@@ -1,0 +1,432 @@
+﻿# Edge HVAC Configuration
+# Copy to config.yaml and customize
+
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# CORE SETTINGS
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+core:
+  # Core database (SQLite for dev, PostgreSQL for prod)
+  database_url: "sqlite+aiosqlite:///./data/core.db"
+  
+  # Vendor databases directory
+  vendor_db_dir: "./data/vendors"
+  
+  # Optional: override vendor DB URLs (e.g., for PostgreSQL)
+  # vendor_databases:
+  #   tuya: "postgresql+asyncpg://user:pass@localhost/tuya_hvac"
+  #   tplink: "postgresql+asyncpg://user:pass@localhost/tplink_hvac"
+
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# PROXY SERVER SETTINGS
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+proxy:
+  host: "0.0.0.0"
+  port: 8911
+  
+  # TLS Configuration (for HTTPS interception)
+  tls:
+    enabled: true
+    cert_file: "./certs/edge-hvac.pem"
+    key_file: "./certs/edge-hvac.key"
+    # Generate self-signed cert trusted by local CA for device trust
+    # Or use cert from local CA (mkcert, step-ca, etc.)
+  
+  # Request processing
+  request_timeout: 30  # seconds
+  max_request_size: 1048576  # 1MB
+  
+  # Vendor route prefixes (path-based routing)
+  vendor_routes:
+      ty: "/ty"
+      tl: "/tl"
+      zh: "/zh"
+      hr: "/hr"
+  
+  # Fallback to vendor cloud
+  fallback:
+    enabled: true
+    timeout: 10  # seconds
+    retry_count: 2
+    # If edge confidence < threshold, forward to cloud
+    confidence_threshold: 0.7
+
+
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# VENDOR CONFIGURATIONS
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+vendors:
+  ty:
+    enabled: true
+    # TY Cloud API endpoints (for fallback)
+    cloud:
+      api_endpoint: "https://openapi.tuyaeu.com"
+      mqtt_endpoint: "mqtt.tuyaeu.com"
+      mqtt_port: 8883
+    # Protocol adapter settings
+    adapter:
+      class: "adapters.ty.TYProtocolAdapter"
+      # TY-specific config
+      region: "eu"  # eu, us, cn, in
+      api_version: "v1.0"
+  
+  tl:
+    enabled: true
+    cloud:
+      api_endpoint: "https://api.kasacloud.com"
+    adapter:
+      class: "adapters.tl.TLProtocolAdapter"
+  
+  zh:
+    enabled: true
+    cloud:
+      api_endpoint: "https://api.zehndercloud.com"
+    adapter:
+      class: "adapters.zh.ZHProtocolAdapter"
+  
+  hr:
+    enabled: true
+    cloud:
+      api_endpoint: "https://api.haier.com"
+    adapter:
+      class: "adapters.hr.HRProtocolAdapter"
+
+
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# MODEL SERVING SETTINGS
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+models:
+  # Model registry path (relative to vendor DB dir)
+  registry_path: "models"
+  
+  # Default model per vendor/device_type (can be overridden in DB)
+  defaults:
+    tuya:
+      ac: "tuya_ac_v1.onnx"
+      heat_pump: "tuya_hp_v1.onnx"
+    tplink:
+      ac: "tplink_ac_v1.onnx"
+    zehnder:
+      ventilator: "zehnder_vent_v1.onnx"
+    haier:
+      ac: "haier_ac_v1.onnx"
+  
+  # Inference settings
+  inference:
+    batch_size: 1
+    intra_op_threads: 2
+    inter_op_threads: 2
+    # Execution providers: CPUExecutionProvider, CUDAExecutionProvider, TensorrtExecutionProvider
+    execution_providers: ["CPUExecutionProvider"]
+  
+  # Hot reload
+  hot_reload:
+    enabled: true
+    check_interval: 30  # seconds
+
+
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# CONTROL LOGIC SETTINGS
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+control:
+  # Policy engine
+  policy:
+    evaluation_interval: 60  # seconds
+    default_policy: "pid_thermal"
+  
+  # Safety limits (global, override vendor policies)
+  safety:
+    min_temp_c: 16.0
+    max_temp_c: 30.0
+    min_humidity_pct: 30
+    max_humidity_pct: 70
+    max_power_watts: 3500
+    max_temp_change_per_hour: 3.0
+    # Emergency stop conditions
+    emergency_stop:
+      temp_delta_c: 10.0  # if target vs actual > 10C for 30min
+      power_spike_watts: 5000
+      comm_loss_minutes: 15
+  
+  # Online learning
+  online_learning:
+    enabled: true
+    buffer_size: 1000
+    update_interval: 3600  # seconds
+    min_samples_for_update: 100
+# ═══════════════════════════════════════════════════════════════════════════════
+# TRAFFIC SELECTION (UI-managed intercept vs passthrough rules)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+traffic_selection:
+  # Default action for unmatched traffic: intercept | passthrough
+  default_action: "intercept"
+  
+  # Rules evaluated in priority order (higher = first)
+  # Can be managed via UI/API
+  rules:
+    # Example: intercept local HVAC subnet
+    - name: "local_hvac_subnet"
+      scope: "local"           # local | external
+      match_type: "cidr"       # cidr | hostname | vendor | device_id
+      match_value: "192.168.1.0/24"
+      action: "intercept"      # intercept | passthrough
+      priority: 10
+      enabled: true
+    
+    # Example: intercept Tuya cloud hostnames
+    - name: "tuya_cloud"
+      scope: "external"
+      match_type: "hostname"
+      match_value: "*.tuya.com"
+      action: "intercept"
+      priority: 10
+      enabled: true
+    
+    # Example: passthrough Zehnder firmware updates
+    - name: "zehnder_firmware_passthrough"
+      scope: "external"
+      match_type: "hostname"
+      match_value: "firmware.zehndercloud.com"
+      action: "passthrough"
+      priority: 20
+      enabled: true
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# LLM DECIPHERING SERVICE (Configurable per-vendor LLM for protocol analysis)
+# ════════════════════════════════════════════════════════════════════════════════
+
+llm_decipher:
+  enabled: true
+  default_profile: "default"
+  
+  profiles:
+    # Default profile - works with any OpenAI-compatible API
+    default:
+      base_url: "https://api.openai.com/v1"
+      api_key: "${OPENAI_API_KEY}"  # Use env var or set directly
+      model_id: "gpt-4o-mini"
+      # Prompt template with database context injection
+      prompt_template: |
+        There are requests and replies from a {vendor} {device_type} device.
+        Decipher them and make correlation on the same the database I give to you.
+        
+        Database schema:
+        {db_schema}
+        
+        Recent patterns from this device type:
+        {recent_patterns}
+        
+        Request/Response pairs to analyze:
+        {pairs}
+        
+        Output JSON with:
+        - intent: the device intent (get_state, set_temp, set_mode, firmware_check, etc.)
+        - fields: object mapping field names to values with types
+        - confidence: 0.0-1.0 confidence score
+        - suggested_dp_codes: object mapping DP code names to values (for Tuya-like protocols)
+        - protocol_notes: any protocol-specific observations
+    
+    # Tuya-specific profile with enhanced prompt
+    tuya:
+      base_url: "https://api.openai.com/v1"
+      api_key: "${OPENAI_API_KEY}"
+      model_id: "gpt-4o-mini"
+      prompt_template: |
+        Analyze Tuya IoT protocol messages. Tuya uses DP (Data Point) codes.
+        Common DP codes: 1=power, 2=mode, 3=temp_set, 4=temp_current, 5=fan_speed, 6=swing, 7=humidity, 8=outdoor_temp, 9=power_consumption
+        
+        There are requests and replies from a Tuya {device_type} device.
+        Decipher them and make correlation on the same the database I give to you.
+        
+        Database schema:
+        {db_schema}
+        
+        Recent Tuya patterns:
+        {recent_patterns}
+        
+        Request/Response pairs:
+        {pairs}
+        
+        Output JSON with:
+        - intent: get_state | set_temperature | set_mode | set_fan | turn_on | turn_off | firmware_check | heartbeat
+        - fields: {dp_code: {value, type}}
+        - confidence: 0.0-1.0
+        - suggested_dp_codes: {dp_code: value}
+        - protocol_notes: MQTT topic structure, encryption type, sequence handling
+    
+    # Local Ollama profile (no API key needed)
+    local_ollama:
+      base_url: "http://localhost:11434/v1"
+      api_key: "ollama"
+      model_id: "llama3.1:8b"
+      prompt_template: |
+        There are requests and replies from a {vendor} {device_type} device.
+        Decipher them and make correlation on the same the database I give to you.
+        
+        Database schema:
+        {db_schema}
+        
+        Recent patterns:
+        {recent_patterns}
+        
+        Pairs:
+        {pairs}
+        
+        Output JSON with: intent, fields, confidence, suggested_dp_codes, protocol_notes
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# TLS DECRYPTION ENGINE (MITM proxy for HTTPS/MQTTS/CoAPS)
+# ════════════════════════════════════════════════════════════════════════════════
+
+tls_decrypt:
+  enabled: true
+  
+  # CA certificate for MITM (generate with: mkcert -install && mkcert -key-file ca.key -cert-file ca.pem "*.local")
+  ca_cert_path: "./certs/ca.pem"
+  ca_key_path: "./certs/ca.key"
+  
+  # Per-device certificate storage
+  device_certs_dir: "./data/device_certs"
+  
+  # Certificate pinning bypass strategies per vendor
+  # Options: "frida", "cert_repin", "mitm_proxy", "disable_pin_check"
+  pinning_bypass:
+    tuya: "cert_repin"
+    tplink: "frida"
+    zehnder: "mitm_proxy"
+    haier: "cert_repin"
+  
+  # DoH/DoT handling
+  doh:
+    enabled: true
+    # Redirect DoH to local resolver that uses edge
+    redirect_port: 8911
+  
+  # TLS versions to support
+  min_version: "TLSv1.2"
+  max_version: "TLSv1.3"
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# ON-THE-FLY MODIFICATION ENGINE (Request/Response transformation rules)
+# ════════════════════════════════════════════════════════════════════════════════
+
+modification:
+  enabled: true
+  # Rules managed via UI/API
+  rules: []
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# CORRELATION ENGINE (Request/Response matching)
+# ════════════════════════════════════════════════════════════════════════════════
+
+correlation:
+  enabled: true
+  
+  # Matching strategies per protocol
+  http:
+    method: "connection"      # connection | correlation_id | sequence
+    correlation_header: "X-Request-ID"
+    keep_alive_timeout: 30    # seconds
+  
+  mqtt:
+    method: "topic_sequence"  # topic_sequence | correlation_data
+    qos_tracking: true
+    retain_handling: "include"
+  
+  coap:
+    method: "message_id"      # message_id | token
+    confirmable_timeout: 5    # seconds
+  
+  # Storage
+  store_pairs: true
+  max_pairs_per_device: 10000
+  pair_ttl_hours: 168  # 1 week
+
+
+
+
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# OBSERVABILITY
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+observability:
+  logging:
+    level: "INFO"
+    format: "json"  # json, console
+    output: "stdout"
+  
+  metrics:
+    enabled: true
+    port: 9090
+    path: "/metrics"
+  
+  tracing:
+    enabled: true
+    exporter: "console"  # console, otlp, jaeger
+    otlp_endpoint: "http://localhost:4317"
+    sample_rate: 0.1
+  
+  health_check:
+    enabled: true
+    port: 8080
+    path: "/health"
+
+
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# DNS CONFIGURATION (for documentation)
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+dns:
+  # Example dnsmasq configuration for local DNS interception
+  # Add to /etc/dnsmasq.d/edge-hvac.conf:
+  #
+  # # Tuya
+  # address=/mqtt.tuya.com/192.168.1.100
+  # address=/api.tuyaeu.com/192.168.1.100
+  # address=/openapi.tuyaeu.com/192.168.1.100
+  #
+  # # TP-Link
+  # address=/api.kasacloud.com/192.168.1.100
+  # address=/iot.tplinkcloud.com/192.168.1.100
+  #
+  # # Zehnder
+  # address=/api.zehndercloud.com/192.168.1.100
+  #
+  # # Haier
+  # address=/api.haier.com/192.168.1.100
+  #
+  # # Port mapping (if needed, use iptables or proxy config)
+  # # iptables -t nat -A PREROUTING -d 192.168.1.100 -p tcp --dport 443 -j REDIRECT --to-port 8911
+  # # iptables -t nat -A PREROUTING -d 192.168.1.100 -p tcp --dport 8883 -j REDIRECT --to-port 8911
+  #
+  # Then: sudo systemctl restart dnsmasq
+  
+  # Example Pi-hole custom DNS entries
+  pihole_custom_dns: |
+    192.168.1.100 mqtt.tuya.com
+    192.168.1.100 api.tuyaeu.com
+    192.168.1.100 openapi.tuyaeu.com
+    192.168.1.100 api.kasacloud.com
+    192.168.1.100 iot.tplinkcloud.com
+    192.168.1.100 api.zehndercloud.com
+    192.168.1.100 api.haier.com
+  
+  # Example AdGuard Home rewrites
+  adguard_rewrites: |
+    mqtt.tuya.com -> 192.168.1.100
+    api.tuyaeu.com -> 192.168.1.100
+    openapi.tuyaeu.com -> 192.168.1.100
+    api.kasacloud.com -> 192.168.1.100
+    iot.tplinkcloud.com -> 192.168.1.100
+    api.zehndercloud.com -> 192.168.1.100
+    api.haier.com -> 192.168.1.100
+

@@ -1,0 +1,68 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+.eggs/
+
+# Virtual environments
+venv/
+env/
+.env
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+data/
+*.db
+*.sqlite
+*.sqlite3
+logs/
+*.log
+
+# Certificates
+certs/*.pem
+certs/*.key
+certs/*.crt
+certs/*.p12
+
+# Models
+models/*.onnx
+models/*.tflite
+models/*.trt
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+.nox/
+
+# Type checking
+.mypy_cache/
+.pyre/
+
+# Ruff
+.ruff_cache/
+
+# Docker
+docker-compose.override.yml

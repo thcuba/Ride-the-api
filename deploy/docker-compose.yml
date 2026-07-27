@@ -1,0 +1,81 @@
+version: '3.8'
+
+services:
+  edge-hvac:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    container_name: edge-hvac
+    restart: unless-stopped
+    ports:
+      - "8911:8911"    # Main proxy port
+      - "9090:9090"    # Prometheus metrics
+      - "8080:8080"    # Health check
+    volumes:
+      - ./config:/app/config:ro
+      - ./data:/app/data
+      - ./certs:/app/certs:ro
+      - ./models:/app/models:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=INFO
+    networks:
+      - edge-hvac-net
+    # Uncomment for GPU support
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  # Optional: PostgreSQL for production (instead of SQLite)
+  # postgres:
+  #   image: postgres:16-alpine
+  #   container_name: edge-hvac-postgres
+  #   restart: unless-stopped
+  #   environment:
+  #     POSTGRES_DB: edge_hvac
+  #     POSTGRES_USER: edge_hvac
+  #     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #   networks:
+  #     - edge-hvac-net
+
+  # Optional: Grafana for dashboards
+  # grafana:
+  #   image: grafana/grafana:10.4
+  #   container_name: edge-hvac-grafana
+  #   restart: unless-stopped
+  #   ports:
+  #     - "3000:3000"
+  #   volumes:
+  #     - grafana_data:/var/lib/grafana
+  #     - ./deploy/grafana/dashboards:/etc/grafana/provisioning/dashboards
+  #     - ./deploy/grafana/datasources:/etc/grafana/provisioning/datasources
+  #   networks:
+  #     - edge-hvac-net
+
+  # Optional: Prometheus for metrics
+  # prometheus:
+  #   image: prom/prometheus:v2.52
+  #   container_name: edge-hvac-prometheus
+  #   restart: unless-stopped
+  #   ports:
+  #     - "9091:9090"
+  #   volumes:
+  #     - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+  #     - prometheus_data:/prometheus
+  #   networks:
+  #     - edge-hvac-net
+
+networks:
+  edge-hvac-net:
+    driver: bridge
+
+volumes:
+  # postgres_data:
+  # grafana_data:
+  # prometheus_data:

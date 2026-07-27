@@ -1,0 +1,101 @@
+[project]
+name = "edge-hvac"
+version = "0.1.0"
+description = "Edge AI DNS Interception Proxy per HVAC Multi-Vendor (Tuya, TP-Link, Zehnder, Haier)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [{name = "Ivan", email = "ivan@example.com"}]
+keywords = ["edge-ai", "hvac", "iot", "tuya", "tplink", "mqtt", "proxy"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+    # Core
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.29.0",
+    "pydantic>=2.7.0",
+    "pydantic-settings>=2.3.0",
+    "python-dotenv>=1.0.0",
+    
+    # Database
+    "sqlalchemy>=2.0.30",
+    "alembic>=1.13.0",
+    "aiosqlite>=0.19.0",
+    "asyncpg>=0.29.0",
+    
+    # Protocol Adapters
+    "paho-mqtt>=2.0.0",
+    "httpx>=0.27.0",
+    "websockets>=12.0",
+    
+    # Model Serving
+    "onnxruntime>=1.18.0",
+    "numpy>=1.26.0",
+    
+    # Observability
+    "opentelemetry-api>=1.25.0",
+    "opentelemetry-sdk>=1.25.0",
+    "opentelemetry-exporter-prometheus>=1.25.0",
+    "prometheus-client>=0.19.0",
+    
+    # Config & Utils
+    "pyyaml>=6.0.1",
+    "watchfiles>=0.21.0",
+    "structlog>=24.1.0",
+    
+    # Testing
+    "pytest>=8.2.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",
+    "httpx>=0.27.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.4.0",
+    "mypy>=1.10.0",
+    "pre-commit>=3.7.0",
+    "black>=24.3.0",
+]
+gpu = [
+    "onnxruntime-gpu>=1.18.0",
+    "tensorrt>=10.0.0; platform_system=='linux'",
+]
+tflite = [
+    "tflite-runtime>=2.16.0",
+]
+
+[build-system]
+requires = ["setuptools>=69.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+select = ["E", "F", "I", "UP", "W", "C90", "ANN", "T20", "PT", "PTH", "ERA", "RET", "SIM", "TCH", "ARG", "PL", "TRY"]
+ignore = ["ANN001", "ANN002", "ANN003", "D100", "D101", "D102", "D103", "D104", "D105", "D107", "TRY003"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+strict_optional = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
