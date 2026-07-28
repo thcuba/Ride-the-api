@@ -191,8 +191,6 @@ async def metrics():
 # MAIN PROXY ENDPOINT - Catches all vendor requests
 # ═══════════════════════════════════════════════════════════════════════════════
 
-from datetime import datetime
-
 @app.api_route("/{vendor}/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"])
 async def proxy_vendor_request(vendor: str, path: str, request: Request):
     """
@@ -410,72 +408,14 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):
         )
 
 
-async def _forward_to_cloud(vendor: str, path: str, request: Request) -> JSONResponse:
-    """Forward request to real cloud API."""
-    adapter = adapter_registry.get_adapter(vendor)
-    if not adapter:
-        return JSONResponse(status_code=404, content={"error": f"Vendor '{vendor}' not supported"})
-
-    body = await _get_request_body(request)
-
-    intercepted = InterceptedRequest(
-        device_id="",
-        timestamp=asyncio.get_running_loop().time(),
-        protocol=ProtocolType.HTTPS if request.url.scheme == "https" else ProtocolType.HTTP,
-        method=request.method,
-        path=f"/{path}",
-        headers=dict(request.headers),
-        query_params=dict(request.query_params),
-        body=body,
-    )
-
-    intercepted = await adapter.parse_request(intercepted)
-    result = await adapter.forward_to_cloud(intercepted)
-    response_data = await adapter.build_response(intercepted, result)
-
-    return JSONResponse(content=response_data, status_code=result.response.get("status_code", 200) if result.response else 200)
-
-
-async def _process_llm_deciphering(pair, vendor: str):
-    """Background task to process LLM deciphering for a request/response pair."""
+        def _is_local_ip(ip: str) -> bool:
+    """Check if IP is in private/local range."""
+    import ipaddress
     try:
-        if not llm_decipher_service or not pair:
-            return
-
-        # Get database schema for vendor
-        db_schema = llm_decipher_service._get_db_schema(vendor)
-
-        # Get recent patterns for context
-        recent_patterns = llm_decipher_service._get_recent_patterns(vendor, None)
-
-        # Decipher the pair directly
-        result = await llm_decipher_service.decipher_pair(pair, profile_name=None)
-
-        # Store result back in pair
-        if pair.llm_analysis is None:
-            pair.llm_analysis = {}
-        pair.llm_analysis.update({
-            'intent': result.intent,
-            'fields': result.fields,
-            'confidence': result.confidence,
-            'suggested_dp_codes': result.suggested_dp_codes,
-            'protocol_notes': result.protocol_notes,
-        })
-
-        logger.info(f"LLM deciphered pair {pair.pair_id}: intent={result.intent}, confidence={result.confidence:.2f}")
-    
-    except Exception as e:
-        logger.error(f"LLM deciphering failed for pair {pair.pair_id if pair else 'unknown'}: {e}")
-
-
-def _is_local_ip(ip: str) -> bool:
-        """Check if IP is in private/local range."""
-        import ipaddress
-        try:
-            addr = ipaddress.ip_address(ip)
-            return addr.is_private or addr.is_loopback
-        except Exception:
-            return False
+        addr = ipaddress.ip_address(ip)
+        return addr.is_private or addr.is_loopback
+    except Exception:
+        return False
 
 
 def _command_to_expected_state(command: Command) -> dict:
@@ -697,22 +637,22 @@ async def send_device_command(device_id: str, request: Request):
 
 @app.get("/api/traffic/rules")
 async def get_traffic_rules():
-        """Get all traffic selection rules."""
-        if not traffic_selector:
-            return JSONResponse(status_code=503, content={"error": "Service not ready"})
-        return JSONResponse(content={
-            "rules": [rule.model_dump() for rule in traffic_selector.get_rules()],
-            "default_action": traffic_selector.default_action,
-        })
+    """Get all traffic selection rules."""
+    if not traffic_selector:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    return JSONResponse(content={
+        "rules": [rule.model_dump() for rule in traffic_selector.get_rules()],
+        "default_action": traffic_selector.default_action,
+    })
 
 
 @app.post("/api/traffic/rules")
 async def create_traffic_rule(rule: TrafficRule):
-        """Create a new traffic selection rule."""
-        if not traffic_selector:
-            return JSONResponse(status_code=503, content={"error": "Service not ready"})
-        traffic_selector.add_rule(rule)
-        return JSONResponse(content={"status": "created", "rule": rule.model_dump()})
+    """Create a new traffic selection rule."""
+    if not traffic_selector:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    traffic_selector.add_rule(rule)
+    return JSONResponse(content={"status": "created", "rule": rule.model_dump()})
 
 
 @app.put("/api/traffic/rules/{rule_name}")
