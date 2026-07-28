@@ -19,7 +19,6 @@ from fastapi.responses import JSONResponse
 
 from core.config import get_config_manager
 from core.database import DatabaseManager, Base
-from core.safety import SafetyEngine, DEFAULT_SAFETY_CONFIG
 from core.traffic_analysis import (
     TrafficAnalyzer, RequestContext, ResponseRecord, 
     TrafficSource, ProcessingMode, ResponseMatchType
@@ -46,7 +45,6 @@ logger = logging.getLogger(__name__)
 # Global instances
 db_manager: DatabaseManager | None = None
 adapter_registry: ProtocolAdapterRegistry | None = None
-safety_engine: SafetyEngine | None = None
 traffic_analyzer: TrafficAnalyzer | None = None
 traffic_selector: TrafficSelector | None = None
 modification_engine = None
@@ -58,7 +56,7 @@ config_manager = get_config_manager()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
-    global db_manager, adapter_registry, safety_engine, traffic_analyzer
+    global db_manager, adapter_registry, traffic_analyzer
     global traffic_selector, correlation_engine, modification_engine, llm_decipher_service
     
     logger.info("Starting Edge HVAC Proxy Server...")
@@ -77,10 +75,6 @@ async def lifespan(app: FastAPI):
         echo=config.observability.logging.level == "DEBUG",
     )
     await db_manager.initialize()
-    
-    # Initialize safety engine
-    safety_engine = SafetyEngine(config.control.safety.__dict__ if hasattr(config.control, 'safety') else DEFAULT_SAFETY_CONFIG)
-    safety_engine.initialize()
     
     # Initialize traffic analyzer
     traffic_analyzer = TrafficAnalyzer(db_manager=db_manager)
@@ -112,7 +106,6 @@ async def lifespan(app: FastAPI):
     
     logger.info(f"Server started on {config.proxy.host}:{config.proxy.port}")
     logger.info(f"Registered vendors: {adapter_registry.list_vendors()}")
-    logger.info(f"Safety rules loaded: {len(safety_engine.rules)} global + vendor-specific")
     
     yield
     
@@ -177,9 +170,6 @@ async def metrics():
         "# HELP edge_hvac_correlation_pairs_total Total number of correlated pairs\n"
         "# TYPE edge_hvac_correlation_pairs_total counter\n"
         f"edge_hvac_correlation_pairs_total {stats.get('correlation_pairs', 0)}\n"
-        "# HELP edge_hvac_safety_violations_total Total number of safety violations\n"
-        "# TYPE edge_hvac_safety_violations_total counter\n"
-        f"edge_hvac_safety_violations_total {stats.get('safety_violations', 0)}\n"
         "# HELP edge_hvac_uptime_seconds Server uptime in seconds\n"
         "# TYPE edge_hvac_uptime_seconds gauge\n"
         f"edge_hvac_uptime_seconds {stats.get('uptime_seconds', 0)}\n"
@@ -262,92 +252,61 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):
         # Log intercepted request to vendor DB
         await _log_intercepted_request(vendor, intercepted)
         
-        # Get device state and info for safety checks
-        device_state = await adapter.get_device_state(intercepted.device_id) if intercepted.device_id else None
-        device_info = await adapter.get_device_info(intercepted.device_id) if intercepted.device_id else None
+                # Get device state and info
+                device_state = await adapter.get_device_state(intercepted.device_id) if intercepted.device_id else None
+                device_info = await adapter.get_device_info(intercepted.device_id) if intercepted.device_id else None
         
-        # Prepare context for safety engine
-        safety_context = {
-            "source": source.value,
-            "client_ip": client_ip,
-        }
-        
-        # Handle locally (edge inference) - but first check safety if it's a command
-        if intercepted.parsed_intent in (
-            "set_temperature", "set_mode", "set_fan_speed", "set_swing",
-            "turn_on", "turn_off", "set_schedule"
-        ):
-            from adapters.base import Command, CommandType
-            
-            # Map parsed intent to CommandType
-            intent_map = {
-                "set_temperature": CommandType.SET_TEMPERATURE,
-                "set_mode": CommandType.SET_MODE,
-                "set_fan_speed": CommandType.SET_FAN_SPEED,
-                "set_swing": CommandType.SET_SWING,
-                "turn_on": CommandType.TURN_ON,
-                "turn_off": CommandType.TURN_OFF,
-                "set_schedule": CommandType.SET_SCHEDULE,
-            }
-            
-            cmd_type = intent_map.get(intercepted.parsed_intent, CommandType.UNKNOWN)
-            if cmd_type != CommandType.UNKNOWN:
-                command = Command(
-                    device_id=intercepted.device_id,
-                    command_type=cmd_type,
-                    params=intercepted.parsed_params,
-                    source="edge_auto",
-                )
+                # Handle locally (edge inference)
+                if intercepted.parsed_intent in (
+                    "set_temperature", "set_mode", "set_fan_speed", "set_swing",
+                    "turn_on", "turn_off", "set_schedule"
+                ):
+                    from adapters.base import Command, CommandType
+    
+                    # Map parsed intent to CommandType
+                    intent_map = {
+                        "set_temperature": CommandType.SET_TEMPERATURE,
+                        "set_mode": CommandType.SET_MODE,
+                        "set_fan_speed": CommandType.SET_FAN_SPEED,
+                        "set_swing": CommandType.SET_SWING,
+                        "turn_on": CommandType.TURN_ON,
+                        "turn_off": CommandType.TURN_OFF,
+                        "set_schedule": CommandType.SET_SCHEDULE,
+                    }
+    
+                    cmd_type = intent_map.get(intercepted.parsed_intent, CommandType.UNKNOWN)
+                    if cmd_type != CommandType.UNKNOWN:
+                        command = Command(
+                            device_id=intercepted.device_id,
+                            command_type=cmd_type,
+                            params=intercepted.parsed_params,
+                            source="edge_auto",
+                        )
                 
-                # Run safety checks
-                safety_result = await safety_engine.check_command(
-                    command, device_state, device_info, safety_context
-                )
+                        # Execute command through adapter
+                        result = await adapter.send_command(intercepted.device_id, command)
                 
-                if not safety_result.allowed:
-                    # Blocked by safety
-                    return JSONResponse(
-                        status_code=403,
-                        content={
-                            "error": "Command blocked by safety rules",
-                            "violations": [
-                                {"type": v.violation_type.value, "message": v.message, "action": v.action.value}
-                                for v in safety_result.violations
-                            ],
-                        },
-                    )
+                        # Track compliance if we have actual response
+                        if device_state:
+                            await traffic_analyzer.track_device_command(
+                                device_id=intercepted.device_id,
+                                vendor=vendor,
+                                command_sent=command.params,
+                                expected_state=_command_to_expected_state(command),
+                                actual_response=result.response,
+                                latency_ms=result.response.get("latency_ms", 0) if result.response else 0,
+                            )
                 
-                # Use modified command if safety modified it
-                if safety_result.modified_command:
-                    command = safety_result.modified_command
+                        response_data = await adapter.build_response(intercepted, result)
                 
-                # Execute command through adapter
-                result = await adapter.send_command(intercepted.device_id, command)
-                
-                # Record command for rate limiting/conflict detection
-                safety_engine.record_command(intercepted.device_id, command.command_type)
-                
-                # Track compliance if we have actual response
-                if device_state:
-                    await traffic_analyzer.track_device_command(
-                        device_id=intercepted.device_id,
-                        vendor=vendor,
-                        command_sent=command.params,
-                        expected_state=_command_to_expected_state(command),
-                        actual_response=result.response,
-                        latency_ms=result.response.get("latency_ms", 0) if result.response else 0,
-                    )
-                
-                response_data = await adapter.build_response(intercepted, result)
-                
-                # Traffic analysis: compare with cloud if available
-                if config_manager.config.proxy.fallback.enabled and result.success:
-                    cloud_result = await adapter.forward_to_cloud(intercepted)
-                    if cloud_result.success:
-                        edge_response = ResponseRecord(
-                            source="edge",
-                            status_code=200,
-                            headers={},
+                        # Traffic analysis: compare with cloud if available
+                        if config_manager.config.proxy.fallback.enabled and result.success:
+                            cloud_result = await adapter.forward_to_cloud(intercepted)
+                            if cloud_result.success:
+                                edge_response = ResponseRecord(
+                                    source="edge",
+                                    status_code=200,
+                                    headers={},
                             body=response_data,
                             latency_ms=0,
                             timestamp=datetime.utcnow(),

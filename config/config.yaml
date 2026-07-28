@@ -138,19 +138,6 @@ control:
     evaluation_interval: 60  # seconds
     default_policy: "pid_thermal"
   
-  # Safety limits (generic infrastructure only - device-specific in vendor rules)
-    safety:
-      comm_loss:
-        max_silence_minutes: 15
-      rate_limit:
-        max_commands_per_minute: 10
-        max_commands_per_hour: 100
-      conflicting:
-        conflict_window_seconds: 30
-      # Emergency stop conditions
-      emergency_stop:
-        comm_loss_minutes: 15
-  
   # Online learning
   online_learning:
     enabled: true

@@ -90,12 +90,12 @@ class ModelRegistry(Base):
 
 
 class GlobalPolicy(Base):
-    """Global safety policies applied to all vendors."""
+    """Global policies applied to all vendors."""
     __tablename__ = "global_policies"
     
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     policy_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
-    policy_type: Mapped[str] = mapped_column(String(32), nullable=False)  # safety_limit, energy_cap, comfort_range
+    policy_type: Mapped[str] = mapped_column(String(32), nullable=False)  # energy_cap, comfort_range, custom
     applies_to: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)  # vendor, device_type filters
     config: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     priority: Mapped[int] = mapped_column(default=100, nullable=False)  # lower = higher priority

@@ -101,23 +101,6 @@ class ModelsConfig(BaseModel):
     hot_reload: HotReloadConfig = Field(default_factory=HotReloadConfig)
 
 
-class SafetyConfig(BaseModel):
-    """Safety limits - all optional, must be explicitly configured per device type.
-    No hardcoded defaults - these are device-specific policies, not universal truths.
-    """
-    min_temp_c: float | None = None
-    max_temp_c: float | None = None
-    min_humidity_pct: int | None = None
-    max_humidity_pct: int | None = None
-    max_power_watts: int | None = None
-    max_temp_change_per_hour: float | None = None
-    emergency_stop: dict[str, Any] = Field(default_factory=lambda: {
-        "temp_delta_c": 10.0,
-        "power_spike_watts": 5000,
-        "comm_loss_minutes": 15,
-    })
-
-
 class OnlineLearningConfig(BaseModel):
     enabled: bool = True
     buffer_size: int = 1000
@@ -132,7 +115,6 @@ class PolicyConfig(BaseModel):
 
 class ControlConfig(BaseModel):
     policy: PolicyConfig = Field(default_factory=PolicyConfig)
-    safety: SafetyConfig = Field(default_factory=SafetyConfig)
     online_learning: OnlineLearningConfig = Field(default_factory=OnlineLearningConfig)
 
 
