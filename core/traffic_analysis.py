@@ -69,6 +69,7 @@ class ResponseRecord:
     latency_ms: float
     timestamp: datetime
     error: str | None = None
+    metadata: dict = field(default_factory=dict)
 
 
 @dataclass

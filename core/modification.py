@@ -437,7 +437,7 @@ class ModificationEngine:
         
         return modified_intercepted, was_modified
     
-    def process_response(self, intercepted: 'InterceptedRequest', response: 'AdapterResponse') -> tuple['AdapterResponse', bool]:
+    def process_response(self, intercepted: 'InterceptedRequest', response: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         """
         Process an adapter response through modification rules.
         Returns (modified_response, was_modified).
@@ -447,7 +447,7 @@ class ModificationEngine:
             source="edge",
             status_code=200,
             headers={},
-            body=response.response,
+            body=response,
             latency_ms=0,
             timestamp=datetime.utcnow(),
             metadata={
@@ -495,15 +495,15 @@ class ModificationEngine:
             original.block_reason = msg.block_reason
         return original
     
-    def _apply_to_response(self, original: 'AdapterResponse', msg: InterceptedMessage) -> 'AdapterResponse':
-        """Apply message modifications back to AdapterResponse."""
+    def _apply_to_response(self, original: dict[str, Any], msg: InterceptedMessage) -> dict[str, Any]:
+        """Apply message modifications back to response dict."""
         if msg.body is not None:
-            original.response = msg.body
+            original = msg.body
         if msg.modifications:
-            original.metadata['modifications'] = msg.modifications
+            original = dict(original)
+            original['modifications'] = msg.modifications
         if msg.blocked:
-            original.success = False
-            original.error = msg.block_reason
+            original = {"success": False, "error": msg.block_reason}
         return original
     
     def _log_modification(self, rule: ModificationRule, msg: InterceptedMessage, 

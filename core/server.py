@@ -229,11 +229,14 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):
     # Check traffic selection rules (passthrough vs intercept)
     if traffic_selector:
         from core.traffic_selector import TrafficRequestInfo
+        dest_host = request.headers.get("host", f"{vendor}.local")
         request_info = TrafficRequestInfo(
-            source_ip=client_ip,
-            dest_host=host,
+            client_ip=client_ip,
+            hostname=dest_host,
             vendor=vendor,
-            scope="local" if is_local else "external",
+            is_local=is_local,
+            url=str(request.url),
+            path=f"/{path}",
         )
         decision = traffic_selector.evaluate(request_info)
         if decision.value == "passthrough" and is_local:
@@ -245,7 +248,7 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):
 
     intercepted = InterceptedRequest(
         device_id="",  # Will be extracted by adapter
-        timestamp=asyncio.get_event_loop().time(),
+        timestamp=asyncio.get_running_loop().time(),
         protocol=ProtocolType.HTTPS if request.url.scheme == "https" else ProtocolType.HTTP,
         method=request.method,
         path=f"/{path}",
@@ -407,89 +410,65 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):
         )
 
 
-    async def _forward_to_cloud(vendor: str, path: str, request: Request) -> JSONResponse:
-        """Forward request to real cloud API."""
-        adapter = adapter_registry.get_adapter(vendor)
-        if not adapter:
-            return JSONResponse(status_code=404, content={"error": f"Vendor '{vendor}' not supported"})
-    
-        body = await _get_request_body(request)
-    
-        intercepted = InterceptedRequest(
-            device_id="",
-            timestamp=asyncio.get_event_loop().time(),
-            protocol=ProtocolType.HTTPS if request.url.scheme == "https" else ProtocolType.HTTP,
-            method=request.method,
-            path=f"/{path}",
-            headers=dict(request.headers),
-            query_params=dict(request.query_params),
-            body=body,
-        )
-    
-        intercepted = await adapter.parse_request(intercepted)
-        result = await adapter.forward_to_cloud(intercepted)
-        response_data = await adapter.build_response(intercepted, result)
-    
-        return JSONResponse(content=response_data, status_code=result.response.get("status_code", 200) if result.response else 200)
+async def _forward_to_cloud(vendor: str, path: str, request: Request) -> JSONResponse:
+    """Forward request to real cloud API."""
+    adapter = adapter_registry.get_adapter(vendor)
+    if not adapter:
+        return JSONResponse(status_code=404, content={"error": f"Vendor '{vendor}' not supported"})
+
+    body = await _get_request_body(request)
+
+    intercepted = InterceptedRequest(
+        device_id="",
+        timestamp=asyncio.get_running_loop().time(),
+        protocol=ProtocolType.HTTPS if request.url.scheme == "https" else ProtocolType.HTTP,
+        method=request.method,
+        path=f"/{path}",
+        headers=dict(request.headers),
+        query_params=dict(request.query_params),
+        body=body,
+    )
+
+    intercepted = await adapter.parse_request(intercepted)
+    result = await adapter.forward_to_cloud(intercepted)
+    response_data = await adapter.build_response(intercepted, result)
+
+    return JSONResponse(content=response_data, status_code=result.response.get("status_code", 200) if result.response else 200)
 
 
-    async def _process_llm_deciphering(pair, vendor: str):
-        """Background task to process LLM deciphering for a request/response pair."""
-        try:
-            if not llm_decipher_service or not pair:
-                return
-        
-            # Get database schema for vendor
-            from core.llm_decipher import DecipherRequest
-        
-            db_schema = llm_decipher_service._get_db_schema(vendor)
-        
-            # Get recent patterns for context
-            recent_patterns = llm_decipher_service._get_recent_patterns(vendor, None)
-        
-            # Build decipher request
-            decipher_request = DecipherRequest(
-                vendor=vendor,
-                device_type=pair.request.metadata.get('device_type', 'unknown'),
-                pairs=[{
-                    'request': {
-                        'method': pair.request.method,
-                        'path': pair.request.path,
-                        'headers': pair.request.headers,
-                        'body': pair.request.body,
-                        'query_params': pair.request.query_params,
-                    },
-                    'response': {
-                        'status_code': 200,
-                        'headers': pair.response.headers if pair.response else {},
-                        'body': pair.response.body if pair.response else {},
-                    }
-                }],
-                db_schema=db_schema,
-                recent_patterns=recent_patterns,
-            )
-        
-            # Decipher
-            result = await llm_decipher_service.decipher(decipher_request)
-        
-            # Store result back in pair
-            if pair.llm_analysis is None:
-                pair.llm_analysis = {}
-            pair.llm_analysis.update({
-                'intent': result.intent,
-                'fields': result.fields,
-                'confidence': result.confidence,
-                'suggested_dp_codes': result.suggested_dp_codes,
-                'protocol_notes': result.protocol_notes,
-            })
-        
-            logger.info(f"LLM deciphered pair {pair.pair_id}: intent={result.intent}, confidence={result.confidence:.2f}")
-        
-        except Exception as e:
-            logger.error(f"LLM deciphering failed for pair {pair.pair_id if pair else 'unknown'}: {e}")
+async def _process_llm_deciphering(pair, vendor: str):
+    """Background task to process LLM deciphering for a request/response pair."""
+    try:
+        if not llm_decipher_service or not pair:
+            return
+
+        # Get database schema for vendor
+        db_schema = llm_decipher_service._get_db_schema(vendor)
+
+        # Get recent patterns for context
+        recent_patterns = llm_decipher_service._get_recent_patterns(vendor, None)
+
+        # Decipher the pair directly
+        result = await llm_decipher_service.decipher_pair(pair, profile_name=None)
+
+        # Store result back in pair
+        if pair.llm_analysis is None:
+            pair.llm_analysis = {}
+        pair.llm_analysis.update({
+            'intent': result.intent,
+            'fields': result.fields,
+            'confidence': result.confidence,
+            'suggested_dp_codes': result.suggested_dp_codes,
+            'protocol_notes': result.protocol_notes,
+        })
+
+        logger.info(f"LLM deciphered pair {pair.pair_id}: intent={result.intent}, confidence={result.confidence:.2f}")
+    
+    except Exception as e:
+        logger.error(f"LLM deciphering failed for pair {pair.pair_id if pair else 'unknown'}: {e}")
 
 
-    def _is_local_ip(ip: str) -> bool:
+def _is_local_ip(ip: str) -> bool:
         """Check if IP is in private/local range."""
         import ipaddress
         try:
@@ -551,7 +530,7 @@ async def mqtt_proxy_publish(vendor: str, request: Request):
     
     intercepted = InterceptedRequest(
         device_id="",
-        timestamp=asyncio.get_event_loop().time(),
+        timestamp=asyncio.get_running_loop().time(),
         protocol=ProtocolType.MQTT,
         topic=topic,
         qos=qos,
@@ -738,20 +717,20 @@ async def create_traffic_rule(rule: TrafficRule):
 
 @app.put("/api/traffic/rules/{rule_name}")
 async def update_traffic_rule(rule_name: str, rule: TrafficRule):
-        """Update an existing traffic rule."""
-        if not traffic_selector:
-            return JSONResponse(status_code=503, content={"error": "Service not ready"})
-        traffic_selector.update_rule(rule_name, rule)
-        return JSONResponse(content={"status": "updated", "rule": rule.model_dump()})
+    """Update an existing traffic rule."""
+    if not traffic_selector:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    traffic_selector.update_rule(rule_name, rule)
+    return JSONResponse(content={"status": "updated", "rule": rule.model_dump()})
 
 
 @app.delete("/api/traffic/rules/{rule_name}")
 async def delete_traffic_rule(rule_name: str):
-        """Delete a traffic rule."""
-        if not traffic_selector:
-            return JSONResponse(status_code=503, content={"error": "Service not ready"})
-        traffic_selector.remove_rule(rule_name)
-        return JSONResponse(content={"status": "deleted", "rule_name": rule_name})
+    """Delete a traffic rule."""
+    if not traffic_selector:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    traffic_selector.remove_rule(rule_name)
+    return JSONResponse(content={"status": "deleted", "rule_name": rule_name})
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -760,20 +739,20 @@ async def delete_traffic_rule(rule_name: str):
 
 @app.get("/api/correlation/pairs")
 async def get_correlation_pairs(vendor: str | None = None, limit: int = 100):
-        """Get correlated request/response pairs."""
-        if not correlation_engine:
-            return JSONResponse(status_code=503, content={"error": "Service not ready"})
-        pairs = correlation_engine.get_pairs(vendor=vendor, limit=limit)
-        return JSONResponse(content={"pairs": [p.model_dump() for p in pairs], "count": len(pairs)})
+    """Get correlated request/response pairs."""
+    if not correlation_engine:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    pairs = correlation_engine.get_pairs(vendor=vendor, limit=limit)
+    return JSONResponse(content={"pairs": [p.model_dump() for p in pairs], "count": len(pairs)})
 
 
 @app.get("/api/correlation/pending")
 async def get_pending_count(vendor: str | None = None):
-        """Get count of pending (unmatched) request/response pairs."""
-        if not correlation_engine:
-            return JSONResponse(status_code=503, content={"error": "Service not ready"})
-        count = correlation_engine.get_pending_count(device_id=vendor)
-        return JSONResponse(content={"pending_count": count})
+    """Get count of pending (unmatched) request/response pairs."""
+    if not correlation_engine:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    count = correlation_engine.get_pending_count(device_id=vendor)
+    return JSONResponse(content={"pending_count": count})
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -782,37 +761,37 @@ async def get_pending_count(vendor: str | None = None):
 
 @app.get("/api/modification/rules")
 async def get_modification_rules():
-        """Get all modification rules."""
-        if not modification_engine:
-            return JSONResponse(status_code=503, content={"error": "Service not ready"})
-        return JSONResponse(content={"rules": [r.model_dump() for r in modification_engine.get_rules()]})
+    """Get all modification rules."""
+    if not modification_engine:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    return JSONResponse(content={"rules": [r.model_dump() for r in modification_engine.get_rules()]})
 
 
 @app.post("/api/modification/rules")
 async def create_modification_rule(rule: ModificationRule):
-        """Create a new modification rule."""
-        if not modification_engine:
-            return JSONResponse(status_code=503, content={"error": "Service not ready"})
-        modification_engine.add_rule(rule)
-        return JSONResponse(content={"status": "created", "rule": rule.model_dump()})
+    """Create a new modification rule."""
+    if not modification_engine:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    modification_engine.add_rule(rule)
+    return JSONResponse(content={"status": "created", "rule": rule.model_dump()})
 
 
 @app.put("/api/modification/rules/{rule_name}")
 async def update_modification_rule(rule_name: str, rule: ModificationRule):
-        """Update an existing modification rule."""
-        if not modification_engine:
-            return JSONResponse(status_code=503, content={"error": "Service not ready"})
-        modification_engine.update_rule(rule_name, rule)
-        return JSONResponse(content={"status": "updated", "rule": rule.model_dump()})
+    """Update an existing modification rule."""
+    if not modification_engine:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    modification_engine.update_rule(rule_name, rule)
+    return JSONResponse(content={"status": "updated", "rule": rule.model_dump()})
 
 
 @app.delete("/api/modification/rules/{rule_name}")
 async def delete_modification_rule(rule_name: str):
-        """Delete a modification rule."""
-        if not modification_engine:
-            return JSONResponse(status_code=503, content={"error": "Service not ready"})
-        modification_engine.remove_rule(rule_name)
-        return JSONResponse(content={"status": "deleted", "rule_name": rule_name})
+    """Delete a modification rule."""
+    if not modification_engine:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    modification_engine.remove_rule(rule_name)
+    return JSONResponse(content={"status": "deleted", "rule_name": rule_name})
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -821,20 +800,20 @@ async def delete_modification_rule(rule_name: str):
 
 @app.get("/api/stats/compliance")
 async def get_compliance_stats(vendor: str | None = None):
-        """Get compliance statistics (percentage of identical responses vs database)."""
-        if not traffic_analyzer:
-            return JSONResponse(status_code=503, content={"error": "Service not ready"})
-        stats = traffic_analyzer.get_compliance_stats(vendor=vendor)
-        return JSONResponse(content=stats)
+    """Get compliance statistics (percentage of identical responses vs database)."""
+    if not traffic_analyzer:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    stats = traffic_analyzer.get_compliance_stats(vendor=vendor)
+    return JSONResponse(content=stats)
 
 
 @app.get("/api/stats/traffic")
 async def get_traffic_stats(vendor: str | None = None):
-        """Get traffic statistics."""
-        if not traffic_analyzer:
-            return JSONResponse(status_code=503, content={"error": "Service not ready"})
-        stats = traffic_analyzer.get_stats(vendor=vendor)
-        return JSONResponse(content=stats)
+    """Get traffic statistics."""
+    if not traffic_analyzer:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    stats = traffic_analyzer.get_stats(vendor=vendor)
+    return JSONResponse(content=stats)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

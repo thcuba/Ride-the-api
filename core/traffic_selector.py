@@ -182,6 +182,11 @@ class TrafficSelector:
     def get_rules(self) -> list[TrafficRule]:
         """Get all current rules."""
         return self.rules.copy()
+
+    @property
+    def default_action(self) -> TrafficAction:
+        """Get the default traffic action."""
+        return self._default_action
     
     def add_rule(self, rule: TrafficRule) -> bool:
         """Add a new rule (will be re-sorted by priority)."""
