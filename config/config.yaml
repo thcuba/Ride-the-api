@@ -138,19 +138,18 @@ control:
     evaluation_interval: 60  # seconds
     default_policy: "pid_thermal"
   
-  # Safety limits (global, override vendor policies)
-  safety:
-    min_temp_c: 16.0
-    max_temp_c: 30.0
-    min_humidity_pct: 30
-    max_humidity_pct: 70
-    max_power_watts: 3500
-    max_temp_change_per_hour: 3.0
-    # Emergency stop conditions
-    emergency_stop:
-      temp_delta_c: 10.0  # if target vs actual > 10C for 30min
-      power_spike_watts: 5000
-      comm_loss_minutes: 15
+  # Safety limits (generic infrastructure only - device-specific in vendor rules)
+    safety:
+      comm_loss:
+        max_silence_minutes: 15
+      rate_limit:
+        max_commands_per_minute: 10
+        max_commands_per_hour: 100
+      conflicting:
+        conflict_window_seconds: 30
+      # Emergency stop conditions
+      emergency_stop:
+        comm_loss_minutes: 15
   
   # Online learning
   online_learning:

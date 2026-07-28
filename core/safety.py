@@ -108,16 +108,19 @@ class TemperatureRangeRule(SafetyRule):
         if target_temp is None:
             return violations
         
-        # Get limits from config or device capabilities
-        min_temp = self.config.get("min_temp_c", 16.0)
-        max_temp = self.config.get("max_temp_c", 30.0)
+        # Get limits from config (no hardcoded defaults - must be configured per device type)
+                min_temp = self.config.get("min_temp_c")
+                max_temp = self.config.get("max_temp_c")
         
-        # Override with device-specific if available
-        if device_info and hasattr(device_info, 'capabilities'):
-            caps = device_info.capabilities
-            if isinstance(caps, dict):
-                min_temp = caps.get("min_temp_c", min_temp)
-                max_temp = caps.get("max_temp_c", max_temp)
+                if min_temp is None or max_temp is None:
+                    return violations  # No limits configured, skip check
+        
+                # Override with device-specific if available
+                if device_info and hasattr(device_info, 'capabilities'):
+                    caps = device_info.capabilities
+                    if isinstance(caps, dict):
+                        min_temp = caps.get("min_temp_c", min_temp)
+                        max_temp = caps.get("max_temp_c", max_temp)
         
         if target_temp < min_temp:
             violations.append(SafetyViolation(
@@ -161,7 +164,10 @@ class TemperatureRateLimitRule(SafetyRule):
         current_temp = device_state.temp_actual
         delta = abs(target_temp - current_temp)
         
-        max_delta_per_hour = self.config.get("max_delta_per_hour", 3.0)
+        max_delta_per_hour = self.config.get("max_delta_per_hour")
+        
+        if max_delta_per_hour is None:
+            return violations  # No rate limit configured, skip check
         
         # Check recent commands for cumulative change
         recent_changes = context.get("recent_temp_changes", []) if context else []
@@ -205,7 +211,10 @@ class PowerLimitRule(SafetyRule):
         if not device_state or device_state.power_watts is None:
             return violations
         
-        max_power = self.config.get("max_power_watts", 3500)
+        max_power = self.config.get("max_power_watts")
+        
+        if max_power is None:
+            return violations  # No power limit configured, skip check
         current_power = device_state.power_watts
         
         # Estimate power after command (simplified)
@@ -508,23 +517,24 @@ class ConflictingCommandsRule(SafetyRule):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TuyaSpecificRules(SafetyRule):
-    """Tuya-specific safety rules."""
+    """Tuya-specific safety rules (e.g., DP code encoding)."""
     
     async def check(self, command, device_state, device_info, context):
         violations = []
         
-        # Tuya devices often have specific DP code requirements
+        # Tuya devices use temp * 10 encoding - just warn about encoding
         if command.command_type == CommandType.SET_TEMPERATURE:
             target = command.params.get("temperature")
             if target is not None:
-                # Tuya uses temp * 10
-                if target < 160 or target > 300:  # 16.0 to 30.0
+                # Tuya DP code expects temp * 10, warn if value looks wrong
+                if target > 1000:  # Already scaled
+                    pass
+                elif target > 300:  # Looks like it should be scaled
                     violations.append(SafetyViolation(
                         violation_type=SafetyViolationType.TEMP_OUT_OF_RANGE,
-                        message=f"Tuya temperature {target/10}°C out of range (16-30°C)",
-                        action=SafetyAction.MODIFY,
-                        severity="high",
-                        suggested_fix={"temperature": max(160, min(300, target))},
+                        message=f"Tuya temperature {target} may need scaling (DP codes use temp*10)",
+                        action=SafetyAction.WARN,
+                        severity="medium",
                     ))
         
         return violations
@@ -536,17 +546,27 @@ class ZehnderSpecificRules(SafetyRule):
     async def check(self, command, device_state, device_info, context):
         violations = []
         
-        # Zehnder: don't turn off heat recovery in winter
+        # Zehnder: warn about turning off heat recovery in cold weather
+        # Configurable via device capabilities or config
         if command.command_type == CommandType.SET_MODE:
             mode = command.params.get("mode")
             if mode == "off" and device_state and device_state.temp_outdoor is not None:
-                if device_state.temp_outdoor < 5.0:  # Below 5°C outside
+                min_outdoor_temp = None
+                # Get from device capabilities or config
+                if device_info and hasattr(device_info, 'capabilities'):
+                    caps = device_info.capabilities
+                    if isinstance(caps, dict):
+                        min_outdoor_temp = caps.get("min_outdoor_temp_for_heat_recovery")
+                if min_outdoor_temp is None:
+                    min_outdoor_temp = self.config.get("min_outdoor_temp_for_heat_recovery", 5.0)
+                
+                if device_state.temp_outdoor < min_outdoor_temp:
                     violations.append(SafetyViolation(
                         violation_type=SafetyViolationType.MAINTENANCE_MODE,
-                        message="Heat recovery should not be disabled below 5°C outdoor temp",
+                        message=f"Heat recovery should not be disabled below {min_outdoor_temp}°C outdoor temp",
                         action=SafetyAction.WARN,
                         severity="medium",
-                        details={"outdoor_temp": device_state.temp_outdoor},
+                        details={"outdoor_temp": device_state.temp_outdoor, "min_allowed": min_outdoor_temp},
                     ))
         
         return violations
@@ -573,24 +593,28 @@ class SafetyEngine:
         if self._initialized:
             return
         
-        # Global rules (apply to all vendors)
+        # Global rules (apply to all vendors) - only infrastructure safety
         self.rules = [
-            TemperatureRangeRule("temp_range", self.config.get("temp_range", {})),
-            TemperatureRateLimitRule("temp_rate_limit", self.config.get("temp_rate_limit", {})),
-            PowerLimitRule("power_limit", self.config.get("power_limit", {})),
-            ModeTransitionRule("mode_transition"),
-            FanSpeedRule("fan_speed"),
-            CommunicationLossRule("comm_loss", self.config.get("comm_loss", {})),
-            DeviceOfflineRule("device_offline"),
-            RateLimitRule("rate_limit", self.config.get("rate_limit", {})),
-            ConflictingCommandsRule("conflicting_commands", self.config.get("conflicting", {})),
-        ]
+                    CommunicationLossRule("comm_loss", self.config.get("comm_loss", {})),
+                    DeviceOfflineRule("device_offline"),
+                    RateLimitRule("rate_limit", self.config.get("rate_limit", {})),
+                    ConflictingCommandsRule("conflicting_commands", self.config.get("conflicting", {})),
+                ]
         
-        # Vendor-specific rules
-        self.vendor_rules = {
-            "tuya": [TuyaSpecificRules("tuya_specific")],
-            "zehnder": [ZehnderSpecificRules("zehnder_specific")],
-        }
+                # Vendor-specific rules (including device-specific limits)
+                self.vendor_rules = {
+                    "tuya": [
+                        TuyaSpecificRules("tuya_specific"),
+                        TemperatureRangeRule("temp_range", self.config.get("temp_range", {})),
+                        TemperatureRateLimitRule("temp_rate_limit", self.config.get("temp_rate_limit", {})),
+                        PowerLimitRule("power_limit", self.config.get("power_limit", {})),
+                        ModeTransitionRule("mode_transition"),
+                        FanSpeedRule("fan_speed"),
+                    ],
+                    "zehnder": [
+                        ZehnderSpecificRules("zehnder_specific"),
+                    ],
+                }
         
         self._initialized = True
         logger.info("Safety engine initialized with %d global rules", len(self.rules))
@@ -686,18 +710,9 @@ class SafetyEngine:
         }
 
 
-# Default safety configuration
+# Default safety configuration - generic infrastructure only
+# Device-specific limits (temp, power) should be in vendor-specific rules
 DEFAULT_SAFETY_CONFIG = {
-    "temp_range": {
-        "min_temp_c": 16.0,
-        "max_temp_c": 30.0,
-    },
-    "temp_rate_limit": {
-        "max_delta_per_hour": 3.0,
-    },
-    "power_limit": {
-        "max_power_watts": 3500,
-    },
     "comm_loss": {
         "max_silence_minutes": 15,
     },

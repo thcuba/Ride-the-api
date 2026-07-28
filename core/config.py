@@ -102,12 +102,15 @@ class ModelsConfig(BaseModel):
 
 
 class SafetyConfig(BaseModel):
-    min_temp_c: float = 16.0
-    max_temp_c: float = 30.0
-    min_humidity_pct: int = 30
-    max_humidity_pct: int = 70
-    max_power_watts: int = 3500
-    max_temp_change_per_hour: float = 3.0
+    """Safety limits - all optional, must be explicitly configured per device type.
+    No hardcoded defaults - these are device-specific policies, not universal truths.
+    """
+    min_temp_c: float | None = None
+    max_temp_c: float | None = None
+    min_humidity_pct: int | None = None
+    max_humidity_pct: int | None = None
+    max_power_watts: int | None = None
+    max_temp_change_per_hour: float | None = None
     emergency_stop: dict[str, Any] = Field(default_factory=lambda: {
         "temp_delta_c": 10.0,
         "power_spike_watts": 5000,
