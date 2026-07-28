@@ -156,13 +156,18 @@ Response:
   Latency: {resp.latency_ms:.1f}ms
 """
         
-        return profile.prompt_template.format(
-            vendor=pair.vendor,
-            device_type=pair.request.metadata.get('device_type', 'unknown'),
-            db_schema=db_schema,
-            recent_patterns=json.dumps(recent_patterns, indent=2),
-            pairs=pairs_text,
-        )
+        # Use safe replacement to avoid issues with literal braces in JSON content
+        prompt = profile.prompt_template
+        replacements = {
+            "{vendor}": pair.vendor,
+            "{device_type}": pair.request.metadata.get("device_type", "unknown"),
+            "{db_schema}": db_schema,
+            "{recent_patterns}": json.dumps(recent_patterns, indent=2),
+            "{pairs}": pairs_text,
+        }
+        for placeholder, value in replacements.items():
+            prompt = prompt.replace(placeholder, value)
+        return prompt
     
     async def decipher_pair(
         self,
@@ -399,3 +404,4 @@ def get_llm_decipher() -> LLMDecipherService:
     if _llm_decipher is None:
         _llm_decipher = LLMDecipherService()
     return _llm_decipher
+

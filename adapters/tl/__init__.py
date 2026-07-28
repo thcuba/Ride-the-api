@@ -28,6 +28,8 @@ class TLProtocolAdapter(ProtocolAdapter):
     """TL (TP-Link/Kasa/Tapo) protocol adapter for HVAC devices."""
     
     VENDOR_CODE = "tl"
+
+    VENDOR_HOSTNAMES = [
         "api.kasacloud.com",
         "iot.tplinkcloud.com",
         "use1-api.tplinkcloud.com",

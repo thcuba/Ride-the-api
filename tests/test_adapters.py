@@ -128,91 +128,91 @@ class TestTYProtocolAdapter:
         # Standard to TY
         assert ty_adapter.MODE_STD_TO_TUYA["cool"] == "cold"
         assert ty_adapter.MODE_STD_TO_TUYA["heat"] == "hot"
-    
-            def test_fan_mapping(self, ty_adapter):
+
+    def test_fan_mapping(self, ty_adapter):
         """Test fan speed mapping."""
-                assert ty_adapter.FAN_TUYA_TO_STD["low"] == "low"
-                assert ty_adapter.FAN_TUYA_TO_STD["medium"] == "medium"
-                assert ty_adapter.FAN_TUYA_TO_STD["high"] == "high"
-                assert ty_adapter.FAN_TUYA_TO_STD["auto"] == "auto"
-    
-            def test_dp_params_to_intent(self, ty_adapter):
+        assert ty_adapter.FAN_TUYA_TO_STD["low"] == "low"
+        assert ty_adapter.FAN_TUYA_TO_STD["medium"] == "medium"
+        assert ty_adapter.FAN_TUYA_TO_STD["high"] == "high"
+        assert ty_adapter.FAN_TUYA_TO_STD["auto"] == "auto"
+
+    def test_dp_params_to_intent(self, ty_adapter):
         """Test mapping DP params to command intent."""
         # Power on
-                assert ty_adapter._dp_params_to_intent({"power": True}) == CommandType.TURN_ON
-                assert ty_adapter._dp_params_to_intent({"power": False}) == CommandType.TURN_OFF
-        
+        assert ty_adapter._dp_params_to_intent({"power": True}) == CommandType.TURN_ON
+        assert ty_adapter._dp_params_to_intent({"power": False}) == CommandType.TURN_OFF
+
         # Temperature
-                assert ty_adapter._dp_params_to_intent({"temp_set": 240}) == CommandType.SET_TEMPERATURE
-        
+        assert ty_adapter._dp_params_to_intent({"temp_set": 240}) == CommandType.SET_TEMPERATURE
+
         # Mode
-                assert ty_adapter._dp_params_to_intent({"mode": "cold"}) == CommandType.SET_MODE
-        
+        assert ty_adapter._dp_params_to_intent({"mode": "cold"}) == CommandType.SET_MODE
+
         # Fan
-                assert ty_adapter._dp_params_to_intent({"fan_speed": "high"}) == CommandType.SET_FAN_SPEED
-        
+        assert ty_adapter._dp_params_to_intent({"fan_speed": "high"}) == CommandType.SET_FAN_SPEED
+
         # Swing
-                assert ty_adapter._dp_params_to_intent({"swing": True}) == CommandType.SET_SWING
-        
+        assert ty_adapter._dp_params_to_intent({"swing": True}) == CommandType.SET_SWING
+
         # Unknown
-                assert ty_adapter._dp_params_to_intent({"unknown": "value"}) == CommandType.UNKNOWN
-    
-            def test_command_to_ty_dps(self, ty_adapter):
-                """Test converting standard command to TY DPs."""
+        assert ty_adapter._dp_params_to_intent({"unknown": "value"}) == CommandType.UNKNOWN
+
+    def test_command_to_ty_dps(self, ty_adapter):
+        """Test converting standard command to TY DPs."""
         # Turn on
         cmd = Command(
             device_id="test",
             command_type=CommandType.TURN_ON,
             params={},
         )
-                dps = ty_adapter._command_to_tuya_dps(cmd)
+        dps = ty_adapter._command_to_tuya_dps(cmd)
         assert len(dps) == 1
         assert dps[0]["code"] == "1"
         assert dps[0]["value"] is True
-        
+
         # Turn off
         cmd = Command(
             device_id="test",
             command_type=CommandType.TURN_OFF,
             params={},
         )
-                dps = ty_adapter._command_to_tuya_dps(cmd)
+        dps = ty_adapter._command_to_tuya_dps(cmd)
         assert dps[0]["code"] == "1"
         assert dps[0]["value"] is False
-        
+
         # Set temperature
         cmd = Command(
             device_id="test",
             command_type=CommandType.SET_TEMPERATURE,
             params={"temperature": 25.0},
         )
-                dps = ty_adapter._command_to_tuya_dps(cmd)
+        dps = ty_adapter._command_to_tuya_dps(cmd)
         assert dps[0]["code"] == "3"
         assert dps[0]["value"] == 250  # 25.0 * 10
-        
+
         # Set mode
         cmd = Command(
             device_id="test",
             command_type=CommandType.SET_MODE,
             params={"mode": "cool"},
         )
-                dps = ty_adapter._command_to_tuya_dps(cmd)
+        dps = ty_adapter._command_to_tuya_dps(cmd)
         assert dps[0]["code"] == "2"
         assert dps[0]["value"] == "cold"
-        
+
         # Set fan
         cmd = Command(
             device_id="test",
             command_type=CommandType.SET_FAN_SPEED,
             params={"fan_speed": "high"},
         )
-                dps = ty_adapter._command_to_tuya_dps(cmd)
+        dps = ty_adapter._command_to_tuya_dps(cmd)
         assert dps[0]["code"] == "5"
         assert dps[0]["value"] == "high"
     
     @pytest.mark.asyncio
-        async def test_parse_mqtt_request(self, ty_adapter):
-            """Test parsing TY MQTT request."""
+    async def test_parse_mqtt_request(self, ty_adapter):
+        """Test parsing TY MQTT request."""
         request = InterceptedRequest(
             device_id="",
             timestamp=datetime.utcnow(),
@@ -225,17 +225,17 @@ class TestTYProtocolAdapter:
                 }
             },
         )
-        
-            parsed = await ty_adapter.parse_request(request)
-        
+
+        parsed = await ty_adapter.parse_request(request)
+
         assert parsed.device_id == "device_123"
         assert parsed.parsed_intent == CommandType.TURN_ON
         assert parsed.parsed_params["power"] is True
         assert parsed.parsed_params["temp_set"] == 240
-    
+
     @pytest.mark.asyncio
-        async def test_parse_http_request(self, ty_adapter):
-            """Test parsing TY HTTP request."""
+    async def test_parse_http_request(self, ty_adapter):
+        """Test parsing TY HTTP request."""
         request = InterceptedRequest(
             device_id="",
             timestamp=datetime.utcnow(),
@@ -249,16 +249,16 @@ class TestTYProtocolAdapter:
                 ]
             },
         )
-        
-            parsed = await ty_adapter.parse_request(request)
-        
+
+        parsed = await ty_adapter.parse_request(request)
+
         assert parsed.device_id == "device_456"
         assert parsed.parsed_intent == CommandType.SET_MODE
         assert parsed.parsed_params["mode"] == "cold"
         assert parsed.parsed_params["temp_set"] == 260
-    
+
     @pytest.mark.asyncio
-        async def test_build_mqtt_response(self, ty_adapter):
+    async def test_build_mqtt_response(self, ty_adapter):
         """Test building MQTT response."""
         request = InterceptedRequest(
             device_id="device_123",
@@ -266,7 +266,7 @@ class TestTYProtocolAdapter:
             protocol=ProtocolType.MQTT,
             parsed_intent=CommandType.GET_STATE,
         )
-        
+
         result = CommandResult(
             success=True,
             response={
@@ -275,8 +275,8 @@ class TestTYProtocolAdapter:
                 "mode": "cool",
             },
         )
-        
-            response = await ty_adapter.build_response(request, result)
+
+        response = await ty_adapter.build_response(request, result)
         
         assert response["type"] == "thing.status"
         assert response["bid"] == "device_123"
@@ -284,8 +284,8 @@ class TestTYProtocolAdapter:
         assert "dps" in response["data"]
         assert response["data"]["dps"]["1"] is True
         assert response["data"]["dps"]["3"] == 240
-    
-        def test_is_firmware_request(self, ty_adapter):
+
+    def test_is_firmware_request(self, ty_adapter):
         """Test firmware request detection."""
         # HTTP firmware paths
         request = InterceptedRequest(
@@ -294,11 +294,11 @@ class TestTYProtocolAdapter:
             protocol=ProtocolType.HTTPS,
             path="/v1.0/devices/test/firmware/upgrade",
         )
-                assert ty_adapter.is_firmware_request(request) is True
-        
+        assert ty_adapter.is_firmware_request(request) is True
+
         request.path = "/v1.0/devices/test/ota"
-                assert ty_adapter.is_firmware_request(request) is True
-        
+        assert ty_adapter.is_firmware_request(request) is True
+
         # MQTT firmware topics
         request = InterceptedRequest(
             device_id="test",
@@ -306,8 +306,8 @@ class TestTYProtocolAdapter:
             protocol=ProtocolType.MQTT,
             topic="thing/fota/device_123",
         )
-                assert ty_adapter.is_firmware_request(request) is True
-        
+        assert ty_adapter.is_firmware_request(request) is True
+
         # Non-firmware
         request = InterceptedRequest(
             device_id="test",
@@ -315,9 +315,9 @@ class TestTYProtocolAdapter:
             protocol=ProtocolType.HTTPS,
             path="/v1.0/devices/test/status",
         )
-                assert ty_adapter.is_firmware_request(request) is False
-    
-            def test_is_auth_request(self, ty_adapter):
+        assert ty_adapter.is_firmware_request(request) is False
+
+    def test_is_auth_request(self, ty_adapter):
         """Test auth request detection."""
         request = InterceptedRequest(
             device_id="test",
@@ -325,13 +325,13 @@ class TestTYProtocolAdapter:
             protocol=ProtocolType.HTTPS,
             path="/v1.0/token",
         )
-                assert ty_adapter.is_auth_request(request) is True
-        
+        assert ty_adapter.is_auth_request(request) is True
+
         request.path = "/v1.0/login"
-                assert ty_adapter.is_auth_request(request) is True
-        
+        assert ty_adapter.is_auth_request(request) is True
+
         request.path = "/v1.0/devices/test/status"
-                assert ty_adapter.is_auth_request(request) is False
+        assert ty_adapter.is_auth_request(request) is False
 
 
 class TestProtocolAdapterRegistry:

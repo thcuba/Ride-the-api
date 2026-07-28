@@ -146,12 +146,12 @@ class TestVendorDatabase:
     async def test_vendor_readings(self, db_manager, ty_db):
         """Test vendor readings time-series data."""
         from datetime import datetime, timezone
-        
-            async with ty_db() as session:
+
+        async with ty_db() as session:
             # Add readings
             for i in range(5):
                 reading = VendorReading(
-                        device_id="ty_ac_001",
+                    device_id="ty_ac_001",
                     timestamp=datetime.now(timezone.utc),
                     temp_target=24.0,
                     temp_actual=23.5 + i * 0.1,
@@ -163,7 +163,7 @@ class TestVendorDatabase:
                 )
                 session.add(reading)
             await session.commit()
-            
+
             # Query recent readings
             from sqlalchemy import select, desc
             result = await session.execute(
@@ -174,29 +174,29 @@ class TestVendorDatabase:
             )
             readings = result.scalars().all()
             assert len(readings) == 3
-    
-        async def test_vendor_commands(self, db_manager, ty_db):
+
+    async def test_vendor_commands(self, db_manager, ty_db):
         """Test vendor command logging."""
         from datetime import datetime, timezone
-        
-            async with ty_db() as session:
+
+        async with ty_db() as session:
             command = VendorCommand(
-                    device_id="ty_ac_001",
+                device_id="ty_ac_001",
                 timestamp=datetime.now(timezone.utc),
                 command="set_temp",
                 params={"temperature": 25.0},
                 source="edge_auto",
-                    edge_model_id="ty_ac_v1",
+                edge_model_id="ty_ac_v1",
                 confidence=0.95,
                 status="sent",
             )
             session.add(command)
             await session.commit()
             await session.refresh(command)
-            
+
             assert command.id is not None
             assert command.status == "sent"
-            
+
             # Update status
             command.status = "acked"
             command.executed_at = datetime.now(timezone.utc)

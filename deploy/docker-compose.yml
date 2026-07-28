@@ -9,8 +9,6 @@ services:
     restart: unless-stopped
     ports:
       - "8911:8911"    # Main proxy port
-      - "9090:9090"    # Prometheus metrics
-      - "8080:8080"    # Health check
     volumes:
       - ./config:/app/config:ro
       - ./data:/app/data

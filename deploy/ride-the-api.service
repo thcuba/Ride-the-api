@@ -1,0 +1,19 @@
+[Unit]
+Description=Ride-the-API Edge HVAC Proxy
+Documentation=https://github.com/thcuba/Ride-the-api
+After=network.target
+
+[Service]
+Type=simple
+User=ride-the-api
+Group=ride-the-api
+WorkingDirectory=/opt/ride-the-api
+ExecStart=/usr/bin/python3 -m core.server
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+Environment="PYTHONPATH=/opt/ride-the-api"
+
+[Install]
+WantedBy=multi-user.target

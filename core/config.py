@@ -5,6 +5,7 @@ Configuration management with hot-reload support.
 from __future__ import annotations
 
 import threading
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -169,6 +170,87 @@ class DNSConfig(BaseModel):
     adguard_rewrites: str = ""
 
 
+class TrafficRule(BaseModel):
+    name: str = ""
+    scope: str = "local"
+    match_type: str = "cidr"
+    match_value: str = ""
+    action: str = "intercept"
+    priority: int = 0
+    enabled: bool = True
+
+
+class TrafficSelectionConfig(BaseModel):
+    default_action: str = "intercept"
+    rules: list[TrafficRule] = Field(default_factory=list)
+
+
+class LLMDecipherProfile(BaseModel):
+    base_url: str = ""
+    api_key: str = ""
+    model_id: str = ""
+    prompt_template: str = ""
+
+
+class LLMDecipherConfig(BaseModel):
+    enabled: bool = True
+    default_profile: str = "default"
+    profiles: dict[str, LLMDecipherProfile] = Field(default_factory=dict)
+
+
+class ModificationAction(str, Enum):
+    modify = "modify"
+    block = "block"
+    inject = "inject"
+    replace = "replace"
+    redirect = "redirect"
+    delay = "delay"
+
+
+class ModificationRule(BaseModel):
+    name: str = ""
+    scope: str = "local"
+    match_type: str = "hostname"
+    match_value: str = ""
+    action: ModificationAction = ModificationAction.modify
+    target_field: str = ""
+    target_value: str = ""
+    priority: int = 0
+    enabled: bool = True
+
+
+class ModificationConfig(BaseModel):
+    enabled: bool = True
+    rules: list[ModificationRule] = Field(default_factory=list)
+
+
+class CorrelationHTTPConfig(BaseModel):
+    method: str = "connection"
+    correlation_header: str = "X-Request-ID"
+    keep_alive_timeout: int = 30
+
+
+class CorrelationMQTTConfig(BaseModel):
+    method: str = "topic_sequence"
+    qos_tracking: bool = True
+    retain_handling: str = "include"
+
+
+class CorrelationCoAPConfig(BaseModel):
+    method: str = "message_id"
+    confirmable_timeout: int = 5
+
+
+class CorrelationConfig(BaseModel):
+    enabled: bool = True
+    http: CorrelationHTTPConfig = Field(default_factory=CorrelationHTTPConfig)
+    mqtt: CorrelationMQTTConfig = Field(default_factory=CorrelationMQTTConfig)
+    coap: CorrelationCoAPConfig = Field(default_factory=CorrelationCoAPConfig)
+    store_pairs: bool = True
+    max_pairs_per_device: int = 10000
+    pair_ttl_hours: int = 168
+
+
 class Config(BaseModel):
     core: CoreConfig = Field(default_factory=CoreConfig)
     proxy: ProxyConfig = Field(default_factory=ProxyConfig)
@@ -177,6 +259,10 @@ class Config(BaseModel):
     control: ControlConfig = Field(default_factory=ControlConfig)
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
     dns: DNSConfig = Field(default_factory=DNSConfig)
+    traffic_selection: TrafficSelectionConfig = Field(default_factory=TrafficSelectionConfig)
+    llm_decipher: LLMDecipherConfig = Field(default_factory=LLMDecipherConfig)
+    modification: ModificationConfig = Field(default_factory=ModificationConfig)
+    correlation: CorrelationConfig = Field(default_factory=CorrelationConfig)
 
 
 class ConfigManager:
