@@ -48,8 +48,9 @@ Ride-the-API is a local edge server that intercepts communications between HVAC 
        │                            │              │                │
        │                            │  ┌───────────▼─────────────┐   │
        │                            │  │ Safety Engine           │   │
-       │                            │  │ (Hard Limits: 16-30°C,  │   │
-       │                            │  │  3500W, 3°C/h, 15min)   │   │
+       │                            │  │ (Infrastructure limits: │   │
+       │                            │  │  comm loss, rate limit, │   │
+       │                            │  │  conflict detection)    │   │
        │                            │  └───────────┬─────────────┘   │
        │                            │              │                │
        │                            │  ┌───────────▼─────────────┐   │
@@ -288,15 +289,16 @@ Core database (`data/core.db`):
 
 ## Safety
 
-Hard safety limits are **always enforced** before sending commands to devices:
+The safety engine enforces **generic infrastructure limits** that cannot be overridden:
 
-- Temperature range: 16-30°C (configurable)
-- Max power: 3500W (configurable)  
-- Max temp change rate: 3°C/hour
-- Emergency stop on communication loss > 15min
-- Min/max humidity: 30-70%
+- Emergency stop on communication loss > 15min (configurable)
+- Rate limiting to prevent command flooding
+- Conflict detection (simultaneous contradictory commands)
+- Device offline detection
 
-These **cannot be overridden** by AI models or modifications.
+**Device-specific limits** (temperature ranges, power limits, humidity, rate of change) are now **per-device configurable** and **not hardcoded in the core foundation**. Each vendor adapter can define its own safety rules based on device capabilities.
+
+See `core/safety.py` and `config/config.yaml` for configuration.
 
 ## LLM Integration
 
