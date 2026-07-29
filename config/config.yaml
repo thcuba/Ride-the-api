@@ -252,31 +252,39 @@ llm_decipher:
         Output JSON with patterns array containing: intent, method, path, body_schema, field_mappings, response template, and confidence.
 
 
-# ════════════════════════════════════════════════════════════════════════════════
 # TLS DECRYPTION ENGINE (MITM proxy for HTTPS/MQTTS/CoAPS)
 # ════════════════════════════════════════════════════════════════════════════════
 
 tls_decrypt:
-  enabled: true
-  
-  # CA certificate for MITM (generate with: mkcert -install && mkcert -key-file ca.key -cert-file ca.pem "*.local")
+  enabled: false  # disabled by default; enable after setting up DNS routing
+
+  # Ports to listen on for TLS interception
+  # The proxy accepts TLS connections on ALL these ports simultaneously.
+  # Device identity is determined by SOURCE IP, not by port.
+  listen_ports:
+    - 443
+    - 8883
+    - 5684
+    - 8443
+
+  # CA certificate for MITM (auto-generated on first run in ./certs/)
   ca_cert_path: "./certs/ca.pem"
   ca_key_path: "./certs/ca.key"
-  
-  # Per-device certificate storage
+
+  # Per-device leaf certificate storage (auto-generated per hostname/SNI)
   device_certs_dir: "./data/device_certs"
-  
+
   # Certificate pinning bypass strategies per vendor
-  # Options: "frida", "cert_repin", "mitm_proxy", "disable_pin_check"
+  # Options: "mitm_proxy" (default), "frida", "disable_pin_check"
+  # - mitm_proxy: dual-handshake — proxy terminates TLS with dynamic cert,
+  #               opens second TLS to real cloud for forwarding
+  # - frida:       expose a Frida JS script at /api/tls/frida/script.js
+  #               user runs it on-device: frida -U -l script.js <app>
+  # - disable_pin_check: assume device already trusts our CA
   pinning_bypass:
-    example: "cert_repin"
-  
-  # DoH/DoT handling
-  doh:
-    enabled: true
-    # Redirect DoH to local resolver that uses edge
-    redirect_port: 8911
-  
+    example:
+      strategy: "mitm_proxy"
+
   # TLS versions to support
   min_version: "TLSv1.2"
   max_version: "TLSv1.3"

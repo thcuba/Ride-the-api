@@ -241,6 +241,23 @@ class LearningConfig(BaseModel):
     min_match_rate_for_production: float = 80.0
 
 
+class PinningBypassConfig(BaseModel):
+    """Per-vendor certificate pinning bypass strategy."""
+    strategy: str = "mitm_proxy"  # mitm_proxy | frida | disable_pin_check
+
+
+class TLSDecryptConfig(BaseModel):
+    """TLS Decryption / MITM engine configuration."""
+    enabled: bool = False  # disabled by default
+    listen_ports: list[int] = Field(default_factory=lambda: [443, 8883, 5684, 8443])
+    ca_cert_path: str = "./certs/ca.pem"
+    ca_key_path: str = "./certs/ca.key"
+    device_certs_dir: str = "./data/device_certs"
+    pinning_bypass: dict[str, PinningBypassConfig] = Field(default_factory=dict)
+    min_tls_version: str = "TLSv1.2"
+    max_tls_version: str = "TLSv1.3"
+
+
 class Config(BaseModel):
     core: CoreConfig = Field(default_factory=CoreConfig)
     proxy: ProxyConfig = Field(default_factory=ProxyConfig)
@@ -254,6 +271,7 @@ class Config(BaseModel):
     modification: ModificationConfig = Field(default_factory=ModificationConfig)
     correlation: CorrelationConfig = Field(default_factory=CorrelationConfig)
     learning: LearningConfig = Field(default_factory=LearningConfig)
+    tls_decrypt: TLSDecryptConfig = Field(default_factory=TLSDecryptConfig)
 
 
 class ConfigManager:
