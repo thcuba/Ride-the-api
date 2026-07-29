@@ -67,18 +67,9 @@ class VendorConfig(BaseModel):
 
 
 class ModelDefaults(BaseModel):
-    ty: dict[str, str] = Field(default_factory=lambda: {
-        "ac": "ty_ac_v1.onnx",
-        "heat_pump": "ty_hp_v1.onnx",
-    })
-    tl: dict[str, str] = Field(default_factory=lambda: {
-        "ac": "tl_ac_v1.onnx",
-    })
-    zh: dict[str, str] = Field(default_factory=lambda: {
-        "ventilator": "zh_vent_v1.onnx",
-    })
-    hr: dict[str, str] = Field(default_factory=lambda: {
-        "ac": "hr_ac_v1.onnx",
+    example: dict[str, str] = Field(default_factory=lambda: {
+        "ac": "example_ac_v1.onnx",
+        "heat_pump": "example_hp_v1.onnx",
     })
 
 

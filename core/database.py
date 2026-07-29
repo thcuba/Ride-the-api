@@ -57,9 +57,9 @@ class DeviceRegistry(Base):
     
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     device_id: Mapped[str] = mapped_column(String(128), unique=True, index=True, nullable=False)
-    vendor: Mapped[str] = mapped_column(String(32), index=True, nullable=False)  # tuya, tplink, zehnder, haier
+    vendor: Mapped[str] = mapped_column(String(32), index=True, nullable=False)  # protocol/vendor identifier
     device_type: Mapped[str] = mapped_column(String(64), nullable=False)  # ac, heat_pump, ventilator
-    vendor_db_name: Mapped[str] = mapped_column(String(64), nullable=False)  # e.g., "tuya", "tplink"
+        vendor_db_name: Mapped[str] = mapped_column(String(64), nullable=False)  # e.g., "example", "my_protocol"
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     location: Mapped[str | None] = mapped_column(String(128), nullable=True)
     capabilities: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)  # vendor-specific caps

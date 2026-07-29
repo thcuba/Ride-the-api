@@ -1,38 +1,28 @@
 """
-Adapters package - Auto-register all vendor adapters.
+Adapters package - Register protocol adapters.
+Users/community add their own adapter implementations here.
 """
 
 from adapters.base import ProtocolAdapterRegistry, get_adapter_registry
 
 
 def register_all_adapters() -> ProtocolAdapterRegistry:
-    """Register all available vendor adapters."""
+    """Register all available protocol adapters."""
     registry = get_adapter_registry()
     
-    # Import and register each adapter (lazy imports to avoid circular dependencies)
-    from adapters.ty import TYProtocolAdapter
-    from adapters.tl import TLProtocolAdapter
-    from adapters.zh import ZHProtocolAdapter
-    from adapters.hr import HRProtocolAdapter
+    # Import and register the example reference adapter
+    from adapters.example import ExampleProtocolAdapter
     
-    # TY (Tuya)
-    ty_adapter = TYProtocolAdapter("ty", {
+    example_adapter = ExampleProtocolAdapter("example", {
         "region": "eu",
         "api_version": "v1.0",
     })
-    registry.register(ty_adapter)
+    registry.register(example_adapter)
     
-    # TL (TP-Link)
-    tl_adapter = TLProtocolAdapter("tl", {})
-    registry.register(tl_adapter)
-    
-    # ZH (Zehnder)
-    zh_adapter = ZHProtocolAdapter("zh", {})
-    registry.register(zh_adapter)
-    
-    # HR (Haier)
-    hr_adapter = HRProtocolAdapter("hr", {})
-    registry.register(hr_adapter)
+    # Users/community: add your own adapter registrations here, e.g.:
+    # from adapters.my_protocol import MyProtocolAdapter
+    # my_adapter = MyProtocolAdapter("my_protocol", {})
+    # registry.register(my_adapter)
     
     return registry
 
