@@ -1,4 +1,4 @@
-"""
+﻿"""
 Tests for the Local Cloud Replacement Proxy architecture.
 """
 
@@ -7,7 +7,7 @@ import pytest_asyncio
 from pathlib import Path
 import tempfile
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
 from core.database import (
     DatabaseManager, Base, init_db_manager, get_db_manager,
@@ -74,7 +74,7 @@ def sample_correlated_pair():
         response_body={"result": {"data": {"1": False, "3": 240}}},
         latency_ms=150.0,
         correlation_confidence=0.9,
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
     )
 
 
@@ -403,10 +403,10 @@ class TestProtocolAdapter:
     async def test_parse_mqtt_request(self, example_adapter):
         """Test parsing MQTT request."""
         from adapters.base import InterceptedRequest, ProtocolType
-        from datetime import datetime
+        from datetime import datetime, timezone
         request = InterceptedRequest(
             device_id="",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             protocol=ProtocolType.MQTT,
             topic="thing/command/device_123",
             body={"data": {"1": True, "3": 240}},
@@ -420,10 +420,10 @@ class TestProtocolAdapter:
     async def test_parse_http_request(self, example_adapter):
         """Test parsing HTTP request."""
         from adapters.base import InterceptedRequest, ProtocolType
-        from datetime import datetime
+        from datetime import datetime, timezone
         request = InterceptedRequest(
             device_id="",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             protocol=ProtocolType.HTTPS,
             method="POST",
             path="/v1.0/devices/device_456/commands",
