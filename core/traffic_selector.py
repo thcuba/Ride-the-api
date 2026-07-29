@@ -120,7 +120,7 @@ class TrafficSelector:
         self._load_rules()
         
         # Watch for config changes
-        self.config_manager.add_change_callback(self._on_config_change)
+        self.config_manager.register_callback(self._on_config_change)
     
     def _load_rules(self):
         """Load rules from configuration."""

@@ -1,4 +1,4 @@
-"""
+﻿"""
 Resilience Module — ensures brand-cloud independence.
 Verifies that devices can function without vendor cloud APIs.
 """
@@ -6,7 +6,7 @@ Verifies that devices can function without vendor cloud APIs.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from core.database import DatabaseManager, DeviceRegistry, get_db_manager
@@ -135,7 +135,7 @@ class CloudIndependenceVerifier:
 
         return {
             "device_id": device_id,
-            "exported_at": datetime.utcnow().isoformat(),
+            "exported_at": datetime.now(timezone.utc).isoformat(),
             "format_version": "1.0",
             "patterns": [
                 {

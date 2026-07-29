@@ -1,4 +1,4 @@
-"""
+﻿"""
 Local Cloud Replacement Proxy - Main entry point.
 Intercepts device traffic, learns protocol via LLM, serves responses locally.
 """
@@ -11,7 +11,7 @@ import logging
 import signal
 import sys
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import uvicorn
@@ -26,6 +26,7 @@ from core.pipeline import (
     LearningOrchestrator, get_orchestrator, ContextBuffer,
     PatternMatcher, MatchRateTracker, PipelineMode,
 )
+from core.resilience import CloudIndependenceVerifier, register_resilience_routes
 from core.traffic_selector import get_traffic_selector, TrafficSelector, TrafficRequestInfo
 from adapters import get_registered_registry
 from adapters.base import (
@@ -88,6 +89,9 @@ async def lifespan(app: FastAPI):
 
     logger.info(f"Server started on {config.proxy.host}:{config.proxy.port}")
     logger.info(f"Registered adapters: {adapter_registry.list_vendors()}")
+
+    # Register resilience routes
+    register_resilience_routes(app, lambda: db_manager, lambda: orchestrator)
 
     yield
 
@@ -481,7 +485,7 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):
     # Build intercepted request
     intercepted = InterceptedRequest(
         device_id="",
-        timestamp=asyncio.get_running_loop().time(),
+            timestamp=datetime.now(timezone.utc),
         protocol=ProtocolType.HTTPS if request.url.scheme == "https" else ProtocolType.HTTP,
         method=request.method,
         path=f"/{path}",

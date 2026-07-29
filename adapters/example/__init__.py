@@ -1,4 +1,4 @@
-"""
+﻿"""
 Example Protocol Adapter - Reference Implementation.
 
 Demonstrates how to implement a protocol adapter for an HVAC device
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from adapters.base import (
@@ -288,7 +288,7 @@ class ExampleProtocolAdapter(ProtocolAdapter):
         
         # Example MQTT command response format
         device_id = request.device_id
-        t = int(datetime.utcnow().timestamp() * 1000)
+        t = int(int(datetime.now(timezone.utc).timestamp() * 1000))
         
         if request.parsed_intent == CommandType.GET_STATE:
             # Status response
@@ -323,7 +323,7 @@ class ExampleProtocolAdapter(ProtocolAdapter):
                 "success": False,
                 "error_code": "EDGE_ERROR",
                 "msg": result.error or "Edge processing failed",
-                "t": int(datetime.utcnow().timestamp() * 1000),
+                "t": int(int(datetime.now(timezone.utc).timestamp() * 1000)),
             }
         
         if request.parsed_intent == CommandType.GET_STATE:
@@ -337,7 +337,7 @@ class ExampleProtocolAdapter(ProtocolAdapter):
             
             return {
                 "success": True,
-                "t": int(datetime.utcnow().timestamp() * 1000),
+                "t": int(int(datetime.now(timezone.utc).timestamp() * 1000)),
                 "result": {
                     "status": [{"code": k, "value": v} for k, v in dps.items()],
                 },
@@ -345,7 +345,7 @@ class ExampleProtocolAdapter(ProtocolAdapter):
         else:
             return {
                 "success": True,
-                "t": int(datetime.utcnow().timestamp() * 1000),
+                "t": int(int(datetime.now(timezone.utc).timestamp() * 1000)),
                 "result": {},
             }
     
@@ -454,7 +454,7 @@ class ExampleProtocolAdapter(ProtocolAdapter):
 
         return DeviceState(
             device_id="",  # Set by caller
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             on_off=dps.get(self.DP_CODES["power"]),
                 mode=self.MODE_VENDOR_TO_STD.get(dps.get(self.DP_CODES["mode"])),
             temp_target=dps.get(self.DP_CODES["temp_set"], 0) / 10 if self.DP_CODES["temp_set"] in dps else None,

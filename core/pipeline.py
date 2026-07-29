@@ -1,4 +1,4 @@
-"""
+﻿"""
 Learning/Production Pipeline - Core engine that manages device learning and local response serving.
 Handles: correlation, buffer management, LLM deciphering, pattern matching, and match rate tracking.
 """
@@ -13,7 +13,7 @@ import time
 import uuid
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Optional
 from uuid import uuid4
@@ -139,7 +139,7 @@ class ContextBuffer:
                     )
                 )
             )
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             count = 0
             for entry in result.scalars().all():
                 entry.flushed = True
@@ -421,7 +421,7 @@ class MatchRateTracker:
             recent = list(stats.recent_results or [])
             recent.append({
                 "result": result.value,
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             })
             if len(recent) > self._rolling_window:
                 recent = recent[-self._rolling_window:]
@@ -491,7 +491,7 @@ class LearningPipeline:
             "headers": headers,
             "body": body,
             "query_params": query_params,
-            "timestamp": datetime.utcnow(),
+            "timestamp": datetime.now(timezone.utc),
         }
 
         self._correlation_cache[device_id].append(entry)
@@ -553,7 +553,7 @@ class LearningPipeline:
                             "timestamp": cache_entry.created_at,
                         }
                         cache_entry.correlated = True
-                        cache_entry.correlated_at = datetime.utcnow()
+                        cache_entry.correlated_at = datetime.now(timezone.utc)
                         cache_entry.response_status = status_code
                         cache_entry.response_headers = headers
                         cache_entry.response_body = body
@@ -563,7 +563,7 @@ class LearningPipeline:
         if not matched:
             return None
 
-        latency_ms = (datetime.utcnow() - matched["timestamp"]).total_seconds() * 1000
+        latency_ms = (datetime.now(timezone.utc) - matched["timestamp"]).total_seconds() * 1000
 
         pair = CorrelatedPair(
             pair_id=str(uuid4()),
@@ -580,7 +580,7 @@ class LearningPipeline:
             response_body=body,
             latency_ms=latency_ms,
             correlation_confidence=0.8,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
         )
 
         # Store in the _correlation_cache for the pipeline
@@ -593,7 +593,7 @@ class LearningPipeline:
                 headers=headers,
                 body=body,
                 correlated=True,
-                correlated_at=datetime.utcnow(),
+                correlated_at=datetime.now(timezone.utc),
                 response_status=status_code,
                 response_headers=headers,
                 response_body=body,
@@ -685,7 +685,7 @@ class LearningPipeline:
                 )
 
             prompt = self._build_learning_prompt(effective_profile, context)
-            result = await self.llm_decipher._call_llm(effective_profile, prompt)
+            result = await self.llm_decipher.call_llm(effective_profile, prompt)
 
             if result["success"]:
                 try:
