@@ -90,9 +90,6 @@ async def lifespan(app: FastAPI):
     logger.info(f"Server started on {config.proxy.host}:{config.proxy.port}")
     logger.info(f"Registered adapters: {adapter_registry.list_vendors()}")
 
-    # Register resilience routes
-    register_resilience_routes(app, lambda: db_manager, lambda: orchestrator)
-
     yield
 
     # Cleanup
@@ -427,6 +424,12 @@ async def dashboard():
     """Simple web dashboard."""
     return HTMLResponse(content=HTML_DASHBOARD, status_code=200)
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Resilience routes (must be registered before catch-all to take priority)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+register_resilience_routes(app, lambda: db_manager, lambda: orchestrator)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # MAIN PROXY ENDPOINT - Catches all device traffic

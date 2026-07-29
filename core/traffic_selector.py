@@ -1,4 +1,4 @@
-"""
+﻿"""
 Traffic Selection Engine - Determines intercept vs passthrough for incoming requests.
 Rules can be managed via UI/API and are evaluated in priority order.
 """
@@ -143,15 +143,27 @@ class TrafficSelector:
         
         for rule_data in rules:
             try:
-                rule = TrafficRule(
-                    name=rule_data.get('name', 'unnamed'),
-                    scope=TrafficScope(rule_data.get('scope', 'local')),
-                    match_type=MatchType(rule_data.get('match_type', 'cidr')),
-                    match_value=rule_data.get('match_value', ''),
-                    action=TrafficAction(rule_data.get('action', 'intercept')),
-                    priority=rule_data.get('priority', 10),
-                    enabled=rule_data.get('enabled', True),
-                )
+                # Handle both Pydantic models and dicts
+                if isinstance(rule_data, dict):
+                    rule = TrafficRule(
+                        name=rule_data.get('name', 'unnamed'),
+                        scope=TrafficScope(rule_data.get('scope', 'local')),
+                        match_type=MatchType(rule_data.get('match_type', 'cidr')),
+                        match_value=rule_data.get('match_value', ''),
+                        action=TrafficAction(rule_data.get('action', 'intercept')),
+                        priority=rule_data.get('priority', 10),
+                        enabled=rule_data.get('enabled', True),
+                    )
+                else:
+                    rule = TrafficRule(
+                        name=getattr(rule_data, 'name', 'unnamed'),
+                        scope=TrafficScope(getattr(rule_data, 'scope', 'local')),
+                        match_type=MatchType(getattr(rule_data, 'match_type', 'cidr')),
+                        match_value=getattr(rule_data, 'match_value', ''),
+                        action=TrafficAction(getattr(rule_data, 'action', 'intercept')),
+                        priority=getattr(rule_data, 'priority', 10),
+                        enabled=getattr(rule_data, 'enabled', True),
+                    )
                 self.rules.append(rule)
             except Exception as e:
                 logger.error(f"Failed to parse traffic rule {rule_data}: {e}")
