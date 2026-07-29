@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ride the API — Local Cloud Replacement</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0b0e14; --surface: #141820; --surface2: #1a1f2b; --border: #2d3648;
+    --text: #e1e6ed; --text2: #9ca8ba; --accent: #6c8cff; --accent2: #5b7ad0;
+    --green: #34d399; --yellow: #fbbf24; --red: #f87171; --blue: #60a5fa;
+    --radius: 12px; --shadow: 0 8px 32px rgba(0,0,0,.3);
+  }
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    background: var(--bg); color: var(--text); padding: 24px; min-height: 100vh;
+    background-image: radial-gradient(ellipse at 20% 10%, rgba(108,140,255,.08) 0%, transparent 50%),
+                      radial-gradient(ellipse at 80% 90%, rgba(52,211,153,.06) 0%, transparent 50%);
+  }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--surface); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  /* ── Skip link ─────────────────────────────────────────────────────────── */
+  .skip-link {
+    position: absolute; top: -100%; left: 8px; padding: 8px 16px;
+    background: var(--accent); color: #fff; border-radius: 0 0 8px 8px;
+    font-size: 14px; font-weight: 600; z-index: 9999; text-decoration: none;
+  }
+  .skip-link:focus { top: 0; }
+
+  /* ── Header ────────────────────────────────────────────────────────────── */
+  .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 28px; flex-wrap: wrap; gap: 12px; }
+  .header-left { display: flex; flex-direction: column; }
+  .header-left h1 { font-size: 28px; font-weight: 800; color: var(--accent); letter-spacing: -.5px; }
+  .header-left .subtitle { font-size: 14px; color: var(--text2); margin-top: 2px; }
+  .header-right { display: flex; gap: 10px; align-items: center; }
+  .btn {
+    padding: 8px 18px; border: none; border-radius: 8px; font-family: inherit; font-size: 13px;
+    font-weight: 600; cursor: pointer; transition: all .2s; display: inline-flex; align-items: center; gap: 6px;
+  }
+  .btn-primary { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff; box-shadow: 0 4px 14px rgba(108,140,255,.25); }
+  .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(108,140,255,.35); }
+  .btn-primary:active { transform: translateY(0); }
+  .btn-primary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .btn-ghost { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+  .btn-ghost:hover { border-color: var(--accent); background: rgba(108,140,255,.1); }
+  .btn-ghost:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* ── Global Stats Bar ──────────────────────────────────────────────────── */
+  .global-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 24px; }
+  .global-stat {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px;
+    position: relative; overflow: hidden;
+  }
+  .global-stat .gs-num { font-size: 26px; font-weight: 700; }
+  .global-stat .gs-lbl { font-size: 13px; color: var(--text2); margin-top: 2px; text-transform: uppercase; letter-spacing: .5px; }
+  .global-stat.gs-blue .gs-num { color: var(--blue); }
+  .global-stat.gs-green .gs-num { color: var(--green); }
+  .global-stat.gs-yellow .gs-num { color: var(--yellow); }
+  .global-stat.gs-red .gs-num { color: var(--red); }
+
+  /* ── Grid / Cards ──────────────────────────────────────────────────────── */
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+  .device-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px;
+    cursor: pointer; transition: all .25s; position: relative; overflow: hidden;
+  }
+  .device-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .device-card:hover { border-color: var(--accent); transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+  .device-card .dc-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; position: relative; z-index: 1; }
+  .device-card .dc-name { font-size: 15px; font-weight: 700; }
+  .device-card .dc-id { font-size: 12px; color: var(--text2); margin-top: 2px; word-break: break-all; }
+  .device-card .dc-meta { font-size: 13px; color: var(--text2); margin-bottom: 8px; position: relative; z-index: 1; }
+  .device-card .dc-stats { display: flex; flex-wrap: wrap; gap: 6px 12px; position: relative; z-index: 1; }
+  .device-card .dc-stat { font-size: 13px; display: flex; align-items: center; gap: 4px; }
+  .device-card .dc-stat .dc-label { color: var(--text2); }
+  .device-card .dc-stat .dc-value { font-weight: 600; }
+
+  /* ── Detail Panel ──────────────────────────────────────────────────────── */
+  #details { margin-bottom: 24px; }
+  .detail-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px;
+    box-shadow: var(--shadow); max-width: 800px; margin: 0 auto;
+  }
+  .detail-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+  .detail-header h2 { font-size: 18px; font-weight: 700; color: var(--accent); }
+  .close-btn { background: none; border: 1px solid var(--border); color: var(--text2); font-size: 20px; cursor: pointer; padding: 2px 12px; border-radius: 6px; transition: all .2s; }
+  .close-btn:hover { color: var(--red); border-color: var(--red); background: rgba(248,113,113,.1); }
+  .close-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* ── SVG Ring ──────────────────────────────────────────────────────────── */
+  .ring-container { display: flex; justify-content: center; align-items: center; margin: 16px 0; }
+  .ring-svg { width: 120px; height: 120px; transform: rotate(-90deg); }
+  .ring-bg { fill: none; stroke: var(--border); stroke-width: 8; }
+  .ring-fg { fill: none; stroke-width: 8; stroke-linecap: round; transition: stroke-dashoffset .6s ease; }
+  .ring-label { position: absolute; text-align: center; font-weight: 700; }
+  .ring-label .pct { font-size: 28px; }
+  .ring-label .pct-label { font-size: 12px; color: var(--text2); display: block; margin-top: 2px; font-weight: 500; }
+  .ring-wrap { position: relative; display: inline-flex; align-items: center; justify-content: center; }
+
+  /* ── Stats Grid ────────────────────────────────────────────────────────── */
+  .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 16px 0; }
+  .stat-box { text-align: center; padding: 12px 6px; background: var(--surface2); border-radius: 8px; }
+  .stat-box .num { font-size: 22px; font-weight: 700; }
+  .stat-box .lbl { font-size: 12px; color: var(--text2); margin-top: 2px; text-transform: uppercase; letter-spacing: .3px; }
+  .stat-box .num.green { color: var(--green); }
+  .stat-box .num.blue { color: var(--blue); }
+  .stat-box .num.red { color: var(--red); }
+  .stat-box .num.yellow { color: var(--yellow); }
+
+  /* ── Detail Rows ───────────────────────────────────────────────────────── */
+  .detail-rows { margin: 12px 0; }
+  .detail-row { display: flex; justify-content: space-between; padding: 8px 0; font-size: 14px; border-bottom: 1px solid rgba(45,54,72,.5); }
+  .detail-row:last-child { border-bottom: none; }
+  .detail-row .dr-label { color: var(--text2); }
+  .detail-row .dr-value { font-weight: 600; }
+
+  /* ── Sparkline ─────────────────────────────────────────────────────────── */
+  .sparkline-wrap { margin: 14px 0; background: var(--surface2); border-radius: 8px; padding: 12px; }
+  .sparkline-label { font-size: 12px; color: var(--text2); margin-bottom: 8px; text-transform: uppercase; letter-spacing: .5px; }
+  .chart { display: flex; gap: 2px; align-items: flex-end; height: 40px; }
+  .chart .bar { width: 6px; border-radius: 2px 2px 0 0; transition: height .3s; flex-shrink: 0; }
+  .bar.hit { background: var(--green); }
+  .bar.miss { background: var(--blue); }
+  .bar.error { background: var(--red); }
+  .legend { display: flex; gap: 14px; margin-top: 8px; font-size: 12px; color: var(--text2); }
+  .legend-item { display: flex; align-items: center; gap: 4px; }
+  .legend-dot { width: 8px; height: 8px; border-radius: 2px; }
+
+  /* ── Mode Switch ───────────────────────────────────────────────────────── */
+  .mode-area { display: flex; gap: 10px; align-items: center; margin-top: 16px; flex-wrap: wrap; }
+  .mode-area label { font-size: 14px; color: var(--text2); }
+  .mode-area select {
+    background: var(--surface2); color: var(--text); border: 1px solid var(--border); padding: 6px 12px;
+    border-radius: 6px; font-family: inherit; font-size: 13px; cursor: pointer; transition: border-color .2s;
+  }
+  .mode-area select:focus { outline: none; border-color: var(--accent); }
+  .mode-area select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* ── Badges ────────────────────────────────────────────────────────────── */
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 10px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .badge-learning { background: rgba(96,165,250,.12); color: var(--blue); border: 1px solid rgba(96,165,250,.3); }
+  .badge-production { background: rgba(52,211,153,.12); color: var(--green); border: 1px solid rgba(52,211,153,.3); }
+  .badge-hybrid { background: rgba(251,191,36,.12); color: var(--yellow); border: 1px solid rgba(251,191,36,.3); }
+
+  /* ── Toast ─────────────────────────────────────────────────────────────── */
+  .toast-container { position: fixed; top: 20px; right: 20px; z-index: 1000; display: flex; flex-direction: column; gap: 8px; }
+  .toast {
+    padding: 12px 20px; border-radius: 10px; background: var(--surface); border: 1px solid var(--border);
+    box-shadow: 0 8px 24px rgba(0,0,0,.4); font-size: 13px; font-weight: 500;
+    animation: slideIn .3s ease; display: flex; align-items: center; gap: 8px; max-width: 360px;
+  }
+  .toast.success { border-color: var(--green); }
+  .toast.error { border-color: var(--red); }
+  .toast.info { border-color: var(--blue); }
+  @keyframes slideIn { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: translateX(0); } }
+  @media (prefers-reduced-motion: reduce) {
+    .toast { animation: none; }
+    .device-card, .btn { transition: none; }
+    .ring-fg { transition: none; }
+    .chart .bar { transition: none; }
+  }
+
+  /* ── Misc ──────────────────────────────────────────────────────────────── */
+  .empty { color: var(--text2); text-align: center; padding: 60px 20px; grid-column: 1 / -1; }
+  .empty-icon { font-size: 48px; margin-bottom: 12px; opacity: .3; }
+  .empty-text { font-size: 16px; font-weight: 500; margin-bottom: 4px; }
+  .empty-sub { font-size: 14px; color: var(--text2); }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+  .invisible { display: none !important; }
+
+  /* ── TLS: Monitored Ports Bar ──────────────────────────────────────────── */
+  .tls-bar { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 18px; margin-bottom: 20px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .tls-bar .tb-label { font-size: 13px; color: var(--text2); text-transform: uppercase; letter-spacing: .5px; font-weight: 600; }
+  .tls-bar .tb-badge { display: inline-flex; align-items: center; gap: 4px; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; font-size: 13px; font-weight: 600; }
+  .tls-bar .tb-badge.tb-active { border-color: var(--green); background: rgba(52,211,153,.08); color: var(--green); }
+  .tls-bar .tb-badge.tb-inactive { border-color: var(--border); color: var(--text2); }
+  .tls-bar .tb-btn { background: none; border: none; color: var(--text2); cursor: pointer; font-size: 14px; padding: 0 2px; transition: color .2s; }
+  .tls-bar .tb-btn:hover { color: var(--red); }
+  .tls-bar .tb-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .tls-bar .tb-add { display: flex; align-items: center; gap: 4px; }
+  .tls-bar .tb-add label { font-size: 0; }
+  .tls-bar .tb-add input { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; color: var(--text); font-size: 13px; width: 80px; font-family: inherit; }
+  .tls-bar .tb-add input:focus { outline: none; border-color: var(--accent); }
+  .tls-bar .tb-add input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .tls-bar .tb-status { font-size: 12px; color: var(--text2); margin-left: auto; }
+
+  /* ── TLS: Unidentified Device Card ─────────────────────────────────────── */
+  .device-card.unidentified { border-color: var(--yellow); background: rgba(251,191,36,.04); }
+  .device-card.unidentified .dc-name { color: var(--yellow); }
+
+  /* ── TLS Config Panel ──────────────────────────────────────────────────── */
+  .tls-config { margin-top: 16px; padding: 14px; background: var(--surface2); border-radius: 8px; border: 1px solid var(--border); }
+  .tls-config h3 { font-size: 14px; font-weight: 700; color: var(--accent); margin-bottom: 12px; display: flex; align-items: center; gap: 6px; }
+  .tls-config .tc-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; font-size: 13px; border-bottom: 1px solid rgba(45,54,72,.5); }
+  .tls-config .tc-row:last-child { border-bottom: none; }
+  .tls-config .tc-label { color: var(--text2); }
+  .tls-config .tc-value { font-weight: 600; }
+  .tls-config input, .tls-config select { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; color: var(--text); font-size: 13px; font-family: inherit; max-width: 180px; }
+  .tls-config input:focus, .tls-config select:focus { outline: none; border-color: var(--accent); }
+  .tls-config input:focus-visible, .tls-config select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .tls-config .tc-toggle { position: relative; display: inline-block; width: 40px; height: 22px; }
+  .tls-config .tc-toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
+  .tls-config .tc-slider { position: absolute; cursor: pointer; inset: 0; background: var(--border); border-radius: 22px; transition: .3s; }
+  .tls-config .tc-slider::before { content: ''; position: absolute; height: 16px; width: 16px; left: 3px; bottom: 3px; background: var(--text); border-radius: 50%; transition: .3s; }
+  .tls-config .tc-toggle input:checked + .tc-slider { background: var(--green); }
+  .tls-config .tc-toggle input:checked + .tc-slider::before { transform: translateX(18px); }
+  @media (prefers-reduced-motion: reduce) {
+    .tls-config .tc-slider { transition: none; }
+    .tls-config .tc-slider::before { transition: none; }
+  }
+
+  /* ── SVG Icons ─────────────────────────────────────────────────────────── */
+  .icon-svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+  .icon-svg-sm { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+  .global-stat .icon-svg { width: 22px; height: 22px; margin-bottom: 6px; color: var(--text2); }
+  .empty-icon .icon-svg { width: 48px; height: 48px; }
+</style>
+</head>
+<body>
+<a href="#main-content" class="skip-link">Skip to content</a>
+
+<div class="toast-container" id="toasts" role="status" aria-live="polite" aria-atomic="true"></div>
+
+<div class="header">
+  <div class="header-left">
+    <h1>Ride the API</h1>
+    <span class="subtitle">Local Cloud Replacement — Device Protocol Learning &amp; Response Dashboard</span>
+  </div>
+  <div class="header-right">
+    <button class="btn btn-ghost" onclick="loadDevices()">
+      <svg class="icon-svg" aria-hidden="true" viewBox="0 0 24 24"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+      <span>Refresh</span>
+    </button>
+  </div>
+</div>
+
+<!-- Monitored Ports (TLS) -->
+<div class="tls-bar" id="tlsBar" role="region" aria-label="Monitored TLS ports">
+  <span class="tb-label">
+    <svg class="icon-svg-sm" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+    Monitored Ports
+  </span>
+  <span id="tlsBadges" role="list" aria-label="Active ports"></span>
+  <span class="tb-add">
+    <label for="newPortInput">Add port number</label>
+    <input type="number" id="newPortInput" placeholder="Port" min="1" max="65535" aria-required="false">
+    <button class="btn btn-ghost" onclick="addTlsPort()" style="padding:4px 10px;font-size:12px;">+ Add</button>
+  </span>
+  <span class="tb-status" id="tlsStatus">loading…</span>
+</div>
+
+<!-- Global stats bar -->
+<div class="global-stats" id="globalStats" role="region" aria-label="Global device statistics">
+  <div class="global-stat gs-blue">
+    <svg class="icon-svg" aria-hidden="true" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+    <div class="gs-num" aria-live="polite">0</div>
+    <div class="gs-lbl">Total Devices</div>
+  </div>
+  <div class="global-stat gs-green">
+    <svg class="icon-svg" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+    <div class="gs-num" aria-live="polite">0</div>
+    <div class="gs-lbl">Learning</div>
+  </div>
+  <div class="global-stat gs-yellow">
+    <svg class="icon-svg" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+    <div class="gs-num" aria-live="polite">0</div>
+    <div class="gs-lbl">Production</div>
+  </div>
+  <div class="global-stat gs-red">
+    <svg class="icon-svg" aria-hidden="true" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/></svg>
+    <div class="gs-num" aria-live="polite">0</div>
+    <div class="gs-lbl">Hybrid</div>
+  </div>
+</div>
+
+<div id="main-content">
+  <div id="devices" class="grid" role="region" aria-label="Registered devices">
+    <div class="empty">
+      <div class="empty-icon">
+        <svg class="icon-svg" aria-hidden="true" viewBox="0 0 24 24" style="width:48px;height:48px;"><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg>
+      </div>
+      <div class="empty-text">Loading devices...</div>
+    </div>
+  </div>
+</div>
+
+<div id="details" class="invisible" role="dialog" aria-labelledby="details-title" aria-modal="true"></div>
+
+<script>
+// ── Helpers ──────────────────────────────────────────────────────────────────
+function rateClass(pct) { return pct >= 80 ? 'good' : pct >= 50 ? 'warning' : 'danger'; }
+function rateColor(pct) { return pct >= 80 ? '#34d399' : pct >= 50 ? '#fbbf24' : '#f87171'; }
+function modeBadge(mode) {
+  const cls = mode === 'production' ? 'badge-production' : mode === 'hybrid' ? 'badge-hybrid' : 'badge-learning';
+  return `<span class="badge ${cls}">${mode}</span>`;
+}
+function shortId(id) { return id && id.length > 30 ? id.slice(0, 12) + '…' : id || 'unknown'; }
+
+// ── SVG Icons ────────────────────────────────────────────────────────────────
+function deviceIcon() {
+  return '<svg class="icon-svg-sm" aria-hidden="true" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>';
+}
+
+// ── Toast ────────────────────────────────────────────────────────────────────
+function showToast(msg, type) {
+  const c = document.getElementById('toasts');
+  const t = document.createElement('div');
+  t.className = 'toast ' + (type || 'info');
+  t.textContent = msg;
+  c.appendChild(t);
+  setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity .3s'; setTimeout(() => t.remove(), 300); }, 3000);
+}
+
+// ── Load device list ─────────────────────────────────────────────────────────
+async function loadDevices() {
+  try {
+    const res = await fetch('/api/devices');
+    const data = await res.json();
+    const container = document.getElementById('devices'), devices = data.devices || [];
+
+    // Global stats
+    const total = devices.length;
+    const learn = devices.filter(d => d.mode === 'learning').length;
+    const prod = devices.filter(d => d.mode === 'production').length;
+    const hybrid = devices.filter(d => d.mode === 'hybrid').length;
+    const gs = document.getElementById('globalStats');
+    gs.querySelectorAll('.gs-num')[0].textContent = total;
+    gs.querySelectorAll('.gs-num')[1].textContent = learn;
+    gs.querySelectorAll('.gs-num')[2].textContent = prod;
+    gs.querySelectorAll('.gs-num')[3].textContent = hybrid;
+
+    if (devices.length === 0) {
+      container.innerHTML = '<div class="empty"><div class="empty-icon">' +
+        '<svg class="icon-svg" aria-hidden="true" viewBox="0 0 24 24" style="width:48px;height:48px;"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="12" y1="17" x2="12" y2="21"/></svg>' +
+        '</div><div class="empty-text">No devices yet</div><div class="empty-sub">Route a device through the proxy to begin learning.</div></div>';
+      return;
+    }
+    container.innerHTML = devices.map(d => {
+      const rate = d.match_rate_pct !== undefined ? d.match_rate_pct : null;
+      const isUnknown = d.device_id && d.device_id.startsWith('ip-');
+      const unkClass = isUnknown ? ' unidentified' : '';
+      const unkBadge = isUnknown ? '<span class="badge badge-hybrid">⚠ Unidentified</span>' : modeBadge(d.mode);
+      return `<div class="device-card${unkClass}" tabindex="0" role="button" aria-label="View details for ${(d.name || d.device_id || 'unknown')}" onclick="loadDeviceStats('${d.device_id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();loadDeviceStats('${d.device_id}')}">
+        <div class="dc-top">
+          <div><div class="dc-name">${d.name || shortId(d.device_id)}</div><div class="dc-id">${shortId(d.device_id)}</div></div>
+          ${unkBadge}
+        </div>
+        <div class="dc-meta">${d.vendor || 'unknown'} · ${d.device_type || 'generic'}</div>
+        <div class="dc-stats">
+          ${rate !== null ? `<span class="dc-stat"><span class="dc-label">Match:</span><span class="dc-value" style="color:${rateColor(rate)}">${rate}%</span></span>` : ''}
+          <span class="dc-stat"><span class="dc-label">Last:</span><span class="dc-value">${d.last_seen ? new Date(d.last_seen).toLocaleString() : 'Never'}</span></span>
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    document.getElementById('devices').innerHTML = '<div class="empty"><div class="empty-icon">' +
+      '<svg class="icon-svg" aria-hidden="true" viewBox="0 0 24 24" style="width:48px;height:48px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>' +
+      '</div><div class="empty-text">Error loading devices</div><div class="empty-sub">Is the server running?</div></div>';
+    showToast('Failed to load devices', 'error');
+  }
+}
+
+// ── Load device detail ───────────────────────────────────────────────────────
+async function loadDeviceStats(deviceId) {
+  try {
+    const res = await fetch(`/api/devices/${deviceId}/stats`);
+    const stats = await res.json();
+    const s = stats.stats, pct = s.match_rate_pct || 0, rc = rateClass(pct);
+    const detail = document.getElementById('details');
+    detail.classList.remove('invisible');
+
+    // SVG ring
+    const circum = 2 * Math.PI * 44;
+    const offset = circum - (pct / 100) * circum;
+    const ringColor = rateColor(pct);
+    const ring = `<div class="ring-wrap" role="img" aria-label="Match rate ${pct} percent"><svg class="ring-svg" viewBox="0 0 100 100" aria-hidden="true">
+      <circle class="ring-bg" cx="50" cy="50" r="44"/>
+      <circle class="ring-fg" cx="50" cy="50" r="44" stroke="${ringColor}" stroke-dasharray="${circum}" stroke-dashoffset="${offset}"/>
+    </svg><div class="ring-label" aria-hidden="true"><span class="pct" style="color:${ringColor}">${pct}%</span><span class="pct-label">Match Rate</span></div></div>`;
+
+    // Sparkline with proportional heights
+    const recent = (s.recent_results || []).slice(-80);
+    let spark = '';
+    if (recent.length > 0) {
+      spark = '<div class="sparkline-wrap"><div class="sparkline-label" id="sparkline-label">Recent Activity</div><div class="chart" role="img" aria-labelledby="sparkline-label" aria-description="Bar chart showing local hits in green, cloud misses in blue, and errors in red">';
+      recent.forEach(r => {
+        const cls = r.result === 'local_hit' ? 'hit' : r.result === 'cloud_miss' ? 'miss' : 'error';
+        const h = Math.max(6, (r.confidence || 0.5) * 36);
+        spark += `<div class="bar ${cls}" style="height:${h}px" role="presentation"></div>`;
+      });
+      const hits = recent.filter(r => r.result === 'local_hit').length;
+      const misses = recent.filter(r => r.result === 'cloud_miss').length;
+      const errs = recent.filter(r => r.result !== 'local_hit' && r.result !== 'cloud_miss').length;
+      spark += '</div><div class="legend">';
+      if (hits) spark += `<span class="legend-item"><span class="legend-dot" style="background:var(--green)"></span>${hits} hits</span>`;
+      if (misses) spark += `<span class="legend-item"><span class="legend-dot" style="background:var(--blue)"></span>${misses} misses</span>`;
+      if (errs) spark += `<span class="legend-item"><span class="legend-dot" style="background:var(--red)"></span>${errs} errors</span>`;
+      spark += '</div></div>';
+    }
+
+    detail.innerHTML = `<div class="detail-card">
+      <div class="detail-header">
+        <h2 id="details-title">${s.name || deviceId} — Details</h2>
+        <button class="close-btn" onclick="closeDetails()" aria-label="Close details panel">&times;</button>
+      </div>
+      ${ring}
+      <div class="stats-grid">
+        <div class="stat-box"><div class="num green">${s.local_hits}</div><div class="lbl">Local Hits</div></div>
+        <div class="stat-box"><div class="num blue">${s.cloud_misses}</div><div class="lbl">Cloud Misses</div></div>
+        <div class="stat-box"><div class="num red">${s.errors}</div><div class="lbl">Errors</div></div>
+        <div class="stat-box"><div class="num yellow">${s.patterns_learned}</div><div class="lbl">Patterns</div></div>
+      </div>
+      <div class="detail-rows">
+        <div class="detail-row"><span class="dr-label">Total Requests</span><span class="dr-value">${s.total_requests}</span></div>
+        <div class="detail-row"><span class="dr-label">Mode</span>${modeBadge(s.mode)}</div>
+        <div class="detail-row"><span class="dr-label">Threshold</span><span class="dr-value">${(s.match_threshold * 100).toFixed(0)}%</span></div>
+        <div class="detail-row"><span class="dr-label">Buffer</span><span class="dr-value">${(s.current_buffer_size_bytes / 1024).toFixed(1)} KB / ${(s.context_buffer_size / 1024).toFixed(0)} KB</span></div>
+        <div class="detail-row"><span class="dr-label">Flushes</span><span class="dr-value">${s.buffer_flushes}</span></div>
+        <div class="detail-row"><span class="dr-label">Templates</span><span class="dr-value">${s.templates_created}</span></div>
+      </div>
+      ${spark}
+      <div class="mode-area">
+        <label for="mode-select-${deviceId}">Mode:</label>
+        <select id="mode-select-${deviceId}">
+          <option value="learning" ${s.mode === 'learning' ? 'selected' : ''}>Cloud — Learn All</option>
+          <option value="production" ${s.mode === 'production' ? 'selected' : ''}>Local — Serve All</option>
+          <option value="hybrid" ${s.mode === 'hybrid' ? 'selected' : ''}>Hybrid — Local then Cloud</option>
+        </select>
+        <button class="btn btn-primary" onclick="switchMode('${deviceId}')">Apply</button>
+      </div>
+
+      <!-- TLS Config Panel (for all devices) -->
+      <div class="tls-config" role="region" aria-label="TLS interception configuration for ${s.name || deviceId}">
+        <h3>
+          <svg class="icon-svg-sm" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          TLS Interception
+        </h3>
+        <div class="tc-row"><span class="tc-label">Device ID</span><span class="tc-value">${shortId(deviceId)}</span></div>
+        <div class="tc-row">
+          <label for="tc-name-${deviceId}" class="tc-label">Name</label>
+          <input type="text" id="tc-name-${deviceId}" value="${s.name || deviceId}">
+        </div>
+        <div class="tc-row">
+          <label for="tc-vendor-${deviceId}" class="tc-label">Vendor / Adapter</label>
+          <select id="tc-vendor-${deviceId}">
+            <option value="unknown" ${(s.vendor || 'unknown') === 'unknown' ? 'selected' : ''}>unknown</option>
+          </select>
+        </div>
+        <div class="tc-row">
+          <span class="tc-label" id="passthrough-label-${deviceId}">Passthrough to Cloud</span>
+          <label class="tc-toggle" aria-label="Toggle passthrough to cloud" role="switch" aria-checked="true">
+            <input type="checkbox" id="tc-passthrough-${deviceId}" checked aria-labelledby="passthrough-label-${deviceId}">
+            <span class="tc-slider"></span>
+          </label>
+        </div>
+        <div class="tc-row">
+          <label for="tc-pinning-${deviceId}" class="tc-label">Pinning Bypass</label>
+          <select id="tc-pinning-${deviceId}">
+            <option value="mitm_proxy">mitm_proxy (default)</option>
+            <option value="frida">frida (script)</option>
+            <option value="disable_pin_check">disable_pin_check</option>
+          </select>
+        </div>
+        <div class="tc-row">
+          <span class="tc-label">CA Certificate</span>
+          <button class="btn btn-ghost" onclick="downloadCaCert()" style="padding:4px 10px;font-size:12px;" aria-label="Download CA certificate">Download</button>
+        </div>
+        <div style="text-align:right;margin-top:8px;">
+          <button class="btn btn-primary" onclick="saveTlsConfig('${deviceId}')" style="padding:6px 16px;font-size:12px;">Save TLS Config</button>
+        </div>
+      </div>
+    </div>`;
+
+    // Focus the detail panel for accessibility
+    const focusTarget = detail.querySelector('h2');
+    if (focusTarget) focusTarget.focus();
+  } catch(e) { showToast('Failed to load device details', 'error'); }
+}
+
+function closeDetails() {
+  const detail = document.getElementById('details');
+  detail.classList.add('invisible');
+  // Return focus to the first device card
+  const firstCard = document.querySelector('.device-card');
+  if (firstCard) firstCard.focus();
+}
+
+async function switchMode(deviceId) {
+  const select = document.getElementById('mode-select-' + deviceId);
+  const mode = select.value;
+  try {
+    await fetch(`/api/devices/${deviceId}/mode`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({mode}),
+    });
+    showToast('Mode switched to ' + mode, 'success');
+    loadDeviceStats(deviceId);
+    loadDevices();
+  } catch(e) { showToast('Failed to switch mode', 'error'); }
+}
+
+loadDevices();
+loadTlsBar();
+loadVendors();
+setInterval(loadDevices, 8000);
+setInterval(loadTlsBar, 15000);
+
+// ── Load vendors list for TLS config dropdown ─────────────────────────────
+async function loadVendors() {
+  try {
+    const res = await fetch('/health');
+    if (!res.ok) return;
+    const h = await res.json();
+    const adapters = h.adapters || [];
+    if (adapters.length === 0) return;
+    document.querySelectorAll('[id^="tc-vendor-"]').forEach(sel => {
+      adapters.forEach(v => {
+        if (!sel.querySelector(`option[value="${v}"]`)) {
+          const opt = document.createElement('option');
+          opt.value = v; opt.textContent = v;
+          sel.appendChild(opt);
+        }
+      });
+    });
+  } catch(e) { /* ignore */ }
+}
+
+// ── TLS: Load monitored ports bar ──────────────────────────────────────────
+async function loadTlsBar() {
+  try {
+    const res = await fetch('/api/tls/ports');
+    const data = await res.json();
+    const container = document.getElementById('tlsBadges');
+    const status = document.getElementById('tlsStatus');
+    if (!data.enabled) {
+      container.innerHTML = '<span class="tb-badge tb-inactive">disabled</span>';
+      status.textContent = 'TLS MITM off';
+      return;
+    }
+    const ports = data.ports || [];
+    container.innerHTML = ports.map(p => `<span class="tb-badge tb-active" role="listitem">${p} <button class="tb-btn" onclick="removeTlsPort(${p})" aria-label="Remove port ${p}">&times;</button></span>`).join('');
+    status.textContent = `${ports.length} port${ports.length !== 1 ? 's' : ''}`;
+  } catch(e) {
+    document.getElementById('tlsBadges').innerHTML = '<span class="tb-badge tb-inactive">error</span>';
+  }
+}
+
+async function addTlsPort() {
+  const input = document.getElementById('newPortInput');
+  const port = parseInt(input.value);
+  if (!port || port < 1 || port > 65535) { showToast('Invalid port', 'error'); return; }
+  try {
+    const res = await fetch('/api/tls/ports', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({port}),
+    });
+    if (!res.ok) { showToast('Failed to add port', 'error'); return; }
+    showToast('Added port ' + port, 'success');
+    input.value = '';
+    loadTlsBar();
+  } catch(e) { showToast('Failed to add port', 'error'); }
+}
+
+async function removeTlsPort(port) {
+  try {
+    const res = await fetch(`/api/tls/ports/${port}`, { method: 'DELETE' });
+    if (!res.ok) { showToast('Failed to remove port', 'error'); return; }
+    showToast('Removed port ' + port, 'success');
+    loadTlsBar();
+  } catch(e) { showToast('Failed to remove port', 'error'); }
+}
+
+function downloadCaCert() {
+  window.open('/api/tls/ca-cert', '_blank', 'noopener');
+}
+
+async function saveTlsConfig(deviceId) {
+  const name = document.getElementById('tc-name-' + deviceId).value;
+  const vendor = document.getElementById('tc-vendor-' + deviceId).value;
+  const passthrough = document.getElementById('tc-passthrough-' + deviceId).checked;
+  const pinning = document.getElementById('tc-pinning-' + deviceId).value;
+  try {
+    const res = await fetch(`/api/devices/${deviceId}/tls-config`, {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name, vendor, passthrough, pinning_bypass: pinning}),
+    });
+    if (!res.ok) { showToast('Failed to save config', 'error'); return; }
+    showToast('TLS config saved', 'success');
+    loadDeviceStats(deviceId);
+    loadDevices();
+  } catch(e) { showToast('Failed to save config', 'error'); }
+}
+</script>
+</body>
+</html>
