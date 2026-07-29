@@ -1,4 +1,4 @@
-﻿"""
+"""
 Example Protocol Adapter - Reference Implementation.
 
 Demonstrates how to implement a protocol adapter for an HVAC device
@@ -161,7 +161,7 @@ class ExampleProtocolAdapter(ProtocolAdapter):
         return request
     
     async def _parse_http_request(self, request: InterceptedRequest) -> InterceptedRequest:
-            """Parse HTTP/HTTPS API request."""
+        """Parse HTTP/HTTPS API request."""
         if not request.path:
             request.parsed_intent = CommandType.UNKNOWN
             return request
@@ -231,9 +231,10 @@ class ExampleProtocolAdapter(ProtocolAdapter):
             # Return current known state (would come from vendor DB)
             state = await self.get_device_state(request.device_id)
             if state:
+                response_data = await self._state_to_response(state)
                 return CommandResult(
                     success=True,
-                    return await self._state_to_response(state),
+                    response=response_data,
                     forwarded=False,
                 )
         
@@ -260,8 +261,8 @@ class ExampleProtocolAdapter(ProtocolAdapter):
         return await self.forward_to_cloud(request)
     
     async def forward_to_cloud(self, request: InterceptedRequest) -> CommandResult:
-            """Forward request to real cloud."""
-            # Implementation would use the vendor's Cloud API
+        """Forward request to real cloud."""
+        # Implementation would use the vendor's Cloud API
         # For now, return placeholder
         return CommandResult(
             success=False,
@@ -274,7 +275,7 @@ class ExampleProtocolAdapter(ProtocolAdapter):
     # ══════════════════════════════════════════════════════════════════════════════
     
     async def build_response(self, request: InterceptedRequest, result: CommandResult) -> dict[str, Any]:
-            """Build vendor-compatible response."""
+        """Build vendor-compatible response."""
         if request.protocol in (ProtocolType.MQTT, ProtocolType.MQTTS):
             return await self._build_mqtt_response(request, result)
         else:
@@ -378,46 +379,45 @@ class ExampleProtocolAdapter(ProtocolAdapter):
     # ══════════════════════════════════════════════════════════════════════════════
     
     async def send_command(self, device_id: str, command: Command) -> CommandResult:
-            """Send command to device via cloud API."""
-            # Convert standard command to DP format
-            vendor_commands = self._command_to_dps(command)
+        """Send command to device via cloud API."""
+        # Convert standard command to DP format
+        vendor_commands = self._command_to_dps(command)
 
-            # In real implementation, call the cloud API:
+        # In real implementation, call the cloud API:
         # POST /v1.0/devices/{device_id}/commands
         # Body: {"commands": [{"code": dp_code, "value": value}, ...]}
 
         return CommandResult(
-            success=True,
-                response={"commands": vendor_commands},
-            forwarded=False,
-        )
+                    success=True,
+                    response={"commands": vendor_commands},
+                    forwarded=False,
+                )
 
-        def _command_to_dps(self, command: Command) -> list[dict[str, Any]]:
-            """Convert standard command to DP commands."""
+    def _command_to_dps(self, command: Command) -> list[dict[str, Any]]:
+        """Convert standard command to DP commands."""
         cmds = []
         params = command.params
 
         if command.command_type == CommandType.TURN_ON:
-            cmds.append({"code": self.DP_CODES["power"], "value": True})
+                cmds.append({"code": self.DP_CODES["power"], "value": True})
         elif command.command_type == CommandType.TURN_OFF:
-            cmds.append({"code": self.DP_CODES["power"], "value": False})
+                cmds.append({"code": self.DP_CODES["power"], "value": False})
         elif command.command_type == CommandType.SET_TEMPERATURE:
-            temp = params.get("temperature") or params.get("temp_set")
-            if temp is not None:
-                    # Example protocol uses temp * 10
-                cmds.append({"code": self.DP_CODES["temp_set"], "value": int(float(temp) * 10)})
+                temp = params.get("temperature") or params.get("temp_set")
+                if temp is not None:
+                    cmds.append({"code": self.DP_CODES["temp_set"], "value": int(float(temp) * 10)})
         elif command.command_type == CommandType.SET_MODE:
-            mode = params.get("mode")
+                mode = params.get("mode")
                 if mode and mode in self.MODE_STD_TO_VENDOR:
                     cmds.append({"code": self.DP_CODES["mode"], "value": self.MODE_STD_TO_VENDOR[mode]})
         elif command.command_type == CommandType.SET_FAN_SPEED:
-            fan = params.get("fan_speed")
+                fan = params.get("fan_speed")
                 if fan and fan in self.FAN_STD_TO_VENDOR:
                     cmds.append({"code": self.DP_CODES["fan_speed"], "value": self.FAN_STD_TO_VENDOR[fan]})
         elif command.command_type == CommandType.SET_SWING:
-            swing = params.get("swing")
-            if swing is not None:
-                cmds.append({"code": self.DP_CODES["swing"], "value": bool(swing)})
+                swing = params.get("swing")
+                if swing is not None:
+                    cmds.append({"code": self.DP_CODES["swing"], "value": bool(swing)})
 
         return cmds
     
@@ -426,7 +426,7 @@ class ExampleProtocolAdapter(ProtocolAdapter):
     # ══════════════════════════════════════════════════════════════════════════════
     
     async def _state_to_response(self, state: DeviceState) -> dict[str, Any]:
-            """Convert standard state to DP format."""
+        """Convert standard state to DP format."""
         dps = {}
 
         if state.on_off is not None:
