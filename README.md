@@ -8,19 +8,19 @@ A DNS interception proxy that sits between IoT devices and their cloud APIs, **l
 ┌──────────────┐     ┌──────────────────────────────────────────────────────┐     ┌──────────┐
 │  IoT Device  │────▶│  Ride-the-API (Local Cloud Replacement Proxy)        │────▶│  Vendor  │
 │  (Any Brand) │     │                                                      │     │  Cloud   │
-│              │     │  ┌─────────────────────────────────────────────────┐  │     │(Fallback)│
+│              │     │  ┌─────────────────────────────────────────────────  │     │(Fallback)│
 │              │     │  │            LEARNING MODE                       │  │     └──────────┘
 │              │     │  │  Request → Correlate → Buffer → LLM → Patterns │  │           │
-│              │     │  └─────────────────────────────────────────────────┘  │           │
+│              │     │  └─────────────────────────────────────────────────  │           │
 │              │     │                                                      │           │
-│              │     │  ┌─────────────────────────────────────────────────┐  │           │
+│              │     │  ┌─────────────────────────────────────────────────  │           │
 │              │     │  │           PRODUCTION MODE                      │  │           │
 │              │     │  │  Request → Match Pattern → Local Response      │  │           │
 │              │     │  │     ↓ (if no match)                            │  │           │
 │              │     │  │  Forward to Cloud → Learn → Improve            │  │           │
-│              │     │  └─────────────────────────────────────────────────┘  │           │
+│              │     │  └─────────────────────────────────────────────────  │           │
 │              │     │                                                      │           │
-│              │     │  Match Rate: 92.5%  ◀── Real-time tracking          │           │
+│              │     │  Match Rate  ◀── Real-time tracking                  │           │
 │              │     └──────────────────────────────────────────────────────┘           │
 └──────────────┘
 ```
@@ -191,6 +191,7 @@ The proxy handles requests locally:
 - [ ] Community pattern database
 - [ ] Encrypted traffic MITM support
 
+YES. it is all vibe coded i'm searching for people who like this idea and would like to help implement it
 ## License
 
 MIT
