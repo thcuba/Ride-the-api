@@ -165,8 +165,20 @@ class ContextBuffer:
         )
         stats = result.scalar_one_or_none()
         if not stats:
-            stats = MatchStats(device_id=device_id)
+            stats = MatchStats(
+                device_id=device_id,
+                total_requests=0,
+                local_hits=0,
+                cloud_misses=0,
+                errors=0,
+                match_rate_pct=0.0,
+                patterns_learned=0,
+                templates_created=0,
+                buffer_flushes=0,
+                current_buffer_size_bytes=0,
+            )
             session.add(stats)
+            await session.flush()
         return stats
 
     async def get_current_size(self, device_id: str) -> int:
@@ -192,15 +204,10 @@ class PatternMatcher:
         Returns: (pattern, response_template, similarity_score) or (None, None, 0)
         """
         async with self.db_manager.device_session(device_id) as session:
-            result = await session.execute(
-                select(RequestPattern).where(
-                    and_(
-                        RequestPattern.method == method,
-                        RequestPattern.method is not None,
+                    result = await session.execute(
+                        select(RequestPattern)
                     )
-                )
-            )
-            patterns = result.scalars().all()
+                    patterns = result.scalars().all()
 
         best_score = 0.0
         best_pattern = None
@@ -377,8 +384,20 @@ class MatchRateTracker:
             )
             stats = result_obj.scalar_one_or_none()
             if not stats:
-                stats = MatchStats(device_id=device_id)
+                stats = MatchStats(
+                    device_id=device_id,
+                    total_requests=0,
+                    local_hits=0,
+                    cloud_misses=0,
+                    errors=0,
+                    match_rate_pct=0.0,
+                    patterns_learned=0,
+                    templates_created=0,
+                    buffer_flushes=0,
+                    current_buffer_size_bytes=0,
+                )
                 session.add(stats)
+                await session.flush()
 
             stats.total_requests += 1
 
