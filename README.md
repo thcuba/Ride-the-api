@@ -189,7 +189,7 @@ The proxy handles requests locally:
 - [ ] MQTT/CoAP protocol support
 - [ ] Web UI for manual pattern editing
 - [ ] Community pattern database
-- [ ] Encrypted traffic MITM support
+- [x] Encrypted traffic MITM support
 
 YES. it is all vibe coded i'm searching for people who like this idea and would like to help implement it
 ## License

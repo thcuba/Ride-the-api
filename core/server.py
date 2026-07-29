@@ -28,6 +28,11 @@ from core.pipeline import (
 )
 from core.resilience import CloudIndependenceVerifier, register_resilience_routes
 from core.traffic_selector import get_traffic_selector, TrafficSelector, TrafficRequestInfo
+from core.cert_manager import get_cert_manager, CertManager
+from core.tls_mitm import (
+    get_tls_mitm_server, TLSMITMServer,
+    DecryptedRequest,
+)
 from adapters import get_registered_registry
 from adapters.base import (
     ProtocolAdapterRegistry, InterceptedRequest, ProtocolType,
@@ -49,12 +54,109 @@ adapter_registry: ProtocolAdapterRegistry | None = None
 orchestrator: LearningOrchestrator | None = None
 llm_decipher_service: LLMDecipherService | None = None
 config_manager = get_config_manager()
+tls_mitm_server: TLSMITMServer | None = None
+cert_manager: CertManager | None = None
+
+
+# ── TLS Decrypted Request Handler ────────────────────────────────────────────
+
+
+async def handle_tls_decrypted_request(req: DecryptedRequest) -> dict | None:
+    """Handle a decrypted TLS request — find/create device and run through pipeline.
+
+    Called by TLSMITMServer for every successfully decrypted HTTP request.
+    If the source IP is unknown, a new device record + SQLite DB is auto-created
+    with passthrough=ON (traffic forwarded to cloud while user configures it).
+    """
+    global db_manager, orchestrator, adapter_registry
+
+    if not db_manager or not orchestrator:
+        logger.warning("TLS handler: service not ready, dropping request from %s", req.client_ip)
+        return None
+
+    config = config_manager.config
+    device_id = f"ip-{req.client_ip.replace('.', '-')}"
+
+    try:
+        # Create or find device by IP
+        device = await db_manager.get_or_create_device(
+            device_id=device_id,
+            vendor="unknown",
+        )
+
+        # Ensure a dedicated device database exists
+        device_db_dir = Path(config.core.device_db_dir)
+        device_db_path = device_db_dir / f"{device_id}.db"
+        if not device_db_path.exists():
+            try:
+                device_db_path.touch()
+                logger.info("TLS handler: created device DB for %s at %s", device_id, device_db_path)
+            except Exception as e:
+                logger.warning("TLS handler: could not create device DB for %s: %s", device_id, e)
+
+        # Log the intercepted request
+        logger.info(
+            "TLS: %s %s %s (device=%s, sni=%s, port=%d)",
+            req.method, req.path, req.http_version,
+            device_id, req.sni, req.dst_port,
+        )
+
+        # Determine vendor/adapter for this device
+        device_vendor = getattr(device, "vendor", "unknown") or "unknown"
+
+        # Find matching adapter if available
+        handler_adapter = None
+        if adapter_registry and device_vendor in adapter_registry._adapters:
+            handler_adapter = adapter_registry._adapters[device_vendor]
+
+        # Build intercepted request for pipeline
+        from adapters.base import InterceptedRequest as AdapterInterceptedRequest, ProtocolType
+
+        intercepted = AdapterInterceptedRequest(
+            device_id=device_id,
+            timestamp=datetime.now(timezone.utc),
+            protocol=ProtocolType.HTTPS,
+            method=req.method,
+            path=req.path,
+            headers=req.headers,
+            query_params={},
+            body=req.body,
+        )
+
+        if handler_adapter:
+            intercepted = await handler_adapter.parse_request(intercepted)
+
+        # Run through the orchestrator pipeline
+        result = await orchestrator.handle_request(
+            device_id=device_id,
+            vendor=device_vendor,
+            protocol="https",
+            method=req.method,
+            path=req.path,
+            headers=req.headers,
+            body=req.body,
+            query_params={},
+        )
+
+        if result["action"] == "local_response":
+            logger.debug("TLS: local response for %s %s", req.method, req.path)
+        else:
+            logger.debug("TLS: passthrough for %s %s", req.method, req.path)
+
+        return result
+
+    except Exception as e:
+        logger.error("TLS handler: error processing %s: %s", req.client_ip, e, exc_info=True)
+        return None
+
+
+# ── Application Lifespan ───────────────────────────────────────────────────────
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
-    global db_manager, adapter_registry, orchestrator, llm_decipher_service
+    global db_manager, adapter_registry, orchestrator, llm_decipher_service, tls_mitm_server, cert_manager
 
     logger.info("Starting Local Cloud Replacement Proxy...")
 
@@ -84,6 +186,30 @@ async def lifespan(app: FastAPI):
     # Register adapters
     adapter_registry = get_registered_registry()
 
+    # Initialize TLS certificate manager
+    if config.tls_decrypt.enabled:
+        try:
+            cert_manager = get_cert_manager()
+            cert_path = cert_manager.ensure_ca()
+            logger.info("TLS CA certificate ready at %s", cert_path)
+        except Exception as e:
+            logger.error("Failed to initialize TLS cert manager: %s", e)
+
+    # Start TLS MITM server if enabled
+    if config.tls_decrypt.enabled and cert_manager:
+        try:
+            tls_mitm_server = get_tls_mitm_server()
+            await tls_mitm_server.start(
+                cert_manager=cert_manager,
+                ports=config.tls_decrypt.listen_ports,
+                request_handler=handle_tls_decrypted_request,
+            )
+            logger.info("TLS MITM server listening on ports %s", config.tls_decrypt.listen_ports)
+        except Exception as e:
+            logger.error("Failed to start TLS MITM server: %s, TLS interception disabled", e)
+    else:
+        logger.info("TLS decryption is disabled (enable in config.yaml)")
+
     # Start config hot-reload
     config_manager.start_watching()
 
@@ -95,6 +221,15 @@ async def lifespan(app: FastAPI):
     # Cleanup
     logger.info("Shutting down...")
     config_manager.stop_watching()
+
+    # Stop TLS MITM server
+    if tls_mitm_server:
+        try:
+            await tls_mitm_server.stop()
+            logger.info("TLS MITM server stopped")
+        except Exception as e:
+            logger.error("Error stopping TLS MITM server: %s", e)
+
     if llm_decipher_service:
         await llm_decipher_service.close()
     if db_manager:
@@ -108,7 +243,6 @@ app = FastAPI(
     version="0.2.0",
     lifespan=lifespan,
 )
-
 # CORS for local dashboard access
 app.add_middleware(
     CORSMiddleware,
@@ -117,6 +251,203 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ── TLS API Routes ───────────────────────────────────────────────────────────
+
+
+@app.get("/api/tls/ca-cert")
+async def tls_download_ca():
+    """Download the CA certificate (PEM) for installation on devices."""
+    if not cert_manager:
+        return JSONResponse(status_code=503, content={"error": "Cert manager not ready"})
+    try:
+        ca_pem = cert_manager.ca_cert_pem()
+        return Response(
+            content=ca_pem,
+            media_type="application/x-pem-file",
+            headers={"Content-Disposition": "attachment; filename=ride-the-api-ca.pem"},
+        )
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.get("/api/tls/stats")
+async def tls_stats():
+    """Return TLS/MITM statistics."""
+    stats = {"cert_manager": {}, "mitm_server": False, "device_ports": []}
+    if cert_manager:
+        stats["cert_manager"] = cert_manager.stats()
+    if tls_mitm_server:
+        stats["mitm_server"] = True
+        stats["listen_ports"] = tls_mitm_server.listen_ports.copy()
+        stats["device_ports"] = [
+            {
+                "ip": dp.ip,
+                "port": dp.port,
+                "device_id": dp.device_id,
+                "first_seen": dp.first_seen.isoformat(),
+                "last_seen": dp.last_seen.isoformat(),
+            }
+            for dp in tls_mitm_server.device_ports.values()
+        ]
+    return stats
+
+
+@app.get("/api/tls/device-ports")
+async def tls_device_ports():
+    """Return IP-to-device mapping for all connected devices."""
+    if not tls_mitm_server:
+        return {"devices": []}
+    devices = []
+    for ip, info in tls_mitm_server.device_ports.items():
+        devices.append({
+            "ip": info.ip,
+            "port": info.port,
+            "device_id": info.device_id,
+            "first_seen": info.first_seen.isoformat(),
+            "last_seen": info.last_seen.isoformat(),
+        })
+    return {"devices": devices}
+
+
+@app.get("/api/tls/unidentified")
+async def tls_unidentified():
+    """List device IDs starting with 'ip-' (auto-created by TLS handler)."""
+    if not db_manager:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    devices = await db_manager.list_devices()
+    unidentified = [d for d in devices if d.get("device_id", "").startswith("ip-")]
+    return {"unidentified": unidentified}
+
+
+@app.post("/api/tls/ports")
+async def tls_add_port(request: Request):
+    """Dynamically add a TLS listen port."""
+    if not tls_mitm_server:
+        return JSONResponse(status_code=503, content={"error": "TLS MITM not running"})
+    try:
+        body = await request.json()
+        port = int(body.get("port", 0))
+        if port < 1 or port > 65535:
+            return JSONResponse(status_code=400, content={"error": "Invalid port number"})
+        success = await tls_mitm_server.add_port(port)
+        if success:
+            # Persist to config
+            config = config_manager.config
+            if port not in config.tls_decrypt.listen_ports:
+                config.tls_decrypt.listen_ports.append(port)
+            return {"status": "ok", "port": port, "listen_ports": tls_mitm_server.listen_ports.copy()}
+        return JSONResponse(status_code=500, content={"error": "Failed to add port"})
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+
+
+@app.delete("/api/tls/ports/{port}")
+async def tls_remove_port(port: int):
+    """Dynamically remove a TLS listen port."""
+    if not tls_mitm_server:
+        return JSONResponse(status_code=503, content={"error": "TLS MITM not running"})
+    success = await tls_mitm_server.remove_port(port)
+    if success:
+        # Update config
+        config = config_manager.config
+        if port in config.tls_decrypt.listen_ports:
+            config.tls_decrypt.listen_ports.remove(port)
+        return {"status": "ok", "port": port, "listen_ports": tls_mitm_server.listen_ports.copy()}
+    return JSONResponse(status_code=404, content={"error": "Port not found"})
+
+
+@app.put("/api/devices/{device_id}/tls-config")
+async def tls_update_device_config(device_id: str, request: Request):
+    """Update TLS config for a specific device (name, vendor, passthrough, pinning_bypass)."""
+    if not db_manager:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    try:
+        body = await request.json()
+        async with db_manager.core_session() as session:
+            result = await session.execute(
+                select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
+            )
+            device = result.scalar_one_or_none()
+            if not device:
+                return JSONResponse(status_code=404, content={"error": "Device not found"})
+
+            # Update editable fields
+            if "name" in body and body["name"]:
+                device.name = body["name"]
+            if "vendor" in body and body["vendor"]:
+                device.vendor = body["vendor"]
+            # passthrough and pinning_bypass stored in extra_attributes
+            extra = dict(device.extra_attributes or {})
+            if "passthrough" in body:
+                extra["tls_passthrough"] = body["passthrough"]
+            if "pinning_bypass" in body:
+                extra["tls_pinning_bypass"] = body["pinning_bypass"]
+            device.extra_attributes = extra
+
+            session.add(device)
+            await session.commit()
+            return {"status": "ok", "device_id": device_id}
+
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+
+
+@app.get("/api/tls/ports")
+async def tls_list_ports():
+    """List all currently active TLS listen ports."""
+    if not tls_mitm_server:
+        return {"ports": [], "enabled": False}
+    return {"ports": tls_mitm_server.listen_ports.copy(), "enabled": True}
+
+
+@app.get("/api/tls/frida/script.js")
+async def tls_frida_script():
+    """Return a Frida script for bypassing certificate pinning."""
+    script = r"""// Ride the API — Certificate Pinning Bypass (Frida)
+// Usage: frida -U -l script.js <app>
+// Requires: Frida installed on device, CA cert installed
+
+Java.perform(function() {
+    // Common SSL pinning bypass targets
+    var X509TrustManager = Java.use('javax.net.ssl.X509TrustManager');
+    var SSLContext = Java.use('javax.net.ssl.SSLContext');
+
+    // Bypass checkClientTrusted / checkServerTrusted
+    X509TrustManager.checkClientTrusted.implementation = function(chain, authType) {
+        console.log('[RideTheAPI] Bypassing checkClientTrusted');
+    };
+    X509TrustManager.checkServerTrusted.implementation = function(chain, authType) {
+        console.log('[RideTheAPI] Bypassing checkServerTrusted');
+    };
+    X509TrustManager.getAcceptedIssuers.implementation = function() {
+        console.log('[RideTheAPI] Returning empty accepted issuers');
+        return [];
+    };
+
+    // Hook OkHttp HostnameVerifier
+    try {
+        var HostnameVerifier = Java.use('javax.net.ssl.HostnameVerifier');
+        HostnameVerifier.verify.implementation = function(hostname, session) {
+            console.log('[RideTheAPI] Bypassing hostname verification for: ' + hostname);
+            return true;
+        };
+    } catch(e) { console.log('[RideTheAPI] HostnameVerifier not found'); }
+
+    // Hook OkHttp CertificatePinner
+    try {
+        var CertificatePinner = Java.use('okhttp3.CertificatePinner');
+        CertificatePinner.check.implementation = function(pin) {
+            console.log('[RideTheAPI] Bypassing certificate pin for: ' + pin);
+        };
+    } catch(e) { console.log("[RideTheAPI] CertificatePinner not found"); }
+
+    console.log("[RideTheAPI] Pinning bypass injected successfully");
+});
+"""
+    return Response(content=script, media_type="application/javascript")
+
+
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -761,7 +1092,40 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
   .empty-text { font-size: 16px; font-weight: 500; margin-bottom: 4px; }
   .empty-sub { font-size: 13px; color: var(--text2); }
   .invisible { display: none !important; }
-</style>
+
+    /* ── TLS: Monitored Ports Bar ──────────────────────────────────────────── */
+    .tls-bar { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 18px; margin-bottom: 20px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .tls-bar .tb-label { font-size: 12px; color: var(--text2); text-transform: uppercase; letter-spacing: .5px; font-weight: 600; }
+    .tls-bar .tb-badge { display: inline-flex; align-items: center; gap: 4px; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; font-size: 13px; font-weight: 600; }
+    .tls-bar .tb-badge.tb-active { border-color: var(--green); background: rgba(52,211,153,.08); color: var(--green); }
+    .tls-bar .tb-badge.tb-inactive { border-color: var(--border); color: var(--text2); }
+    .tls-bar .tb-btn { background: none; border: none; color: var(--text2); cursor: pointer; font-size: 14px; padding: 0 2px; transition: color .2s; }
+    .tls-bar .tb-btn:hover { color: var(--red); }
+    .tls-bar .tb-add input { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; color: var(--text); font-size: 13px; width: 70px; font-family: inherit; }
+    .tls-bar .tb-add input:focus { outline: none; border-color: var(--accent); }
+    .tls-bar .tb-status { font-size: 12px; color: var(--text2); margin-left: auto; }
+
+    /* ── TLS: Unidentified Device Card ─────────────────────────────────────── */
+    .device-card.unidentified { border-color: var(--yellow); background: rgba(251,191,36,.04); }
+    .device-card.unidentified .dc-name { color: var(--yellow); }
+    .device-card.unidentified::after { background: linear-gradient(135deg, rgba(251,191,36,.08), transparent); }
+
+    /* ── TLS Config Panel ──────────────────────────────────────────────────── */
+    .tls-config { margin-top: 16px; padding: 14px; background: var(--surface2); border-radius: 8px; border: 1px solid var(--border); }
+    .tls-config h3 { font-size: 14px; font-weight: 700; color: var(--accent); margin-bottom: 12px; display: flex; align-items: center; gap: 6px; }
+    .tls-config .tc-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; font-size: 13px; border-bottom: 1px solid rgba(35,42,54,.5); }
+    .tls-config .tc-row:last-child { border-bottom: none; }
+    .tls-config .tc-label { color: var(--text2); }
+    .tls-config .tc-value { font-weight: 600; }
+    .tls-config input, .tls-config select { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; color: var(--text); font-size: 12px; font-family: inherit; max-width: 180px; }
+    .tls-config input:focus, .tls-config select:focus { outline: none; border-color: var(--accent); }
+    .tls-config .tc-toggle { position: relative; display: inline-block; width: 40px; height: 22px; }
+    .tls-config .tc-toggle input { opacity: 0; width: 0; height: 0; }
+    .tls-config .tc-slider { position: absolute; cursor: pointer; inset: 0; background: var(--border); border-radius: 22px; transition: .3s; }
+    .tls-config .tc-slider::before { content: ''; position: absolute; height: 16px; width: 16px; left: 3px; bottom: 3px; background: var(--text); border-radius: 50%; transition: .3s; }
+    .tls-config .tc-toggle input:checked + .tc-slider { background: var(--green); }
+    .tls-config .tc-toggle input:checked + .tc-slider::before { transform: translateX(18px); }
+  </style>
 </head>
 <body>
 
@@ -775,6 +1139,17 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
   <div class="header-right">
     <button class="btn btn-ghost" onclick="loadDevices()">⟳ Refresh</button>
   </div>
+</div>
+
+<!-- Monitored Ports (TLS) -->
+<div class="tls-bar" id="tlsBar">
+  <span class="tb-label">🔐 Monitored Ports</span>
+  <span id="tlsBadges"></span>
+  <span class="tb-add">
+    <input type="number" id="newPortInput" placeholder="Port" min="1" max="65535" style="width:80px">
+    <button class="btn btn-ghost" onclick="addTlsPort()" style="padding:4px 10px;font-size:12px;">+ Add</button>
+  </span>
+  <span class="tb-status" id="tlsStatus">loading…</span>
 </div>
 
 <!-- Global stats bar -->
@@ -854,18 +1229,21 @@ async function loadDevices() {
     }
     container.innerHTML = devices.map(d => {
       const rate = d.match_rate_pct !== undefined ? d.match_rate_pct : null;
-      return `<div class="device-card" onclick="loadDeviceStats('${d.device_id}')">
-        <div class="dc-top">
-          <div><div class="dc-name">${d.name || shortId(d.device_id)}</div><div class="dc-id">${shortId(d.device_id)}</div></div>
-          ${modeBadge(d.mode)}
-        </div>
-        <div class="dc-meta">${d.vendor || 'unknown'} · ${d.device_type || 'generic'}</div>
-        <div class="dc-stats">
-          ${rate !== null ? `<span class="dc-stat"><span class="dc-label">Match:</span><span class="dc-value" style="color:${rateColor(rate)}">${rate}%</span></span>` : ''}
-          <span class="dc-stat"><span class="dc-label">Last:</span><span class="dc-value">${d.last_seen ? new Date(d.last_seen).toLocaleString() : 'Never'}</span></span>
-        </div>
-      </div>`;
-    }).join('');
+          const isUnknown = d.device_id && d.device_id.startsWith('ip-');
+          const unkClass = isUnknown ? ' unidentified' : '';
+          const unkBadge = isUnknown ? '<span class="badge badge-hybrid">⚠ Unidentified</span>' : modeBadge(d.mode);
+          return `<div class="device-card${unkClass}" onclick="loadDeviceStats('${d.device_id}')">
+            <div class="dc-top">
+              <div><div class="dc-name">${d.name || shortId(d.device_id)}</div><div class="dc-id">${shortId(d.device_id)}</div></div>
+              ${unkBadge}
+            </div>
+            <div class="dc-meta">${d.vendor || 'unknown'} · ${d.device_type || 'generic'}</div>
+            <div class="dc-stats">
+              ${rate !== null ? `<span class="dc-stat"><span class="dc-label">Match:</span><span class="dc-value" style="color:${rateColor(rate)}">${rate}%</span></span>` : ''}
+              <span class="dc-stat"><span class="dc-label">Last:</span><span class="dc-value">${d.last_seen ? new Date(d.last_seen).toLocaleString() : 'Never'}</span></span>
+            </div>
+          </div>`;
+        }).join('');
   } catch(e) {
     document.getElementById('devices').innerHTML = '<div class="empty"><div class="empty-icon">⚠</div><div class="empty-text">Error loading devices</div><div class="empty-sub">Is the server running?</div></div>';
     showToast('Failed to load devices', 'error');
@@ -939,7 +1317,39 @@ async function loadDeviceStats(deviceId) {
         </select>
         <button class="btn btn-primary" onclick="switchMode('${deviceId}')">Apply</button>
       </div>
-    </div>`;
+
+            <!-- TLS Config Panel (for all devices) -->
+            <div class="tls-config">
+              <h3>🔐 TLS Interception</h3>
+              <div class="tc-row"><span class="tc-label">Device ID</span><span class="tc-value">${shortId(deviceId)}</span></div>
+              <div class="tc-row"><span class="tc-label">Name</span><input type="text" id="tc-name-${deviceId}" value="${s.name || deviceId}"></div>
+              <div class="tc-row"><span class="tc-label">Vendor / Adapter</span>
+                <select id="tc-vendor-${deviceId}">
+                  <option value="unknown" ${(s.vendor || 'unknown') === 'unknown' ? 'selected' : ''}>unknown</option>
+                </select>
+              </div>
+              <div class="tc-row"><span class="tc-label">Passthrough to Cloud</span>
+                <label class="tc-toggle">
+                  <input type="checkbox" id="tc-passthrough-${deviceId}" checked>
+                  <span class="tc-slider"></span>
+                </label>
+              </div>
+              <div class="tc-row"><span class="tc-label">Pinning Bypass</span>
+                <select id="tc-pinning-${deviceId}">
+                  <option value="mitm_proxy">mitm_proxy (default)</option>
+                  <option value="frida">frida (script)</option>
+                  <option value="disable_pin_check">disable_pin_check</option>
+                </select>
+              </div>
+              <div class="tc-row">
+                <span class="tc-label">⬇️ CA Certificate</span>
+                <button class="btn btn-ghost" onclick="downloadCaCert()" style="padding:4px 10px;font-size:12px;">Download</button>
+              </div>
+              <div style="text-align:right;margin-top:8px;">
+                <button class="btn btn-primary" onclick="saveTlsConfig('${deviceId}')" style="padding:6px 16px;font-size:12px;">Save TLS Config</button>
+              </div>
+            </div>
+          </div>`;
   } catch(e) { showToast('Failed to load device details', 'error'); }
 }
 
@@ -959,7 +1369,98 @@ async function switchMode(deviceId) {
 }
 
 loadDevices();
+loadTlsBar();
+loadVendors();
 setInterval(loadDevices, 8000);
+setInterval(loadTlsBar, 15000);
+
+// ── Load vendors list for TLS config dropdown ─────────────────────────────
+async function loadVendors() {
+  try {
+    // Get the list from the first device's detail or from a known endpoint
+    // For now, populate from /health which lists adapters
+    const res = await fetch('/health');
+    if (!res.ok) return;
+    const h = await res.json();
+    const adapters = h.adapters || [];
+    if (adapters.length === 0) return;
+    // Update any vendor select dropdown on the page
+    document.querySelectorAll('[id^="tc-vendor-"]').forEach(sel => {
+      adapters.forEach(v => {
+        if (!sel.querySelector(`option[value="${v}"]`)) {
+          const opt = document.createElement('option');
+          opt.value = v; opt.textContent = v;
+          sel.appendChild(opt);
+        }
+      });
+    });
+  } catch(e) { /* ignore */ }
+}
+
+// ── TLS: Load monitored ports bar ──────────────────────────────────────────
+async function loadTlsBar() {
+  try {
+    const res = await fetch('/api/tls/ports');
+    const data = await res.json();
+    const container = document.getElementById('tlsBadges');
+    const status = document.getElementById('tlsStatus');
+    if (!data.enabled) {
+      container.innerHTML = '<span class="tb-badge tb-inactive">disabled</span>';
+      status.textContent = 'TLS MITM off';
+      return;
+    }
+    const ports = data.ports || [];
+    container.innerHTML = ports.map(p => `<span class="tb-badge tb-active">${p} <button class="tb-btn" onclick="removeTlsPort(${p})">&times;</button></span>`).join('');
+    status.textContent = `${ports.length} port${ports.length !== 1 ? 's' : ''}`;
+  } catch(e) {
+    document.getElementById('tlsBadges').innerHTML = '<span class="tb-badge tb-inactive">error</span>';
+  }
+}
+
+async function addTlsPort() {
+  const input = document.getElementById('newPortInput');
+  const port = parseInt(input.value);
+  if (!port || port < 1 || port > 65535) { showToast('Invalid port', 'error'); return; }
+  try {
+    const res = await fetch('/api/tls/ports', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({port}),
+    });
+    if (!res.ok) { showToast('Failed to add port', 'error'); return; }
+    showToast('Added port ' + port, 'success');
+    input.value = '';
+    loadTlsBar();
+  } catch(e) { showToast('Failed to add port', 'error'); }
+}
+
+async function removeTlsPort(port) {
+  try {
+    const res = await fetch(`/api/tls/ports/${port}`, { method: 'DELETE' });
+    if (!res.ok) { showToast('Failed to remove port', 'error'); return; }
+    showToast('Removed port ' + port, 'success');
+    loadTlsBar();
+  } catch(e) { showToast('Failed to remove port', 'error'); }
+}
+
+function downloadCaCert() {
+  window.open('/api/tls/ca-cert', '_blank');
+}
+
+async function saveTlsConfig(deviceId) {
+  const name = document.getElementById('tc-name-' + deviceId).value;
+  const vendor = document.getElementById('tc-vendor-' + deviceId).value;
+  const passthrough = document.getElementById('tc-passthrough-' + deviceId).checked;
+  const pinning = document.getElementById('tc-pinning-' + deviceId).value;
+  try {
+    const res = await fetch(`/api/devices/${deviceId}/tls-config`, {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name, vendor, passthrough, pinning_bypass: pinning}),
+    });
+    if (!res.ok) { showToast('Failed to save config', 'error'); return; }
+    showToast('TLS config saved', 'success');
+    loadDeviceStats(deviceId);
+    loadDevices();
+  } catch(e) { showToast('Failed to save config', 'error'); }
+}
 </script>
 </body>
 </html>"""
