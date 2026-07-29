@@ -1,38 +1,38 @@
 """
-Edge HVAC Proxy Server - Main entry point.
-DNS Interception Proxy for multi-vendor HVAC devices.
+Local Cloud Replacement Proxy - Main entry point.
+Intercepts device traffic, learns protocol via LLM, serves responses locally.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import signal
 import sys
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
 
 from core.config import get_config_manager
-from core.database import DatabaseManager, Base
-from core.traffic_analysis import (
-    TrafficAnalyzer, RequestContext, ResponseRecord, 
-    TrafficSource, ProcessingMode, ResponseMatchType
+from core.database import DatabaseManager, Base, init_db_manager, get_db_manager, DeviceRegistry
+from core.llm_decipher import get_llm_decipher, LLMDecipherService
+from core.pipeline import (
+    LearningOrchestrator, get_orchestrator, ContextBuffer,
+    PatternMatcher, MatchRateTracker, PipelineMode,
 )
-from core.traffic_selector import get_traffic_selector, TrafficSelector, TrafficRule
-from core.correlation import get_correlation_engine, RequestResponsePair
-from core.llm_decipher import get_llm_decipher, DecipherResult
-from core.modification import get_modification_engine, ModificationRule, ModificationAction
+from core.traffic_selector import get_traffic_selector, TrafficSelector, TrafficRequestInfo
 from adapters import get_registered_registry
 from adapters.base import (
-    ProtocolAdapterRegistry, InterceptedRequest, ProtocolType, 
+    ProtocolAdapterRegistry, InterceptedRequest, ProtocolType,
     Command, CommandType,
 )
-from datetime import datetime
+from sqlalchemy import select
 
 # Configure logging
 logging.basicConfig(
@@ -45,75 +45,55 @@ logger = logging.getLogger(__name__)
 # Global instances
 db_manager: DatabaseManager | None = None
 adapter_registry: ProtocolAdapterRegistry | None = None
-traffic_analyzer: TrafficAnalyzer | None = None
-traffic_selector: TrafficSelector | None = None
-modification_engine = None
-correlation_engine = None
-llm_decipher_service = None
+orchestrator: LearningOrchestrator | None = None
+llm_decipher_service: LLMDecipherService | None = None
 config_manager = get_config_manager()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
-    global db_manager, adapter_registry, traffic_analyzer
-    global traffic_selector, correlation_engine, modification_engine, llm_decipher_service
-    
-    logger.info("Starting Edge HVAC Proxy Server...")
-    
-    # Load configuration
+    global db_manager, adapter_registry, orchestrator, llm_decipher_service
+
+    logger.info("Starting Local Cloud Replacement Proxy...")
+
     config = config_manager.config
-    
+
     # Initialize database
-    data_dir = Path(config.core.vendor_db_dir)
+    data_dir = Path(config.core.device_db_dir)
     data_dir.mkdir(parents=True, exist_ok=True)
-    
-    db_manager = DatabaseManager(
+
+    db_manager = init_db_manager(
         core_db_url=config.core.database_url,
-        vendor_db_dir=data_dir,
-        vendor_db_urls=config.core.vendor_databases,
+        device_db_dir=data_dir,
+        device_db_urls=config.core.device_databases,
         echo=config.observability.logging.level == "DEBUG",
     )
     await db_manager.initialize()
-    
-    # Initialize traffic analyzer
-    traffic_analyzer = TrafficAnalyzer(db_manager=db_manager)
-    await traffic_analyzer.start()
-    
-    # Initialize traffic selector
-    traffic_selector = get_traffic_selector()
-    logger.info(f"Traffic selector loaded with {len(traffic_selector.get_rules())} rules")
-    
-    # Initialize modification engine
-    modification_engine = get_modification_engine()
-    logger.info(f"Modification engine loaded with {len(modification_engine.get_rules())} rules")
 
     # Initialize LLM decipher service
     llm_decipher_service = get_llm_decipher()
-    if llm_decipher_service:
-        profiles = llm_decipher_service.list_profiles()
-        logger.info(f"LLM decipher service loaded with profiles: {profiles}")
+    profiles = llm_decipher_service.list_profiles()
+    logger.info(f"LLM decipher service loaded with profiles: {profiles}")
 
-    # Initialize correlation engine
-    correlation_engine = get_correlation_engine()
-    logger.info("Correlation engine initialized")
-    
+    # Initialize orchestrator
+    orchestrator = get_orchestrator()
+    orchestrator.initialize(llm_decipher_service)
+
     # Register adapters
     adapter_registry = get_registered_registry()
-    
+
     # Start config hot-reload
     config_manager.start_watching()
-    
+
     logger.info(f"Server started on {config.proxy.host}:{config.proxy.port}")
-    logger.info(f"Registered vendors: {adapter_registry.list_vendors()}")
-    
+    logger.info(f"Registered adapters: {adapter_registry.list_vendors()}")
+
     yield
-    
+
     # Cleanup
     logger.info("Shutting down...")
     config_manager.stop_watching()
-    if traffic_analyzer:
-        await traffic_analyzer.stop()
     if llm_decipher_service:
         await llm_decipher_service.close()
     if db_manager:
@@ -122,9 +102,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Edge HVAC Proxy",
-    description="DNS Interception Proxy for Multi-Vendor HVAC Edge AI",
-    version="0.1.0",
+    title="Local Cloud Replacement Proxy",
+    description="DNS Interception Proxy that learns device protocols and serves responses locally",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
@@ -147,73 +127,237 @@ async def health_check():
     """Health check endpoint."""
     return {
         "status": "healthy",
-        "service": "edge-hvac-proxy",
-        "version": "0.1.0",
-        "vendors": adapter_registry.list_vendors() if adapter_registry else [],
+        "service": "local-cloud-replacement-proxy",
+        "version": "0.2.0",
+        "adapters": adapter_registry.list_vendors() if adapter_registry else [],
     }
 
 
-@app.get("/metrics")
-async def metrics():
-    """Prometheus metrics endpoint."""
-    stats = traffic_analyzer.get_stats() if traffic_analyzer else {}
-    content = (
-        "# HELP edge_hvac_requests_total Total number of requests processed\n"
-        "# TYPE edge_hvac_requests_total counter\n"
-        f"edge_hvac_requests_total {stats.get('total_requests', 0)}\n"
-        "# HELP edge_hvac_intercepted_requests_total Total number of intercepted requests\n"
-        "# TYPE edge_hvac_intercepted_requests_total counter\n"
-        f"edge_hvac_intercepted_requests_total {stats.get('intercepted', 0)}\n"
-        "# HELP edge_hvac_passthrough_requests_total Total number of passthrough requests\n"
-        "# TYPE edge_hvac_passthrough_requests_total counter\n"
-        f"edge_hvac_passthrough_requests_total {stats.get('passthrough', 0)}\n"
-        "# HELP edge_hvac_correlation_pairs_total Total number of correlated pairs\n"
-        "# TYPE edge_hvac_correlation_pairs_total counter\n"
-        f"edge_hvac_correlation_pairs_total {stats.get('correlation_pairs', 0)}\n"
-        "# HELP edge_hvac_uptime_seconds Server uptime in seconds\n"
-        "# TYPE edge_hvac_uptime_seconds gauge\n"
-        f"edge_hvac_uptime_seconds {stats.get('uptime_seconds', 0)}\n"
+# ═══════════════════════════════════════════════════════════════════════════════
+# DEVICE MANAGEMENT API
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/devices")
+async def list_devices():
+    """List all registered devices."""
+    if not db_manager:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    devices = await db_manager.list_devices()
+    return {"devices": devices}
+
+
+@app.get("/api/devices/{device_id}")
+async def get_device(device_id: str):
+    """Get device details and stats."""
+    if not db_manager or not orchestrator:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    async with db_manager.core_session() as session:
+        result = await session.execute(
+            select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
+        )
+        device = result.scalar_one_or_none()
+        if not device:
+            return JSONResponse(status_code=404, content={"error": "Device not found"})
+
+    stats = await orchestrator.get_device_stats(device_id)
+    return {"device": stats}
+
+
+@app.get("/api/devices/{device_id}/stats")
+async def get_device_stats(device_id: str):
+    """Get real-time match statistics for a device."""
+    if not orchestrator:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    stats = await orchestrator.get_device_stats(device_id)
+    return {"stats": stats}
+
+
+@app.get("/api/devices/{device_id}/match-rate")
+async def get_match_rate(device_id: str):
+    """Get current match rate percentage."""
+    if not orchestrator:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    stats = await orchestrator.get_device_stats(device_id)
+    return {
+        "device_id": device_id,
+        "match_rate_pct": stats.get("match_rate_pct", 0),
+        "total_requests": stats.get("total_requests", 0),
+        "local_hits": stats.get("local_hits", 0),
+        "cloud_misses": stats.get("cloud_misses", 0),
+    }
+
+
+@app.post("/api/devices/{device_id}/mode")
+async def set_device_mode(device_id: str, request: Request):
+    """Switch device between learning and production mode."""
+    if not db_manager:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    body = await request.json()
+    mode = body.get("mode", "learning")
+    if mode not in ("learning", "production"):
+        return JSONResponse(status_code=400, content={"error": "Invalid mode. Use 'learning' or 'production'"})
+    success = await db_manager.update_device_mode(device_id, mode)
+    if not success:
+        return JSONResponse(status_code=404, content={"error": "Device not found"})
+    return {"device_id": device_id, "mode": mode}
+
+
+@app.put("/api/devices/{device_id}/llm")
+async def configure_device_llm(device_id: str, request: Request):
+    """Configure LLM settings for a device."""
+    if not db_manager:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    body = await request.json()
+    success = await db_manager.update_device_llm_config(
+        device_id,
+        base_url=body.get("base_url"),
+        model_id=body.get("model_id"),
+        profile_name=body.get("profile_name"),
     )
-    return Response(content=content, media_type="text/plain")
+    if not success:
+        return JSONResponse(status_code=404, content={"error": "Device not found"})
+    return {"device_id": device_id, "status": "updated"}
+
+
+@app.get("/api/devices/{device_id}/patterns")
+async def get_device_patterns(device_id: str):
+    """Get learned patterns for a device."""
+    if not db_manager:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    from core.database import RequestPattern, ResponseTemplate, FieldMapping
+    from sqlalchemy import select
+    async with db_manager.device_session(device_id) as session:
+        patterns = await session.execute(
+            select(RequestPattern).order_by(RequestPattern.confidence.desc())
+        )
+        patterns_list = []
+        for p in patterns.scalars().all():
+            templates = await session.execute(
+                select(ResponseTemplate).where(ResponseTemplate.pattern_id == p.pattern_id)
+            )
+            tpl = templates.scalar_one_or_none()
+            patterns_list.append({
+                "pattern_id": p.pattern_id,
+                "method": p.method,
+                "path": p.path_pattern,
+                "intent": p.intent,
+                "confidence": p.confidence,
+                "hit_count": p.hit_count,
+                "response_template": {
+                    "status_code": tpl.status_code,
+                    "body_template": tpl.body_template,
+                    "field_mappings": tpl.field_mappings,
+                } if tpl else None,
+            })
+        return {"device_id": device_id, "patterns": patterns_list}
+
+
+@app.get("/api/devices/{device_id}/patterns/{pattern_id}")
+async def get_pattern_detail(device_id: str, pattern_id: str):
+    """Get detailed pattern info including field mappings."""
+    if not db_manager:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    from core.database import RequestPattern, ResponseTemplate, FieldMapping
+    from sqlalchemy import select
+    async with db_manager.device_session(device_id) as session:
+        result = await session.execute(
+            select(RequestPattern).where(RequestPattern.pattern_id == pattern_id)
+        )
+        pattern = result.scalar_one_or_none()
+        if not pattern:
+            return JSONResponse(status_code=404, content={"error": "Pattern not found"})
+
+        tpl_result = await session.execute(
+            select(ResponseTemplate).where(ResponseTemplate.pattern_id == pattern_id)
+        )
+        template = tpl_result.scalar_one_or_none()
+
+        mappings_result = await session.execute(
+            select(FieldMapping).where(FieldMapping.intent == pattern.intent)
+        )
+        mappings = [{"request_field": m.request_field, "response_field": m.response_field,
+                      "transform": m.transform, "confidence": m.confidence}
+                    for m in mappings_result.scalars().all()]
+
+        return {
+            "pattern": {
+                "pattern_id": pattern.pattern_id,
+                "method": pattern.method,
+                "path_pattern": pattern.path_pattern,
+                "protocol": pattern.protocol,
+                "required_headers": pattern.required_headers,
+                "body_schema": pattern.body_schema,
+                "intent": pattern.intent,
+                "confidence": pattern.confidence,
+                "hit_count": pattern.hit_count,
+            },
+            "response_template": {
+                "status_code": template.status_code,
+                "headers_template": template.headers_template,
+                "body_template": template.body_template,
+                "field_mappings": template.field_mappings,
+                "expected_variables": template.expected_variables,
+            } if template else None,
+            "field_mappings": mappings,
+        }
+
+
+@app.get("/api/llm/profiles")
+async def list_llm_profiles():
+    """List available LLM profiles."""
+    if not llm_decipher_service:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    profiles = llm_decipher_service.list_profiles()
+    return {"profiles": profiles}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# MAIN PROXY ENDPOINT - Catches all vendor requests
+# WEB UI (basic dashboard)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/", response_class=HTMLResponse)
+async def dashboard():
+    """Simple web dashboard."""
+    return HTMLResponse(content=HTML_DASHBOARD, status_code=200)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MAIN PROXY ENDPOINT - Catches all device traffic
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @app.api_route("/{vendor}/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"])
 async def proxy_vendor_request(vendor: str, path: str, request: Request):
-    """
-    Main proxy endpoint for vendor API requests.
-    
+    """Main proxy endpoint for device API requests.
+
     Routes:
-        - /{vendor}/* -> adapter for that vendor (e.g., /example/*)
+        - /{vendor}/* -> adapter for that protocol (e.g., /example/*)
+
+    For each request, the pipeline decides:
+      learning mode: forward to cloud, correlate, buffer, learn
+      production mode: try local match, fall back to cloud + learn
     """
-    if not adapter_registry:
+    if not db_manager or not orchestrator or not adapter_registry:
         return JSONResponse(
             status_code=503,
             content={"error": "Service not ready"},
         )
-    
+
     adapter = adapter_registry.get_adapter(vendor)
     if not adapter:
         return JSONResponse(
             status_code=404,
-            content={"error": f"Vendor '{vendor}' not supported"},
+            content={"error": f"Protocol '{vendor}' not supported. Supported: {adapter_registry.list_vendors()}"},
         )
-    
-    # Build intercepted request
+
+    # Parse request body
     body = await _get_request_body(request)
-    
-    # Determine traffic source (local vs internet)
+
+    # Determine source
     client_ip = request.client.host if request.client else "unknown"
-    # Simple heuristic: local if private IP range
     is_local = _is_local_ip(client_ip)
-    source = TrafficSource.LOCAL_NETWORK if is_local else TrafficSource.INTERNET
-    
-    # Check traffic selection rules (passthrough vs intercept)
-    if traffic_selector:
-        from core.traffic_selector import TrafficRequestInfo
+
+    # Check traffic selection rules
+    if traffic_selector := get_traffic_selector():
         dest_host = request.headers.get("host", f"{vendor}.local")
         request_info = TrafficRequestInfo(
             client_ip=client_ip,
@@ -231,8 +375,9 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):
                 content={"status": "passthrough", "message": "Traffic forwarded directly"},
             )
 
+    # Build intercepted request
     intercepted = InterceptedRequest(
-        device_id="",  # Will be extracted by adapter
+        device_id="",
         timestamp=asyncio.get_running_loop().time(),
         protocol=ProtocolType.HTTPS if request.url.scheme == "https" else ProtocolType.HTTP,
         method=request.method,
@@ -241,508 +386,223 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):
         query_params=dict(request.query_params),
         body=body,
     )
-    
+
     try:
-        # Parse request to extract intent
+        # Parse request to extract device info
         intercepted = await adapter.parse_request(intercepted)
-        
-        # Log intercepted request to vendor DB
-        await _log_intercepted_request(vendor, intercepted)
-        
-                # Get device state and info
-                device_state = await adapter.get_device_state(intercepted.device_id) if intercepted.device_id else None
-                device_info = await adapter.get_device_info(intercepted.device_id) if intercepted.device_id else None
-        
-                # Handle locally (edge inference)
-                if intercepted.parsed_intent in (
-                    "set_temperature", "set_mode", "set_fan_speed", "set_swing",
-                    "turn_on", "turn_off", "set_schedule"
-                ):
-                    from adapters.base import Command, CommandType
-    
-                    # Map parsed intent to CommandType
-                    intent_map = {
-                        "set_temperature": CommandType.SET_TEMPERATURE,
-                        "set_mode": CommandType.SET_MODE,
-                        "set_fan_speed": CommandType.SET_FAN_SPEED,
-                        "set_swing": CommandType.SET_SWING,
-                        "turn_on": CommandType.TURN_ON,
-                        "turn_off": CommandType.TURN_OFF,
-                        "set_schedule": CommandType.SET_SCHEDULE,
-                    }
-    
-                    cmd_type = intent_map.get(intercepted.parsed_intent, CommandType.UNKNOWN)
-                    if cmd_type != CommandType.UNKNOWN:
-                        command = Command(
-                            device_id=intercepted.device_id,
-                            command_type=cmd_type,
-                            params=intercepted.parsed_params,
-                            source="edge_auto",
-                        )
-                
-                        # Execute command through adapter
-                        result = await adapter.send_command(intercepted.device_id, command)
-                
-                        # Track compliance if we have actual response
-                        if device_state:
-                            await traffic_analyzer.track_device_command(
-                                device_id=intercepted.device_id,
-                                vendor=vendor,
-                                command_sent=command.params,
-                                expected_state=_command_to_expected_state(command),
-                                actual_response=result.response,
-                                latency_ms=result.response.get("latency_ms", 0) if result.response else 0,
-                            )
-                
-                        response_data = await adapter.build_response(intercepted, result)
-                
-                        # Traffic analysis: compare with cloud if available
-                        if config_manager.config.proxy.fallback.enabled and result.success:
-                            cloud_result = await adapter.forward_to_cloud(intercepted)
-                            if cloud_result.success:
-                                edge_response = ResponseRecord(
-                                    source="edge",
-                                    status_code=200,
-                                    headers={},
-                            body=response_data,
-                            latency_ms=0,
-                            timestamp=datetime.utcnow(),
-                        )
-                        cloud_response = ResponseRecord(
-                            source="cloud",
-                            status_code=200,
-                            headers={},
-                            body=cloud_result.response,
-                            latency_ms=0,
-                            timestamp=datetime.utcnow(),
-                        )
-                        
-                        request_context = RequestContext(
-                            request_id=intercepted.device_id,
-                            device_id=intercepted.device_id,
-                            vendor=vendor,
-                            device_type=device_info.device_type if device_info else "unknown",
-                            source=source,
-                            timestamp=datetime.utcnow(),
-                            protocol=intercepted.protocol.value,
-                            method=intercepted.method,
-                            path=intercepted.path,
-                            headers=intercepted.headers,
-                            body=intercepted.body,
-                            query_params=intercepted.query_params,
-                        )
-                        
-                        await traffic_analyzer.analyze_request(
-                            request_context, edge_response, cloud_response
-                        )
-                
-                return JSONResponse(content=response_data)
-        
-        # For non-command requests (GET_STATE, etc.), handle normally
-        result = await adapter.handle_request(intercepted)
-        
-        # Build vendor-compatible response
-        response_data = await adapter.build_response(intercepted, result)
-        
-        return JSONResponse(content=response_data)
-        
+        device_id = intercepted.device_id or _extract_device_id(request.headers, path)
+
+        if not device_id:
+            logger.warning(f"Could not extract device ID from request to {vendor}")
+            device_id = f"unknown_{vendor}_{hash(str(request.url)) % 10000}"
+
+        # Ensure device is registered
+        await db_manager.get_or_create_device(device_id, vendor)
+
+        # Pass to pipeline for processing
+        result = await orchestrator.handle_request(
+            device_id=device_id,
+            vendor=vendor,
+            protocol="http",
+            method=request.method,
+            path=f"/{path}",
+            headers=dict(request.headers),
+            body=body,
+            query_params=dict(request.query_params),
+        )
+
+        if result["action"] == "local_response":
+            # Serve locally from learned patterns
+            response = result["response"]
+            return JSONResponse(
+                status_code=response.get("status_code", 200),
+                content=response.get("body", {}),
+                headers=response.get("headers", {}),
+            )
+        else:
+            # Forward to cloud (passthrough)
+            # In production, this would forward to the actual cloud endpoint
+            # For now, return a simulated response that the adapter provides
+            cloud_response = await adapter.forward_to_cloud(intercepted)
+            if cloud_response and cloud_response.success:
+                # Process cloud response for learning
+                resp_body = cloud_response.data if hasattr(cloud_response, 'data') else {}
+                await orchestrator.handle_response(
+                    device_id=device_id,
+                    vendor=vendor,
+                    protocol="http",
+                    status_code=200,
+                    headers={"content-type": "application/json"},
+                    body=resp_body,
+                )
+                return JSONResponse(content=resp_body)
+            else:
+                return JSONResponse(
+                    status_code=502,
+                    content={"error": "Cloud passthrough failed", "detail": str(cloud_response.error) if cloud_response else "No response"},
+                )
+
     except Exception as e:
-        logger.exception(f"Error processing request for {vendor}: {e}")
-        
-        # Fallback to cloud
-        if config_manager.config.proxy.fallback.enabled:
-            try:
-                result = await adapter.forward_to_cloud(intercepted)
-                response_data = await adapter.build_response(intercepted, result)
-                return JSONResponse(content=response_data)
-            except Exception as fallback_error:
-                logger.exception(f"Fallback to cloud failed: {fallback_error}")
-        
+        logger.error(f"Error processing request: {e}", exc_info=True)
         return JSONResponse(
             status_code=500,
-            content={"error": "Internal server error", "detail": str(e)},
+            content={"error": f"Internal error: {str(e)}"},
         )
 
 
-        def _is_local_ip(ip: str) -> bool:
-    """Check if IP is in private/local range."""
-    import ipaddress
+# ═══════════════════════════════════════════════════════════════════════════════
+# HELPERS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+async def _get_request_body(request: Request) -> dict | None:
+    """Extract JSON body from request."""
     try:
-        addr = ipaddress.ip_address(ip)
-        return addr.is_private or addr.is_loopback
+        body = await request.body()
+        if body:
+            return json.loads(body)
     except Exception:
-        return False
-
-
-def _command_to_expected_state(command: Command) -> dict:
-    """Convert command to expected device state."""
-    expected = {}
-    if command.command_type == CommandType.SET_TEMPERATURE:
-        expected["temp_target"] = command.params.get("temperature")
-    elif command.command_type == CommandType.SET_MODE:
-        expected["mode"] = command.params.get("mode")
-    elif command.command_type == CommandType.SET_FAN_SPEED:
-        expected["fan_speed"] = command.params.get("fan_speed")
-    elif command.command_type == CommandType.SET_SWING:
-        expected["swing"] = command.params.get("swing")
-    elif command.command_type == CommandType.TURN_ON:
-        expected["on_off"] = True
-    elif command.command_type == CommandType.TURN_OFF:
-        expected["on_off"] = False
-    return expected
-
-
-async def _get_request_body(request: Request) -> dict | bytes | None:
-    """Extract request body."""
-    content_type = request.headers.get("content-type", "")
-    if "application/json" in content_type:
-        return await request.json()
-    elif "application/x-www-form-urlencoded" in content_type:
-        return dict(await request.form())
-    elif content_type:
-        return await request.body()
+        pass
     return None
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# MQTT PROXY ENDPOINT (for MQTT-based protocols)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-@app.post("/mqtt/{vendor}/publish")
-async def mqtt_proxy_publish(vendor: str, request: Request):
-    """Proxy MQTT publish from device."""
-    if not adapter_registry:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    
-    adapter = adapter_registry.get_adapter(vendor)
-    if not adapter or ProtocolType.MQTT not in adapter.supported_protocols:
-        return JSONResponse(status_code=404, content={"error": "MQTT not supported for vendor"})
-    
-    body = await request.json()
-    topic = body.get("topic", "")
-    payload = body.get("payload", {})
-    qos = body.get("qos", 0)
-    retain = body.get("retain", False)
-    
-    intercepted = InterceptedRequest(
-        device_id="",
-        timestamp=asyncio.get_running_loop().time(),
-        protocol=ProtocolType.MQTT,
-        topic=topic,
-        qos=qos,
-        retain=retain,
-        body=payload,
-    )
-    
-    intercepted = await adapter.parse_request(intercepted)
-    await _log_intercepted_request(vendor, intercepted)
-    result = await adapter.handle_request(intercepted)
-    response_data = await adapter.build_response(intercepted, result)
-    
-    return JSONResponse(content=response_data)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# DEVICE MANAGEMENT API (for dashboard/control)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-@app.get("/api/devices")
-async def list_devices():
-    """List all registered devices."""
-    if not db_manager:
-        return JSONResponse(status_code=503, content={"error": "DB not ready"})
-    
-    async with db_manager.core_session() as session:
-        from sqlalchemy import select
-        from core.database import DeviceRegistry
-        
-        result = await session.execute(select(DeviceRegistry))
-        devices = result.scalars().all()
-        
-        return [
-            {
-                "device_id": d.device_id,
-                "vendor": d.vendor,
-                "device_type": d.device_type,
-                "name": d.name,
-                "location": d.location,
-                "status": d.status,
-                "last_seen": d.last_seen.isoformat() if d.last_seen else None,
-                "capabilities": d.capabilities,
-            }
-            for d in devices
-        ]
-
-
-@app.get("/api/devices/{device_id}")
-async def get_device(device_id: str):
-    """Get device details."""
-    if not db_manager:
-        return JSONResponse(status_code=503, content={"error": "DB not ready"})
-    
-    async with db_manager.core_session() as session:
-        from sqlalchemy import select
-        from core.database import DeviceRegistry
-        
-        result = await session.execute(
-            select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
-        )
-        device = result.scalar_one_or_none()
-        
-        if not device:
-            return JSONResponse(status_code=404, content={"error": "Device not found"})
-        
-        # Get recent readings from vendor DB
-        vendor_db = device.vendor_db_name
-        readings = []
-        if vendor_db and db_manager:
-            try:
-                async with db_manager.vendor_session(vendor_db) as v_session:
-                    from sqlalchemy import select, desc
-                    from core.database import VendorReading
-                    
-                    result = await v_session.execute(
-                        select(VendorReading)
-                        .where(VendorReading.device_id == device_id)
-                        .order_by(desc(VendorReading.timestamp))
-                        .limit(50)
-                    )
-                    readings = [
-                        {
-                            "timestamp": r.timestamp.isoformat(),
-                            "temp_target": r.temp_target,
-                            "temp_actual": r.temp_actual,
-                            "humidity": r.humidity,
-                            "power_watts": r.power_watts,
-                            "mode": r.mode,
-                            "fan_speed": r.fan_speed,
-                        }
-                        for r in result.scalars().all()
-                    ]
-            except Exception as e:
-                logger.warning(f"Failed to fetch readings: {e}")
-        
-        return {
-            "device_id": device.device_id,
-            "vendor": device.vendor,
-            "device_type": device.device_type,
-            "name": device.name,
-            "location": device.location,
-            "capabilities": device.capabilities,
-            "config": device.config,
-            "status": device.status,
-            "last_seen": device.last_seen.isoformat() if device.last_seen else None,
-            "recent_readings": readings,
-        }
-
-
-@app.post("/api/devices/{device_id}/command")
-async def send_device_command(device_id: str, request: Request):
-    """Send command to device."""
-    if not db_manager or not adapter_registry:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    
-    # Get device info
-    async with db_manager.core_session() as session:
-        from sqlalchemy import select
-        from core.database import DeviceRegistry
-        
-        result = await session.execute(
-            select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
-        )
-        device = result.scalar_one_or_none()
-        
-        if not device:
-            return JSONResponse(status_code=404, content={"error": "Device not found"})
-        
-        adapter = adapter_registry.get_adapter(device.vendor)
-        if not adapter:
-            return JSONResponse(status_code=400, content={"error": f"No adapter for vendor {device.vendor}"})
-        
-        body = await request.json()
-        command_type = body.get("command")
-        params = body.get("params", {})
-        
-        from adapters.base import Command, CommandType
-        
-        try:
-            cmd_type = CommandType(command_type)
-        except ValueError:
-            return JSONResponse(status_code=400, content={"error": f"Unknown command: {command_type}"})
-        
-        command = Command(
-            device_id=device_id,
-            command_type=cmd_type,
-            params=params,
-            source="edge_manual",
-        )
-        
-        result = await adapter.send_command(device_id, command)
-        
-        return JSONResponse(content={
-            "success": result.success,
-            "response": result.response,
-            "error": result.error,
-            "forwarded": result.forwarded,
-        })
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# TRAFFIC SELECTION API ENDPOINTS
-# ═══════════════════════════════════════════════════════════════════════════════
-
-@app.get("/api/traffic/rules")
-async def get_traffic_rules():
-    """Get all traffic selection rules."""
-    if not traffic_selector:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    return JSONResponse(content={
-        "rules": [rule.model_dump() for rule in traffic_selector.get_rules()],
-        "default_action": traffic_selector.default_action,
-    })
-
-
-@app.post("/api/traffic/rules")
-async def create_traffic_rule(rule: TrafficRule):
-    """Create a new traffic selection rule."""
-    if not traffic_selector:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    traffic_selector.add_rule(rule)
-    return JSONResponse(content={"status": "created", "rule": rule.model_dump()})
-
-
-@app.put("/api/traffic/rules/{rule_name}")
-async def update_traffic_rule(rule_name: str, rule: TrafficRule):
-    """Update an existing traffic rule."""
-    if not traffic_selector:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    traffic_selector.update_rule(rule_name, rule)
-    return JSONResponse(content={"status": "updated", "rule": rule.model_dump()})
-
-
-@app.delete("/api/traffic/rules/{rule_name}")
-async def delete_traffic_rule(rule_name: str):
-    """Delete a traffic rule."""
-    if not traffic_selector:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    traffic_selector.remove_rule(rule_name)
-    return JSONResponse(content={"status": "deleted", "rule_name": rule_name})
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# CORRELATION API ENDPOINTS
-# ═══════════════════════════════════════════════════════════════════════════════
-
-@app.get("/api/correlation/pairs")
-async def get_correlation_pairs(vendor: str | None = None, limit: int = 100):
-    """Get correlated request/response pairs."""
-    if not correlation_engine:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    pairs = correlation_engine.get_pairs(vendor=vendor, limit=limit)
-    return JSONResponse(content={"pairs": [p.model_dump() for p in pairs], "count": len(pairs)})
-
-
-@app.get("/api/correlation/pending")
-async def get_pending_count(vendor: str | None = None):
-    """Get count of pending (unmatched) request/response pairs."""
-    if not correlation_engine:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    count = correlation_engine.get_pending_count(device_id=vendor)
-    return JSONResponse(content={"pending_count": count})
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# MODIFICATION RULES API ENDPOINTS
-# ═══════════════════════════════════════════════════════════════════════════════
-
-@app.get("/api/modification/rules")
-async def get_modification_rules():
-    """Get all modification rules."""
-    if not modification_engine:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    return JSONResponse(content={"rules": [r.model_dump() for r in modification_engine.get_rules()]})
-
-
-@app.post("/api/modification/rules")
-async def create_modification_rule(rule: ModificationRule):
-    """Create a new modification rule."""
-    if not modification_engine:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    modification_engine.add_rule(rule)
-    return JSONResponse(content={"status": "created", "rule": rule.model_dump()})
-
-
-@app.put("/api/modification/rules/{rule_name}")
-async def update_modification_rule(rule_name: str, rule: ModificationRule):
-    """Update an existing modification rule."""
-    if not modification_engine:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    modification_engine.update_rule(rule_name, rule)
-    return JSONResponse(content={"status": "updated", "rule": rule.model_dump()})
-
-
-@app.delete("/api/modification/rules/{rule_name}")
-async def delete_modification_rule(rule_name: str):
-    """Delete a modification rule."""
-    if not modification_engine:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    modification_engine.remove_rule(rule_name)
-    return JSONResponse(content={"status": "deleted", "rule_name": rule_name})
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# ADDITIONAL ANALYTICS ENDPOINTS
-# ═══════════════════════════════════════════════════════════════════════════════
-
-@app.get("/api/stats/compliance")
-async def get_compliance_stats(vendor: str | None = None):
-    """Get compliance statistics (percentage of identical responses vs database)."""
-    if not traffic_analyzer:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    stats = traffic_analyzer.get_compliance_stats(vendor=vendor)
-    return JSONResponse(content=stats)
-
-
-@app.get("/api/stats/traffic")
-async def get_traffic_stats(vendor: str | None = None):
-    """Get traffic statistics."""
-    if not traffic_analyzer:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    stats = traffic_analyzer.get_stats(vendor=vendor)
-    return JSONResponse(content=stats)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# HELPER FUNCTIONS
-# ═══════════════════════════════════════════════════════════════════════════════
-
-async def _log_intercepted_request(vendor: str, request: InterceptedRequest):
-    """Log intercepted request to vendor database."""
-    if not db_manager:
-        return
-    
+def _is_local_ip(ip: str) -> bool:
+    """Check if IP is in a private/local range."""
     try:
-        from core.database import VendorInterceptedRequest
-        
-        async with db_manager.vendor_session(vendor) as session:
-            log_entry = VendorInterceptedRequest(
-                device_id=request.device_id or "unknown",
-                protocol=request.protocol.value,
-                method=request.method,
-                path=request.path,
-                headers=request.headers,
-                body=request.body,
-                query_params=request.query_params,
-                topic=request.topic,
-                qos=request.qos,
-                retain=request.retain,
-                parsed_intent=request.parsed_intent.value if request.parsed_intent else "unknown",
-                parsed_params=request.parsed_params,
-            )
-            session.add(log_entry)
-            await session.commit()
-    except Exception as e:
-        logger.warning(f"Failed to log intercepted request: {e}")
+        import ipaddress
+        ip_obj = ipaddress.ip_address(ip)
+        return ip_obj.is_private or ip_obj.is_loopback
+    except ValueError:
+        return False
+
+
+def _extract_device_id(headers: dict, path: str) -> str:
+    """Try to extract device ID from headers or path."""
+    # Check common headers
+    for header in ["x-device-id", "x-deviceid", "device-id", "deviceid", "x-client-id", "x-sn"]:
+        if header in headers:
+            return headers[header]
+    # Check path for common patterns
+    parts = path.strip("/").split("/")
+    for part in parts:
+        if len(part) >= 8 and part.isalnum():
+            return part
+    return "unknown"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# DASHBOARD HTML
+# ═══════════════════════════════════════════════════════════════════════════════
+
+HTML_DASHBOARD = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Local Cloud Replacement Proxy</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #c9d1d9; padding: 20px; }
+  h1 { color: #58a6ff; margin-bottom: 8px; }
+  .subtitle { color: #8b949e; margin-bottom: 24px; }
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 16px; }
+  .card h2 { color: #58a6ff; font-size: 16px; margin-bottom: 12px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+  .device-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; }
+  .device-name { font-size: 16px; font-weight: 600; color: #c9d1d9; }
+  .device-id { font-size: 12px; color: #8b949e; margin-bottom: 8px; }
+  .stat-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13px; }
+  .stat-label { color: #8b949e; }
+  .stat-value { color: #c9d1d9; font-weight: 500; }
+  .match-rate { font-size: 24px; font-weight: 700; color: #3fb950; text-align: center; padding: 8px; }
+  .match-rate.warning { color: #d29922; }
+  .match-rate.danger { color: #f85149; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+  .badge-learning { background: #1f6feb22; color: #58a6ff; border: 1px solid #1f6feb; }
+  .badge-production { background: #3fb95022; color: #3fb950; border: 1px solid #3fb950; }
+  button { background: #238636; color: #fff; border: none; padding: 6px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  button:hover { background: #2ea043; }
+  select { background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; padding: 4px 8px; border-radius: 4px; }
+  #refresh { position: fixed; top: 20px; right: 20px; }
+  .empty { color: #8b949e; text-align: center; padding: 40px; font-style: italic; }
+  .mode-switch { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+</style>
+</head>
+<body>
+<h1>Local Cloud Replacement Proxy</h1>
+<p class="subtitle">DNS Interception Proxy — Device Protocol Learning & Local Response</p>
+<button id="refresh" onclick="loadDevices()">Refresh</button>
+<div id="devices" class="grid"><div class="empty">Loading devices...</div></div>
+<div id="details" style="display:none;"></div>
+
+<script>
+async function loadDevices() {
+  try {
+    const res = await fetch('/api/devices');
+    const data = await res.json();
+    const container = document.getElementById('devices');
+    if (!data.devices || data.devices.length === 0) {
+      container.innerHTML = '<div class="empty">No devices registered yet. Route a device through the proxy to begin.</div>';
+      return;
+    }
+    container.innerHTML = data.devices.map(d => {
+      const modeClass = d.mode === 'production' ? 'badge-production' : 'badge-learning';
+      return `<div class="device-card" onclick="loadDeviceStats('${d.device_id}')">
+        <div class="device-name">${d.name || d.device_id}</div>
+        <div class="device-id">${d.device_id} · ${d.vendor} · ${d.device_type}</div>
+        <div class="stat-row"><span class="stat-label">Mode</span><span class="badge ${modeClass}">${d.mode}</span></div>
+        <div class="stat-row"><span class="stat-label">Last Seen</span><span class="stat-value">${d.last_seen ? new Date(d.last_seen).toLocaleString() : 'Never'}</span></div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    document.getElementById('devices').innerHTML = '<div class="empty">Error loading devices. Is the server running?</div>';
+  }
+}
+
+async function loadDeviceStats(deviceId) {
+  try {
+    const res = await fetch(`/api/devices/${deviceId}/stats`);
+    const stats = await res.json();
+    const s = stats.stats;
+    const modeClass = s.mode === 'production' ? 'badge-production' : 'badge-learning';
+    const rateClass = s.match_rate_pct >= 80 ? '' : (s.match_rate_pct >= 50 ? 'warning' : 'danger');
+    document.getElementById('details').style.display = 'block';
+    document.getElementById('details').innerHTML = `<div class="card">
+      <h2>${s.name || deviceId} — Details</h2>
+      <div class="match-rate ${rateClass}">${s.match_rate_pct}% Match Rate</div>
+      <div class="stat-row"><span class="stat-label">Mode</span><span class="badge ${modeClass}">${s.mode}</span></div>
+      <div class="stat-row"><span class="stat-label">Total Requests</span><span class="stat-value">${s.total_requests}</span></div>
+      <div class="stat-row"><span class="stat-label">Local Hits</span><span class="stat-value">${s.local_hits}</span></div>
+      <div class="stat-row"><span class="stat-label">Cloud Misses</span><span class="stat-value">${s.cloud_misses}</span></div>
+      <div class="stat-row"><span class="stat-label">Patterns Learned</span><span class="stat-value">${s.patterns_learned}</span></div>
+      <div class="stat-row"><span class="stat-label">Buffer Size</span><span class="stat-value">${(s.current_buffer_size_bytes / 1024).toFixed(1)} KB / ${(s.context_buffer_size / 1024).toFixed(0)} KB</span></div>
+      <div class="stat-row"><span class="stat-label">Buffer Flushes</span><span class="stat-value">${s.buffer_flushes}</span></div>
+      <div class="mode-switch">
+        <select id="mode-select-${deviceId}">
+          <option value="learning" ${s.mode === 'learning' ? 'selected' : ''}>Learning</option>
+          <option value="production" ${s.mode === 'production' ? 'selected' : ''}>Production</option>
+        </select>
+        <button onclick="switchMode('${deviceId}')">Switch Mode</button>
+      </div>
+    </div>`;
+  } catch(e) { /* ignore */ }
+}
+
+async function switchMode(deviceId) {
+  const select = document.getElementById('mode-select-' + deviceId);
+  const mode = select.value;
+  await fetch(`/api/devices/${deviceId}/mode`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({mode}),
+  });
+  loadDeviceStats(deviceId);
+}
+
+loadDevices();
+setInterval(loadDevices, 5000);
+</script>
+</body>
+</html>"""
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -750,27 +610,14 @@ async def _log_intercepted_request(vendor: str, request: InterceptedRequest):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def main():
-    """Main entry point."""
+    """Run the server."""
     config = config_manager.config
-    
-    # Setup signal handlers for graceful shutdown
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    
-    def signal_handler(sig, frame):
-        logger.info(f"Received signal {sig}, shutting down...")
-        loop.stop()
-    
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-    
-    # Run server
     uvicorn.run(
-        "server:app",
+        "core.server:app",
         host=config.proxy.host,
         port=config.proxy.port,
         log_level=config.observability.logging.level.lower(),
-        reload=False,  # Disable reload in production
+        reload=False,
     )
 
 
