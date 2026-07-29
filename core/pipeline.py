@@ -720,7 +720,24 @@ class LearningPipeline:
         return prompt
 
     async def _save_patterns(self, device_id: str, analysis: dict):
-        """Save LLM-decoded patterns to the device database."""
+        """Save LLM-decoded patterns to the device database.
+
+        Uses DecipherIngest for structured output; falls back to the
+        original dict-based save for simpler analyses.
+        """
+        # Try structured ingest (PatternDB format) first
+        if "meta" in analysis and "client" in analysis and "server" in analysis:
+            from core.pattern_db import decipher_ingest
+            from core.pattern_db.schemas import PatternDB
+            try:
+                pattern_db = PatternDB.model_validate(analysis)
+                ingester = decipher_ingest.DecipherIngest(self.db_manager)
+                count = await ingester.import_patterns(device_id, pattern_db)
+                logger.info("DecipherIngest saved %d patterns for %s", count, device_id)
+                return
+            except Exception as e:
+                logger.warning("Structured ingest failed, falling back: %s", e)
+
         patterns = analysis.get("patterns", analysis.get("decoded_patterns", []))
         if not patterns:
             # Try to extract from top-level fields
@@ -818,12 +835,15 @@ class LearningOrchestrator:
         self.llm_decipher = None
         self.buffer: dict[str, ContextBuffer] = {}
         self.matcher = None
+        self.engine = None
         self.tracker = None
         self.pipeline = None
 
     def initialize(self, llm_decipher: LLMDecipherService):
         """Initialize the orchestrator with required services."""
         self.llm_decipher = llm_decipher
+        from core.pattern_db.pattern_engine import PatternEngine
+        self.engine = PatternEngine(self.db_manager)
         self.matcher = PatternMatcher(self.db_manager)
         self.tracker = MatchRateTracker(self.db_manager)
 
@@ -856,13 +876,13 @@ class LearningOrchestrator:
     async def _handle_production(self, device: DeviceRegistry, method: str, path: str,
                                     headers: dict, body: Any, query_params: dict) -> dict:
         """Production mode: try local match, fall back to cloud forwarding + learning."""
-        pattern, template, score = await self.matcher.find_best_match(
+        pattern, template, score = await self.engine.find_best_match(
             device.device_id, method, path, headers, body, query_params
         )
 
         if pattern and template and score >= device.match_threshold:
-            # Local hit
-            response = await self.matcher.build_local_response(
+            # Local hit -- build with state-aware engine
+            response = await self.engine.build_local_response(
                 device.device_id, template,
                 {"body": body, "headers": headers, "query_params": query_params}
             )
@@ -871,11 +891,11 @@ class LearningOrchestrator:
                 "action": "local_response",
                 "response": response,
                 "match_score": score,
-                "pattern_id": pattern.pattern_id,
-                "intent": pattern.intent,
+                "pattern_id": getattr(pattern, "pattern_id", None),
+                "intent": getattr(pattern, "intent", None),
             }
         else:
-            # Miss — forward to cloud, but also capture for learning
+            # Miss -- forward to cloud, but also capture for learning
             corr_key = await self._register_for_learning(
                 device, method, path, headers, body, query_params
             )
@@ -886,17 +906,16 @@ class LearningOrchestrator:
                 "match_score": score,
                 "reason": "below_threshold" if pattern else "no_pattern",
             }
-
     async def _handle_hybrid(self, device: DeviceRegistry, method: str, path: str,
                                   headers: dict, body: Any, query_params: dict) -> dict:
         """Hybrid mode: try local match first; if confident serve locally, otherwise forward to cloud + learn."""
-        pattern, template, score = await self.matcher.find_best_match(
+        pattern, template, score = await self.engine.find_best_match(
                     device.device_id, method, path, headers, body, query_params
         )
 
         if pattern and template and score >= device.match_threshold:
-            # Confident local hit
-            response = await self.matcher.build_local_response(
+            # Confident local hit -- build with state-aware engine
+            response = await self.engine.build_local_response(
                 device.device_id, template,
                 {"body": body, "headers": headers, "query_params": query_params}
             )
@@ -905,12 +924,12 @@ class LearningOrchestrator:
                 "action": "local_response",
                 "response": response,
                 "match_score": score,
-                "pattern_id": pattern.pattern_id,
-                "intent": pattern.intent,
+                "pattern_id": getattr(pattern, "pattern_id", None),
+                "intent": getattr(pattern, "intent", None),
                 "mode": "hybrid",
             }
         else:
-            # Not confident — forward to cloud but also capture for learning
+            # Not confident -- forward to cloud but also capture for learning
             corr_key = await self._register_for_learning(
                 device, method, path, headers, body, query_params
             )
@@ -922,7 +941,6 @@ class LearningOrchestrator:
                 "reason": "below_threshold" if pattern else "no_pattern",
                 "mode": "hybrid",
             }
-
     async def _handle_learning(self, device: DeviceRegistry, method: str, path: str,
                                   headers: dict, body: Any, query_params: dict) -> dict:
         """Learning mode: forward all to cloud, correlate, and build patterns."""
