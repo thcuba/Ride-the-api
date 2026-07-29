@@ -609,106 +609,266 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Ride the API — Local Cloud Replacement</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #c9d1d9; padding: 20px; }
-  h1 { color: #58a6ff; margin-bottom: 4px; }
-  .subtitle { color: #8b949e; margin-bottom: 24px; }
-  .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 16px; }
-  .card h2 { color: #58a6ff; font-size: 16px; margin-bottom: 12px; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
-  .device-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; cursor: pointer; transition: border-color 0.2s; }
-  .device-card:hover { border-color: #58a6ff; }
-  .device-name { font-size: 16px; font-weight: 600; color: #c9d1d9; }
-  .device-id { font-size: 12px; color: #8b949e; margin-bottom: 8px; }
-  .stat-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13px; }
-  .stat-label { color: #8b949e; }
-  .stat-value { color: #c9d1d9; font-weight: 500; }
-  .match-rate-big { font-size: 32px; font-weight: 700; text-align: center; padding: 12px; }
-  .match-rate-big.good { color: #3fb950; }
-  .match-rate-big.warning { color: #d29922; }
-  .match-rate-big.danger { color: #f85149; }
-  .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; white-space: nowrap; }
-  .badge-learning { background: #1f6feb22; color: #58a6ff; border: 1px solid #1f6feb; }
-  .badge-production { background: #3fb95022; color: #3fb950; border: 1px solid #3fb950; }
-  .badge-hybrid { background: #d2992222; color: #d29922; border: 1px solid #d29922; }
-  .badge-local { background: #3fb95022; color: #3fb950; border: 1px solid #3fb950; }
-  .badge-cloud { background: #1f6feb22; color: #58a6ff; border: 1px solid #1f6feb; }
-  button { background: #238636; color: #fff; border: none; padding: 6px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; }
-  button:hover { background: #2ea043; }
-  button.danger { background: #da3633; }
-  button.danger:hover { background: #f85149; }
-  select { background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; padding: 4px 8px; border-radius: 4px; font-size: 13px; }
-  #refresh { position: fixed; top: 20px; right: 20px; }
-  .empty { color: #8b949e; text-align: center; padding: 40px; font-style: italic; }
-  .mode-switch { display: flex; gap: 8px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
-  .progress-bar { background: #21262d; border-radius: 8px; height: 12px; overflow: hidden; margin: 8px 0; }
-  .progress-fill { height: 100%; border-radius: 8px; transition: width 0.5s; }
-  .progress-fill.good { background: #3fb950; }
-  .progress-fill.warning { background: #d29922; }
-  .progress-fill.danger { background: #f85149; }
-  .mini-chart { display: flex; gap: 2px; align-items: flex-end; height: 40px; margin: 8px 0; }
-  .mini-chart .bar { width: 6px; border-radius: 2px 2px 0 0; flex-shrink: 0; }
-  .bar.hit { background: #3fb950; }
-  .bar.miss { background: #58a6ff; }
-  .bar.error { background: #f85149; }
-  .stats-summary { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 0; }
-  .stat-tile { text-align: center; padding: 8px; background: #0d1117; border-radius: 6px; }
-  .stat-tile .num { font-size: 20px; font-weight: 700; }
-  .stat-tile .lbl { font-size: 11px; color: #8b949e; }
-  .stat-tile .num.green { color: #3fb950; }
-  .stat-tile .num.blue { color: #58a6ff; }
-  .stat-tile .num.red { color: #f85149; }
-  .stat-tile .num.orange { color: #d29922; }
-  .chart-container { width: 100%; overflow-x: auto; }
-  .invisible { display: none; }
-  .detail-header { display: flex; justify-content: space-between; align-items: center; }
-  .close-btn { background: none; border: 1px solid #30363d; color: #8b949e; font-size: 18px; cursor: pointer; padding: 2px 10px; border-radius: 4px; }
-  .close-btn:hover { color: #f85149; border-color: #f85149; }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0b0e14; --surface: #141820; --surface2: #1a1f2b; --border: #232a36;
+    --text: #e1e6ed; --text2: #8a94a6; --accent: #6c8cff; --accent2: #5b7ad0;
+    --green: #34d399; --yellow: #fbbf24; --red: #f87171; --blue: #60a5fa;
+    --radius: 12px; --shadow: 0 8px 32px rgba(0,0,0,.3);
+  }
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    background: var(--bg); color: var(--text); padding: 24px; min-height: 100vh;
+    background-image: radial-gradient(ellipse at 20% 10%, rgba(108,140,255,.08) 0%, transparent 50%),
+                      radial-gradient(ellipse at 80% 90%, rgba(52,211,153,.06) 0%, transparent 50%);
+  }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--surface); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  /* ── Header ────────────────────────────────────────────────────────────── */
+  .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 28px; flex-wrap: wrap; gap: 12px; }
+  .header-left { display: flex; flex-direction: column; }
+  .header-left h1 { font-size: 28px; font-weight: 800; background: linear-gradient(135deg, var(--accent), var(--green)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; letter-spacing: -.5px; }
+  .header-left .subtitle { font-size: 14px; color: var(--text2); margin-top: 2px; }
+  .header-right { display: flex; gap: 10px; align-items: center; }
+  .btn {
+    padding: 8px 18px; border: none; border-radius: 8px; font-family: inherit; font-size: 13px;
+    font-weight: 600; cursor: pointer; transition: all .2s; display: inline-flex; align-items: center; gap: 6px;
+  }
+  .btn-primary { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff; box-shadow: 0 4px 14px rgba(108,140,255,.25); }
+  .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(108,140,255,.35); }
+  .btn-primary:active { transform: translateY(0); }
+  .btn-ghost { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+  .btn-ghost:hover { border-color: var(--accent); background: rgba(108,140,255,.1); }
+
+  /* ── Global Stats Bar ──────────────────────────────────────────────────── */
+  .global-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 24px; }
+  .global-stat {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px;
+    position: relative; overflow: hidden;
+  }
+  .global-stat::before { content: ''; position: absolute; inset: 0; opacity: .06; }
+  .global-stat .gs-icon { font-size: 20px; margin-bottom: 6px; }
+  .global-stat .gs-num { font-size: 26px; font-weight: 700; }
+  .global-stat .gs-lbl { font-size: 12px; color: var(--text2); margin-top: 2px; text-transform: uppercase; letter-spacing: .5px; }
+  .global-stat.gs-blue .gs-num { color: var(--blue); }
+  .global-stat.gs-green .gs-num { color: var(--green); }
+  .global-stat.gs-yellow .gs-num { color: var(--yellow); }
+  .global-stat.gs-red .gs-num { color: var(--red); }
+
+  /* ── Grid / Cards ──────────────────────────────────────────────────────── */
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+  .device-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px;
+    cursor: pointer; transition: all .25s; position: relative; overflow: hidden;
+  }
+  .device-card::after { content: ''; position: absolute; inset: 0; border-radius: var(--radius); opacity: 0; transition: opacity .25s; background: linear-gradient(135deg, rgba(108,140,255,.05), transparent); }
+  .device-card:hover { border-color: var(--accent); transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+  .device-card:hover::after { opacity: 1; }
+  .device-card .dc-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; position: relative; z-index: 1; }
+  .device-card .dc-name { font-size: 15px; font-weight: 700; }
+  .device-card .dc-id { font-size: 11px; color: var(--text2); margin-top: 2px; }
+  .device-card .dc-meta { font-size: 12px; color: var(--text2); margin-bottom: 8px; position: relative; z-index: 1; }
+  .device-card .dc-stats { display: flex; flex-wrap: wrap; gap: 6px 12px; position: relative; z-index: 1; }
+  .device-card .dc-stat { font-size: 12px; display: flex; align-items: center; gap: 4px; }
+  .device-card .dc-stat .dc-label { color: var(--text2); }
+  .device-card .dc-stat .dc-value { font-weight: 600; }
+
+  /* ── Detail Panel ──────────────────────────────────────────────────────── */
+  #details { margin-bottom: 24px; }
+  .detail-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px;
+    box-shadow: var(--shadow); max-width: 800px; margin: 0 auto;
+  }
+  .detail-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+  .detail-header h2 { font-size: 18px; font-weight: 700; background: linear-gradient(135deg, var(--accent), var(--green)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+  .close-btn { background: none; border: 1px solid var(--border); color: var(--text2); font-size: 20px; cursor: pointer; padding: 2px 12px; border-radius: 6px; transition: all .2s; }
+  .close-btn:hover { color: var(--red); border-color: var(--red); background: rgba(248,113,113,.1); }
+
+  /* ── SVG Ring ──────────────────────────────────────────────────────────── */
+  .ring-container { display: flex; justify-content: center; align-items: center; margin: 16px 0; }
+  .ring-svg { width: 120px; height: 120px; transform: rotate(-90deg); }
+  .ring-bg { fill: none; stroke: var(--border); stroke-width: 8; }
+  .ring-fg { fill: none; stroke-width: 8; stroke-linecap: round; transition: stroke-dashoffset .6s ease; }
+  .ring-label { position: absolute; text-align: center; font-weight: 700; }
+  .ring-label .pct { font-size: 28px; }
+  .ring-label .pct-label { font-size: 11px; color: var(--text2); display: block; margin-top: 2px; font-weight: 500; }
+  .ring-wrap { position: relative; display: inline-flex; align-items: center; justify-content: center; }
+
+  /* ── Stats Grid ────────────────────────────────────────────────────────── */
+  .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 16px 0; }
+  .stat-box { text-align: center; padding: 12px 6px; background: var(--surface2); border-radius: 8px; }
+  .stat-box .num { font-size: 22px; font-weight: 700; }
+  .stat-box .lbl { font-size: 11px; color: var(--text2); margin-top: 2px; text-transform: uppercase; letter-spacing: .3px; }
+  .stat-box .num.green { color: var(--green); }
+  .stat-box .num.blue { color: var(--blue); }
+  .stat-box .num.red { color: var(--red); }
+  .stat-box .num.yellow { color: var(--yellow); }
+
+  /* ── Detail Rows ───────────────────────────────────────────────────────── */
+  .detail-rows { margin: 12px 0; }
+  .detail-row { display: flex; justify-content: space-between; padding: 6px 0; font-size: 13px; border-bottom: 1px solid rgba(35,42,54,.5); }
+  .detail-row:last-child { border-bottom: none; }
+  .detail-row .dr-label { color: var(--text2); }
+  .detail-row .dr-value { font-weight: 600; }
+
+  /* ── Sparkline ─────────────────────────────────────────────────────────── */
+  .sparkline-wrap { margin: 14px 0; background: var(--surface2); border-radius: 8px; padding: 12px; }
+  .sparkline-label { font-size: 12px; color: var(--text2); margin-bottom: 8px; text-transform: uppercase; letter-spacing: .5px; }
+  .chart { display: flex; gap: 2px; align-items: flex-end; height: 40px; }
+  .chart .bar { width: 6px; border-radius: 2px 2px 0 0; transition: height .3s; flex-shrink: 0; }
+  .bar.hit { background: var(--green); }
+  .bar.miss { background: var(--blue); }
+  .bar.error { background: var(--red); }
+  .legend { display: flex; gap: 14px; margin-top: 8px; font-size: 11px; color: var(--text2); }
+  .legend-item { display: flex; align-items: center; gap: 4px; }
+  .legend-dot { width: 8px; height: 8px; border-radius: 2px; }
+
+  /* ── Mode Switch ───────────────────────────────────────────────────────── */
+  .mode-area { display: flex; gap: 10px; align-items: center; margin-top: 16px; flex-wrap: wrap; }
+  .mode-area label { font-size: 13px; color: var(--text2); }
+  .mode-area select {
+    background: var(--surface2); color: var(--text); border: 1px solid var(--border); padding: 6px 12px;
+    border-radius: 6px; font-family: inherit; font-size: 13px; cursor: pointer; transition: border-color .2s;
+  }
+  .mode-area select:focus { outline: none; border-color: var(--accent); }
+
+  /* ── Badges ────────────────────────────────────────────────────────────── */
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 10px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+  .badge-learning { background: rgba(96,165,250,.12); color: var(--blue); border: 1px solid rgba(96,165,250,.3); }
+  .badge-production { background: rgba(52,211,153,.12); color: var(--green); border: 1px solid rgba(52,211,153,.3); }
+  .badge-hybrid { background: rgba(251,191,36,.12); color: var(--yellow); border: 1px solid rgba(251,191,36,.3); }
+
+  /* ── Toast ─────────────────────────────────────────────────────────────── */
+  .toast-container { position: fixed; top: 20px; right: 20px; z-index: 1000; display: flex; flex-direction: column; gap: 8px; }
+  .toast {
+    padding: 12px 20px; border-radius: 10px; background: var(--surface); border: 1px solid var(--border);
+    box-shadow: 0 8px 24px rgba(0,0,0,.4); font-size: 13px; font-weight: 500;
+    animation: slideIn .3s ease; display: flex; align-items: center; gap: 8px; max-width: 360px;
+  }
+  .toast.success { border-color: var(--green); }
+  .toast.error { border-color: var(--red); }
+  .toast.info { border-color: var(--blue); }
+  @keyframes slideIn { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: translateX(0); } }
+
+  /* ── Misc ──────────────────────────────────────────────────────────────── */
+  .empty { color: var(--text2); text-align: center; padding: 60px 20px; grid-column: 1 / -1; }
+  .empty-icon { font-size: 48px; margin-bottom: 12px; opacity: .3; }
+  .empty-text { font-size: 16px; font-weight: 500; margin-bottom: 4px; }
+  .empty-sub { font-size: 13px; color: var(--text2); }
+  .invisible { display: none !important; }
 </style>
 </head>
 <body>
-<h1>Ride the API</h1>
-<p class="subtitle">Local Cloud Replacement — Device Protocol Learning &amp; Response Dashboard</p>
-<button id="refresh" onclick="loadDevices()">Refresh</button>
-<div id="devices" class="grid"><div class="empty">Loading devices...</div></div>
+
+<div class="toast-container" id="toasts"></div>
+
+<div class="header">
+  <div class="header-left">
+    <h1>Ride the API</h1>
+    <span class="subtitle">Local Cloud Replacement — Device Protocol Learning &amp; Response Dashboard</span>
+  </div>
+  <div class="header-right">
+    <button class="btn btn-ghost" onclick="loadDevices()">⟳ Refresh</button>
+  </div>
+</div>
+
+<!-- Global stats bar -->
+<div class="global-stats" id="globalStats">
+  <div class="global-stat gs-blue">
+    <div class="gs-icon">⟐</div>
+    <div class="gs-num">0</div>
+    <div class="gs-lbl">Total Devices</div>
+  </div>
+  <div class="global-stat gs-green">
+    <div class="gs-icon">⊙</div>
+    <div class="gs-num">0</div>
+    <div class="gs-lbl">Learning</div>
+  </div>
+  <div class="global-stat gs-yellow">
+    <div class="gs-icon">⊕</div>
+    <div class="gs-num">0</div>
+    <div class="gs-lbl">Production</div>
+  </div>
+  <div class="global-stat gs-red">
+    <div class="gs-icon">⊞</div>
+    <div class="gs-num">0</div>
+    <div class="gs-lbl">Hybrid</div>
+  </div>
+</div>
+
+<div id="devices" class="grid">
+  <div class="empty">
+    <div class="empty-icon">⟳</div>
+    <div class="empty-text">Loading devices...</div>
+  </div>
+</div>
+
 <div id="details" class="invisible"></div>
 
 <script>
 // ── Helpers ──────────────────────────────────────────────────────────────────
-function rateClass(pct) {
-  if (pct >= 80) return 'good';
-  if (pct >= 50) return 'warning';
-  return 'danger';
-}
+function rateClass(pct) { return pct >= 80 ? 'good' : pct >= 50 ? 'warning' : 'danger'; }
+function rateColor(pct) { return pct >= 80 ? '#34d399' : pct >= 50 ? '#fbbf24' : '#f87171'; }
 function modeBadge(mode) {
   const cls = mode === 'production' ? 'badge-production' : mode === 'hybrid' ? 'badge-hybrid' : 'badge-learning';
   return `<span class="badge ${cls}">${mode}</span>`;
 }
-function shortId(id) { return id.length > 30 ? id.slice(0, 14) + '…' : id; }
+function shortId(id) { return id.length > 30 ? id.slice(0, 12) + '…' : id; }
+
+// ── Toast ────────────────────────────────────────────────────────────────────
+function showToast(msg, type) {
+  const c = document.getElementById('toasts');
+  const t = document.createElement('div');
+  t.className = 'toast ' + (type || 'info');
+  t.textContent = msg;
+  c.appendChild(t);
+  setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity .3s'; setTimeout(() => t.remove(), 300); }, 3000);
+}
 
 // ── Load device list ─────────────────────────────────────────────────────────
 async function loadDevices() {
   try {
     const res = await fetch('/api/devices');
     const data = await res.json();
-    const container = document.getElementById('devices');
-    if (!data.devices || data.devices.length === 0) {
-      container.innerHTML = '<div class="empty">No devices registered yet. Route a device through the proxy to begin.</div>';
+    const container = document.getElementById('devices'), devices = data.devices || [];
+
+    // Global stats
+    const total = devices.length;
+    const learn = devices.filter(d => d.mode === 'learning').length;
+    const prod = devices.filter(d => d.mode === 'production').length;
+    const hybrid = devices.filter(d => d.mode === 'hybrid').length;
+    const gs = document.getElementById('globalStats');
+    gs.querySelectorAll('.gs-num')[0].textContent = total;
+    gs.querySelectorAll('.gs-num')[1].textContent = learn;
+    gs.querySelectorAll('.gs-num')[2].textContent = prod;
+    gs.querySelectorAll('.gs-num')[3].textContent = hybrid;
+
+    if (devices.length === 0) {
+      container.innerHTML = '<div class="empty"><div class="empty-icon">⟐</div><div class="empty-text">No devices yet</div><div class="empty-sub">Route a device through the proxy to begin learning.</div></div>';
       return;
     }
-    container.innerHTML = data.devices.map(d => {
+    container.innerHTML = devices.map(d => {
       const rate = d.match_rate_pct !== undefined ? d.match_rate_pct : null;
       return `<div class="device-card" onclick="loadDeviceStats('${d.device_id}')">
-        <div class="device-name">${d.name || shortId(d.device_id)}</div>
-        <div class="device-id">${d.device_id} · ${d.vendor} · ${d.device_type}</div>
-        <div class="stat-row"><span class="stat-label">Mode</span>${modeBadge(d.mode)}</div>
-        ${rate !== null ? `<div class="stat-row"><span class="stat-label">Match Rate</span><span class="stat-value ${rateClass(rate)}">${rate}%</span></div>` : ''}
-        <div class="stat-row"><span class="stat-label">Last Seen</span><span class="stat-value">${d.last_seen ? new Date(d.last_seen).toLocaleString() : 'Never'}</span></div>
+        <div class="dc-top">
+          <div><div class="dc-name">${d.name || shortId(d.device_id)}</div><div class="dc-id">${shortId(d.device_id)}</div></div>
+          ${modeBadge(d.mode)}
+        </div>
+        <div class="dc-meta">${d.vendor || 'unknown'} · ${d.device_type || 'generic'}</div>
+        <div class="dc-stats">
+          ${rate !== null ? `<span class="dc-stat"><span class="dc-label">Match:</span><span class="dc-value" style="color:${rateColor(rate)}">${rate}%</span></span>` : ''}
+          <span class="dc-stat"><span class="dc-label">Last:</span><span class="dc-value">${d.last_seen ? new Date(d.last_seen).toLocaleString() : 'Never'}</span></span>
+        </div>
       </div>`;
     }).join('');
   } catch(e) {
-    document.getElementById('devices').innerHTML = '<div class="empty">Error loading devices. Is the server running?</div>';
+    document.getElementById('devices').innerHTML = '<div class="empty"><div class="empty-icon">⚠</div><div class="empty-text">Error loading devices</div><div class="empty-sub">Is the server running?</div></div>';
+    showToast('Failed to load devices', 'error');
   }
 }
 
@@ -717,84 +877,89 @@ async function loadDeviceStats(deviceId) {
   try {
     const res = await fetch(`/api/devices/${deviceId}/stats`);
     const stats = await res.json();
-    const s = stats.stats;
-    const rc = rateClass(s.match_rate_pct);
+    const s = stats.stats, pct = s.match_rate_pct || 0, rc = rateClass(pct);
     const detail = document.getElementById('details');
     detail.classList.remove('invisible');
 
-    // Build mini sparkline from recent_results
-    let sparkline = '';
+    // SVG ring
+    const circum = 2 * Math.PI * 44;
+    const offset = circum - (pct / 100) * circum;
+    const ringColor = rateColor(pct);
+    const ring = `<div class="ring-wrap"><svg class="ring-svg" viewBox="0 0 100 100">
+      <circle class="ring-bg" cx="50" cy="50" r="44"/>
+      <circle class="ring-fg" cx="50" cy="50" r="44" stroke="${ringColor}" stroke-dasharray="${circum}" stroke-dashoffset="${offset}"/>
+    </svg><div class="ring-label"><span class="pct" style="color:${ringColor}">${pct}%</span><span class="pct-label">Match Rate</span></div></div>`;
+
+    // Sparkline
     const recent = (s.recent_results || []).slice(-80);
+    let spark = '';
     if (recent.length > 0) {
-      sparkline = '<div class="chart-container"><div class="mini-chart">';
-      const maxVal = Math.max(...recent.map(r => 1));
+      spark = '<div class="sparkline-wrap"><div class="sparkline-label">Recent Activity</div><div class="chart">';
       recent.forEach(r => {
         const cls = r.result === 'local_hit' ? 'hit' : r.result === 'cloud_miss' ? 'miss' : 'error';
-        sparkline += `<div class="bar ${cls}" style="height:${Math.max(4, 40 * (1 / maxVal))}px"></div>`;
+        spark += `<div class="bar ${cls}" style="height:40px"></div>`;
       });
-      sparkline += '</div></div>';
+      const hits = recent.filter(r => r.result === 'local_hit').length;
+      const misses = recent.filter(r => r.result === 'cloud_miss').length;
+      const errs = recent.filter(r => r.result !== 'local_hit' && r.result !== 'cloud_miss').length;
+      spark += '</div><div class="legend">';
+      if (hits) spark += `<span class="legend-item"><span class="legend-dot" style="background:var(--green)"></span>${hits} hits</span>`;
+      if (misses) spark += `<span class="legend-item"><span class="legend-dot" style="background:var(--blue)"></span>${misses} misses</span>`;
+      if (errs) spark += `<span class="legend-item"><span class="legend-dot" style="background:var(--red)"></span>${errs} errors</span>`;
+      spark += '</div></div>';
     }
 
-    // Progress bar
-    const pct = s.match_rate_pct || 0;
-    const progressColor = rc;
-
-    detail.innerHTML = `<div class="card">
+    detail.innerHTML = `<div class="detail-card">
       <div class="detail-header">
         <h2>${s.name || deviceId} — Details</h2>
         <button class="close-btn" onclick="closeDetails()">&times;</button>
       </div>
-      <div class="match-rate-big ${rc}">${pct}% <span style="font-size:14px;font-weight:400;">Match Rate</span></div>
-      <div class="progress-bar"><div class="progress-fill ${progressColor}" style="width:${pct}%"></div></div>
-
-      <div class="stats-summary">
-        <div class="stat-tile"><div class="num green">${s.local_hits}</div><div class="lbl">Local Hits</div></div>
-        <div class="stat-tile"><div class="num blue">${s.cloud_misses}</div><div class="lbl">Cloud Misses</div></div>
-        <div class="stat-tile"><div class="num red">${s.errors}</div><div class="lbl">Errors</div></div>
-        <div class="stat-tile"><div class="num orange">${s.patterns_learned}</div><div class="lbl">Patterns</div></div>
+      ${ring}
+      <div class="stats-grid">
+        <div class="stat-box"><div class="num green">${s.local_hits}</div><div class="lbl">Local Hits</div></div>
+        <div class="stat-box"><div class="num blue">${s.cloud_misses}</div><div class="lbl">Cloud Misses</div></div>
+        <div class="stat-box"><div class="num red">${s.errors}</div><div class="lbl">Errors</div></div>
+        <div class="stat-box"><div class="num yellow">${s.patterns_learned}</div><div class="lbl">Patterns</div></div>
       </div>
-
-      <div class="stat-row"><span class="stat-label">Total Requests</span><span class="stat-value">${s.total_requests}</span></div>
-      <div class="stat-row"><span class="stat-label">Mode</span>${modeBadge(s.mode)}</div>
-      <div class="stat-row"><span class="stat-label">Match Threshold</span><span class="stat-value">${(s.match_threshold * 100).toFixed(0)}%</span></div>
-      <div class="stat-row"><span class="stat-label">Buffer</span><span class="stat-value">${(s.current_buffer_size_bytes / 1024).toFixed(1)} KB / ${(s.context_buffer_size / 1024).toFixed(0)} KB</span></div>
-      <div class="stat-row"><span class="stat-label">Buffer Flushes</span><span class="stat-value">${s.buffer_flushes}</span></div>
-      <div class="stat-row"><span class="stat-label">Templates</span><span class="stat-value">${s.templates_created}</span></div>
-
-      ${sparkline}
-
-      <div class="mode-switch">
-        <label style="font-size:13px;color:#8b949e;">Mode:</label>
+      <div class="detail-rows">
+        <div class="detail-row"><span class="dr-label">Total Requests</span><span class="dr-value">${s.total_requests}</span></div>
+        <div class="detail-row"><span class="dr-label">Mode</span>${modeBadge(s.mode)}</div>
+        <div class="detail-row"><span class="dr-label">Threshold</span><span class="dr-value">${(s.match_threshold * 100).toFixed(0)}%</span></div>
+        <div class="detail-row"><span class="dr-label">Buffer</span><span class="dr-value">${(s.current_buffer_size_bytes / 1024).toFixed(1)} KB / ${(s.context_buffer_size / 1024).toFixed(0)} KB</span></div>
+        <div class="detail-row"><span class="dr-label">Flushes</span><span class="dr-value">${s.buffer_flushes}</span></div>
+        <div class="detail-row"><span class="dr-label">Templates</span><span class="dr-value">${s.templates_created}</span></div>
+      </div>
+      ${spark}
+      <div class="mode-area">
+        <label>Mode:</label>
         <select id="mode-select-${deviceId}">
           <option value="learning" ${s.mode === 'learning' ? 'selected' : ''}>Cloud — Learn All</option>
           <option value="production" ${s.mode === 'production' ? 'selected' : ''}>Local — Serve All</option>
           <option value="hybrid" ${s.mode === 'hybrid' ? 'selected' : ''}>Hybrid — Local then Cloud</option>
         </select>
-        <button onclick="switchMode('${deviceId}')">Apply</button>
+        <button class="btn btn-primary" onclick="switchMode('${deviceId}')">Apply</button>
       </div>
     </div>`;
-  } catch(e) { /* ignore */ }
+  } catch(e) { showToast('Failed to load device details', 'error'); }
 }
 
-function closeDetails() {
-  document.getElementById('details').classList.add('invisible');
-}
+function closeDetails() { document.getElementById('details').classList.add('invisible'); }
 
 async function switchMode(deviceId) {
   const select = document.getElementById('mode-select-' + deviceId);
   const mode = select.value;
-  await fetch(`/api/devices/${deviceId}/mode`, {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({mode}),
-  });
-  loadDeviceStats(deviceId);
-  loadDevices();
+  try {
+    await fetch(`/api/devices/${deviceId}/mode`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({mode}),
+    });
+    showToast('Mode switched to ' + mode, 'success');
+    loadDeviceStats(deviceId);
+    loadDevices();
+  } catch(e) { showToast('Failed to switch mode', 'error'); }
 }
 
-// ── Auto-refresh ─────────────────────────────────────────────────────────────
 loadDevices();
-setInterval(loadDevices, 5000);
+setInterval(loadDevices, 8000);
 </script>
 </body>
 </html>"""
