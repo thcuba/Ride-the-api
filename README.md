@@ -184,7 +184,7 @@ The proxy handles requests locally:
 ## Roadmap
 
 - [ ] Auto-switch to production when match rate is sufficient
-- [ ] Pattern export/import for sharing between users
+- [ ] Pattern sharing via external database (link or DB reference)
 - [ ] Built-in DNS server (no external dependency)
 - [ ] MQTT/CoAP protocol support
 - [ ] Web UI for manual pattern editing
