@@ -1,4 +1,4 @@
-﻿"""
+"""
 Local Cloud Replacement Proxy - Main entry point.
 Intercepts device traffic, learns protocol via LLM, serves responses locally.
 """

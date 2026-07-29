@@ -1,4 +1,4 @@
-﻿"""
+"""
 On-the-Fly Modification Engine - Real-time interception and modification
 of device requests and cloud responses based on configurable rules.
 """
