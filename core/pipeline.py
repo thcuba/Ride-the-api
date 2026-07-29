@@ -32,6 +32,7 @@ class PipelineMode(str, Enum):
     """Operation mode for the pipeline."""
     LEARNING = "learning"
     PRODUCTION = "production"
+    HYBRID = "hybrid"
 
 
 class MatchResult(str, Enum):
@@ -846,6 +847,8 @@ class LearningOrchestrator:
 
         if device.mode == PipelineMode.PRODUCTION.value:
             return await self._handle_production(device, method, path, headers, body, query_params)
+        elif device.mode == PipelineMode.HYBRID.value:
+            return await self._handle_hybrid(device, method, path, headers, body, query_params)
         else:
             return await self._handle_learning(device, method, path, headers, body, query_params)
 
@@ -883,16 +886,52 @@ class LearningOrchestrator:
                 "reason": "below_threshold" if pattern else "no_pattern",
             }
 
+    async def _handle_hybrid(self, device: DeviceRegistry, method: str, path: str,
+                                  headers: dict, body: Any, query_params: dict) -> dict:
+        """Hybrid mode: try local match first; if confident serve locally, otherwise forward to cloud + learn."""
+        pattern, template, score = await self.matcher.find_best_match(
+                    device.device_id, method, path, headers, body, query_params
+        )
+
+        if pattern and template and score >= device.match_threshold:
+            # Confident local hit
+            response = await self.matcher.build_local_response(
+                device.device_id, template,
+                {"body": body, "headers": headers, "query_params": query_params}
+            )
+            await self.tracker.record_result(device.device_id, MatchResult.LOCAL_HIT)
+            return {
+                "action": "local_response",
+                "response": response,
+                "match_score": score,
+                "pattern_id": pattern.pattern_id,
+                "intent": pattern.intent,
+                "mode": "hybrid",
+            }
+        else:
+            # Not confident — forward to cloud but also capture for learning
+            corr_key = await self._register_for_learning(
+                device, method, path, headers, body, query_params
+            )
+            await self.tracker.record_result(device.device_id, MatchResult.CLOUD_MISS)
+            return {
+                "action": "forward",
+                "correlation_key": corr_key,
+                "match_score": score,
+                "reason": "below_threshold" if pattern else "no_pattern",
+                "mode": "hybrid",
+            }
+
     async def _handle_learning(self, device: DeviceRegistry, method: str, path: str,
                                   headers: dict, body: Any, query_params: dict) -> dict:
         """Learning mode: forward all to cloud, correlate, and build patterns."""
         corr_key = await self._register_for_learning(
-            device, method, path, headers, body, query_params
+                    device, method, path, headers, body, query_params
         )
         return {
-            "action": "forward",
-            "correlation_key": corr_key,
-            "mode": "learning",
+                    "action": "forward",
+                    "correlation_key": corr_key,
+                    "mode": "learning",
         }
 
     async def _register_for_learning(self, device: DeviceRegistry, method: str, path: str,
