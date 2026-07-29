@@ -194,8 +194,8 @@ async def set_device_mode(device_id: str, request: Request):
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
     body = await request.json()
     mode = body.get("mode", "learning")
-    if mode not in ("learning", "production"):
-        return JSONResponse(status_code=400, content={"error": "Invalid mode. Use 'learning' or 'production'"})
+    if mode not in ("learning", "production", "hybrid"):
+        return JSONResponse(status_code=400, content={"error": "Invalid mode. Use 'learning', 'production', or 'hybrid'"})
     success = await db_manager.update_device_mode(device_id, mode)
     if not success:
         return JSONResponse(status_code=404, content={"error": "Device not found"})
@@ -498,43 +498,86 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Local Cloud Replacement Proxy</title>
+<title>Ride the API — Local Cloud Replacement</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #c9d1d9; padding: 20px; }
-  h1 { color: #58a6ff; margin-bottom: 8px; }
+  h1 { color: #58a6ff; margin-bottom: 4px; }
   .subtitle { color: #8b949e; margin-bottom: 24px; }
   .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 16px; }
   .card h2 { color: #58a6ff; font-size: 16px; margin-bottom: 12px; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
-  .device-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
+  .device-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; cursor: pointer; transition: border-color 0.2s; }
+  .device-card:hover { border-color: #58a6ff; }
   .device-name { font-size: 16px; font-weight: 600; color: #c9d1d9; }
   .device-id { font-size: 12px; color: #8b949e; margin-bottom: 8px; }
   .stat-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13px; }
   .stat-label { color: #8b949e; }
   .stat-value { color: #c9d1d9; font-weight: 500; }
-  .match-rate { font-size: 24px; font-weight: 700; color: #3fb950; text-align: center; padding: 8px; }
-  .match-rate.warning { color: #d29922; }
-  .match-rate.danger { color: #f85149; }
-  .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+  .match-rate-big { font-size: 32px; font-weight: 700; text-align: center; padding: 12px; }
+  .match-rate-big.good { color: #3fb950; }
+  .match-rate-big.warning { color: #d29922; }
+  .match-rate-big.danger { color: #f85149; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; white-space: nowrap; }
   .badge-learning { background: #1f6feb22; color: #58a6ff; border: 1px solid #1f6feb; }
   .badge-production { background: #3fb95022; color: #3fb950; border: 1px solid #3fb950; }
+  .badge-hybrid { background: #d2992222; color: #d29922; border: 1px solid #d29922; }
+  .badge-local { background: #3fb95022; color: #3fb950; border: 1px solid #3fb950; }
+  .badge-cloud { background: #1f6feb22; color: #58a6ff; border: 1px solid #1f6feb; }
   button { background: #238636; color: #fff; border: none; padding: 6px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; }
   button:hover { background: #2ea043; }
-  select { background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; padding: 4px 8px; border-radius: 4px; }
+  button.danger { background: #da3633; }
+  button.danger:hover { background: #f85149; }
+  select { background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; padding: 4px 8px; border-radius: 4px; font-size: 13px; }
   #refresh { position: fixed; top: 20px; right: 20px; }
   .empty { color: #8b949e; text-align: center; padding: 40px; font-style: italic; }
-  .mode-switch { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+  .mode-switch { display: flex; gap: 8px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+  .progress-bar { background: #21262d; border-radius: 8px; height: 12px; overflow: hidden; margin: 8px 0; }
+  .progress-fill { height: 100%; border-radius: 8px; transition: width 0.5s; }
+  .progress-fill.good { background: #3fb950; }
+  .progress-fill.warning { background: #d29922; }
+  .progress-fill.danger { background: #f85149; }
+  .mini-chart { display: flex; gap: 2px; align-items: flex-end; height: 40px; margin: 8px 0; }
+  .mini-chart .bar { width: 6px; border-radius: 2px 2px 0 0; flex-shrink: 0; }
+  .bar.hit { background: #3fb950; }
+  .bar.miss { background: #58a6ff; }
+  .bar.error { background: #f85149; }
+  .stats-summary { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 0; }
+  .stat-tile { text-align: center; padding: 8px; background: #0d1117; border-radius: 6px; }
+  .stat-tile .num { font-size: 20px; font-weight: 700; }
+  .stat-tile .lbl { font-size: 11px; color: #8b949e; }
+  .stat-tile .num.green { color: #3fb950; }
+  .stat-tile .num.blue { color: #58a6ff; }
+  .stat-tile .num.red { color: #f85149; }
+  .stat-tile .num.orange { color: #d29922; }
+  .chart-container { width: 100%; overflow-x: auto; }
+  .invisible { display: none; }
+  .detail-header { display: flex; justify-content: space-between; align-items: center; }
+  .close-btn { background: none; border: 1px solid #30363d; color: #8b949e; font-size: 18px; cursor: pointer; padding: 2px 10px; border-radius: 4px; }
+  .close-btn:hover { color: #f85149; border-color: #f85149; }
 </style>
 </head>
 <body>
-<h1>Local Cloud Replacement Proxy</h1>
-<p class="subtitle">DNS Interception Proxy — Device Protocol Learning & Local Response</p>
+<h1>Ride the API</h1>
+<p class="subtitle">Local Cloud Replacement — Device Protocol Learning &amp; Response Dashboard</p>
 <button id="refresh" onclick="loadDevices()">Refresh</button>
 <div id="devices" class="grid"><div class="empty">Loading devices...</div></div>
-<div id="details" style="display:none;"></div>
+<div id="details" class="invisible"></div>
 
 <script>
+// ── Helpers ──────────────────────────────────────────────────────────────────
+function rateClass(pct) {
+  if (pct >= 80) return 'good';
+  if (pct >= 50) return 'warning';
+  return 'danger';
+}
+function modeBadge(mode) {
+  const cls = mode === 'production' ? 'badge-production' : mode === 'hybrid' ? 'badge-hybrid' : 'badge-learning';
+  return `<span class="badge ${cls}">${mode}</span>`;
+}
+function shortId(id) { return id.length > 30 ? id.slice(0, 14) + '…' : id; }
+
+// ── Load device list ─────────────────────────────────────────────────────────
 async function loadDevices() {
   try {
     const res = await fetch('/api/devices');
@@ -545,11 +588,12 @@ async function loadDevices() {
       return;
     }
     container.innerHTML = data.devices.map(d => {
-      const modeClass = d.mode === 'production' ? 'badge-production' : 'badge-learning';
+      const rate = d.match_rate_pct !== undefined ? d.match_rate_pct : null;
       return `<div class="device-card" onclick="loadDeviceStats('${d.device_id}')">
-        <div class="device-name">${d.name || d.device_id}</div>
+        <div class="device-name">${d.name || shortId(d.device_id)}</div>
         <div class="device-id">${d.device_id} · ${d.vendor} · ${d.device_type}</div>
-        <div class="stat-row"><span class="stat-label">Mode</span><span class="badge ${modeClass}">${d.mode}</span></div>
+        <div class="stat-row"><span class="stat-label">Mode</span>${modeBadge(d.mode)}</div>
+        ${rate !== null ? `<div class="stat-row"><span class="stat-label">Match Rate</span><span class="stat-value ${rateClass(rate)}">${rate}%</span></div>` : ''}
         <div class="stat-row"><span class="stat-label">Last Seen</span><span class="stat-value">${d.last_seen ? new Date(d.last_seen).toLocaleString() : 'Never'}</span></div>
       </div>`;
     }).join('');
@@ -558,33 +602,72 @@ async function loadDevices() {
   }
 }
 
+// ── Load device detail ───────────────────────────────────────────────────────
 async function loadDeviceStats(deviceId) {
   try {
     const res = await fetch(`/api/devices/${deviceId}/stats`);
     const stats = await res.json();
     const s = stats.stats;
-    const modeClass = s.mode === 'production' ? 'badge-production' : 'badge-learning';
-    const rateClass = s.match_rate_pct >= 80 ? '' : (s.match_rate_pct >= 50 ? 'warning' : 'danger');
-    document.getElementById('details').style.display = 'block';
-    document.getElementById('details').innerHTML = `<div class="card">
-      <h2>${s.name || deviceId} — Details</h2>
-      <div class="match-rate ${rateClass}">${s.match_rate_pct}% Match Rate</div>
-      <div class="stat-row"><span class="stat-label">Mode</span><span class="badge ${modeClass}">${s.mode}</span></div>
+    const rc = rateClass(s.match_rate_pct);
+    const detail = document.getElementById('details');
+    detail.classList.remove('invisible');
+
+    // Build mini sparkline from recent_results
+    let sparkline = '';
+    const recent = (s.recent_results || []).slice(-80);
+    if (recent.length > 0) {
+      sparkline = '<div class="chart-container"><div class="mini-chart">';
+      const maxVal = Math.max(...recent.map(r => 1));
+      recent.forEach(r => {
+        const cls = r.result === 'local_hit' ? 'hit' : r.result === 'cloud_miss' ? 'miss' : 'error';
+        sparkline += `<div class="bar ${cls}" style="height:${Math.max(4, 40 * (1 / maxVal))}px"></div>`;
+      });
+      sparkline += '</div></div>';
+    }
+
+    // Progress bar
+    const pct = s.match_rate_pct || 0;
+    const progressColor = rc;
+
+    detail.innerHTML = `<div class="card">
+      <div class="detail-header">
+        <h2>${s.name || deviceId} — Details</h2>
+        <button class="close-btn" onclick="closeDetails()">&times;</button>
+      </div>
+      <div class="match-rate-big ${rc}">${pct}% <span style="font-size:14px;font-weight:400;">Match Rate</span></div>
+      <div class="progress-bar"><div class="progress-fill ${progressColor}" style="width:${pct}%"></div></div>
+
+      <div class="stats-summary">
+        <div class="stat-tile"><div class="num green">${s.local_hits}</div><div class="lbl">Local Hits</div></div>
+        <div class="stat-tile"><div class="num blue">${s.cloud_misses}</div><div class="lbl">Cloud Misses</div></div>
+        <div class="stat-tile"><div class="num red">${s.errors}</div><div class="lbl">Errors</div></div>
+        <div class="stat-tile"><div class="num orange">${s.patterns_learned}</div><div class="lbl">Patterns</div></div>
+      </div>
+
       <div class="stat-row"><span class="stat-label">Total Requests</span><span class="stat-value">${s.total_requests}</span></div>
-      <div class="stat-row"><span class="stat-label">Local Hits</span><span class="stat-value">${s.local_hits}</span></div>
-      <div class="stat-row"><span class="stat-label">Cloud Misses</span><span class="stat-value">${s.cloud_misses}</span></div>
-      <div class="stat-row"><span class="stat-label">Patterns Learned</span><span class="stat-value">${s.patterns_learned}</span></div>
-      <div class="stat-row"><span class="stat-label">Buffer Size</span><span class="stat-value">${(s.current_buffer_size_bytes / 1024).toFixed(1)} KB / ${(s.context_buffer_size / 1024).toFixed(0)} KB</span></div>
+      <div class="stat-row"><span class="stat-label">Mode</span>${modeBadge(s.mode)}</div>
+      <div class="stat-row"><span class="stat-label">Match Threshold</span><span class="stat-value">${(s.match_threshold * 100).toFixed(0)}%</span></div>
+      <div class="stat-row"><span class="stat-label">Buffer</span><span class="stat-value">${(s.current_buffer_size_bytes / 1024).toFixed(1)} KB / ${(s.context_buffer_size / 1024).toFixed(0)} KB</span></div>
       <div class="stat-row"><span class="stat-label">Buffer Flushes</span><span class="stat-value">${s.buffer_flushes}</span></div>
+      <div class="stat-row"><span class="stat-label">Templates</span><span class="stat-value">${s.templates_created}</span></div>
+
+      ${sparkline}
+
       <div class="mode-switch">
+        <label style="font-size:13px;color:#8b949e;">Mode:</label>
         <select id="mode-select-${deviceId}">
-          <option value="learning" ${s.mode === 'learning' ? 'selected' : ''}>Learning</option>
-          <option value="production" ${s.mode === 'production' ? 'selected' : ''}>Production</option>
+          <option value="learning" ${s.mode === 'learning' ? 'selected' : ''}>Cloud — Learn All</option>
+          <option value="production" ${s.mode === 'production' ? 'selected' : ''}>Local — Serve All</option>
+          <option value="hybrid" ${s.mode === 'hybrid' ? 'selected' : ''}>Hybrid — Local then Cloud</option>
         </select>
-        <button onclick="switchMode('${deviceId}')">Switch Mode</button>
+        <button onclick="switchMode('${deviceId}')">Apply</button>
       </div>
     </div>`;
   } catch(e) { /* ignore */ }
+}
+
+function closeDetails() {
+  document.getElementById('details').classList.add('invisible');
 }
 
 async function switchMode(deviceId) {
@@ -596,8 +679,10 @@ async function switchMode(deviceId) {
     body: JSON.stringify({mode}),
   });
   loadDeviceStats(deviceId);
+  loadDevices();
 }
 
+// ── Auto-refresh ─────────────────────────────────────────────────────────────
 loadDevices();
 setInterval(loadDevices, 5000);
 </script>
