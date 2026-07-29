@@ -45,9 +45,20 @@ A DNS interception proxy that sits between IoT devices and their cloud APIs, **l
 ### Production Pipeline
 - Matches incoming requests against learned patterns
 - Calculates similarity score (path, method, headers, body, query params)
-- If score ≥ threshold → serves response from local database
+- If score ≥ threshold → serves response from local database with **state-aware pattern engine**
 - If score < threshold → forwards to cloud, captures and learns from the miss
 - Real-time match rate tracking: `hits / (hits + misses) * 100%`
+
+### Portable Pattern Database
+- Two portable databases per device: **Buffer DB** (raw captures) and **Deciphered DB** (learned patterns)
+- **Client section**: what the device sends (endpoints, body schemas, auth, firmware variants)
+- **Server section**: response templates, field mappings, state variables, virtual sensors
+- **State variables**: persistent device state across requests (power, mode, temperature)
+- **Virtual sensors**: simulated data — static, drift (random walk), periodic (sine wave), random
+- **Template variables**: `{state.varname}`, `{request.body.path}`, `{uuid}` resolved at response time
+- **Field transforms**: direct, enum (value mapping), formula (eval context-aware)
+- **Export/import**: `.ride-capture.json` and `.ride-pattern.json` portable format — shareable, LLM-agnostic, cross-hardware
+- See [design doc](docs/portable-pattern-database.md) for full schema and examples
 
 ### Configurable LLM
 - Per-device LLM configuration: `base_url`, `model_id`, optional `profile_name`
@@ -156,7 +167,14 @@ The proxy handles requests locally:
 │   ├── pipeline.py        # Learning/production orchestrator, correlator, buffer, matcher
 │   ├── llm_decipher.py    # LLM analysis service
 │   ├── modification.py    # Request/response modification
-│   └── traffic_selector.py # Intercept/passthrough rules
+│   ├── traffic_selector.py # Intercept/passthrough rules
+│   └── pattern_db/        # Portable pattern database engine
+│       ├── __init__.py    # Package init + Pydantic schemas
+│       ├── schemas.py     # CaptureDB & PatternDB Pydantic models
+│       ├── state_manager.py   # Device state + virtual sensor simulation
+│       ├── buffer_manager.py  # Buffer accumulation + export/import
+│       ├── decipher_ingest.py # LLM output → pattern DB records
+│       └── pattern_engine.py  # Pattern matching + state-aware response builder
 ├── config/
 │   └── config.yaml        # Main configuration
 ├── tests/
@@ -179,12 +197,16 @@ The proxy handles requests locally:
 | `GET /api/devices/{id}/patterns` | Learned patterns |
 | `GET /api/devices/{id}/patterns/{pid}` | Pattern detail + field mappings |
 | `GET /api/llm/profiles` | Available LLM profiles |
+| `GET /api/devices/{id}/patterns/export` | Export deciphered patterns (.ride-pattern.json) |
+| `POST /api/devices/{id}/patterns/import` | Import patterns from .ride-pattern.json |
+| `GET /api/devices/{id}/capture/export` | Export raw buffer (.ride-capture.json) |
+| `POST /api/devices/{id}/capture/import` | Import raw pairs from .ride-capture.json |
 | `/{vendor}/{path:path}` | Proxy endpoint for device traffic |
 
 ## Roadmap
 
 - [ ] Auto-switch to production when match rate is sufficient
-- [ ] Portable pattern database (LLM-agnostic, shareable, cross-hardware) — see [design doc](docs/portable-pattern-database.md)
+- [x] Portable pattern database (LLM-agnostic, shareable, cross-hardware) — see [design doc](docs/portable-pattern-database.md)
 - [ ] Built-in DNS server (no external dependency)
 - [ ] MQTT/CoAP protocol support
 - [ ] Web UI for manual pattern editing
