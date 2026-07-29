@@ -219,6 +219,109 @@ async def configure_device_llm(device_id: str, request: Request):
     return {"device_id": device_id, "status": "updated"}
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# DATABASE ASSIGNMENT API
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.post("/api/devices/{device_id}/database")
+async def assign_device_database(device_id: str, request: Request):
+    """Assign a database (URL or name) to a device. Creates a new DB if only name given."""
+    if not db_manager:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    body = await request.json()
+    database_url = body.get("database_url")
+    database_name = body.get("database_name")
+
+    # If only a name is given, create a new SQLite database for it
+    if not database_url and database_name:
+        db_path = db_manager.device_db_dir / f"{database_name}.db"
+        database_url = f"sqlite+aiosqlite:///{db_path}"
+    elif not database_url and not database_name:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Provide 'database_url' or 'database_name'"},
+        )
+
+    success = await db_manager.assign_device_database(
+        device_id, database_url=database_url, database_name=database_name,
+    )
+    if not success:
+        return JSONResponse(status_code=404, content={"error": "Device not found"})
+    return {
+        "device_id": device_id,
+        "database_url": database_url,
+        "database_name": database_name,
+    }
+
+
+@app.get("/api/databases")
+async def list_databases():
+    """List all active device databases."""
+    if not db_manager:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    databases = await db_manager.list_databases()
+    return {"databases": databases}
+
+
+@app.get("/api/devices/{device_id}/database")
+async def get_device_database(device_id: str):
+    """Get the database assignment for a device."""
+    if not db_manager:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    async with db_manager.core_session() as session:
+        from sqlalchemy import select
+        from core.database import DeviceRegistry
+        result = await session.execute(
+            select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
+        )
+        device = result.scalar_one_or_none()
+        if not device:
+            return JSONResponse(status_code=404, content={"error": "Device not found"})
+        return {
+            "device_id": device.device_id,
+            "database_url": device.database_url,
+            "database_name": device.database_name,
+            "ip_addresses": device.ip_addresses,
+        }
+
+
+@app.get("/api/devices/by-ip/{ip_address}")
+async def get_device_by_ip(ip_address: str):
+    """Look up a device by its IP address."""
+    if not db_manager:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    device_id = await db_manager.resolve_device_id(ip_address)
+    if not device_id:
+        return JSONResponse(status_code=404, content={"error": "Device not found for this IP"})
+    return {"device_id": device_id, "ip_address": ip_address}
+
+
+@app.post("/api/devices/{device_id}/ip")
+async def register_device_ip(device_id: str, request: Request):
+    """Register an IP address for a device."""
+    if not db_manager:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    body = await request.json()
+    ip_address = body.get("ip_address")
+    if not ip_address:
+        return JSONResponse(status_code=400, content={"error": "Provide 'ip_address'"})
+    async with db_manager.core_session() as session:
+        from sqlalchemy import select
+        from core.database import DeviceRegistry
+        result = await session.execute(
+            select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
+        )
+        device = result.scalar_one_or_none()
+        if not device:
+            return JSONResponse(status_code=404, content={"error": "Device not found"})
+        current_ips = list(device.ip_addresses or [])
+        if ip_address not in current_ips:
+            current_ips.append(ip_address)
+            device.ip_addresses = current_ips
+            await session.commit()
+        return {"device_id": device_id, "ip_addresses": current_ips}
+
+
 @app.get("/api/devices/{device_id}/patterns")
 async def get_device_patterns(device_id: str):
     """Get learned patterns for a device."""

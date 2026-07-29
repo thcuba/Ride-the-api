@@ -63,8 +63,15 @@ class DeviceRegistry(Base):
     capabilities: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     config: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
 
-    # Learning / Production mode
-    mode: Mapped[str] = mapped_column(String(16), default="learning", nullable=False)  # learning | production
+    # IP addresses associated with this device (for routing by IP)
+    ip_addresses: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+
+    # Database assignment (optional — override default per-device db)
+    database_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    database_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+    # Learning / Production / Hybrid mode
+    mode: Mapped[str] = mapped_column(String(16), default="learning", nullable=False)  # learning | production | hybrid
 
     # Match threshold for production mode
     match_threshold: Mapped[float] = mapped_column(Float, default=0.85, nullable=False)
@@ -352,15 +359,107 @@ class DatabaseManager:
             await conn.run_sync(Base.metadata.create_all)
         logger.info("Core database initialized")
 
+    @staticmethod
+    def _is_ip(value: str) -> bool:
+        """Check if a string looks like an IPv4 address."""
+        parts = value.split(".")
+        if len(parts) != 4:
+            return False
+        try:
+            return all(0 <= int(p) <= 255 for p in parts)
+        except ValueError:
+            return False
+
+    async def _get_device_db_url(self, device_id: str) -> str | None:
+        """Look up a device's custom database URL from the registry."""
+        async with await self.get_core_session() as session:
+            result = await session.execute(
+                select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
+            )
+            device = result.scalar_one_or_none()
+            if device and device.database_url:
+                return device.database_url
+            return None
+
+    async def resolve_device_id(self, ip_address: str) -> str | None:
+        """Resolve device_id from an IP address (reverse lookup)."""
+        async with await self.get_core_session() as session:
+            result = await session.execute(
+                select(DeviceRegistry).where(
+                    DeviceRegistry.ip_addresses.contains(ip_address)
+                )
+            )
+            device = result.scalar_one_or_none()
+            if device:
+                return device.device_id
+            return None
+
+    async def assign_device_database(
+        self, device_id: str, database_url: str | None = None,
+        database_name: str | None = None,
+    ) -> bool:
+        """Assign a specific database URL or name to a device."""
+        async with await self.get_core_session() as session:
+            result = await session.execute(
+                select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
+            )
+            device = result.scalar_one_or_none()
+            if not device:
+                return False
+            if database_url:
+                device.database_url = database_url
+            if database_name:
+                device.database_name = database_name
+            await session.commit()
+            # Re-initialize engine with new URL
+            if device_id in self._device_engines:
+                old = self._device_engines.pop(device_id)
+                await old.dispose()
+            if device_id in self._device_sessions:
+                del self._device_sessions[device_id]
+            if database_url:
+                self._device_db_urls[device_id] = database_url
+            logger.info(f"Device {device_id} database assigned: {database_url or database_name}")
+            return True
+
+    async def list_databases(self) -> list[dict]:
+        """List all device databases with their assignments."""
+        databases: list[dict] = []
+        for device_id, engine in self._device_engines.items():
+            db_url = self._device_db_urls.get(device_id, "")
+            if not db_url:
+                db_path = self.device_db_dir / f"{device_id}.db"
+                db_url = f"sqlite+aiosqlite:///{db_path}"
+            databases.append({
+                "device_id": device_id,
+                "database_url": db_url,
+                "is_active": True,
+            })
+        return databases
+
     async def get_device_engine(self, device_id: str) -> AsyncEngine:
-        """Get or create a device-specific database engine."""
+        """Get or create a device-specific database engine.
+        Checks device_registry for a custom database_url override first.
+        Also supports resolving device_id from an IP address."""
+        # IP resolution: if device_id looks like an IP, try reverse lookup
+        if device_id not in self._device_engines and self._is_ip(device_id):
+            resolved = await self.resolve_device_id(device_id)
+            if resolved:
+                device_id = resolved
+
         if device_id in self._device_engines:
             return self._device_engines[device_id]
         if device_id in self._device_db_urls:
             db_url = self._device_db_urls[device_id]
         else:
-            db_path = self.device_db_dir / f"{device_id}.db"
-            db_url = f"sqlite+aiosqlite:///{db_path}"
+            # Check registry for custom database URL
+            custom_url = await self._get_device_db_url(device_id)
+            if custom_url:
+                db_url = custom_url
+                self._device_db_urls[device_id] = custom_url
+            else:
+                db_path = self.device_db_dir / f"{device_id}.db"
+                db_url = f"sqlite+aiosqlite:///{db_path}"
         engine = create_async_engine(db_url, echo=self.echo, poolclass=NullPool)
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
@@ -370,7 +469,6 @@ class DatabaseManager:
         )
         logger.info(f"Device database '{device_id}' initialized at {db_url}")
         return engine
-
     async def get_device_session(self, device_id: str) -> AsyncSession:
         """Get an async session for a device database."""
         await self.get_device_engine(device_id)
