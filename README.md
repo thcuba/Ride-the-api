@@ -184,11 +184,10 @@ The proxy handles requests locally:
 ## Roadmap
 
 - [ ] Auto-switch to production when match rate is sufficient
-- [ ] Pattern sharing via external database (link or DB reference)
+- [ ] Portable pattern database (LLM-agnostic, shareable, cross-hardware) — see [design doc](docs/portable-pattern-database.md)
 - [ ] Built-in DNS server (no external dependency)
 - [ ] MQTT/CoAP protocol support
 - [ ] Web UI for manual pattern editing
-- [ ] Community pattern database
 - [x] Encrypted traffic MITM support
 
 YES. it is all vibe coded i'm searching for people who like this idea and would like to help implement it

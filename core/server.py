@@ -751,6 +751,87 @@ async def list_llm_profiles():
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# PORTABLE PATTERN DB ENDPOINTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@app.get("/api/devices/{device_id}/patterns/export")
+async def export_patterns(device_id: str):
+    """Export deciphered patterns to portable .ride-pattern.json format."""
+    if not db_manager:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    from core.pattern_db import decipher_ingest
+    ingester = decipher_ingest.DecipherIngest(db_manager)
+    try:
+        async with db_manager.device_session(device_id) as session:
+            from core.database import DeviceRegistry
+            from sqlalchemy import select as sel
+            result = await session.execute(sel(DeviceRegistry).where(DeviceRegistry.device_id == device_id))
+            device = result.scalar_one_or_none()
+            vendor = device.vendor if device else "unknown"
+            device_type = device.device_type if device else "unknown"
+        pattern_db = await ingester.export_patterns(device_id, vendor, device_type)
+        return pattern_db.model_dump(by_alias=True, exclude_none=True)
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/devices/{device_id}/patterns/import")
+async def import_patterns(device_id: str, request: Request):
+    """Import patterns from portable .ride-pattern.json format."""
+    if not db_manager:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    from core.pattern_db.schemas import PatternDB
+    from core.pattern_db import decipher_ingest
+    try:
+        body = await request.json()
+        pattern_db = PatternDB.model_validate(body)
+        ingester = decipher_ingest.DecipherIngest(db_manager)
+        count = await ingester.import_patterns(device_id, pattern_db)
+        return {"imported": count, "device_id": device_id}
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+
+
+@app.get("/api/devices/{device_id}/capture/export")
+async def export_buffer(device_id: str):
+    """Export raw buffer to portable .ride-capture.json format."""
+    if not db_manager:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    from core.pattern_db import buffer_manager
+    manager = buffer_manager.BufferManager(db_manager)
+    try:
+        async with db_manager.device_session(device_id) as session:
+            from core.database import DeviceRegistry
+            from sqlalchemy import select as sel
+            result = await session.execute(sel(DeviceRegistry).where(DeviceRegistry.device_id == device_id))
+            device = result.scalar_one_or_none()
+            vendor = device.vendor if device else "unknown"
+            device_type = device.device_type if device else "unknown"
+        capture = await manager.export_capture(device_id, vendor, device_type)
+        return capture.model_dump(by_alias=True, exclude_none=True)
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/devices/{device_id}/capture/import")
+async def import_buffer(device_id: str, request: Request):
+    """Import raw pairs from portable .ride-capture.json into buffer."""
+    if not db_manager:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    from core.pattern_db.schemas import CaptureDB
+    from core.pattern_db import buffer_manager
+    manager = buffer_manager.BufferManager(db_manager)
+    try:
+        body = await request.json()
+        capture = CaptureDB.model_validate(body)
+        count = await manager.import_capture(capture)
+        return {"imported": count, "device_id": device_id}
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # WEB UI (basic dashboard)
 # ═══════════════════════════════════════════════════════════════════════════════
 
