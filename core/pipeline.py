@@ -1,4 +1,4 @@
-﻿"""
+"""
 Learning/Production Pipeline - Core engine that manages device learning and local response serving.
 Handles: correlation, buffer management, LLM deciphering, pattern matching, and match rate tracking.
 """
