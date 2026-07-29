@@ -1,5 +1,5 @@
 [Unit]
-Description=Ride-the-API Edge HVAC Proxy
+Description=Ride the API — Local Cloud Replacement Proxy
 Documentation=https://github.com/thcuba/Ride-the-api
 After=network.target
 
@@ -14,6 +14,8 @@ RestartSec=5
 StandardOutput=journal
 StandardError=journal
 Environment="PYTHONPATH=/opt/ride-the-api"
+Environment="LOG_LEVEL=INFO"
+Environment="CONFIG_PATH=/opt/ride-the-api/config/config.yaml"
 
 [Install]
 WantedBy=multi-user.target

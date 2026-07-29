@@ -1,5 +1,5 @@
-# Multi-stage Dockerfile for Edge HVAC Proxy
-# Supports both CPU and GPU (NVIDIA) builds
+# Multi-stage Dockerfile for Ride the API — Local Cloud Replacement Proxy
+# Supports CPU-only (default) and GPU (NVIDIA) builds
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # BASE STAGE
@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
-RUN groupadd -r edgehvac && useradd -r -g edgehvac -d /app -s /bin/bash edgehvac
+RUN groupadd -r rideapi && useradd -r -g rideapi -d /app -s /bin/bash rideapi
 
 WORKDIR /app
 
@@ -29,7 +29,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -e . --no-build-isolation
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# GPU STAGE (optional - for NVIDIA GPU support)
+# GPU STAGE (optional — for NVIDIA GPU inference acceleration)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 FROM base AS gpu
@@ -56,15 +56,6 @@ RUN pip install --no-cache-dir \
     tensorrt==10.0.0
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# TFLITE STAGE (optional - for TensorFlow Lite)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-FROM base AS tflite
-
-RUN pip install --no-cache-dir \
-    tflite-runtime==2.16.1
-
-# ═══════════════════════════════════════════════════════════════════════════════
 # PRODUCTION STAGE
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -78,7 +69,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
-RUN groupadd -r edgehvac && useradd -r -g edgehvac -d /app -s /bin/bash edgehvac
+RUN groupadd -r rideapi && useradd -r -g rideapi -d /app -s /bin/bash rideapi
 
 WORKDIR /app
 
@@ -87,20 +78,20 @@ COPY --from=base /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.
 COPY --from=base /usr/local/bin /usr/local/bin
 
 # Copy application code
-COPY --chown=edgehvac:edgehvac . .
+COPY --chown=rideapi:rideapi . .
 
 # Create data directories
-RUN mkdir -p /app/data/vendors /app/models /app/certs /app/logs && \
-    chown -R edgehvac:edgehvac /app
+RUN mkdir -p /app/data/devices /app/data/core /app/models /app/certs /app/logs && \
+    chown -R rideapi:rideapi /app
 
-USER edgehvac
+USER rideapi
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:8080/health || exit 1
 
-# Expose ports
-EXPOSE 8911 9090 8080
+# Expose ports: 8911 proxy, 8080 health/metrics, 9090 optional metrics
+EXPOSE 8911 8080 9090
 
 # Entry point
 ENTRYPOINT ["python", "-m", "core.server"]
@@ -121,7 +112,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-RUN groupadd -r edgehvac && useradd -r -g edgehvac -d /app -s /bin/bash edgehvac
+RUN groupadd -r rideapi && useradd -r -g rideapi -d /app -s /bin/bash rideapi
 
 WORKDIR /app
 
@@ -133,16 +124,16 @@ ENV CUDA_HOME=/usr/local/cuda
 ENV PATH=${CUDA_HOME}/bin:${PATH}
 ENV LD_LIBRARY_PATH=${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}
 
-COPY --chown=edgehvac:edgehvac . .
+COPY --chown=rideapi:rideapi . .
 
-RUN mkdir -p /app/data/vendors /app/models /app/certs /app/logs && \
-    chown -R edgehvac:edgehvac /app
+RUN mkdir -p /app/data/devices /app/data/core /app/models /app/certs /app/logs && \
+    chown -R rideapi:rideapi /app
 
-USER edgehvac
+USER rideapi
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:8080/health || exit 1
 
-EXPOSE 8911 9090 8080
+EXPOSE 8911 8080 9090
 
 ENTRYPOINT ["python", "-m", "core.server"]

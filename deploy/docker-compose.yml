@@ -1,14 +1,15 @@
 version: '3.8'
 
 services:
-  edge-hvac:
+  ride-the-api:
     build:
-      context: .
+      context: ..
       dockerfile: deploy/Dockerfile
-    container_name: edge-hvac
+    container_name: ride-the-api
     restart: unless-stopped
     ports:
       - "8911:8911"    # Main proxy port
+      - "8080:8080"    # Health / dashboard
     volumes:
       - ./config:/app/config:ro
       - ./data:/app/data
@@ -17,8 +18,9 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - LOG_LEVEL=INFO
+      - CONFIG_PATH=/app/config/config.yaml
     networks:
-      - edge-hvac-net
+      - ride-the-api-net
     # Uncomment for GPU support
     # deploy:
     #   resources:
@@ -28,52 +30,23 @@ services:
     #           count: 1
     #           capabilities: [gpu]
 
-  # Optional: PostgreSQL for production (instead of SQLite)
+  # Optional: PostgreSQL for production (instead of per-device SQLite)
   # postgres:
   #   image: postgres:16-alpine
-  #   container_name: edge-hvac-postgres
+  #   container_name: ride-the-api-postgres
   #   restart: unless-stopped
   #   environment:
-  #     POSTGRES_DB: edge_hvac
-  #     POSTGRES_USER: edge_hvac
+  #     POSTGRES_DB: ride_the_api
+  #     POSTGRES_USER: ride_the_api
   #     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
   #   volumes:
   #     - postgres_data:/var/lib/postgresql/data
   #   networks:
-  #     - edge-hvac-net
-
-  # Optional: Grafana for dashboards
-  # grafana:
-  #   image: grafana/grafana:10.4
-  #   container_name: edge-hvac-grafana
-  #   restart: unless-stopped
-  #   ports:
-  #     - "3000:3000"
-  #   volumes:
-  #     - grafana_data:/var/lib/grafana
-  #     - ./deploy/grafana/dashboards:/etc/grafana/provisioning/dashboards
-  #     - ./deploy/grafana/datasources:/etc/grafana/provisioning/datasources
-  #   networks:
-  #     - edge-hvac-net
-
-  # Optional: Prometheus for metrics
-  # prometheus:
-  #   image: prom/prometheus:v2.52
-  #   container_name: edge-hvac-prometheus
-  #   restart: unless-stopped
-  #   ports:
-  #     - "9091:9090"
-  #   volumes:
-  #     - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
-  #     - prometheus_data:/prometheus
-  #   networks:
-  #     - edge-hvac-net
+  #     - ride-the-api-net
 
 networks:
-  edge-hvac-net:
+  ride-the-api-net:
     driver: bridge
 
 volumes:
-  # postgres_data:
-  # grafana_data:
-  # prometheus_data:
+  postgres_data:
