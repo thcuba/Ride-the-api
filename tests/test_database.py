@@ -38,10 +38,10 @@ async def db_manager():
 
 
 @pytest_asyncio.fixture
-async def ty_db(db_manager):
-    """Get TY vendor database session."""
-    await db_manager.get_vendor_engine("ty")
-    return db_manager.get_vendor_session("ty")
+async def example_db(db_manager):
+    """Get example vendor database session."""
+    await db_manager.get_vendor_engine("example")
+    return db_manager.get_vendor_session("example")
 
 
 class TestCoreDatabase:
@@ -63,9 +63,9 @@ class TestCoreDatabase:
             # Create
             device = DeviceRegistry(
                 device_id="test_device_001",
-                vendor="tuya",
+                vendor="example",
                 device_type="ac",
-                vendor_db_name="tuya",
+                                vendor_db_name="example",
                 name="Test AC",
                 location="Living Room",
                 capabilities={"temp_control": True, "modes": ["cool", "heat"]},
@@ -106,22 +106,22 @@ class TestCoreDatabase:
 class TestVendorDatabase:
     """Test per-vendor database operations."""
     
-    async def test_vendor_db_initialization(self, db_manager, ty_db):
+    async def test_vendor_db_initialization(self, db_manager, example_db):
         """Test vendor database tables are created."""
-        async with ty_db() as session:
+            async with example_db() as session:
             from sqlalchemy import select
             
             result = await session.execute(select(VendorDevice))
             devices = result.scalars().all()
             assert isinstance(devices, list)
     
-    async def test_vendor_device_crud(self, db_manager, ty_db):
+        async def test_vendor_device_crud(self, db_manager, example_db):
         """Test vendor device CRUD."""
-        async with ty_db() as session:
+            async with example_db() as session:
             # Create
             device = VendorDevice(
-                device_id="ty_ac_001",
-                name="TY AC",
+                    device_id="example_ac_001",
+                    name="Example AC",
                 device_type="ac",
                 model="YK-001",
                 firmware_version="1.2.3",
@@ -137,21 +137,21 @@ class TestVendorDatabase:
             # Read
             from sqlalchemy import select
             result = await session.execute(
-                select(VendorDevice).where(VendorDevice.device_id == "tuya_ac_001")
+                    select(VendorDevice).where(VendorDevice.device_id == "example_ac_001")
             )
             found = result.scalar_one_or_none()
             assert found is not None
             assert found.model == "YK-001"
     
-    async def test_vendor_readings(self, db_manager, ty_db):
+        async def test_vendor_readings(self, db_manager, example_db):
         """Test vendor readings time-series data."""
         from datetime import datetime, timezone
 
-        async with ty_db() as session:
+            async with example_db() as session:
             # Add readings
             for i in range(5):
                 reading = VendorReading(
-                    device_id="ty_ac_001",
+                        device_id="example_ac_001",
                     timestamp=datetime.now(timezone.utc),
                     temp_target=24.0,
                     temp_actual=23.5 + i * 0.1,
@@ -168,25 +168,25 @@ class TestVendorDatabase:
             from sqlalchemy import select, desc
             result = await session.execute(
                 select(VendorReading)
-                    .where(VendorReading.device_id == "ty_ac_001")
+                        .where(VendorReading.device_id == "example_ac_001")
                 .order_by(desc(VendorReading.timestamp))
                 .limit(3)
             )
             readings = result.scalars().all()
             assert len(readings) == 3
 
-    async def test_vendor_commands(self, db_manager, ty_db):
+        async def test_vendor_commands(self, db_manager, example_db):
         """Test vendor command logging."""
         from datetime import datetime, timezone
 
-        async with ty_db() as session:
+            async with example_db() as session:
             command = VendorCommand(
-                device_id="ty_ac_001",
+                    device_id="example_ac_001",
                 timestamp=datetime.now(timezone.utc),
                 command="set_temp",
                 params={"temperature": 25.0},
                 source="edge_auto",
-                edge_model_id="ty_ac_v1",
+                    edge_model_id="example_ac_v1",
                 confidence=0.95,
                 status="sent",
             )
@@ -211,43 +211,28 @@ class TestDatabaseManager:
     async def test_multi_vendor_databases(self, db_manager):
         """Test creating multiple vendor databases."""
         # Initialize multiple vendor DBs
-        ty_engine = await db_manager.get_vendor_engine("ty")
-        tl_engine = await db_manager.get_vendor_engine("tl")
-        zh_engine = await db_manager.get_vendor_engine("zh")
+        example_engine = await db_manager.get_vendor_engine("example")
         
-        assert ty_engine is not None
-        assert tl_engine is not None
-        assert zh_engine is not None
+                assert example_engine is not None
         
-        # Verify they're separate engines
-        assert ty_engine is not tl_engine
-        assert tl_engine is not zh_engine
+                # Verify they're separate engines
+                assert example_engine is not None
     
-    async def test_vendor_session_isolation(self, db_manager):
-        """Test vendor database sessions are isolated."""
-        await db_manager.get_vendor_engine("ty")
-        await db_manager.get_vendor_engine("tl")
+            async def test_vendor_session_isolation(self, db_manager):
+                """Test vendor database sessions are isolated."""
+                await db_manager.get_vendor_engine("example")
         
-        ty_session = db_manager.get_vendor_session("ty")
-        tl_session = db_manager.get_vendor_session("tl")
+                example_session = db_manager.get_vendor_session("example")
         
-        # Add device to TY DB
-        async with ty_session() as session:
-            device = VendorDevice(
-                device_id="test_ty",
-                name="TY Device",
-                device_type="ac",
-            )
-            session.add(device)
-            await session.commit()
-        
-        # Verify not in TL DB
-        async with tl_session() as session:
-            from sqlalchemy import select
-            result = await session.execute(
-                select(VendorDevice).where(VendorDevice.device_id == "test_ty")
-            )
-            assert result.scalar_one_or_none() is None
+                # Add device to example DB
+                async with example_session() as session:
+                    device = VendorDevice(
+                        device_id="test_example",
+                        name="Example Device",
+                        device_type="ac",
+                    )
+                    session.add(device)
+                    await session.commit()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

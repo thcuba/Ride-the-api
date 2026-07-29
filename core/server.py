@@ -30,7 +30,7 @@ from core.modification import get_modification_engine, ModificationRule, Modific
 from adapters import get_registered_registry
 from adapters.base import (
     ProtocolAdapterRegistry, InterceptedRequest, ProtocolType, 
-    Command, CommandType, VendorProtocolAdapter
+    Command, CommandType,
 )
 from datetime import datetime
 
@@ -187,10 +187,7 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):
     Main proxy endpoint for vendor API requests.
     
     Routes:
-    - /ty/* -> TY (Tuya) adapter
-    - /tl/* -> TL (TP-Link) adapter
-    - /zh/* -> ZH (Zehnder) adapter
-    - /hr/* -> HR (Haier) adapter
+        - /{vendor}/* -> adapter for that vendor (e.g., /example/*)
     """
     if not adapter_registry:
         return JSONResponse(
@@ -408,7 +405,7 @@ async def _get_request_body(request: Request) -> dict | bytes | None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# MQTT PROXY ENDPOINT (for MQTT-based vendors like Tuya)
+# MQTT PROXY ENDPOINT (for MQTT-based protocols)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @app.post("/mqtt/{vendor}/publish")

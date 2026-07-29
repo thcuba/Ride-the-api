@@ -1,12 +1,12 @@
 [project]
 name = "edge-hvac"
 version = "0.1.0"
-description = "Edge AI DNS Interception Proxy per HVAC Multi-Vendor (Tuya, TP-Link, Zehnder, Haier)"
+description = "Edge AI DNS Interception Proxy per HVAC Multi-Protocol"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [{name = "Ivan", email = "ivan@example.com"}]
-keywords = ["edge-ai", "hvac", "iot", "tuya", "tplink", "mqtt", "proxy"]
+keywords = ["edge-ai", "hvac", "iot", "protocol", "mqtt", "proxy", "dns-interception"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",

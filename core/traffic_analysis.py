@@ -516,23 +516,10 @@ class TrafficAnalyzer:
             logging.getLogger(__name__).warning(f"Failed to persist command record: {e}")
 
 
-# Vendor-specific normalizers for Tuya
-def tuya_normalizer(response: dict[str, Any]) -> dict[str, Any]:
-    """Normalize Tuya response for comparison."""
-    # Tuya responses have 'result' wrapper, 't' timestamp, 'tid' request ID
-    if "result" in response:
-        return response["result"]
+# Default normalizer (identity)
+def default_normalizer(response: dict[str, Any]) -> dict[str, Any]:
+    """Default normalizer — returns response as-is."""
     return response
 
-
-def tplink_normalizer(response: dict[str, Any]) -> dict[str, Any]:
-    """Normalize TP-Link response."""
-    # TP-Link Kasa/Tapo responses
-    return response
-
-
-# Registry of vendor normalizers
-VENDOR_NORMALIZERS = {
-    "tuya": tuya_normalizer,
-    "tplink": tplink_normalizer,
-}
+# Registry of vendor normalizers — users add their own
+VENDOR_NORMALIZERS: dict[str, callable] = {}

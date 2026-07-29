@@ -1,10 +1,9 @@
 """
-TY (Tuya) Protocol Adapter - Reverse Engineering Reference Implementation.
-Based on Tuya IoT Cloud API v1.0/v2.0 and MQTT protocol.
+Example Protocol Adapter - Reference Implementation.
 
-References:
-- Tuya IoT Cloud API: https://developer.tuya.com/en/docs/iot
-- Tuya MQTT: https://developer.tuya.com/en/docs/iot/mqtt-access
+Demonstrates how to implement a protocol adapter for an HVAC device
+that uses MQTT and HTTP/HTTPS with Data Point (DP) code-based protocol.
+This is a reference example — users/community choose their own database names.
 """
 
 from __future__ import annotations
@@ -27,30 +26,25 @@ from adapters.base import (
 )
 
 
-class TYProtocolAdapter(ProtocolAdapter):
-    """TY (Tuya) protocol adapter for HVAC devices."""
-    
-    # Vendor code
-    VENDOR_CODE = "ty"
-    
-    # Tuya cloud hostnames (EU region example)
+class ExampleProtocolAdapter(ProtocolAdapter):
+    """Example protocol adapter for HVAC devices — reference implementation."""
+
+    # Vendor code (example — users choose their own)
+    VENDOR_CODE = "example"
+
+    # Example cloud hostnames (placeholder — users replace with their own)
     VENDOR_HOSTNAMES = [
-        "mqtt.tuyaeu.com",
-        "mqtt.tuyaus.com",
-        "mqtt.tuyacn.com",
-        "mqtt.tuyain.com",
-        "api.tuyaeu.com",
-        "api.tuyaus.com",
-        "api.tuyacn.com",
-        "api.tuyain.com",
-        "openapi.tuyaeu.com",
-        "openapi.tuyaus.com",
-        "openapi.tuyacn.com",
-        "openapi.tuyain.com",
+        "mqtt.example.com",
+        "mqtt.example.cn",
+        "api.example.com",
+        "api.example.cn",
+        "openapi.example.com",
+        "openapi.example.cn",
     ]
-    
-    # Tuya HVAC DP (Data Point) codes - standard across most Tuya ACs
-    # These can vary by device model - should be discovered per device
+
+    # Data Point (DP) codes — common HVAC DP codes used by many protocols
+    # These can vary by device model — should be discovered per device.
+    # Users/community define their own DP code mappings for their database.
     DP_CODES = {
         "power": "1",           # Boolean: true=on, false=off
         "mode": "2",            # Enum: "cold", "hot", "wet", "wind", "auto"
@@ -66,30 +60,30 @@ class TYProtocolAdapter(ProtocolAdapter):
         "filter_life": "12",    # Integer: percentage
         "error_code": "13",     # String: error code
     }
-    
+
     # Reverse mapping
     DP_CODES_REV = {v: k for k, v in DP_CODES.items()}
-    
-    # Mode mapping: Tuya -> Standard
-    MODE_TUYA_TO_STD = {
+
+    # Mode mapping: vendor-specific -> standard
+    MODE_VENDOR_TO_STD = {
         "cold": "cool",
         "hot": "heat",
         "wet": "dry",
         "wind": "fan",
         "auto": "auto",
     }
-    
-    MODE_STD_TO_TUYA = {v: k for k, v in MODE_TUYA_TO_STD.items()}
-    
+
+    MODE_STD_TO_VENDOR = {v: k for k, v in MODE_VENDOR_TO_STD.items()}
+
     # Fan speed mapping
-    FAN_TUYA_TO_STD = {
+    FAN_VENDOR_TO_STD = {
         "low": "low",
         "medium": "medium",
         "high": "high",
         "auto": "auto",
     }
-    
-    FAN_STD_TO_TUYA = {v: k for k, v in FAN_TUYA_TO_STD.items()}
+
+    FAN_STD_TO_VENDOR = {v: k for k, v in FAN_VENDOR_TO_STD.items()}
     
     def __init__(self, vendor: str, config: dict[str, Any]):
         super().__init__(vendor, config)
@@ -110,7 +104,7 @@ class TYProtocolAdapter(ProtocolAdapter):
     # ══════════════════════════════════════════════════════════════════════════════
     
     async def parse_request(self, request: InterceptedRequest) -> InterceptedRequest:
-        """Parse Tuya request and extract intent."""
+            """Parse request and extract intent."""
         
         if request.protocol in (ProtocolType.MQTT, ProtocolType.MQTTS):
             return await self._parse_mqtt_request(request)
@@ -121,12 +115,12 @@ class TYProtocolAdapter(ProtocolAdapter):
         return request
     
     async def _parse_mqtt_request(self, request: InterceptedRequest) -> InterceptedRequest:
-        """Parse Tuya MQTT message."""
+            """Parse MQTT message."""
         if not request.topic or not request.body:
             request.parsed_intent = CommandType.UNKNOWN
             return request
         
-        # Tuya MQTT topics:
+            # Example MQTT topics:
         # - thing/status/device_id (device reports state)
         # - thing/command/device_id (cloud sends command)
         # - thing/property/device_id (property updates)
@@ -167,12 +161,12 @@ class TYProtocolAdapter(ProtocolAdapter):
         return request
     
     async def _parse_http_request(self, request: InterceptedRequest) -> InterceptedRequest:
-        """Parse Tuya HTTP/HTTPS API request."""
+            """Parse HTTP/HTTPS API request."""
         if not request.path:
             request.parsed_intent = CommandType.UNKNOWN
             return request
         
-        # Tuya OpenAPI endpoints:
+            # Example API endpoints:
         # GET  /v1.0/devices/{device_id}                    - Get device info
         # GET  /v1.0/devices/{device_id}/status             - Get device status
         # POST /v1.0/devices/{device_id}/commands           - Send command
@@ -239,7 +233,7 @@ class TYProtocolAdapter(ProtocolAdapter):
             if state:
                 return CommandResult(
                     success=True,
-                    response=await self._state_to_tuya_response(state),
+                    return await self._state_to_response(state),
                     forwarded=False,
                 )
         
@@ -266,8 +260,8 @@ class TYProtocolAdapter(ProtocolAdapter):
         return await self.forward_to_cloud(request)
     
     async def forward_to_cloud(self, request: InterceptedRequest) -> CommandResult:
-        """Forward request to real Tuya cloud."""
-        # Implementation would use Tuya Cloud API
+            """Forward request to real cloud."""
+            # Implementation would use the vendor's Cloud API
         # For now, return placeholder
         return CommandResult(
             success=False,
@@ -280,7 +274,7 @@ class TYProtocolAdapter(ProtocolAdapter):
     # ══════════════════════════════════════════════════════════════════════════════
     
     async def build_response(self, request: InterceptedRequest, result: CommandResult) -> dict[str, Any]:
-        """Build Tuya-compatible response."""
+            """Build vendor-compatible response."""
         if request.protocol in (ProtocolType.MQTT, ProtocolType.MQTTS):
             return await self._build_mqtt_response(request, result)
         else:
@@ -291,7 +285,7 @@ class TYProtocolAdapter(ProtocolAdapter):
         if not result.success:
             return {"success": False, "error": result.error}
         
-        # Tuya MQTT command response format
+        # Example MQTT command response format
         device_id = request.device_id
         t = int(datetime.utcnow().timestamp() * 1000)
         
@@ -333,7 +327,7 @@ class TYProtocolAdapter(ProtocolAdapter):
         
         if request.parsed_intent == CommandType.GET_STATE:
             state_data = result.response or {}
-            # Convert to Tuya status format
+            # Convert to vendor status format
             dps = {}
             for std_key, value in state_data.items():
                 dp_code = self.DP_CODES.get(std_key)
@@ -384,25 +378,25 @@ class TYProtocolAdapter(ProtocolAdapter):
     # ══════════════════════════════════════════════════════════════════════════════
     
     async def send_command(self, device_id: str, command: Command) -> CommandResult:
-        """Send command to device via Tuya Cloud API."""
-        # Convert standard command to Tuya DP format
-        tuya_commands = self._command_to_tuya_dps(command)
-        
-        # In real implementation, call Tuya Cloud API:
+            """Send command to device via cloud API."""
+            # Convert standard command to DP format
+            vendor_commands = self._command_to_dps(command)
+
+            # In real implementation, call the cloud API:
         # POST /v1.0/devices/{device_id}/commands
         # Body: {"commands": [{"code": dp_code, "value": value}, ...]}
-        
+
         return CommandResult(
             success=True,
-            response={"commands": tuya_commands},
+                response={"commands": vendor_commands},
             forwarded=False,
         )
-    
-    def _command_to_tuya_dps(self, command: Command) -> list[dict[str, Any]]:
-        """Convert standard command to Tuya DP commands."""
+
+        def _command_to_dps(self, command: Command) -> list[dict[str, Any]]:
+            """Convert standard command to DP commands."""
         cmds = []
         params = command.params
-        
+
         if command.command_type == CommandType.TURN_ON:
             cmds.append({"code": self.DP_CODES["power"], "value": True})
         elif command.command_type == CommandType.TURN_OFF:
@@ -410,64 +404,64 @@ class TYProtocolAdapter(ProtocolAdapter):
         elif command.command_type == CommandType.SET_TEMPERATURE:
             temp = params.get("temperature") or params.get("temp_set")
             if temp is not None:
-                # Tuya uses temp * 10
+                    # Example protocol uses temp * 10
                 cmds.append({"code": self.DP_CODES["temp_set"], "value": int(float(temp) * 10)})
         elif command.command_type == CommandType.SET_MODE:
             mode = params.get("mode")
-            if mode and mode in self.MODE_STD_TO_TUYA:
-                cmds.append({"code": self.DP_CODES["mode"], "value": self.MODE_STD_TO_TUYA[mode]})
+                if mode and mode in self.MODE_STD_TO_VENDOR:
+                    cmds.append({"code": self.DP_CODES["mode"], "value": self.MODE_STD_TO_VENDOR[mode]})
         elif command.command_type == CommandType.SET_FAN_SPEED:
             fan = params.get("fan_speed")
-            if fan and fan in self.FAN_STD_TO_TUYA:
-                cmds.append({"code": self.DP_CODES["fan_speed"], "value": self.FAN_STD_TO_TUYA[fan]})
+                if fan and fan in self.FAN_STD_TO_VENDOR:
+                    cmds.append({"code": self.DP_CODES["fan_speed"], "value": self.FAN_STD_TO_VENDOR[fan]})
         elif command.command_type == CommandType.SET_SWING:
             swing = params.get("swing")
             if swing is not None:
                 cmds.append({"code": self.DP_CODES["swing"], "value": bool(swing)})
-        
+
         return cmds
     
     # ══════════════════════════════════════════════════════════════════════════════
     # STATE CONVERSION
     # ══════════════════════════════════════════════════════════════════════════════
     
-    async def _state_to_tuya_response(self, state: DeviceState) -> dict[str, Any]:
-        """Convert standard state to Tuya DP format."""
+    async def _state_to_response(self, state: DeviceState) -> dict[str, Any]:
+            """Convert standard state to DP format."""
         dps = {}
-        
+
         if state.on_off is not None:
             dps[self.DP_CODES["power"]] = state.on_off
-        if state.mode and state.mode in self.MODE_STD_TO_TUYA:
-            dps[self.DP_CODES["mode"]] = self.MODE_STD_TO_TUYA[state.mode]
+            if state.mode and state.mode in self.MODE_STD_TO_VENDOR:
+                dps[self.DP_CODES["mode"]] = self.MODE_STD_TO_VENDOR[state.mode]
         if state.temp_target is not None:
             dps[self.DP_CODES["temp_set"]] = int(state.temp_target * 10)
         if state.temp_actual is not None:
             dps[self.DP_CODES["temp_current"]] = int(state.temp_actual * 10)
-        if state.fan_speed and state.fan_speed in self.FAN_STD_TO_TUYA:
-            dps[self.DP_CODES["fan_speed"]] = self.FAN_STD_TO_TUYA[state.fan_speed]
+            if state.fan_speed and state.fan_speed in self.FAN_STD_TO_VENDOR:
+                dps[self.DP_CODES["fan_speed"]] = self.FAN_STD_TO_VENDOR[state.fan_speed]
         if state.humidity is not None:
             dps[self.DP_CODES["humidity"]] = int(state.humidity)
         if state.temp_outdoor is not None:
             dps[self.DP_CODES["outdoor_temp"]] = int(state.temp_outdoor * 10)
         if state.power_watts is not None:
             dps[self.DP_CODES["power_consumption"]] = int(state.power_watts)
-        
+
         return {"dps": dps}
-    
-    async def _tuya_response_to_state(self, tuya_data: dict[str, Any]) -> DeviceState:
-        """Convert Tuya DP data to standard state."""
-        dps = tuya_data.get("dps", tuya_data.get("data", {}))
-        
+
+        async def _response_to_state(self, data: dict[str, Any]) -> DeviceState:
+            """Convert DP data to standard state."""
+            dps = data.get("dps", data.get("data", {}))
+
         return DeviceState(
             device_id="",  # Set by caller
             timestamp=datetime.utcnow(),
             on_off=dps.get(self.DP_CODES["power"]),
-            mode=self.MODE_TUYA_TO_STD.get(dps.get(self.DP_CODES["mode"])),
+                mode=self.MODE_VENDOR_TO_STD.get(dps.get(self.DP_CODES["mode"])),
             temp_target=dps.get(self.DP_CODES["temp_set"], 0) / 10 if self.DP_CODES["temp_set"] in dps else None,
             temp_actual=dps.get(self.DP_CODES["temp_current"], 0) / 10 if self.DP_CODES["temp_current"] in dps else None,
-            fan_speed=self.FAN_TUYA_TO_STD.get(dps.get(self.DP_CODES["fan_speed"])),
+                fan_speed=self.FAN_VENDOR_TO_STD.get(dps.get(self.DP_CODES["fan_speed"])),
             humidity=dps.get(self.DP_CODES["humidity"]),
             temp_outdoor=dps.get(self.DP_CODES["outdoor_temp"], 0) / 10 if self.DP_CODES["outdoor_temp"] in dps else None,
             power_watts=dps.get(self.DP_CODES["power_consumption"]),
-            vendor_data=tuya_data,
+                vendor_data=data,
         )

@@ -1,25 +1,24 @@
 ﻿# Edge HVAC Configuration
 # Copy to config.yaml and customize
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ═══════════════════════════════════════════════════════════════════════════════
 # CORE SETTINGS
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ═══════════════════════════════════════════════════════════════════════════════
 
 core:
   # Core database (SQLite for dev, PostgreSQL for prod)
   database_url: "sqlite+aiosqlite:///./data/core.db"
   
-  # Vendor databases directory
+  # Protocol databases directory
   vendor_db_dir: "./data/vendors"
   
   # Optional: override vendor DB URLs (e.g., for PostgreSQL)
   # vendor_databases:
-  #   tuya: "postgresql+asyncpg://user:pass@localhost/tuya_hvac"
-  #   tplink: "postgresql+asyncpg://user:pass@localhost/tplink_hvac"
+  #   example: "postgresql://localhost/example_hvac"
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ═══════════════════════════════════════════════════════════════════════════════
 # PROXY SERVER SETTINGS
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ═══════════════════════════════════════════════════════════════════════════════
 
 proxy:
   host: "0.0.0.0"
@@ -39,10 +38,7 @@ proxy:
   
   # Vendor route prefixes (path-based routing)
   vendor_routes:
-      ty: "/ty"
-      tl: "/tl"
-      zh: "/zh"
-      hr: "/hr"
+      example: "/example"
   
   # Fallback to vendor cloud
   fallback:
@@ -53,50 +49,29 @@ proxy:
     confidence_threshold: 0.7
 
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ═══════════════════════════════════════════════════════════════════════════════
 # VENDOR CONFIGURATIONS
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ═══════════════════════════════════════════════════════════════════════════════
 
 vendors:
-  ty:
+  example:
     enabled: true
-    # TY Cloud API endpoints (for fallback)
+    # Example cloud API endpoints (for fallback)
     cloud:
-      api_endpoint: "https://openapi.tuyaeu.com"
-      mqtt_endpoint: "mqtt.tuyaeu.com"
+      api_endpoint: "https://openapi.example.com"
+      mqtt_endpoint: "mqtt.example.com"
       mqtt_port: 8883
     # Protocol adapter settings
     adapter:
-      class: "adapters.ty.TYProtocolAdapter"
-      # TY-specific config
+      class: "adapters.example.ExampleProtocolAdapter"
+      # Region config
       region: "eu"  # eu, us, cn, in
       api_version: "v1.0"
-  
-  tl:
-    enabled: true
-    cloud:
-      api_endpoint: "https://api.kasacloud.com"
-    adapter:
-      class: "adapters.tl.TLProtocolAdapter"
-  
-  zh:
-    enabled: true
-    cloud:
-      api_endpoint: "https://api.zehndercloud.com"
-    adapter:
-      class: "adapters.zh.ZHProtocolAdapter"
-  
-  hr:
-    enabled: true
-    cloud:
-      api_endpoint: "https://api.haier.com"
-    adapter:
-      class: "adapters.hr.HRProtocolAdapter"
 
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ═══════════════════════════════════════════════════════════════════════════════
 # MODEL SERVING SETTINGS
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ═══════════════════════════════════════════════════════════════════════════════
 
 models:
   # Model registry path (relative to vendor DB dir)
@@ -104,15 +79,9 @@ models:
   
   # Default model per vendor/device_type (can be overridden in DB)
   defaults:
-    tuya:
-      ac: "tuya_ac_v1.onnx"
-      heat_pump: "tuya_hp_v1.onnx"
-    tplink:
-      ac: "tplink_ac_v1.onnx"
-    zehnder:
-      ventilator: "zehnder_vent_v1.onnx"
-    haier:
-      ac: "haier_ac_v1.onnx"
+    example:
+      ac: "example_ac_v1.onnx"
+      heat_pump: "example_hp_v1.onnx"
   
   # Inference settings
   inference:
@@ -128,9 +97,9 @@ models:
     check_interval: 30  # seconds
 
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ═══════════════════════════════════════════════════════════════════════════════
 # CONTROL LOGIC SETTINGS
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ═══════════════════════════════════════════════════════════════════════════════
 
 control:
   # Policy engine
@@ -144,6 +113,7 @@ control:
     buffer_size: 1000
     update_interval: 3600  # seconds
     min_samples_for_update: 100
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # TRAFFIC SELECTION (UI-managed intercept vs passthrough rules)
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -164,27 +134,27 @@ traffic_selection:
       priority: 10
       enabled: true
     
-    # Example: intercept Tuya cloud hostnames
-    - name: "tuya_cloud"
+    # Example: intercept cloud hostnames
+    - name: "example_cloud"
       scope: "external"
       match_type: "hostname"
-      match_value: "*.tuya.com"
+      match_value: "*.example.com"
       action: "intercept"
       priority: 10
       enabled: true
     
-    # Example: passthrough Zehnder firmware updates
-    - name: "zehnder_firmware_passthrough"
+    # Example: passthrough firmware updates
+    - name: "firmware_passthrough"
       scope: "external"
       match_type: "hostname"
-      match_value: "firmware.zehndercloud.com"
+      match_value: "firmware.example.com"
       action: "passthrough"
       priority: 20
       enabled: true
 
 
 # ════════════════════════════════════════════════════════════════════════════════
-# LLM DECIPHERING SERVICE (Configurable per-vendor LLM for protocol analysis)
+# LLM DECIPHERING SERVICE (Configurable per-protocol LLM for analysis)
 # ════════════════════════════════════════════════════════════════════════════════
 
 llm_decipher:
@@ -215,25 +185,25 @@ llm_decipher:
         - intent: the device intent (get_state, set_temp, set_mode, firmware_check, etc.)
         - fields: object mapping field names to values with types
         - confidence: 0.0-1.0 confidence score
-        - suggested_dp_codes: object mapping DP code names to values (for Tuya-like protocols)
+        - suggested_dp_codes: object mapping DP code names to values (for DP-based protocols)
         - protocol_notes: any protocol-specific observations
     
-    # Tuya-specific profile with enhanced prompt
-    tuya:
+    # DP-based protocol profile with enhanced prompt
+    dp_protocol:
       base_url: "https://api.openai.com/v1"
       api_key: "${OPENAI_API_KEY}"
       model_id: "gpt-4o-mini"
       prompt_template: |
-        Analyze Tuya IoT protocol messages. Tuya uses DP (Data Point) codes.
+        Analyze IoT protocol messages. This protocol uses DP (Data Point) codes.
         Common DP codes: 1=power, 2=mode, 3=temp_set, 4=temp_current, 5=fan_speed, 6=swing, 7=humidity, 8=outdoor_temp, 9=power_consumption
         
-        There are requests and replies from a Tuya {device_type} device.
+        There are requests and replies from a {device_type} device.
         Decipher them and make correlation on the same the database I give to you.
         
         Database schema:
         {db_schema}
         
-        Recent Tuya patterns:
+        Recent patterns:
         {recent_patterns}
         
         Request/Response pairs:
@@ -284,10 +254,7 @@ tls_decrypt:
   # Certificate pinning bypass strategies per vendor
   # Options: "frida", "cert_repin", "mitm_proxy", "disable_pin_check"
   pinning_bypass:
-    tuya: "cert_repin"
-    tplink: "frida"
-    zehnder: "mitm_proxy"
-    haier: "cert_repin"
+    example: "cert_repin"
   
   # DoH/DoT handling
   doh:
@@ -340,9 +307,9 @@ correlation:
 
 
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ═══════════════════════════════════════════════════════════════════════════════
 # OBSERVABILITY
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ═══════════════════════════════════════════════════════════════════════════════
 
 observability:
   logging:
@@ -367,28 +334,18 @@ observability:
     path: "/health"
 
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ═══════════════════════════════════════════════════════════════════════════════
 # DNS CONFIGURATION (for documentation)
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ═══════════════════════════════════════════════════════════════════════════════
 
 dns:
   # Example dnsmasq configuration for local DNS interception
   # Add to /etc/dnsmasq.d/edge-hvac.conf:
   #
-  # # Tuya
-  # address=/mqtt.tuya.com/192.168.1.100
-  # address=/api.tuyaeu.com/192.168.1.100
-  # address=/openapi.tuyaeu.com/192.168.1.100
-  #
-  # # TP-Link
-  # address=/api.kasacloud.com/192.168.1.100
-  # address=/iot.tplinkcloud.com/192.168.1.100
-  #
-  # # Zehnder
-  # address=/api.zehndercloud.com/192.168.1.100
-  #
-  # # Haier
-  # address=/api.haier.com/192.168.1.100
+  # # Device cloud hostnames
+  # address=/mqtt.example.com/192.168.1.100
+  # address=/api.example.com/192.168.1.100
+  # address=/openapi.example.com/192.168.1.100
   #
   # # Port mapping (if needed, use iptables or proxy config)
   # # iptables -t nat -A PREROUTING -d 192.168.1.100 -p tcp --dport 443 -j REDIRECT --to-port 8911
@@ -398,21 +355,12 @@ dns:
   
   # Example Pi-hole custom DNS entries
   pihole_custom_dns: |
-    192.168.1.100 mqtt.tuya.com
-    192.168.1.100 api.tuyaeu.com
-    192.168.1.100 openapi.tuyaeu.com
-    192.168.1.100 api.kasacloud.com
-    192.168.1.100 iot.tplinkcloud.com
-    192.168.1.100 api.zehndercloud.com
-    192.168.1.100 api.haier.com
+    192.168.1.100 mqtt.example.com
+    192.168.1.100 api.example.com
+    192.168.1.100 openapi.example.com
   
   # Example AdGuard Home rewrites
   adguard_rewrites: |
-    mqtt.tuya.com -> 192.168.1.100
-    api.tuyaeu.com -> 192.168.1.100
-    openapi.tuyaeu.com -> 192.168.1.100
-    api.kasacloud.com -> 192.168.1.100
-    iot.tplinkcloud.com -> 192.168.1.100
-    api.zehndercloud.com -> 192.168.1.100
-    api.haier.com -> 192.168.1.100
-
+    mqtt.example.com -> 192.168.1.100
+    api.example.com -> 192.168.1.100
+    openapi.example.com -> 192.168.1.100
