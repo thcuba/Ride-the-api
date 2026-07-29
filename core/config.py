@@ -60,7 +60,7 @@ class CloudConfig(BaseModel):
 
 
 class AdapterConfig(BaseModel):
-    class_name: str = ""
+    class_name: str = Field(default="", alias="class")
     # Vendor-specific extra config
     extra: dict[str, Any] = Field(default_factory=dict)
 

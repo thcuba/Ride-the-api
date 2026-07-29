@@ -130,7 +130,7 @@ class CommandResult:
 class InterceptedRequest:
     """Raw intercepted request from device to cloud."""
     device_id: str
-    timestamp: datetime
+    timestamp: datetime | float
     protocol: ProtocolType
     # HTTP/HTTPS
     method: str | None = None

@@ -1,4 +1,4 @@
-"""
+﻿"""
 On-the-Fly Modification Engine - Real-time interception and modification
 of device requests and cloud responses based on configurable rules.
 """
@@ -9,7 +9,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Callable, Optional
 from uuid import uuid4
@@ -274,7 +274,7 @@ class ModificationRule:
         modified.modifications.append({
             'rule': self.name,
             'action': self.action.value,
-            'timestamp': datetime.utcnow().isoformat(),
+            'timestamp': datetime.now(timezone.utc).isoformat(),
         })
         
         return modified
@@ -449,7 +449,7 @@ class ModificationEngine:
             headers={},
             body=response,
             latency_ms=0,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             metadata={
                 'device_id': intercepted.device_id,
                 'vendor': intercepted.vendor,
@@ -510,7 +510,7 @@ class ModificationEngine:
                          original_body: str | None, original_headers: dict | None):
         """Log modification to audit trail."""
         entry = {
-            'timestamp': datetime.utcnow().isoformat(),
+            'timestamp': datetime.now(timezone.utc).isoformat(),
             'rule': rule.name,
             'action': rule.action.value,
             'device_id': msg.device_id,

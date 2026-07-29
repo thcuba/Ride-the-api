@@ -1,4 +1,4 @@
-"""
+﻿"""
 LLM Deciphering Service - Uses configurable LLMs to analyze and decipher
 intercepted request/response pairs for protocol understanding and field mapping.
 """
@@ -11,7 +11,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 from uuid import uuid4
 
@@ -86,18 +86,18 @@ class LLMDecipherService:
         for name, profile_config in profiles_config.items():
             profile = LLMProfile(
                 name=name,
-                base_url=profile_config.get('base_url', 'https://api.openai.com/v1'),
-                api_key=self._resolve_api_key(profile_config.get('api_key', '')),
-                model_id=profile_config.get('model_id', 'gpt-4o-mini'),
-                prompt_template=profile_config.get('prompt_template', ''),
-                enabled=profile_config.get('enabled', True),
-                timeout=profile_config.get('timeout', 30),
-                max_retries=profile_config.get('max_retries', 2),
+                        base_url=getattr(profile_config, 'base_url', 'https://api.openai.com/v1'),
+                        api_key=self._resolve_api_key(getattr(profile_config, 'api_key', '')),
+                        model_id=getattr(profile_config, 'model_id', 'gpt-4o-mini'),
+                        prompt_template=getattr(profile_config, 'prompt_template', ''),
+                        enabled=getattr(profile_config, 'enabled', True),
+                        timeout=getattr(profile_config, 'timeout', 30),
+                        max_retries=getattr(profile_config, 'max_retries', 2),
             )
             self._profiles[name] = profile
         
         # Register for config changes
-        self.config_manager.add_change_callback(self._on_config_change)
+        self.config_manager.register_callback(self._on_config_change)
         
         logger.info(f"Loaded {len(self._profiles)} LLM profiles: {list(self._profiles.keys())}")
     
@@ -166,7 +166,7 @@ class LLMDecipherService:
                 prompt = prompt.replace(placeholder, value)
 
             try:
-                result = await self._call_llm(effective, prompt)
+                result = await self.call_llm(effective, prompt)
                 if result["success"]:
                     content = result["content"]
                     if "```json" in content:
@@ -247,7 +247,7 @@ Response:
         cache_key = f"{pair.pair_id}:{profile.name}"
         if cache_key in self._cache:
             cached = self._cache[cache_key]
-            if (datetime.utcnow() - cached.timestamp).total_seconds() < self._cache_ttl:
+            if (datetime.now(timezone.utc) - cached.timestamp).total_seconds() < self._cache_ttl:
                 logger.debug(f"Cache hit for pair {pair.pair_id}")
                 return cached
         
@@ -261,7 +261,7 @@ Response:
         prompt = self._build_prompt(profile, pair, db_schema, recent_patterns)
         
         # Call LLM
-        result = await self._call_llm(profile, prompt)
+        result = await self.call_llm(profile, prompt)
         
         processing_time = (time.time() - start_time) * 1000
         
@@ -327,7 +327,7 @@ Response:
         logger.info(f"Deciphered pair {pair.pair_id}: intent={decipher_result.intent}, confidence={decipher_result.confidence:.2f}")
         return decipher_result
     
-    async def _call_llm(self, profile: LLMProfile, prompt: str) -> dict:
+    async def call_llm(self, profile: LLMProfile, prompt: str) -> dict:
         """Call the LLM API."""
         client = self._get_client()
         
