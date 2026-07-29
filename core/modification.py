@@ -16,6 +16,18 @@ from uuid import uuid4
 
 from core.config import get_config_manager
 
+
+@dataclass
+class ResponseRecord:
+    """Record of an adapter response for modification processing."""
+    source: str
+    status_code: int
+    headers: dict[str, str]
+    body: dict[str, Any] | None
+    latency_ms: float
+    timestamp: datetime
+    metadata: dict[str, Any]
+
 logger = logging.getLogger(__name__)
 
 
