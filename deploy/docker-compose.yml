@@ -11,10 +11,11 @@ services:
       - "8911:8911"    # Main proxy port
       - "8080:8080"    # Health / dashboard
     volumes:
-      - ./config:/app/config:ro
-      - ./data:/app/data
-      - ./certs:/app/certs:ro
-      - ./models:/app/models:ro
+          - ../config:/app/config:ro
+          - ../data:/app/data
+          - ../certs:/app/certs:ro
+          - ../models:/app/models:ro
+          - ../logs:/app/logs
     environment:
       - PYTHONUNBUFFERED=1
       - LOG_LEVEL=INFO

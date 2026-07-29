@@ -1,0 +1,55 @@
+# Git
+.git/
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project data
+data/
+*.db
+*.sqlite
+*.sqlite3
+logs/
+
+# Sensitive
+.env
+.env.*
+certs/*.pem
+certs/*.key
+certs/*.crt
+
+# Large model files
+models/*.onnx
+models/*.tflite
+models/*.trt
+
+# Testing/cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Docker
+docker-compose*.yml
+Dockerfile

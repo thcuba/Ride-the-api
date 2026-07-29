@@ -33,8 +33,8 @@ class CoreConfig(BaseModel):
 
 class TLSConfig(BaseModel):
     enabled: bool = True
-    cert_file: str = "./certs/edge-hvac.pem"
-    key_file: str = "./certs/edge-hvac.key"
+    cert_file: str = "./certs/ride-api.pem"
+    key_file: str = "./certs/ride-api.key"
 
 
 class FallbackConfig(BaseModel):

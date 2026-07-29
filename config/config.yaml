@@ -1,4 +1,4 @@
-﻿# Edge HVAC Configuration
+﻿# Ride the API — Local Cloud Replacement Proxy
 # Copy to config.yaml and customize
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -30,8 +30,8 @@ proxy:
   # TLS Configuration (for HTTPS interception)
   tls:
     enabled: true
-    cert_file: "./certs/edge-hvac.pem"
-    key_file: "./certs/edge-hvac.key"
+    cert_file: "./certs/ride-api.pem"
+    key_file: "./certs/ride-api.key"
     # Generate self-signed cert trusted by local CA for device trust
     # Or use cert from local CA (mkcert, step-ca, etc.)
   
@@ -172,24 +172,6 @@ traffic_selection:
       action: "passthrough"
       priority: 20
       enabled: true
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# LEARNING / PRODUCTION PIPELINE
-# ═══════════════════════════════════════════════════════════════════════════════
-
-learning:
-  enabled: true
-  # Default mode for new devices: "learning" or "production"
-  default_mode: "learning"
-  # Match threshold for production mode (0.0 to 1.0)
-  default_match_threshold: 0.85
-  # Auto-switch to production when conditions are met
-  auto_switch_to_production: false
-  # Minimum patterns needed before auto-switch
-  min_patterns_for_production: 10
-  # Minimum match rate % needed before auto-switch
-  min_match_rate_for_production: 80.0
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -373,7 +355,7 @@ observability:
 
 dns:
   # Example dnsmasq configuration for local DNS interception
-  # Add to /etc/dnsmasq.d/edge-hvac.conf:
+  # Add to /etc/dnsmasq.d/ride-api.conf:
   #
   # # Device cloud hostnames
   # address=/mqtt.example.com/192.168.1.100

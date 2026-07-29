@@ -81,7 +81,7 @@ cp config/config.example.yaml config/config.yaml
 Add DNS entries to redirect device traffic to the proxy:
 
 ```bash
-# /etc/dnsmasq.d/edge-hvac.conf
+# /etc/dnsmasq.d/ride-api.conf
 address=/mqtt.example.com/192.168.1.100
 address=/api.example.com/192.168.1.100
 ```

@@ -21,6 +21,7 @@ from uuid import uuid4
 from core.database import (
     DatabaseManager, DeviceRegistry, RequestPattern, ResponseTemplate,
     FieldMapping, LLMContextBuffer, SessionCache, MatchStats,
+    get_db_manager,
 )
 from core.llm_decipher import LLMDecipherService, DecipherResult, LLMProfile
 from sqlalchemy import select, delete, func as sql_func, and_, desc
