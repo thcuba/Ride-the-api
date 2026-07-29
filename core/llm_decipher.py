@@ -18,7 +18,6 @@ from uuid import uuid4
 import httpx
 
 from core.config import get_config_manager
-from core.correlation import RequestResponsePair, get_correlation_engine
 
 logger = logging.getLogger(__name__)
 
@@ -129,18 +128,68 @@ class LLMDecipherService:
         """List available profile names."""
         return [name for name, p in self._profiles.items() if p.enabled]
     
-    def _build_prompt(
+    async def decipher_with_params(
         self,
-        profile: LLMProfile,
-        pair: RequestResponsePair,
-        db_schema: str,
-        recent_patterns: list[dict],
-    ) -> str:
+            context: dict,
+            base_url: str | None = None,
+            model_id: str | None = None,
+            profile_name: str | None = None,
+        ) -> dict:
+            """Decipher using on-the-fly overridden parameters. Used by pipeline."""
+            profile = self.get_profile(profile_name)
+            if not profile:
+                return {"success": False, "error": f"Profile not found: {profile_name}"}
+
+            # Override base_url/model_id if provided
+            effective = profile
+            if base_url or model_id:
+                effective = LLMProfile(
+                    name=profile.name,
+                    base_url=base_url or profile.base_url,
+                    api_key=profile.api_key,
+                    model_id=model_id or profile.model_id,
+                    prompt_template=profile.prompt_template,
+                    enabled=profile.enabled,
+                    timeout=profile.timeout,
+                    max_retries=profile.max_retries,
+                )
+
+            pairs_text = json.dumps(context.get("pairs", []), indent=2, default=str)
+            prompt = effective.prompt_template
+            replacements = {
+                "{vendor}": context.get("vendor", "unknown"),
+                "{device_type}": context.get("device_type", "unknown"),
+                "{pairs}": pairs_text,
+                "{device_id}": context.get("device_id", "unknown"),
+            }
+            for placeholder, value in replacements.items():
+                prompt = prompt.replace(placeholder, value)
+
+            try:
+                result = await self._call_llm(effective, prompt)
+                if result["success"]:
+                    content = result["content"]
+                    if "```json" in content:
+                        content = content.split("```json")[1].split("```")[0]
+                    elif "```" in content:
+                        content = content.split("```")[1].split("```")[0]
+                    return {"success": True, "analysis": json.loads(content)}
+                return {"success": False, "error": result.get("error")}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+    def _build_prompt(
+            self,
+            profile: LLMProfile,
+            pair: RequestResponsePair,
+            db_schema: str,
+            recent_patterns: list[dict],
+        ) -> str:
         """Build the prompt for the LLM."""
         # Format request/response pairs
         req = pair.request
         resp = pair.response
-        
+
         pairs_text = f"""
 Request:
   Method: {req.method}
@@ -155,7 +204,7 @@ Response:
   Body: {json.dumps(resp.body, indent=2) if resp.body else 'empty'}
   Latency: {resp.latency_ms:.1f}ms
 """
-        
+
         # Use safe replacement to avoid issues with literal braces in JSON content
         prompt = profile.prompt_template
         replacements = {
@@ -168,7 +217,7 @@ Response:
         for placeholder, value in replacements.items():
             prompt = prompt.replace(placeholder, value)
         return prompt
-    
+
     async def decipher_pair(
         self,
         pair: RequestResponsePair,
@@ -342,23 +391,10 @@ Tables:
 """
     
     def _get_recent_patterns(self, vendor: str, device_type: str | None) -> list[dict]:
-        """Get recent successful deciphering patterns for context."""
-        engine = get_correlation_engine()
-        pairs = engine.get_pairs(vendor=vendor, limit=50)
-        
-        patterns = []
-        for pair in pairs:
-            if pair.deciphered and pair.llm_analysis:
-                patterns.append({
-                    'intent': pair.llm_analysis.get('intent'),
-                    'fields': pair.llm_analysis.get('fields', {}),
-                    'dp_codes': pair.llm_analysis.get('suggested_dp_codes', {}),
-                    'confidence': pair.correlation_confidence,
-                })
-                if len(patterns) >= 10:
-                    break
-        
-        return patterns
+            """Get recent successful deciphering patterns for context."""
+            return []
+            # TODO: Load from device database patterns table
+            # patterns = await db.get_recent_patterns(vendor, limit=10)
     
     async def decipher_batch(
         self,

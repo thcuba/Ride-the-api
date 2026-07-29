@@ -1,12 +1,12 @@
 [project]
-name = "edge-hvac"
+name = "ride-the-api"
 version = "0.1.0"
-description = "Edge AI DNS Interception Proxy per HVAC Multi-Protocol"
+description = "Local Cloud Replacement Proxy — learn device protocols via LLM and serve locally"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [{name = "Ivan", email = "ivan@example.com"}]
-keywords = ["edge-ai", "hvac", "iot", "protocol", "mqtt", "proxy", "dns-interception"]
+keywords = ["iot", "protocol", "proxy", "dns-interception", "local-cloud", "llm"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -73,6 +73,9 @@ tflite = [
 [build-system]
 requires = ["setuptools>=69.0", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["core*", "adapters*", "tests*"]
 
 [tool.ruff]
 line-length = 100

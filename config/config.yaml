@@ -9,12 +9,15 @@ core:
   # Core database (SQLite for dev, PostgreSQL for prod)
   database_url: "sqlite+aiosqlite:///./data/core.db"
   
-  # Protocol databases directory
-  vendor_db_dir: "./data/vendors"
+  # Device-specific protocol databases directory
+  device_db_dir: "./data/devices"
   
-  # Optional: override vendor DB URLs (e.g., for PostgreSQL)
-  # vendor_databases:
-  #   example: "postgresql://localhost/example_hvac"
+  # Optional: override device DB URLs (e.g., for PostgreSQL)
+  # device_databases:
+  #   my_ac: "postgresql://localhost/my_ac_protocol"
+  
+  # Default context buffer size (128KB, 256KB, 512KB, 1MB, 2MB, 5MB, 10MB)
+  default_context_buffer_size: 524288  # 512KB
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # PROXY SERVER SETTINGS
@@ -36,9 +39,9 @@ proxy:
   request_timeout: 30  # seconds
   max_request_size: 1048576  # 1MB
   
-  # Vendor route prefixes (path-based routing)
-  vendor_routes:
-      example: "/example"
+  # No hardcoded routes — each device is identified dynamically
+  # by its adapter and device ID. The vendor field is just a
+  # protocol identifier chosen by the user/community.
   
   # Fallback to vendor cloud
   fallback:
@@ -98,6 +101,24 @@ models:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# LEARNING / PRODUCTION PIPELINE SETTINGS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+learning:
+  enabled: true
+  # Default mode for new devices: learning | production
+  default_mode: "learning"
+  # Match confidence threshold for production mode (0.0 to 1.0)
+  # If local match score >= threshold, serve locally; otherwise forward to cloud
+  default_match_threshold: 0.85
+  # Auto-switch to production when conditions are met
+  auto_switch_to_production: false
+  # Minimum patterns needed before auto-switch
+  min_patterns_for_production: 10
+  # Minimum match rate before auto-switch
+  min_match_rate_for_production: 80.0
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # CONTROL LOGIC SETTINGS
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -153,88 +174,100 @@ traffic_selection:
       enabled: true
 
 
-# ════════════════════════════════════════════════════════════════════════════════
-# LLM DECIPHERING SERVICE (Configurable per-protocol LLM for analysis)
-# ════════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
+# LEARNING / PRODUCTION PIPELINE
+# ═══════════════════════════════════════════════════════════════════════════════
+
+learning:
+  enabled: true
+  # Default mode for new devices: "learning" or "production"
+  default_mode: "learning"
+  # Match threshold for production mode (0.0 to 1.0)
+  default_match_threshold: 0.85
+  # Auto-switch to production when conditions are met
+  auto_switch_to_production: false
+  # Minimum patterns needed before auto-switch
+  min_patterns_for_production: 10
+  # Minimum match rate % needed before auto-switch
+  min_match_rate_for_production: 80.0
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# LLM DECIPHERING SERVICE (Configurable per-device LLM for analysis)
+# ═══════════════════════════════════════════════════════════════════════════════
 
 llm_decipher:
   enabled: true
   default_profile: "default"
-  
+
   profiles:
     # Default profile - works with any OpenAI-compatible API
     default:
       base_url: "https://api.openai.com/v1"
-      api_key: "${OPENAI_API_KEY}"  # Use env var or set directly
+      api_key: "${OPENAI_API_KEY}"
       model_id: "gpt-4o-mini"
-      # Prompt template with database context injection
+      # Prompt template for batch protocol analysis
       prompt_template: |
-        There are requests and replies from a {vendor} {device_type} device.
-        Decipher them and make correlation on the same the database I give to you.
-        
-        Database schema:
-        {db_schema}
-        
-        Recent patterns from this device type:
-        {recent_patterns}
-        
-        Request/Response pairs to analyze:
+        Analyze the following intercepted device communication pairs.
+        The device communicates with a cloud API using a specific protocol.
+        Your task is to decode the protocol and extract patterns.
+
+        Device: {device_id} ({vendor} {device_type})
+
+        Communication pairs (request → response):
         {pairs}
-        
-        Output JSON with:
-        - intent: the device intent (get_state, set_temp, set_mode, firmware_check, etc.)
-        - fields: object mapping field names to values with types
+
+        For each pattern you identify, output JSON with:
+        - intent: what the device is trying to do (get_state, set_temperature, set_mode, turn_on, turn_off, get_status, update_firmware, heartbeat, etc.)
+        - method: HTTP method used (GET, POST, PUT, etc.)
+        - path: request path pattern (use {param} for variable parts)
+        - request_headers: list of required header keys
+        - body_schema: expected body fields with types
+        - query_param_keys: expected query parameter keys
+        - response: object with status_code, headers (template), body (template with {variables} for dynamic values)
+        - field_mappings: object mapping request fields to response fields, e.g. {"body.temp_set": {"response_field": "body.temp_set", "type": "float", "transform": "direct"}}
+        - expected_variables: list of variable names in the response body template
         - confidence: 0.0-1.0 confidence score
-        - suggested_dp_codes: object mapping DP code names to values (for DP-based protocols)
-        - protocol_notes: any protocol-specific observations
-    
-    # DP-based protocol profile with enhanced prompt
+
+        Output format: {"patterns": [pattern1, pattern2, ...]}
+
+    # DP-based protocol profile
     dp_protocol:
       base_url: "https://api.openai.com/v1"
       api_key: "${OPENAI_API_KEY}"
       model_id: "gpt-4o-mini"
       prompt_template: |
-        Analyze IoT protocol messages. This protocol uses DP (Data Point) codes.
+        Analyze IoT protocol messages using DP (Data Point) codes.
         Common DP codes: 1=power, 2=mode, 3=temp_set, 4=temp_current, 5=fan_speed, 6=swing, 7=humidity, 8=outdoor_temp, 9=power_consumption
-        
-        There are requests and replies from a {device_type} device.
-        Decipher them and make correlation on the same the database I give to you.
-        
-        Database schema:
-        {db_schema}
-        
-        Recent patterns:
-        {recent_patterns}
-        
-        Request/Response pairs:
+
+        Device: {device_id} ({vendor} {device_type})
+
+        Communication pairs:
         {pairs}
-        
+
         Output JSON with:
+        - patterns: array of decoded patterns
+        Each pattern:
         - intent: get_state | set_temperature | set_mode | set_fan | turn_on | turn_off | firmware_check | heartbeat
-        - fields: {dp_code: {value, type}}
+        - method: request method
+        - path: request path
+        - body_schema: {dp_code: {value, type, description}}
+        - field_mappings: {request_field: {response_field, type, transform, enum_values}}
+        - response: {status_code, headers, body_template, expected_variables}
         - confidence: 0.0-1.0
-        - suggested_dp_codes: {dp_code: value}
-        - protocol_notes: MQTT topic structure, encryption type, sequence handling
-    
-    # Local Ollama profile (no API key needed)
+
+    # Local Ollama profile
     local_ollama:
       base_url: "http://localhost:11434/v1"
       api_key: "ollama"
       model_id: "llama3.1:8b"
       prompt_template: |
-        There are requests and replies from a {vendor} {device_type} device.
-        Decipher them and make correlation on the same the database I give to you.
-        
-        Database schema:
-        {db_schema}
-        
-        Recent patterns:
-        {recent_patterns}
-        
+        Analyze device communication pairs for {device_id} ({vendor} {device_type}).
+
         Pairs:
         {pairs}
-        
-        Output JSON with: intent, fields, confidence, suggested_dp_codes, protocol_notes
+
+        Output JSON with patterns array containing: intent, method, path, body_schema, field_mappings, response template, and confidence.
 
 
 # ════════════════════════════════════════════════════════════════════════════════

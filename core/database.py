@@ -1,15 +1,14 @@
 """
-Core Database Architecture - Multi-Vendor SQL Databases
-Core DB + Per-Vendor DB (SQLite default, PostgreSQL optional)
+Core Database Architecture - Device-Specific Protocol Databases
+Core DB + Per-Device DB (SQLite default, PostgreSQL optional)
 """
 
 from __future__ import annotations
 
 import contextlib
 import logging
-from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import AsyncGenerator, Optional
+from typing import Any, AsyncGenerator, Optional
 
 from sqlalchemy import (
     Column,
@@ -48,22 +47,36 @@ class Base(DeclarativeBase):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# CORE DATABASE MODELS (shared across all vendors)
+# CORE DATABASE MODELS (shared across all devices)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class DeviceRegistry(Base):
-    """Core device registry - maps device_id to vendor DB."""
+    """Core device registry - maps device_id to its protocol DB."""
     __tablename__ = "device_registry"
-    
+
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     device_id: Mapped[str] = mapped_column(String(128), unique=True, index=True, nullable=False)
-    vendor: Mapped[str] = mapped_column(String(32), index=True, nullable=False)  # protocol/vendor identifier
-    device_type: Mapped[str] = mapped_column(String(64), nullable=False)  # ac, heat_pump, ventilator
-        vendor_db_name: Mapped[str] = mapped_column(String(64), nullable=False)  # e.g., "example", "my_protocol"
+    vendor: Mapped[str] = mapped_column(String(32), index=True, nullable=False)  # protocol identifier
+    device_type: Mapped[str] = mapped_column(String(64), nullable=False)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     location: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    capabilities: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)  # vendor-specific caps
-    config: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)      # vendor-specific config
+    capabilities: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    config: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+
+    # Learning / Production mode
+    mode: Mapped[str] = mapped_column(String(16), default="learning", nullable=False)  # learning | production
+
+    # Match threshold for production mode
+    match_threshold: Mapped[float] = mapped_column(Float, default=0.85, nullable=False)
+
+    # LLM configuration (per-device override)
+    llm_base_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    llm_model_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    llm_profile_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    # Context buffer configuration
+    context_buffer_size: Mapped[int] = mapped_column(Integer, default=524288, nullable=False)  # 512KB default
+
     status: Mapped[str] = mapped_column(String(32), default="online", nullable=False)
     last_seen: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -71,205 +84,235 @@ class DeviceRegistry(Base):
 
 
 class ModelRegistry(Base):
-    """Core model registry - tracks models per vendor."""
+    """Core model registry - tracks models per device."""
     __tablename__ = "model_registry"
-    
+
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     model_id: Mapped[str] = mapped_column(String(128), unique=True, index=True, nullable=False)
-    vendor: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
-    device_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    device_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
     version: Mapped[str] = mapped_column(String(32), nullable=False)
-    framework: Mapped[str] = mapped_column(String(32), nullable=False)  # onnx, tflite, tensorrt
-    model_path: Mapped[str] = mapped_column(String(512), nullable=False)  # path in vendor DB
+    framework: Mapped[str] = mapped_column(String(32), nullable=False)
+    model_path: Mapped[str] = mapped_column(String(512), nullable=False)
     input_schema: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     output_schema: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
-    metrics: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)  # accuracy, latency, etc.
+    metrics: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
     is_default: Mapped[bool] = mapped_column(default=False, nullable=False)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
-class GlobalPolicy(Base):
-    """Global policies applied to all vendors."""
-    __tablename__ = "global_policies"
-    
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    policy_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
-    policy_type: Mapped[str] = mapped_column(String(32), nullable=False)  # energy_cap, comfort_range, custom
-    applies_to: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)  # vendor, device_type filters
-    config: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
-    priority: Mapped[int] = mapped_column(default=100, nullable=False)  # lower = higher priority
-    is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
-    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
-
-class CloudProvider(Base):
-    """Cloud provider configuration for fallback."""
-    __tablename__ = "cloud_providers"
-    
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    vendor: Mapped[str] = mapped_column(String(32), unique=True, index=True, nullable=False)
-    provider_class: Mapped[str] = mapped_column(String(128), nullable=False)  # full import path
-    config: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)  # api_keys, endpoints, etc.
-    is_enabled: Mapped[bool] = mapped_column(default=True, nullable=False)
-    priority: Mapped[int] = mapped_column(default=1, nullable=False)  # fallback order
-    health_check_interval: Mapped[int] = mapped_column(default=60, nullable=False)  # seconds
-    last_health_check: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    is_healthy: Mapped[bool] = mapped_column(default=True, nullable=False)
-    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-
-
 # ═══════════════════════════════════════════════════════════════════════════════
-# PER-VENDOR DATABASE MODELS (template - each vendor gets their own DB with these tables)
+# DEVICE-SPECIFIC DATABASE MODELS (each device gets its own DB with these tables)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-class VendorDevice(Base):
-    """Per-vendor device table - stored in vendor DB."""
-    __tablename__ = "devices"
-    
+class RequestPattern(Base):
+    """Learned request pattern for matching incoming requests."""
+    __tablename__ = "request_patterns"
+
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    device_id: Mapped[str] = mapped_column(String(128), unique=True, index=True, nullable=False)
-    name: Mapped[str] = mapped_column(String(128), nullable=False)
-    device_type: Mapped[str] = mapped_column(String(64), nullable=False)
-    model: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    firmware_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    capabilities: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
-    config: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
-    status: Mapped[str] = mapped_column(String(32), default="unknown", nullable=False)
-    last_seen: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    pattern_id: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+
+    # Request signature
+    method: Mapped[str] = mapped_column(String(16), nullable=False)
+    path_pattern: Mapped[str] = mapped_column(String(512), nullable=False)
+    protocol: Mapped[str] = mapped_column(String(16), nullable=False)
+
+    # Header requirements (keys that must be present)
+    required_headers: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+
+    # Body schema (JSONSchema-like)
+    body_schema: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+
+    # Query params typically present
+    query_param_keys: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+
+    # Intent (deciphered by LLM)
+    intent: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    # Confidence in this pattern
+    confidence: Mapped[float] = mapped_column(Float, default=0.5, nullable=False)
+
+    # Usage statistics
+    hit_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_matched: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
-class VendorReading(Base):
-    """Per-vendor sensor readings - time series data."""
-    __tablename__ = "readings"
-    __table_args__ = (
-        Index("ix_readings_device_ts", "device_id", "timestamp"),
-        Index("ix_readings_ts", "timestamp"),
-    )
-    
+class ResponseTemplate(Base):
+    """Learned response template for local response building."""
+    __tablename__ = "response_templates"
+
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    device_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
-    timestamp: Mapped[DateTime] = mapped_column(DateTime(timezone=True), index=True, nullable=False)
-    
-    # HVAC Standard Fields
-    temp_target: Mapped[float | None] = mapped_column(Float, nullable=True)
-    temp_actual: Mapped[float | None] = mapped_column(Float, nullable=True)
-    temp_outdoor: Mapped[float | None] = mapped_column(Float, nullable=True)
-    humidity: Mapped[float | None] = mapped_column(Float, nullable=True)
-    power_watts: Mapped[float | None] = mapped_column(Float, nullable=True)
-    mode: Mapped[str | None] = mapped_column(String(32), nullable=True)  # cool, heat, fan, auto, dry
-    fan_speed: Mapped[str | None] = mapped_column(String(32), nullable=True)  # low, medium, high, auto
-    swing_mode: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    
-    # Vendor-specific extensions (JSON for flexibility)
-    vendor_data: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
-    
-    # Metadata
-    source: Mapped[str] = mapped_column(String(32), default="device", nullable=False)  # device, cloud, edge
-    quality: Mapped[str] = mapped_column(String(16), default="good", nullable=False)  # good, estimated, stale
+    template_id: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
 
+    # Links to the request pattern this response matches
+    pattern_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
 
-class VendorCommand(Base):
-    """Per-vendor command log."""
-    __tablename__ = "commands"
-    __table_args__ = (
-        Index("ix_commands_device_ts", "device_id", "timestamp"),
-        Index("ix_commands_status", "status"),
-    )
-    
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    device_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
-    timestamp: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
-    
-    command: Mapped[str] = mapped_column(String(64), nullable=False)  # set_temp, set_mode, set_fan, on, off
-    params: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
-    
-    # Source tracking
-    source: Mapped[str] = mapped_column(String(32), nullable=False)  # edge_auto, edge_manual, cloud_app, cloud_schedule
-    edge_model_id: Mapped[str | None] = mapped_column(String(128), nullable=True)  # which model generated this
-    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
-    
-    # Execution tracking
-    status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False)  # pending, sent, acked, failed, timeout
-    response: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    executed_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Response template
+    status_code: Mapped[int] = mapped_column(Integer, nullable=False)
+    headers_template: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    body_template: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
 
+    # Field mappings: which request fields map to which response fields
+    field_mappings: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
 
-class VendorModel(Base):
-    """Per-vendor trained models metadata."""
-    __tablename__ = "models"
-    
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    model_id: Mapped[str] = mapped_column(String(128), unique=True, index=True, nullable=False)
-    version: Mapped[str] = mapped_column(String(32), nullable=False)
-    framework: Mapped[str] = mapped_column(String(32), nullable=False)
-    model_path: Mapped[str] = mapped_column(String(512), nullable=False)  # path to ONNX/TFLite file
-    input_schema: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
-    output_schema: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
-    
-    # Training metadata
-    training_data_start: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    training_data_end: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    training_samples: Mapped[int] = mapped_column(default=0, nullable=False)
-    metrics: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)  # MAE, RMSE, accuracy per action
-    
-    # Deployment
-    is_active: Mapped[bool] = mapped_column(default=False, nullable=False)
-    is_canary: Mapped[bool] = mapped_column(default=False, nullable=False)
-    canary_traffic_pct: Mapped[float] = mapped_column(default=0.0, nullable=False)
-    deployed_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    
-    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Variables expected in the body template
+    expected_variables: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
 
+    # Confidence
+    confidence: Mapped[float] = mapped_column(Float, default=0.5, nullable=False)
 
-class VendorPolicy(Base):
-    """Per-vendor control policies."""
-    __tablename__ = "policies"
-    
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    policy_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
-    device_type: Mapped[str] = mapped_column(String(64), nullable=False)
-    policy_type: Mapped[str] = mapped_column(String(32), nullable=False)  # pid, rl, rule_based, schedule
-    config: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
-    priority: Mapped[int] = mapped_column(default=100, nullable=False)
-    is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    # Usage
+    hit_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_used: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
-class VendorInterceptedRequest(Base):
-    """Raw intercepted requests for training data."""
-    __tablename__ = "intercepted_requests"
-    __table_args__ = (
-        Index("ix_intercepted_device_ts", "device_id", "timestamp"),
-    )
-    
+class FieldMapping(Base):
+    """LLM-decoded field mapping between request and response."""
+    __tablename__ = "field_mappings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    mapping_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+
+    # Source field in request
+    request_field: Mapped[str] = mapped_column(String(128), nullable=False)
+    request_type: Mapped[str] = mapped_column(String(32), nullable=False)
+
+    # Destination field in response
+    response_field: Mapped[str] = mapped_column(String(128), nullable=False)
+    response_type: Mapped[str] = mapped_column(String(32), nullable=False)
+
+    # Transformation (if any)
+    transform: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    # Enum values if type is enum
+    enum_values: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    # Context / intent this mapping belongs to
+    intent: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    # Confidence from LLM
+    confidence: Mapped[float] = mapped_column(Float, default=0.5, nullable=False)
+
+    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class LLMContextBuffer(Base):
+    """Sliding-window context buffer for LLM batch analysis."""
+    __tablename__ = "llm_context_buffer"
+
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     device_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
-    timestamp: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
-    
-    # Request details
-    method: Mapped[str] = mapped_column(String(16), nullable=False)  # GET, POST, MQTT_PUB, etc.
+
+    # The correlated request/response pair data (serialized)
+    correlated_pair: Mapped[dict] = mapped_column(JSON, nullable=False)
+
+    # Estimated size in bytes
+    estimated_size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    # Sequence number (for ordering)
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    # Whether this entry has been flushed to LLM
+    flushed: Mapped[bool] = mapped_column(default=False, nullable=False)
+
+    # Timestamps
+    captured_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    flushed_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class SessionCache(Base):
+    """Temporary correlation cache - cleared after each learning cycle flush."""
+    __tablename__ = "session_cache"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    device_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+
+    # Correlation key for matching
+    correlation_key: Mapped[str] = mapped_column(String(256), nullable=False)
+
+    # Pending request data
+    method: Mapped[str] = mapped_column(String(16), nullable=False)
     path: Mapped[str] = mapped_column(String(512), nullable=False)
     headers: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     body: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     query_params: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
-    
-    # Response details
+
+    # Response data (filled when correlated)
+    response_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    response_headers: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    response_body: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    response_latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    # Correlation status
+    correlated: Mapped[bool] = mapped_column(default=False, nullable=False)
+    correlated_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Whether this entry was already sent to context buffer
+    in_buffer: Mapped[bool] = mapped_column(default=False, nullable=False)
+
+    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class MatchStats(Base):
+    """Real-time match statistics per device."""
+    __tablename__ = "match_stats"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    device_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+
+    # Running counters
+    total_requests: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    local_hits: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    cloud_misses: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    errors: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    # Current match rate
+    match_rate_pct: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+
+    # Rolling window for recent requests (last 1000)
+    recent_results: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+
+    # Learning mode specific
+    patterns_learned: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    templates_created: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    buffer_flushes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    current_buffer_size_bytes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_flush_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    updated_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class InterceptedRequest(Base):
+    """Raw intercepted request/response pair for audit / training data."""
+    __tablename__ = "intercepted_requests"
+    __table_args__ = (
+        Index("ix_intercepted_device_ts", "device_id", "captured_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    device_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    captured_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    method: Mapped[str] = mapped_column(String(16), nullable=False)
+    path: Mapped[str] = mapped_column(String(512), nullable=False)
+    headers: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    body: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    query_params: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+
     response_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
     response_headers: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     response_body: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     response_latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    
-    # Processing
+
     processed: Mapped[bool] = mapped_column(default=False, nullable=False)
     processed_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    edge_action: Mapped[str | None] = mapped_column(String(64), nullable=True)  # responded_locally, forwarded, blocked
-    model_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    action: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -277,210 +320,192 @@ class VendorInterceptedRequest(Base):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class DatabaseManager:
-    """Manages core DB + per-vendor DBs."""
-    
+    """Manages core DB + per-device DBs."""
+
     def __init__(
         self,
         core_db_url: str,
-        vendor_db_dir: Path,
-        vendor_db_urls: dict[str, str] | None = None,
+        device_db_dir: Path,
+        device_db_urls: dict[str, str] | None = None,
         echo: bool = False,
     ):
         self.core_db_url = core_db_url
-        self.vendor_db_dir = Path(vendor_db_dir)
-        self.vendor_db_dir.mkdir(parents=True, exist_ok=True)
+        self.device_db_dir = Path(device_db_dir)
+        self.device_db_dir.mkdir(parents=True, exist_ok=True)
         self.echo = echo
-        
+
         self._core_engine: AsyncEngine | None = None
         self._core_session_factory: async_sessionmaker[AsyncSession] | None = None
-        
-        self._vendor_engines: dict[str, AsyncEngine] = {}
-        self._vendor_sessions: dict[str, async_sessionmaker[AsyncSession]] = {}
-        self._vendor_db_urls = vendor_db_urls or {}
-    
+        self._device_engines: dict[str, AsyncEngine] = {}
+        self._device_sessions: dict[str, async_sessionmaker[AsyncSession]] = {}
+        self._device_db_urls = device_db_urls or {}
+
     async def initialize(self) -> None:
         """Initialize all databases."""
-        # Core DB
         self._core_engine = create_async_engine(
-            self.core_db_url,
-            echo=self.echo,
-            poolclass=NullPool,
+            self.core_db_url, echo=self.echo, poolclass=NullPool,
         )
         self._core_session_factory = async_sessionmaker(
-            self._core_engine,
-            class_=AsyncSession,
-            expire_on_commit=False,
+            self._core_engine, class_=AsyncSession, expire_on_commit=False,
         )
-        
         async with self._core_engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-        
         logger.info("Core database initialized")
-    
-    async def get_vendor_engine(self, vendor: str) -> AsyncEngine:
-        """Get or create vendor database engine."""
-        if vendor in self._vendor_engines:
-            return self._vendor_engines[vendor]
-        
-        # Use custom URL or default SQLite in vendor_db_dir
-        if vendor in self._vendor_db_urls:
-            db_url = self._vendor_db_urls[vendor]
+
+    async def get_device_engine(self, device_id: str) -> AsyncEngine:
+        """Get or create a device-specific database engine."""
+        if device_id in self._device_engines:
+            return self._device_engines[device_id]
+        if device_id in self._device_db_urls:
+            db_url = self._device_db_urls[device_id]
         else:
-            db_path = self.vendor_db_dir / f"{vendor}.db"
+            db_path = self.device_db_dir / f"{device_id}.db"
             db_url = f"sqlite+aiosqlite:///{db_path}"
-        
-        engine = create_async_engine(
-            db_url,
-            echo=self.echo,
-            poolclass=NullPool,
-        )
-        
-        # Create tables for vendor DB
+        engine = create_async_engine(db_url, echo=self.echo, poolclass=NullPool)
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-        
-        self._vendor_engines[vendor] = engine
-        self._vendor_sessions[vendor] = async_sessionmaker(
-            engine,
-            class_=AsyncSession,
-            expire_on_commit=False,
+        self._device_engines[device_id] = engine
+        self._device_sessions[device_id] = async_sessionmaker(
+            engine, class_=AsyncSession, expire_on_commit=False,
         )
-        
-        logger.info(f"Vendor database '{vendor}' initialized at {db_url}")
+        logger.info(f"Device database '{device_id}' initialized at {db_url}")
         return engine
-    
-    def get_vendor_session(self, vendor: str) -> async_sessionmaker[AsyncSession]:
-        """Get session factory for vendor DB."""
-        if vendor not in self._vendor_sessions:
-            raise ValueError(f"Vendor DB '{vendor}' not initialized. Call get_vendor_engine first.")
-        return self._vendor_sessions[vendor]
-    
+
+    async def get_device_session(self, device_id: str) -> AsyncSession:
+        """Get an async session for a device database."""
+        await self.get_device_engine(device_id)
+        return self._device_sessions[device_id]()
+
+    async def get_core_session(self) -> AsyncSession:
+        """Get an async session for the core database."""
+        if not self._core_session_factory:
+            raise RuntimeError("Core database not initialized")
+        return self._core_session_factory()
+
+    async def get_or_create_device(self, device_id: str, vendor: str,
+                                    device_type: str = "unknown", name: str = "") -> None:
+        """Ensure a device exists in the registry and create its DB."""
+        async with await self.get_core_session() as session:
+            result = await session.execute(
+                select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
+            )
+            device = result.scalar_one_or_none()
+            if not device:
+                device = DeviceRegistry(
+                    device_id=device_id, vendor=vendor,
+                    device_type=device_type, name=name or device_id,
+                    mode="learning",
+                )
+                session.add(device)
+                await session.commit()
+                logger.info(f"Registered new device: {device_id} ({vendor})")
+        await self.get_device_engine(device_id)
+
     @contextlib.asynccontextmanager
     async def core_session(self) -> AsyncGenerator[AsyncSession, None]:
-        """Get core database session."""
-        if not self._core_session_factory:
-            raise RuntimeError("Database not initialized. Call initialize() first.")
-        async with self._core_session_factory() as session:
+        """Context manager for core DB session."""
+        session = await self.get_core_session()
+        try:
             yield session
-    
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+
     @contextlib.asynccontextmanager
-    async def vendor_session(self, vendor: str) -> AsyncGenerator[AsyncSession, None]:
-        """Get vendor database session."""
-        session_factory = self.get_vendor_session(vendor)
-        async with session_factory() as session:
+    async def device_session(self, device_id: str) -> AsyncGenerator[AsyncSession, None]:
+        """Context manager for device DB session."""
+        session = await self.get_device_session(device_id)
+        try:
             yield session
-    
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+
+    async def list_devices(self) -> list[dict]:
+        """List all registered devices."""
+        async with await self.get_core_session() as session:
+            result = await session.execute(
+                select(DeviceRegistry).order_by(DeviceRegistry.created_at.desc())
+            )
+            return [
+                {
+                    "device_id": d.device_id, "vendor": d.vendor,
+                    "device_type": d.device_type, "name": d.name,
+                    "mode": d.mode, "match_threshold": d.match_threshold,
+                    "status": d.status,
+                    "last_seen": d.last_seen.isoformat() if d.last_seen else None,
+                    "context_buffer_size": d.context_buffer_size,
+                    "llm_model_id": d.llm_model_id,
+                    "llm_base_url": d.llm_base_url,
+                }
+                for d in result.scalars().all()
+            ]
+
+    async def update_device_mode(self, device_id: str, mode: str) -> bool:
+        """Switch device between learning and production mode."""
+        async with await self.get_core_session() as session:
+            result = await session.execute(
+                select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
+            )
+            device = result.scalar_one_or_none()
+            if not device:
+                return False
+            device.mode = mode
+            await session.commit()
+            logger.info(f"Device {device_id} switched to {mode} mode")
+            return True
+
+    async def update_device_llm_config(self, device_id: str, base_url: str | None = None,
+                                        model_id: str | None = None,
+                                        profile_name: str | None = None) -> bool:
+        """Update LLM configuration for a device."""
+        async with await self.get_core_session() as session:
+            result = await session.execute(
+                select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
+            )
+            device = result.scalar_one_or_none()
+            if not device:
+                return False
+            if base_url is not None:
+                device.llm_base_url = base_url
+            if model_id is not None:
+                device.llm_model_id = model_id
+            if profile_name is not None:
+                device.llm_profile_name = profile_name
+            await session.commit()
+            return True
+
     async def close(self) -> None:
         """Close all database connections."""
         if self._core_engine:
             await self._core_engine.dispose()
-        for engine in self._vendor_engines.values():
+        for engine in self._device_engines.values():
             await engine.dispose()
         logger.info("All database connections closed")
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# VENDOR DB ABSTRACTION
-# ═══════════════════════════════════════════════════════════════════════════════
+# Global instance
+_db_manager: DatabaseManager | None = None
 
-class VendorDatabase(ABC):
-    """Abstract base for vendor-specific database operations."""
-    
-    def __init__(self, vendor: str, db_manager: DatabaseManager):
-        self.vendor = vendor
-        self.db_manager = db_manager
-    
-    @property
-    @abstractmethod
-    def device_model(self) -> type[Base]:
-        """Vendor-specific device model (can extend VendorDevice)."""
-        pass
-    
-    @property
-    @abstractmethod
-    def reading_model(self) -> type[Base]:
-        """Vendor-specific reading model (can extend VendorReading)."""
-        pass
-    
-    @property
-    @abstractmethod
-    def command_model(self) -> type[Base]:
-        """Vendor-specific command model (can extend VendorCommand)."""
-        pass
-    
-    async def get_device(self, device_id: str) -> VendorDevice | None:
-        """Get device by ID."""
-        async with self.db_manager.vendor_session(self.vendor) as session:
-            result = await session.execute(
-                select(self.device_model).where(self.device_model.device_id == device_id)
-            )
-            return result.scalar_one_or_none()
-    
-    async def upsert_device(self, device_data: dict) -> VendorDevice:
-        """Insert or update device."""
-        async with self.db_manager.vendor_session(self.vendor) as session:
-            device = await self.get_device(device_data["device_id"])
-            if device:
-                for key, value in device_data.items():
-                    setattr(device, key, value)
-                device.updated_at = func.now()
-            else:
-                device = self.device_model(**device_data)
-                session.add(device)
-            await session.commit()
-            await session.refresh(device)
-            return device
-    
-    async def add_reading(self, reading_data: dict) -> VendorReading:
-        """Add a sensor reading."""
-        async with self.db_manager.vendor_session(self.vendor) as session:
-            reading = self.reading_model(**reading_data)
-            session.add(reading)
-            await session.commit()
-            return reading
-    
-    async def add_command(self, command_data: dict) -> VendorCommand:
-        """Log a command."""
-        async with self.db_manager.vendor_session(self.vendor) as session:
-            command = self.command_model(**command_data)
-            session.add(command)
-            await session.commit()
-            return command
-    
-    async def get_recent_readings(
-        self,
-        device_id: str,
-        limit: int = 100,
-        since: DateTime | None = None,
-    ) -> list[VendorReading]:
-        """Get recent readings for a device."""
-        async with self.db_manager.vendor_session(self.vendor) as session:
-            query = (
-                select(self.reading_model)
-                .where(self.reading_model.device_id == device_id)
-                .order_by(self.reading_model.timestamp.desc())
-                .limit(limit)
-            )
-            if since:
-                query = query.where(self.reading_model.timestamp >= since)
-            result = await session.execute(query)
-            return list(result.scalars().all())
-    
-    async def get_active_model(self) -> VendorModel | None:
-        """Get currently active model for this vendor."""
-        async with self.db_manager.vendor_session(self.vendor) as session:
-            result = await session.execute(
-                select(VendorModel)
-                .where(VendorModel.vendor == self.vendor)
-                .where(VendorModel.is_active == True)
-                .order_by(VendorModel.deployed_at.desc())
-            )
-            return result.scalar_one_or_none()
-    
-    async def log_intercepted_request(self, request_data: dict) -> VendorInterceptedRequest:
-        """Log intercepted request for training."""
-        async with self.db_manager.vendor_session(self.vendor) as session:
-            req = VendorInterceptedRequest(**request_data)
-            session.add(req)
-            await session.commit()
-            return req
+
+def get_db_manager() -> DatabaseManager:
+    """Get or create global database manager instance."""
+    global _db_manager
+    if _db_manager is None:
+        raise RuntimeError("DatabaseManager not initialized. Call init_db_manager first.")
+    return _db_manager
+
+
+def init_db_manager(core_db_url: str, device_db_dir: Path,
+                    device_db_urls: dict[str, str] | None = None,
+                    echo: bool = False) -> DatabaseManager:
+    """Initialize the global database manager."""
+    global _db_manager
+    _db_manager = DatabaseManager(core_db_url, device_db_dir, device_db_urls, echo)
+    return _db_manager

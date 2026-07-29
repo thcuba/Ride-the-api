@@ -14,10 +14,21 @@ from pydantic import BaseModel, Field
 from watchfiles import watch, Change
 
 
+class ContextBufferSizes(str, Enum):
+    KB_128 = "131072"
+    KB_256 = "262144"
+    KB_512 = "524288"
+    MB_1 = "1048576"
+    MB_2 = "2097152"
+    MB_5 = "5242880"
+    MB_10 = "10485760"
+
+
 class CoreConfig(BaseModel):
     database_url: str = "sqlite+aiosqlite:///./data/core.db"
-    vendor_db_dir: str = "./data/vendors"
-    vendor_databases: dict[str, str] = Field(default_factory=dict)
+    device_db_dir: str = "./data/devices"
+    device_databases: dict[str, str] = Field(default_factory=dict)
+    default_context_buffer_size: int = 524288  # 512KB default
 
 
 class TLSConfig(BaseModel):
@@ -39,12 +50,6 @@ class ProxyConfig(BaseModel):
     tls: TLSConfig = Field(default_factory=TLSConfig)
     request_timeout: int = 30
     max_request_size: int = 1048576
-    vendor_routes: dict[str, str] = Field(default_factory=lambda: {
-        "ty": "/ty",
-        "tl": "/tl",
-        "zh": "/zh",
-        "hr": "/hr",
-    })
     fallback: FallbackConfig = Field(default_factory=FallbackConfig)
 
 
@@ -227,6 +232,15 @@ class CorrelationConfig(BaseModel):
     pair_ttl_hours: int = 168
 
 
+class LearningConfig(BaseModel):
+    enabled: bool = True
+    default_mode: str = "learning"  # learning | production
+    default_match_threshold: float = 0.85
+    auto_switch_to_production: bool = False
+    min_patterns_for_production: int = 10
+    min_match_rate_for_production: float = 80.0
+
+
 class Config(BaseModel):
     core: CoreConfig = Field(default_factory=CoreConfig)
     proxy: ProxyConfig = Field(default_factory=ProxyConfig)
@@ -239,6 +253,7 @@ class Config(BaseModel):
     llm_decipher: LLMDecipherConfig = Field(default_factory=LLMDecipherConfig)
     modification: ModificationConfig = Field(default_factory=ModificationConfig)
     correlation: CorrelationConfig = Field(default_factory=CorrelationConfig)
+    learning: LearningConfig = Field(default_factory=LearningConfig)
 
 
 class ConfigManager:

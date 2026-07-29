@@ -1,4 +1,4 @@
-"""
+﻿"""
 Example Protocol Adapter - Reference Implementation.
 
 Demonstrates how to implement a protocol adapter for an HVAC device
@@ -104,7 +104,7 @@ class ExampleProtocolAdapter(ProtocolAdapter):
     # ══════════════════════════════════════════════════════════════════════════════
     
     async def parse_request(self, request: InterceptedRequest) -> InterceptedRequest:
-            """Parse request and extract intent."""
+        """Parse request and extract intent."""
         
         if request.protocol in (ProtocolType.MQTT, ProtocolType.MQTTS):
             return await self._parse_mqtt_request(request)
@@ -115,7 +115,7 @@ class ExampleProtocolAdapter(ProtocolAdapter):
         return request
     
     async def _parse_mqtt_request(self, request: InterceptedRequest) -> InterceptedRequest:
-            """Parse MQTT message."""
+        """Parse MQTT message."""
         if not request.topic or not request.body:
             request.parsed_intent = CommandType.UNKNOWN
             return request
