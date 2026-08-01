@@ -253,9 +253,117 @@ class TLSDecryptConfig(BaseModel):
     ca_cert_path: str = "./certs/ca.pem"
     ca_key_path: str = "./certs/ca.key"
     device_certs_dir: str = "./data/device_certs"
+    external_certs_dir: str = "./data/external_certs"
     pinning_bypass: dict[str, PinningBypassConfig] = Field(default_factory=dict)
     min_tls_version: str = "TLSv1.2"
     max_tls_version: str = "TLSv1.3"
+
+
+# ── Protocol Server Configs ─────────────────────────────────────────────────────
+
+
+class MQTTServerConfig(BaseModel):
+    """MQTT broker server configuration."""
+    enabled: bool = False
+    host: str = "0.0.0.0"
+    port: int = 1883
+    port_tls: int = 8883
+    tls_enabled: bool = False
+    max_packet_size: int = 268435  # 256KB
+    topic_filters: list[str] = Field(default_factory=lambda: ["#"])
+
+
+class CoAPServerConfig(BaseModel):
+    """CoAP server configuration."""
+    enabled: bool = False
+    host: str = "0.0.0.0"
+    port: int = 5683
+    dtls_enabled: bool = False
+    dtls_port: int = 5684
+    max_pdu_size: int = 1024
+
+
+class ModbusServerConfig(BaseModel):
+    """Modbus TCP server configuration."""
+    enabled: bool = False
+    host: str = "0.0.0.0"
+    port: int = 502
+    unit_id: int = 1
+    tls_enabled: bool = False
+    tls_port: int = 802
+    holding_registers: dict[str, int] = Field(default_factory=dict)
+    coil_registers: dict[str, int] = Field(default_factory=dict)
+
+
+class WebSocketServerConfig(BaseModel):
+    """WebSocket server configuration."""
+    enabled: bool = False
+    host: str = "0.0.0.0"
+    port: int = 9000
+    path: str = "/ws"
+    max_message_size: int = 1048576  # 1MB
+
+
+class RawTCPServerConfig(BaseModel):
+    """Raw TCP server configuration."""
+    enabled: bool = False
+    host: str = "0.0.0.0"
+    port: int = 9100
+    buffer_size: int = 4096
+    idle_timeout: int = 300
+    protocol_detect: bool = True
+
+
+class HTTP2ServerConfig(BaseModel):
+    """HTTP/2 server configuration."""
+    enabled: bool = False
+    host: str = "0.0.0.0"
+    port: int = 443
+    cleartext_port: int = 8080  # h2c
+    tls_enabled: bool = True
+
+
+class ZigbeeBridgeConfig(BaseModel):
+    """Zigbee bridge (Zigbee2MQTT) configuration."""
+    enabled: bool = False
+    mqtt_host: str = "localhost"
+    mqtt_port: int = 1883
+    mqtt_user: str = ""
+    mqtt_pass: str = ""
+    topic_prefix: str = "zigbee2mqtt"
+    reconnect_interval: int = 10
+
+
+class ZWaveBridgeConfig(BaseModel):
+    """Z-Wave bridge (Z-Wave JS UI) configuration."""
+    enabled: bool = False
+    connection_type: str = "mqtt"  # mqtt | ws
+    host: str = "localhost"
+    port: int = 1883
+    ws_port: int = 3000
+    mqtt_user: str = ""
+    mqtt_pass: str = ""
+
+
+class MatterBridgeConfig(BaseModel):
+    """Matter bridge (Matter.js) configuration."""
+    enabled: bool = False
+    controller_port: int = 5540
+    fabric_id: int = 1
+    vendor_id: int = 65521
+
+
+class ProtocolServersConfig(BaseModel):
+    """All protocol server configurations."""
+    mqtt: MQTTServerConfig = Field(default_factory=MQTTServerConfig)
+    coap: CoAPServerConfig = Field(default_factory=CoAPServerConfig)
+    modbus: ModbusServerConfig = Field(default_factory=ModbusServerConfig)
+    websocket: WebSocketServerConfig = Field(default_factory=WebSocketServerConfig)
+    raw_tcp: RawTCPServerConfig = Field(default_factory=RawTCPServerConfig)
+    http2: HTTP2ServerConfig = Field(default_factory=HTTP2ServerConfig)
+    zigbee_bridge: ZigbeeBridgeConfig = Field(default_factory=ZigbeeBridgeConfig)
+    zwave_bridge: ZWaveBridgeConfig = Field(default_factory=ZWaveBridgeConfig)
+    matter_bridge: MatterBridgeConfig = Field(default_factory=MatterBridgeConfig)
 
 
 class Config(BaseModel):
@@ -272,6 +380,7 @@ class Config(BaseModel):
     correlation: CorrelationConfig = Field(default_factory=CorrelationConfig)
     learning: LearningConfig = Field(default_factory=LearningConfig)
     tls_decrypt: TLSDecryptConfig = Field(default_factory=TLSDecryptConfig)
+    protocol_servers: ProtocolServersConfig = Field(default_factory=ProtocolServersConfig)
 
 
 class ConfigManager:

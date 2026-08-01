@@ -22,6 +22,11 @@ class ProtocolType(str, Enum):
     MQTTS = "mqtts"
     WEBSOCKET = "websocket"
     COAP = "coap"
+    MODBUS = "modbus"
+    MODBUSS = "modbuss"  # Modbus over TLS
+    MATTER = "matter"
+    ZIGBEE = "zigbee"
+    ZWAVE = "zwave"
     TCPIP = "tcpip"  # Raw TCP
 
 

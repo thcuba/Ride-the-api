@@ -252,8 +252,91 @@ llm_decipher:
         Output JSON with patterns array containing: intent, method, path, body_schema, field_mappings, response template, and confidence.
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# PROTOCOL SERVERS (Direct listeners for IoT protocols)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+protocol_servers:
+  # MQTT Broker (port 1883 / 8883 TLS)
+  mqtt:
+    enabled: false
+    host: "0.0.0.0"
+    port: 1883
+    port_tls: 8883
+    tls_enabled: false
+    max_packet_size: 268435  # 256KB
+    topic_filters: ["#"]
+
+  # CoAP Server (port 5683 UDP / 5684 DTLS)
+  coap:
+    enabled: false
+    host: "0.0.0.0"
+    port: 5683
+    dtls_enabled: false
+    dtls_port: 5684
+    max_pdu_size: 1024
+
+  # Modbus TCP Server (port 502)
+  modbus:
+    enabled: false
+    host: "0.0.0.0"
+    port: 502
+    unit_id: 1
+    tls_enabled: false
+    tls_port: 802
+
+  # WebSocket Server (port 9000)
+  websocket:
+    enabled: false
+    host: "0.0.0.0"
+    port: 9000
+    path: "/ws"
+    max_message_size: 1048576  # 1MB
+
+  # Raw TCP Server (port 9100)
+  raw_tcp:
+    enabled: false
+    host: "0.0.0.0"
+    port: 9100
+    buffer_size: 4096
+    idle_timeout: 300
+    protocol_detect: true
+
+  # HTTP/2 Server (port 443 TLS / 8080 cleartext)
+  http2:
+    enabled: false
+    host: "0.0.0.0"
+    port: 443
+    cleartext_port: 8080
+    tls_enabled: true
+
+  # Zigbee Bridge (via Zigbee2MQTT)
+  zigbee_bridge:
+    enabled: false
+    mqtt_host: "localhost"
+    mqtt_port: 1883
+    topic_prefix: "zigbee2mqtt"
+    reconnect_interval: 10
+
+  # Z-Wave Bridge (via Z-Wave JS UI)
+  zwave_bridge:
+    enabled: false
+    connection_type: "mqtt"
+    host: "localhost"
+    port: 1883
+    ws_port: 3000
+
+  # Matter Bridge (via Matter.js)
+  matter_bridge:
+    enabled: false
+    controller_port: 5540
+    fabric_id: 1
+    vendor_id: 65521
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # TLS DECRYPTION ENGINE (MITM proxy for HTTPS/MQTTS/CoAPS)
-# ════════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
 
 tls_decrypt:
   enabled: false  # disabled by default; enable after setting up DNS routing
