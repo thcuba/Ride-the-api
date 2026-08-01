@@ -12,6 +12,7 @@ via API for manual installation on devices.
 from __future__ import annotations
 
 import ipaddress
+import json
 import logging
 import os
 from datetime import datetime, timedelta, timezone
@@ -33,24 +34,27 @@ class CertManager:
         ca_cert_path: str = "./certs/ca.pem",
         ca_key_path: str = "./certs/ca.key",
         device_certs_dir: str = "./data/device_certs",
-        ca_key_size: int = 4096,
-        leaf_key_size: int = 2048,
-        cert_validity_days: int = 730,  # 2 years
-    ):
-        self.ca_cert_path = Path(ca_cert_path)
-        self.ca_key_path = Path(ca_key_path)
-        self.device_certs_dir = Path(device_certs_dir)
-        self.ca_key_size = ca_key_size
-        self.leaf_key_size = leaf_key_size
-        self.cert_validity_days = cert_validity_days
+            external_certs_dir: str = "./data/external_certs",
+            ca_key_size: int = 4096,
+            leaf_key_size: int = 2048,
+            cert_validity_days: int = 730,  # 2 years
+        ):
+            self.ca_cert_path = Path(ca_cert_path)
+            self.ca_key_path = Path(ca_key_path)
+            self.device_certs_dir = Path(device_certs_dir)
+            self.external_certs_dir = Path(external_certs_dir)
+            self.ca_key_size = ca_key_size
+            self.leaf_key_size = leaf_key_size
+            self.cert_validity_days = cert_validity_days
 
-        self._ca_cert: x509.Certificate | None = None
-        self._ca_key: rsa.RSAPrivateKey | None = None
-        self._cache: dict[str, tuple[str, str]] = {}  # hostname -> (cert_pem, key_pem)
+            self._ca_cert: x509.Certificate | None = None
+            self._ca_key: rsa.RSAPrivateKey | None = None
+            self._cache: dict[str, tuple[str, str]] = {}  # hostname -> (cert_pem, key_pem)
 
-        # Ensure directories exist
-        self.ca_cert_path.parent.mkdir(parents=True, exist_ok=True)
-        self.device_certs_dir.mkdir(parents=True, exist_ok=True)
+            # Ensure directories exist
+            self.ca_cert_path.parent.mkdir(parents=True, exist_ok=True)
+            self.device_certs_dir.mkdir(parents=True, exist_ok=True)
+            self.external_certs_dir.mkdir(parents=True, exist_ok=True)
 
     # ── CA Management ──────────────────────────────────────────────────────────
 
@@ -247,16 +251,197 @@ class CertManager:
         if self.device_certs_dir.exists():
             cert_count = len(list(self.device_certs_dir.glob("*.pem")))
 
-        return {
-            "ca_exists": self.ca_cert_path.exists(),
-            "leaf_certs_cached": cert_count,
-            "in_memory_cache": len(self._cache),
-        }
+            ext_count = 0
+            ext_meta = self._external_certs_meta()
+            if ext_meta:
+                ext_count = len(ext_meta)
 
-    @staticmethod
-    def _safe_filename(hostname: str) -> str:
-        """Convert a hostname to a safe filename."""
-        return hostname.replace("*", "wildcard_").replace(".", "_").replace(":", "_")
+            return {
+                "ca_exists": self.ca_cert_path.exists(),
+                "leaf_certs_cached": cert_count,
+                "in_memory_cache": len(self._cache),
+                "external_certs": ext_count,
+            }
+
+        # ── External Certificate Import ───────────────────────────────────────────
+
+        def import_cert(self, hostname: str, cert_pem: str, key_pem: str,
+                         label: str = "") -> dict:
+            """Import an external certificate for a hostname.
+
+            Stores in data/external_certs/{hostname}/ and adds metadata.
+            Once imported, get_cert_for_hostname() will return the external cert.
+            """
+            from datetime import datetime as dt
+
+            ext_dir = self._ext_dir(hostname)
+            ext_dir.mkdir(parents=True, exist_ok=True)
+
+            cert_path = ext_dir / "cert.pem"
+            key_path = ext_dir / "key.pem"
+            meta_path = ext_dir / "meta.json"
+
+            cert_path.write_text(cert_pem)
+            key_path.write_text(key_pem)
+
+            # Parse the imported cert to extract metadata
+            cert_info = self._parse_cert_info(cert_pem)
+
+            meta = {
+                "hostname": hostname,
+                "label": label,
+                "imported_at": dt.now(timezone.utc).isoformat(),
+                "type": "imported",
+                "issuer": cert_info.get("issuer", ""),
+                "subject": cert_info.get("subject", ""),
+                "not_before": cert_info.get("not_before", ""),
+                "not_after": cert_info.get("not_after", ""),
+                "sans": cert_info.get("sans", []),
+            }
+
+            with open(meta_path, "w") as f:
+                json.dump(meta, f, indent=2)
+
+            # Update in-memory cache so TLS MITM picks it up immediately
+            self._cache[hostname] = (cert_pem, key_pem)
+
+            logger.info("Imported external certificate for %s (expires: %s)",
+                         hostname, meta["not_after"])
+            return meta
+
+        def get_cert_for_hostname(self, hostname: str) -> tuple[str, str]:
+            """Get (cert_pem, key_pem) for a hostname.
+
+            Priority: external certs > generated + cached > generate new.
+            """
+            # Check in-memory cache
+            if hostname in self._cache:
+                return self._cache[hostname]
+
+            # Check external cert first (higher priority)
+            ext = self._load_external_cert(hostname)
+            if ext:
+                cert_pem, key_pem = ext
+                self._cache[hostname] = (cert_pem, key_pem)
+                return cert_pem, key_pem
+
+            # Check disk cache
+            safe_name = self._safe_filename(hostname)
+            cert_file = self.device_certs_dir / f"{safe_name}.pem"
+            key_file = self.device_certs_dir / f"{safe_name}.key"
+
+            if cert_file.exists() and key_file.exists():
+                cert_pem = cert_file.read_text()
+                key_pem = key_file.read_text()
+                self._cache[hostname] = (cert_pem, key_pem)
+                return cert_pem, key_pem
+
+            # Generate new leaf certificate
+            cert_pem, key_pem = self._generate_leaf_cert(hostname)
+
+            # Save to disk cache
+            cert_file.write_text(cert_pem)
+            key_file.write_text(key_pem)
+            self._cache[hostname] = (cert_pem, key_pem)
+            logger.debug("Generated leaf certificate for %s", hostname)
+
+            return cert_pem, key_pem
+
+        def delete_external_cert(self, hostname: str) -> bool:
+            """Delete an imported external certificate. Falls back to auto-generated."""
+            ext_dir = self._ext_dir(hostname)
+            if not ext_dir.exists():
+                return False
+
+            import shutil
+            shutil.rmtree(str(ext_dir))
+
+            # Clear cache so next call regenerates
+            self._cache.pop(hostname, None)
+
+            logger.info("Deleted external certificate for %s", hostname)
+            return True
+
+        def list_external_certs(self) -> list[dict]:
+            """List all imported external certificates with metadata."""
+            return self._external_certs_meta()
+
+        def get_external_cert_info(self, hostname: str) -> dict | None:
+            """Get metadata for a specific external certificate."""
+            meta_path = self._ext_dir(hostname) / "meta.json"
+            if meta_path.exists():
+                try:
+                    with open(meta_path) as f:
+                        return json.load(f)
+                except Exception as e:
+                    logger.warning("Failed to read cert meta for %s: %s", hostname, e)
+            return None
+
+        def has_external_cert(self, hostname: str) -> bool:
+            """Check if an external certificate exists for hostname."""
+            return (self._ext_dir(hostname) / "cert.pem").exists()
+
+        def _ext_dir(self, hostname: str) -> Path:
+            """Get path to external cert directory for hostname."""
+            # Use external_certs_dir from config; default fallback
+            base = getattr(self, "external_certs_dir", None)
+            if base is None:
+                base = Path("./data/external_certs")
+            return Path(base) / self._safe_filename(hostname)
+
+        def _load_external_cert(self, hostname: str) -> tuple[str, str] | None:
+            """Load external cert and key from disk if they exist."""
+            ext_dir = self._ext_dir(hostname)
+            cert_path = ext_dir / "cert.pem"
+            key_path = ext_dir / "key.pem"
+            if cert_path.exists() and key_path.exists():
+                return cert_path.read_text(), key_path.read_text()
+            return None
+
+        def _external_certs_meta(self) -> list[dict]:
+            """Scan external certs directory and collect metadata."""
+            base = getattr(self, "external_certs_dir", None)
+            if base is None:
+                base = Path("./data/external_certs")
+            base = Path(base)
+            if not base.exists():
+                return []
+
+            certs = []
+            for meta_file in base.glob("*/meta.json"):
+                try:
+                    with open(meta_file) as f:
+                        certs.append(json.load(f))
+                except Exception as e:
+                    logger.warning("Failed to read %s: %s", meta_file, e)
+            return certs
+
+        @staticmethod
+        def _parse_cert_info(cert_pem: str) -> dict:
+            """Extract metadata from a PEM certificate string."""
+            try:
+                cert = x509.load_pem_x509_certificate(cert_pem.encode())
+                info = {
+                    "issuer": cert.issuer.rfc4514_string() if cert.issuer else "",
+                    "subject": cert.subject.rfc4514_string() if cert.subject else "",
+                    "not_before": cert.not_valid_before_utc.isoformat() if hasattr(cert, 'not_valid_before_utc') else "",
+                    "not_after": cert.not_valid_after_utc.isoformat() if hasattr(cert, 'not_valid_after_utc') else "",
+                    "sans": [],
+                }
+                try:
+                    ext = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName)
+                    info["sans"] = [str(s) for s in ext.value]
+                except x509.ExtensionNotFound:
+                    pass
+                return info
+            except Exception as e:
+                logger.warning("Failed to parse cert: %s", e)
+                return {}
+
+        @staticmethod
+        def _safe_filename(hostname: str) -> str:
+            """Convert a hostname to a safe filename."""
+            return hostname.replace("*", "wildcard_").replace(".", "_").replace(":", "_")
 
 
 # ── Global instance ─────────────────────────────────────────────────────────
@@ -268,6 +453,7 @@ def get_cert_manager(
     ca_cert_path: str | None = None,
     ca_key_path: str | None = None,
     device_certs_dir: str | None = None,
+    external_certs_dir: str | None = None,
 ) -> CertManager:
     """Get or create the global CertManager instance."""
     global _cert_manager
@@ -276,5 +462,6 @@ def get_cert_manager(
             ca_cert_path=ca_cert_path or "./certs/ca.pem",
             ca_key_path=ca_key_path or "./certs/ca.key",
             device_certs_dir=device_certs_dir or "./data/device_certs",
+            external_certs_dir=external_certs_dir or "./data/external_certs",
         )
     return _cert_manager

@@ -6,6 +6,7 @@ Intercepts device traffic, learns protocol via LLM, serves responses locally.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import signal
@@ -19,9 +20,11 @@ WEBUI_DIR = Path(__file__).resolve().parent.parent / "webui"
 DASHBOARD_HTML = WEBUI_DIR / "dashboard.html"
 
 import uvicorn
-from fastapi import FastAPI, Request, Response
+
+from fastapi import FastAPI, Request, Response, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 
 from core.config import get_config_manager
 from core.database import DatabaseManager, Base, init_db_manager, get_db_manager, DeviceRegistry
@@ -60,6 +63,10 @@ llm_decipher_service: LLMDecipherService | None = None
 config_manager = get_config_manager()
 tls_mitm_server: TLSMITMServer | None = None
 cert_manager: CertManager | None = None
+
+# Protocol server instances (lazy-loaded on first access)
+protocol_servers: dict[str, object] = {}
+protocol_server_tasks: dict[str, asyncio.Task] = {}
 
 
 # ── TLS Decrypted Request Handler ────────────────────────────────────────────
@@ -217,6 +224,65 @@ async def lifespan(app: FastAPI):
     # Start config hot-reload
     config_manager.start_watching()
 
+    # Start protocol servers if configured
+    # Start protocol servers if configured
+    protocol_servers_cfg = getattr(config, "protocol_servers", None)
+    if protocol_servers_cfg:
+        try:
+            from core.protocol_servers import get_protocol_server_manager
+            proto_mgr = get_protocol_server_manager(protocol_servers_cfg)
+            from core.protocol_servers.mqtt_server import MQTTServerPlugin
+            from core.protocol_servers.coap_server import CoAPServerPlugin
+            from core.protocol_servers.modbus_server import ModbusServerPlugin
+            from core.protocol_servers.websocket_server import WebSocketServerPlugin
+            from core.protocol_servers.raw_tcp_server import RawTCPServerPlugin
+            from core.protocol_servers.http2_server import HTTP2ServerPlugin
+
+            # Register plugins based on config
+            if getattr(protocol_servers_cfg.mqtt, "enabled", False):
+                proto_mgr.register_plugin(MQTTServerPlugin(protocol_servers_cfg.mqtt))
+            if getattr(protocol_servers_cfg.coap, "enabled", False):
+                proto_mgr.register_plugin(CoAPServerPlugin(protocol_servers_cfg.coap))
+            if getattr(protocol_servers_cfg.modbus, "enabled", False):
+                proto_mgr.register_plugin(ModbusServerPlugin(protocol_servers_cfg.modbus))
+            if getattr(protocol_servers_cfg.websocket, "enabled", False):
+                proto_mgr.register_plugin(WebSocketServerPlugin(protocol_servers_cfg.websocket))
+            if getattr(protocol_servers_cfg.raw_tcp, "enabled", False):
+                proto_mgr.register_plugin(RawTCPServerPlugin(protocol_servers_cfg.raw_tcp))
+            if getattr(protocol_servers_cfg.http2, "enabled", False):
+                proto_mgr.register_plugin(HTTP2ServerPlugin(protocol_servers_cfg.http2))
+
+            # Auto-start enabled servers
+            results = await proto_mgr.start_all()
+            for name, status in results.items():
+                logger.info("Protocol server %s: %s", name, status)
+
+            # Register bridges if enabled
+            if getattr(protocol_servers_cfg.zigbee_bridge, "enabled", False):
+                from core.protocol_servers.zigbee_bridge import ZigbeeBridgePlugin
+                proto_mgr.register_plugin(ZigbeeBridgePlugin(protocol_servers_cfg.zigbee_bridge))
+                await proto_mgr.start_plugin("zigbee")
+
+            if getattr(protocol_servers_cfg.zwave_bridge, "enabled", False):
+                from core.protocol_servers.zwave_bridge import ZWaveBridgePlugin
+                proto_mgr.register_plugin(ZWaveBridgePlugin(protocol_servers_cfg.zwave_bridge))
+                await proto_mgr.start_plugin("zwave")
+
+            if getattr(protocol_servers_cfg.matter_bridge, "enabled", False):
+                from core.protocol_servers.matter_bridge import MatterBridgePlugin
+                proto_mgr.register_plugin(MatterBridgePlugin(protocol_servers_cfg.matter_bridge))
+                await proto_mgr.start_plugin("matter")
+        except Exception as e:
+            logger.error("Failed to initialize protocol servers: %s", e)
+
+    # Mount static files for Web UI
+    try:
+        static_dir = Path(__file__).resolve().parent.parent / "webui" / "static"
+        if static_dir.exists():
+            app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+    except Exception as e:
+        logger.warning("Could not mount static files: %s", e)
+
     logger.info(f"Server started on {config.proxy.host}:{config.proxy.port}")
     logger.info(f"Registered adapters: {adapter_registry.list_vendors()}")
 
@@ -226,6 +292,15 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down...")
     config_manager.stop_watching()
 
+    # Stop protocol servers
+    try:
+        from core.protocol_servers import get_protocol_server_manager
+        proto_mgr = get_protocol_server_manager()
+        await proto_mgr.stop_all()
+        logger.info("Protocol servers stopped")
+    except Exception as e:
+        logger.error("Error stopping protocol servers: %s", e)
+
     # Stop TLS MITM server
     if tls_mitm_server:
         try:
@@ -233,7 +308,6 @@ async def lifespan(app: FastAPI):
             logger.info("TLS MITM server stopped")
         except Exception as e:
             logger.error("Error stopping TLS MITM server: %s", e)
-
     if llm_decipher_service:
         await llm_decipher_service.close()
     if db_manager:
@@ -452,11 +526,183 @@ Java.perform(function() {
     return Response(content=script, media_type="application/javascript")
 
 
+    # ═══════════════════════════════════════════════════════════════════════════════
+    # TLS CERTIFICATE MANAGEMENT API
+    # ═══════════════════════════════════════════════════════════════════════════════
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# HEALTH & METRICS
-# ═══════════════════════════════════════════════════════════════════════════════
+    @app.get("/api/tls/certs")
+    async def tls_list_certs():
+        """List all imported and auto-generated certificates."""
+        if not cert_manager:
+            return JSONResponse(status_code=503, content={"error": "Cert manager not ready"})
+        try:
+            imported = cert_manager.list_imported_certs()
+            return {"certs": imported}
+        except Exception as e:
+            return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+    @app.get("/api/tls/certs/{hostname}")
+    async def tls_get_cert_info(hostname: str):
+        """Get detailed info about a specific certificate."""
+        if not cert_manager:
+            return JSONResponse(status_code=503, content={"error": "Cert manager not ready"})
+        try:
+            info = cert_manager.get_cert_info(hostname)
+            if not info:
+                return JSONResponse(status_code=404, content={"error": f"No certificate found for '{hostname}'"})
+            return {"cert": info}
+        except Exception as e:
+            return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+    @app.post("/api/tls/certs/upload")
+    async def tls_upload_cert(
+        hostname: str = Form(...),
+        cert: UploadFile = File(...),
+        key: UploadFile = File(...),
+    ):
+        """Upload a certificate + private key (PEM format) for a specific hostname."""
+        if not cert_manager:
+            return JSONResponse(status_code=503, content={"error": "Cert manager not ready"})
+        try:
+            cert_pem = await cert.read()
+            key_pem = await key.read()
+            cert_manager.import_cert(hostname, cert_pem.decode("utf-8"), key_pem.decode("utf-8"))
+            return {"status": "ok", "hostname": hostname, "message": f"Certificate imported for '{hostname}'"}
+        except Exception as e:
+            return JSONResponse(status_code=400, content={"error": str(e)})
+
+
+    @app.post("/api/tls/certs/upload-json")
+    async def tls_upload_cert_json(request: Request):
+        """Upload a certificate + private key as JSON (base64-encoded PEM)."""
+        if not cert_manager:
+            return JSONResponse(status_code=503, content={"error": "Cert manager not ready"})
+        try:
+            body = await request.json()
+            hostname = body.get("hostname")
+            cert_b64 = body.get("cert_base64")
+            key_b64 = body.get("key_base64")
+            if not all([hostname, cert_b64, key_b64]):
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "Missing 'hostname', 'cert_base64', or 'key_base64'"},
+                )
+            cert_pem = base64.b64decode(cert_b64).decode("utf-8")
+            key_pem = base64.b64decode(key_b64).decode("utf-8")
+            cert_manager.import_cert(hostname, cert_pem, key_pem)
+            return {"status": "ok", "hostname": hostname}
+        except Exception as e:
+            return JSONResponse(status_code=400, content={"error": str(e)})
+
+
+    @app.delete("/api/tls/certs/{hostname}")
+    async def tls_delete_cert(hostname: str):
+        """Delete an imported certificate, reverting to auto-generated."""
+        if not cert_manager:
+            return JSONResponse(status_code=503, content={"error": "Cert manager not ready"})
+        try:
+            cert_manager.delete_cert(hostname)
+            return {"status": "ok", "hostname": hostname, "message": f"Certificate deleted for '{hostname}'"}
+        except Exception as e:
+            return JSONResponse(status_code=400, content={"error": str(e)})
+
+
+    @app.post("/api/tls/certs/{hostname}/rotate")
+    async def tls_rotate_cert(hostname: str, request: Request):
+        """Replace an existing certificate without downtime."""
+        if not cert_manager:
+            return JSONResponse(status_code=503, content={"error": "Cert manager not ready"})
+        try:
+            body = await request.json()
+            cert_b64 = body.get("cert_base64")
+            key_b64 = body.get("key_base64")
+            if not all([cert_b64, key_b64]):
+                return JSONResponse(status_code=400, content={"error": "Missing 'cert_base64' or 'key_base64'"})
+            cert_pem = base64.b64decode(cert_b64).decode("utf-8")
+            key_pem = base64.b64decode(key_b64).decode("utf-8")
+            cert_manager.import_cert(hostname, cert_pem, key_pem)
+            return {"status": "ok", "hostname": hostname, "message": f"Certificate rotated for '{hostname}'"}
+        except Exception as e:
+            return JSONResponse(status_code=400, content={"error": str(e)})
+
+
+    @app.post("/api/tls/root-ca/download")
+    async def tls_download_root_ca():
+        """Download the root CA certificate for manual installation on devices."""
+        if not cert_manager:
+            return JSONResponse(status_code=503, content={"error": "Cert manager not ready"})
+        try:
+            ca_pem = cert_manager.ca_cert_pem()
+            return Response(
+                content=ca_pem,
+                media_type="application/x-pem-file",
+                headers={"Content-Disposition": "attachment; filename=ride-the-api-ca.pem"},
+            )
+        except Exception as e:
+            return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+    # ═══════════════════════════════════════════════════════════════════════════════
+    # PROTOCOL SERVER MANAGEMENT API
+    # ═══════════════════════════════════════════════════════════════════════════════
+
+
+    @app.get("/api/protocol-servers")
+    async def protocol_servers_status():
+        """List all protocol servers and their status."""
+        from core.protocol_servers import get_protocol_server_manager
+        manager = get_protocol_server_manager()
+        status_list = await manager.get_all_status()
+        return {"servers": status_list}
+
+
+    @app.post("/api/protocol-servers/{name}/start")
+    async def protocol_server_start(name: str):
+        """Start a specific protocol server."""
+        from core.protocol_servers import get_protocol_server_manager
+        manager = get_protocol_server_manager()
+        success = await manager.start_plugin(name)
+        if not success:
+            plugin = manager.get_plugin(name)
+            if plugin is None:
+                return JSONResponse(status_code=404, content={"error": f"Server '{name}' not found"})
+            return JSONResponse(status_code=500, content={"error": f"Failed to start '{name}'"})
+        return {"status": "ok", "server": name, "running": True}
+
+
+    @app.post("/api/protocol-servers/{name}/stop")
+    async def protocol_server_stop(name: str):
+        """Stop a specific protocol server."""
+        from core.protocol_servers import get_protocol_server_manager
+        manager = get_protocol_server_manager()
+        success = await manager.stop_plugin(name)
+        if not success:
+            plugin = manager.get_plugin(name)
+            if plugin is None:
+                return JSONResponse(status_code=404, content={"error": f"Server '{name}' not found"})
+            return JSONResponse(status_code=500, content={"error": f"Failed to stop '{name}'"})
+        return {"status": "ok", "server": name, "running": False}
+
+
+    @app.get("/api/protocol-servers/{name}/config")
+    async def protocol_server_config(name: str):
+        """Get configuration for a specific protocol server."""
+        from core.protocol_servers import get_protocol_server_manager
+        manager = get_protocol_server_manager()
+        plugin = manager.get_plugin(name)
+        if not plugin:
+            return JSONResponse(status_code=404, content={"error": f"Server '{name}' not found"})
+        cfg = plugin.config
+        config_dict = cfg.model_dump() if hasattr(cfg, "model_dump") else vars(cfg)
+        return {"name": name, "config": config_dict}
+
+
+    # ═══════════════════════════════════════════════════════════════════════════════
+    # HEALTH & METRICS
+    # ═══════════════════════════════════════════════════════════════════════════════
 
 @app.get("/health")
 async def health_check():

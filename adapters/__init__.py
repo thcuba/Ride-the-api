@@ -12,12 +12,24 @@ def register_all_adapters() -> ProtocolAdapterRegistry:
     
     # Import and register the example reference adapter
     from adapters.example import ExampleProtocolAdapter
-    
+
     example_adapter = ExampleProtocolAdapter("example", {
         "region": "eu",
         "api_version": "v1.0",
     })
     registry.register(example_adapter)
+
+    # CoAP adapter example
+    from adapters.coap import CoAPProtocolAdapter
+    registry.register(CoAPProtocolAdapter("coap_example", {}))
+
+    # Modbus adapter example
+    from adapters.modbus import ModbusProtocolAdapter
+    registry.register(ModbusProtocolAdapter("modbus_example", {}))
+
+    # Shelly adapter
+    from adapters.shelly import ShellyProtocolAdapter
+    registry.register(ShellyProtocolAdapter("shelly", {}))
     
     # Users/community: add your own adapter registrations here, e.g.:
     # from adapters.my_protocol import MyProtocolAdapter
