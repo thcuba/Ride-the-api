@@ -65,6 +65,19 @@ A DNS interception proxy that sits between IoT devices and their cloud APIs, **l
 - Supports OpenAI-compatible APIs, local Ollama, vLLM, etc.
 - Context buffer size configurable per device
 
+### Multi-Protocol Server Platform
+- Direct protocol listeners for **MQTT** (port 1883 / 8883 TLS), **CoAP** (5683 / 5684 DTLS), **Modbus TCP** (502 / 802 TLS), **WebSocket** (9000), **Raw TCP** (9100), and **HTTP/2** (443 / 8080 h2c)
+- Protocol bridge plugins for **Zigbee** (via Zigbee2MQTT), **Z-Wave** (via Z-Wave JS UI), and **Matter** (via Matter.js)
+- All servers managed via `ProtocolServerManager` — unified start/stop/status lifecycle
+- REST API for runtime protocol server control
+- Example protocol adapters: **CoAP**, **Modbus**, **Shelly**
+
+### TLS Certificate Management
+- **Certificate upload**: import PEM cert+key pairs per hostname via file upload or JSON
+- **Certificate lifecycle**: list, inspect, delete, and rotate TLS certificates
+- **MITM CA download**: retrieve the root CA certificate for device trust configuration
+- External certs stored at `data/external_certs/{hostname}/`
+
 ### Dashboard
 - Real-time web UI at `http://localhost:8911/`
 - Per-device match rate, pattern count, buffer fill level
@@ -128,6 +141,53 @@ python -m core.server
 
 Open `http://localhost:8911/` in your browser to see the dashboard.
 
+### Protocol Server Configuration
+
+Protocol servers are opt-in (disabled by default). Enable them in `config/config.yaml`:
+
+```yaml
+protocol_servers:
+  mqtt:
+    enabled: true
+    host: "0.0.0.0"
+    port: 1883
+  coap:
+    enabled: true
+    host: "0.0.0.0"
+    port: 5683
+  modbus:
+    enabled: true
+    host: "0.0.0.0"
+    port: 502
+  websocket:
+    enabled: true
+    host: "0.0.0.0"
+    port: 9000
+  raw_tcp:
+    enabled: true
+    host: "0.0.0.0"
+    port: 9100
+  http2:
+    enabled: true
+    host: "0.0.0.0"
+    port: 443
+    cleartext_port: 8080
+  # Bridge plugins (connect via external software)
+  zigbee_bridge:
+    enabled: true
+    mqtt_host: "localhost"
+    mqtt_port: 1883
+    topic_prefix: "zigbee2mqtt"
+  zwave_bridge:
+    enabled: true
+    connection_type: "mqtt"
+    host: "localhost"
+    port: 1883
+  matter_bridge:
+    enabled: true
+    controller_port: 5540
+```
+
 ## How It Works
 
 ### 1. Learning Mode (default)
@@ -159,15 +219,30 @@ The proxy handles requests locally:
 ├── adapters/
 │   ├── base/              # Abstract ProtocolAdapter interface
 │   ├── example/           # Reference implementation
+│   ├── coap/              # CoAP protocol adapter example
+│   ├── modbus/            # Modbus protocol adapter example
+│   ├── shelly/            # Shelly smart home adapter
 │   └── __init__.py        # Adapter registry
 ├── core/
 │   ├── server.py          # FastAPI server + dashboard + API endpoints
 │   ├── config.py          # Configuration management
+│   ├── cert_manager.py    # TLS CA + device cert generation + external cert management
 │   ├── database.py        # Device-specific protocol DB models + manager
 │   ├── pipeline.py        # Learning/production orchestrator, correlator, buffer, matcher
 │   ├── llm_decipher.py    # LLM analysis service
 │   ├── modification.py    # Request/response modification
 │   ├── traffic_selector.py # Intercept/passthrough rules
+│   ├── protocol_servers/  # IoT/industrial protocol server plugins
+│   │   ├── __init__.py    # ProtocolServerPlugin base + ProtocolServerManager
+│   │   ├── mqtt_server.py      # MQTT broker plugin
+│   │   ├── coap_server.py      # CoAP server plugin
+│   │   ├── modbus_server.py    # Modbus TCP server plugin
+│   │   ├── websocket_server.py # WebSocket server plugin
+│   │   ├── raw_tcp_server.py   # Raw TCP server plugin
+│   │   ├── http2_server.py     # HTTP/2 server plugin
+│   │   ├── zigbee_bridge.py    # Zigbee2MQTT bridge
+│   │   ├── zwave_bridge.py     # Z-Wave JS UI bridge
+│   │   └── matter_bridge.py    # Matter.js bridge
 │   └── pattern_db/        # Portable pattern database engine
 │       ├── __init__.py    # Package init + Pydantic schemas
 │       ├── schemas.py     # CaptureDB & PatternDB Pydantic models
@@ -201,6 +276,17 @@ The proxy handles requests locally:
 | `POST /api/devices/{id}/patterns/import` | Import patterns from .ride-pattern.json |
 | `GET /api/devices/{id}/capture/export` | Export raw buffer (.ride-capture.json) |
 | `POST /api/devices/{id}/capture/import` | Import raw pairs from .ride-capture.json |
+| `GET /api/protocol-servers` | List all protocol servers with status |
+| `POST /api/protocol-servers/{name}/start` | Start a protocol server |
+| `POST /api/protocol-servers/{name}/stop` | Stop a protocol server |
+| `GET /api/protocol-servers/{name}/config` | Get protocol server configuration |
+| `POST /api/tls/certs/upload` | Upload TLS certificate + key (multipart) |
+| `POST /api/tls/certs/upload-json` | Upload TLS certificate + key (JSON) |
+| `GET /api/tls/certs` | List all imported TLS certificates |
+| `GET /api/tls/certs/{hostname}` | Inspect a TLS certificate |
+| `DELETE /api/tls/certs/{hostname}` | Delete an imported certificate |
+| `POST /api/tls/certs/{hostname}/rotate` | Regenerate a device leaf certificate |
+| `POST /api/tls/root-ca/download` | Download the MITM root CA certificate |
 | `/{vendor}/{path:path}` | Proxy endpoint for device traffic |
 
 ## Roadmap
@@ -208,7 +294,10 @@ The proxy handles requests locally:
 - [ ] Auto-switch to production when match rate is sufficient
 - [x] Portable pattern database (LLM-agnostic, shareable, cross-hardware) — see [design doc](docs/portable-pattern-database.md)
 - [ ] Built-in DNS server (no external dependency)
-- [ ] MQTT/CoAP protocol support
+- [x] MQTT/CoAP protocol support
+- [x] Modbus, WebSocket, Raw TCP, HTTP/2 protocol servers
+- [x] TLS certificate management API (upload, list, delete, rotate)
+- [x] Zigbee / Z-Wave / Matter bridge plugins
 - [ ] Web UI for manual pattern editing
 - [x] Encrypted traffic MITM support
 
