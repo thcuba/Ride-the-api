@@ -261,17 +261,17 @@ async def lifespan(app: FastAPI):
             if getattr(protocol_servers_cfg.zigbee_bridge, "enabled", False):
                 from core.protocol_servers.zigbee_bridge import ZigbeeBridgePlugin
                 proto_mgr.register_plugin(ZigbeeBridgePlugin(protocol_servers_cfg.zigbee_bridge))
-                await proto_mgr.start_plugin("zigbee")
+                await proto_mgr.start_plugin("zigbee_bridge")
 
             if getattr(protocol_servers_cfg.zwave_bridge, "enabled", False):
                 from core.protocol_servers.zwave_bridge import ZWaveBridgePlugin
                 proto_mgr.register_plugin(ZWaveBridgePlugin(protocol_servers_cfg.zwave_bridge))
-                await proto_mgr.start_plugin("zwave")
+                await proto_mgr.start_plugin("zwave_bridge")
 
             if getattr(protocol_servers_cfg.matter_bridge, "enabled", False):
                 from core.protocol_servers.matter_bridge import MatterBridgePlugin
                 proto_mgr.register_plugin(MatterBridgePlugin(protocol_servers_cfg.matter_bridge))
-                await proto_mgr.start_plugin("matter")
+                await proto_mgr.start_plugin("matter_bridge")
         except Exception as e:
             logger.error("Failed to initialize protocol servers: %s", e)
 
