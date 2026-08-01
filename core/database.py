@@ -76,6 +76,9 @@ class DeviceRegistry(Base):
     # Match threshold for production mode
     match_threshold: Mapped[float] = mapped_column(Float, default=0.85, nullable=False)
 
+    # Auto-switch to production when match rate >= 99%
+    auto_switch_enabled: Mapped[bool] = mapped_column(default=False, nullable=False)
+
     # LLM configuration (per-device override)
     llm_base_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     llm_model_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -541,6 +544,7 @@ class DatabaseManager:
                     "context_buffer_size": d.context_buffer_size,
                     "llm_model_id": d.llm_model_id,
                     "llm_base_url": d.llm_base_url,
+                    "auto_switch_enabled": d.auto_switch_enabled,
                 }
                 for d in result.scalars().all()
             ]
@@ -577,6 +581,20 @@ class DatabaseManager:
             if profile_name is not None:
                 device.llm_profile_name = profile_name
             await session.commit()
+            return True
+
+    async def update_device_auto_switch(self, device_id: str, enabled: bool) -> bool:
+        """Enable or disable auto-switch to production for a device."""
+        async with await self.get_core_session() as session:
+            result = await session.execute(
+                select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
+            )
+            device = result.scalar_one_or_none()
+            if not device:
+                return False
+            device.auto_switch_enabled = enabled
+            await session.commit()
+            logger.info(f"Device {device_id} auto-switch {'enabled' if enabled else 'disabled'}")
             return True
 
     async def close(self) -> None:

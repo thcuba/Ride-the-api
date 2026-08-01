@@ -33,7 +33,7 @@ from core.pipeline import (
     LearningOrchestrator, get_orchestrator, ContextBuffer,
     PatternMatcher, MatchRateTracker, PipelineMode,
 )
-from core.resilience import CloudIndependenceVerifier, register_resilience_routes
+from core.resilience import CloudIndependenceVerifier, register_resilience_routes, AutoSwitchScheduler
 from core.traffic_selector import get_traffic_selector, TrafficSelector, TrafficRequestInfo
 from core.cert_manager import get_cert_manager, CertManager
 from core.tls_mitm import (
@@ -63,6 +63,7 @@ llm_decipher_service: LLMDecipherService | None = None
 config_manager = get_config_manager()
 tls_mitm_server: TLSMITMServer | None = None
 cert_manager: CertManager | None = None
+auto_switch_scheduler: AutoSwitchScheduler | None = None
 
 # Protocol server instances (lazy-loaded on first access)
 protocol_servers: dict[str, object] = {}
@@ -167,7 +168,7 @@ async def handle_tls_decrypted_request(req: DecryptedRequest) -> dict | None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
-    global db_manager, adapter_registry, orchestrator, llm_decipher_service, tls_mitm_server, cert_manager
+    global db_manager, adapter_registry, orchestrator, llm_decipher_service, tls_mitm_server, cert_manager, auto_switch_scheduler
 
     logger.info("Starting Local Cloud Replacement Proxy...")
 
@@ -283,16 +284,29 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Could not mount static files: %s", e)
 
+    # Start auto-switch scheduler
+    auto_switch_scheduler = AutoSwitchScheduler(db_manager)
+    await auto_switch_scheduler.start()
+    logger.info("Auto-switch scheduler started")
+
     logger.info(f"Server started on {config.proxy.host}:{config.proxy.port}")
     logger.info(f"Registered adapters: {adapter_registry.list_vendors()}")
 
     yield
 
     # Cleanup
-    logger.info("Shutting down...")
-    config_manager.stop_watching()
+        logger.info("Shutting down...")
+        config_manager.stop_watching()
 
-    # Stop protocol servers
+        # Stop auto-switch scheduler
+        if auto_switch_scheduler:
+            try:
+                await auto_switch_scheduler.stop()
+                logger.info("Auto-switch scheduler stopped")
+            except Exception as e:
+                logger.error("Error stopping auto-switch scheduler: %s", e)
+
+        # Stop protocol servers
     try:
         from core.protocol_servers import get_protocol_server_manager
         proto_mgr = get_protocol_server_manager()
@@ -784,7 +798,34 @@ async def set_device_mode(device_id: str, request: Request):
     return {"device_id": device_id, "mode": mode}
 
 
-@app.put("/api/devices/{device_id}/llm")
+    @app.get("/api/devices/{device_id}/auto-switch")
+    async def get_device_auto_switch(device_id: str):
+        """Get auto-switch status for a device."""
+        if not db_manager:
+            return JSONResponse(status_code=503, content={"error": "Service not ready"})
+        devices = await db_manager.list_devices()
+        for d in devices:
+            if d["device_id"] == device_id:
+                return {"device_id": device_id, "auto_switch_enabled": d.get("auto_switch_enabled", False)}
+        return JSONResponse(status_code=404, content={"error": "Device not found"})
+
+
+    @app.put("/api/devices/{device_id}/auto-switch")
+    async def set_device_auto_switch(device_id: str, request: Request):
+        """Enable or disable auto-switch to production for a device."""
+        if not db_manager:
+            return JSONResponse(status_code=503, content={"error": "Service not ready"})
+        body = await request.json()
+        enabled = body.get("enabled", False)
+        if not isinstance(enabled, bool):
+            return JSONResponse(status_code=400, content={"error": "'enabled' must be a boolean"})
+        success = await db_manager.update_device_auto_switch(device_id, enabled)
+        if not success:
+            return JSONResponse(status_code=404, content={"error": "Device not found"})
+        return {"device_id": device_id, "auto_switch_enabled": enabled}
+
+
+    @app.put("/api/devices/{device_id}/llm")
 async def configure_device_llm(device_id: str, request: Request):
     """Configure LLM settings for a device."""
     if not db_manager:

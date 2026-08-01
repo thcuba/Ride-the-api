@@ -434,7 +434,21 @@ async function loadDeviceStats(deviceId) {
         <button class="btn btn-primary" onclick="switchMode('${deviceId}')">Apply</button>
       </div>
 
-      <!-- TLS Config Panel (for all devices) -->
+              <!-- Auto-Switch to Production toggle -->
+              <div class="mode-area" style="margin-top: 8px;">
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                  <input type="checkbox" id="auto-switch-${deviceId}"
+                         ${s.auto_switch_enabled ? 'checked' : ''}
+                         onchange="toggleAutoSwitch('${deviceId}', this.checked)">
+                  <span>Auto-Switch to Production (99% match rate)</span>
+                </label>
+                <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">
+                  Current match rate: ${s.match_rate_pct != null ? s.match_rate_pct.toFixed(1) + '%' : 'N/A'}
+                  &middot; Threshold: 99.0%
+                </div>
+              </div>
+
+              <!-- TLS Config Panel (for all devices) -->
       <div class="tls-config" role="region" aria-label="TLS interception configuration for ${s.name || deviceId}">
         <h3>
           <svg class="icon-svg-sm" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
@@ -503,7 +517,17 @@ async function switchMode(deviceId) {
   } catch(e) { showToast('Failed to switch mode', 'error'); }
 }
 
-loadDevices();
+  async function toggleAutoSwitch(deviceId, enabled) {
+    try {
+      await fetch(`/api/devices/${deviceId}/auto-switch`, {
+        method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({enabled}),
+      });
+      showToast('Auto-switch ' + (enabled ? 'enabled' : 'disabled'), 'success');
+      loadDevices();
+    } catch(e) { showToast('Failed to toggle auto-switch', 'error'); }
+  }
+
+  loadDevices();
 loadTlsBar();
 loadVendors();
 setInterval(loadDevices, 8000);
