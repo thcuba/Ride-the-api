@@ -435,6 +435,91 @@ class TestProtocolAdapter:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# RESILIENCE / AUTO-SWITCH TESTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@pytest.mark.asyncio
+async def test_auto_switch_disabled_by_default(db_manager):
+    """Auto-switch should be disabled by default for new devices."""
+    await db_manager.get_or_create_device("test_auto_001", "example", "ac", "Test Auto")
+    devices = await db_manager.list_devices()
+    for d in devices:
+        if d["device_id"] == "test_auto_001":
+            assert d.get("auto_switch_enabled") is False
+            return
+    pytest.fail("Device not found")
+
+
+@pytest.mark.asyncio
+async def test_update_device_auto_switch(db_manager):
+    """Test toggling auto-switch for a device."""
+    await db_manager.get_or_create_device("test_auto_002", "example", "ac", "Test Auto")
+    result = await db_manager.update_device_auto_switch("test_auto_002", True)
+    assert result is True
+    devices = await db_manager.list_devices()
+    for d in devices:
+        if d["device_id"] == "test_auto_002":
+            assert d.get("auto_switch_enabled") is True
+            return
+    pytest.fail("Device not found")
+
+
+@pytest.mark.asyncio
+async def test_update_device_auto_switch_not_found(db_manager):
+    """Test toggling auto-switch for a non-existent device returns False."""
+    result = await db_manager.update_device_auto_switch("nonexistent", True)
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_auto_switch_threshold_constants():
+    """Verify the auto-switch thresholds are set correctly."""
+    from core.resilience import AUTO_SWITCH_MATCH_RATE, ROLLBACK_MATCH_RATE, MIN_TOTAL_REQUESTS, MIN_PATTERNS_FOR_SWITCH
+    assert AUTO_SWITCH_MATCH_RATE == 99.0
+    assert ROLLBACK_MATCH_RATE == 90.0
+    assert MIN_TOTAL_REQUESTS >= 50
+    assert MIN_PATTERNS_FOR_SWITCH >= 10
+
+
+@pytest.mark.asyncio
+async def test_auto_switch_to_production_disabled(device_db, sample_patterns):
+    """Auto-switch should not happen when auto_switch_enabled is False."""
+    from core.resilience import CloudIndependenceVerifier
+    verifier = CloudIndependenceVerifier(device_db)
+    result = await verifier.auto_switch_to_production(sample_patterns)
+    assert result is False  # auto_switch_enabled is False by default
+
+
+@pytest.mark.asyncio
+async def test_auto_switch_to_production_enabled_but_low_match(device_db, sample_patterns):
+    """Auto-switch should not happen when match rate is below 99%."""
+    from core.resilience import CloudIndependenceVerifier
+    await device_db.update_device_auto_switch(sample_patterns, True)
+    verifier = CloudIndependenceVerifier(device_db)
+    result = await verifier.auto_switch_to_production(sample_patterns)
+    assert result is False  # match rate is 70%
+
+
+@pytest.mark.asyncio
+async def test_cloud_independence_verifier_returns_auto_switch_field(device_db, sample_patterns):
+    """Check_cloud_independence should return auto_switch_enabled field."""
+    from core.resilience import CloudIndependenceVerifier
+    verifier = CloudIndependenceVerifier(device_db)
+    status = await verifier.check_cloud_independence(sample_patterns)
+    assert "auto_switch_enabled" in status
+    assert status["auto_switch_enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_should_rollback_not_production(device_db, sample_patterns):
+    """Rollback should not trigger for devices not in production mode."""
+    from core.resilience import CloudIndependenceVerifier
+    verifier = CloudIndependenceVerifier(device_db)
+    result = await verifier.should_rollback_to_learning(sample_patterns)
+    assert result is False  # device is in learning mode
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # RUN TESTS
 # ═══════════════════════════════════════════════════════════════════════════════
 

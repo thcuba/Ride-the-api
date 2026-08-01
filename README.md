@@ -291,7 +291,7 @@ The proxy handles requests locally:
 
 ## Roadmap
 
-- [ ] Auto-switch to production when match rate is sufficient
+- [x] Auto-switch to production when match rate reaches 99% (per-device toggle, rollback safety) — see [design doc](docs/resilience.md)
 - [x] Portable pattern database (LLM-agnostic, shareable, cross-hardware) — see [design doc](docs/portable-pattern-database.md)
 - [ ] Built-in DNS server (no external dependency)
 - [x] MQTT/CoAP protocol support

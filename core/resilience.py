@@ -5,8 +5,9 @@ Verifies that devices can function without vendor cloud APIs.
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from core.database import DatabaseManager, DeviceRegistry, get_db_manager
@@ -14,6 +15,13 @@ from core.pipeline import LearningOrchestrator, PatternMatcher
 from sqlalchemy import select, func
 
 logger = logging.getLogger(__name__)
+
+# Auto-switch thresholds
+AUTO_SWITCH_MATCH_RATE = 99.0    # Switch to production at 99% match rate
+ROLLBACK_MATCH_RATE = 90.0       # Roll back to learning below 90% match rate
+MIN_PATTERNS_FOR_SWITCH = 10     # Minimum patterns before considering switch
+MIN_TOTAL_REQUESTS = 50          # Minimum total requests for reliable stats
+CHECK_INTERVAL_SECONDS = 60      # How often to check auto-switch conditions
 
 
 class CloudIndependenceVerifier:
@@ -58,45 +66,63 @@ class CloudIndependenceVerifier:
                 return {"independent": False, "reason": "device_not_found"}
 
         match_rate = stats.match_rate_pct if stats else 0.0
+        total_requests = stats.total_requests if stats else 0
         has_patterns = len(patterns_list) > 0
         has_templates = len(templates_list) > 0
         has_high_confidence = any(t.confidence >= 0.85 for t in templates_list)
-        has_good_match_rate = match_rate >= 80.0
+        has_excellent_match_rate = match_rate >= AUTO_SWITCH_MATCH_RATE
         is_learning = device.mode == "learning"
+        is_production = device.mode == "production"
 
-        # Production mode with high confidence = independent
-        if not is_learning and has_patterns and has_templates and has_high_confidence:
+        # Production mode with excellent match rate = independent
+        if is_production and has_patterns and has_templates and has_high_confidence:
             return {
                 "independent": True,
                 "patterns_learned": len(patterns_list),
                 "templates_created": len(templates_list),
                 "match_rate": match_rate,
+                "total_requests": total_requests,
                 "mode": "production",
+                "auto_switch_enabled": device.auto_switch_enabled,
                 "reason": "Device is in production mode with learned patterns",
             }
 
-        # Learning mode with enough data to switch
-        if has_patterns and has_good_match_rate and has_high_confidence:
+        # Learning mode with enough data to switch (99% threshold)
+        is_switch_ready = (
+            has_patterns
+            and has_excellent_match_rate
+            and has_high_confidence
+            and total_requests >= MIN_TOTAL_REQUESTS
+            and len(patterns_list) >= MIN_PATTERNS_FOR_SWITCH
+        )
+        if is_switch_ready:
             return {
                 "independent": True,
                 "patterns_learned": len(patterns_list),
                 "templates_created": len(templates_list),
                 "match_rate": match_rate,
+                "total_requests": total_requests,
                 "mode": device.mode,
+                "auto_switch_enabled": device.auto_switch_enabled,
                 "reason": "Device has sufficient patterns to operate independently",
                 "suggested_action": "Switch to production mode",
             }
 
-        # Still learning
+        # Still learning or production with degrading match rate
         return {
             "independent": False,
             "patterns_learned": len(patterns_list),
             "templates_created": len(templates_list),
             "match_rate": match_rate,
+            "total_requests": total_requests,
             "mode": device.mode,
-            "reason": f"Device {device_id} is still learning. "
-                      f"Needs more patterns or higher match rate. "
-                      f"Current: {len(patterns_list)} patterns, {match_rate}% match rate.",
+            "auto_switch_enabled": device.auto_switch_enabled,
+            "reason": (
+                f"Device {device_id} is {'in production but ' if is_production else ''}"
+                f"not fully independent yet. "
+                f"Current: {len(patterns_list)} patterns, {match_rate}% match rate "
+                f"(need {AUTO_SWITCH_MATCH_RATE}% for auto-switch)."
+            ),
         }
 
     async def verify_all_devices(self) -> list[dict]:
@@ -113,16 +139,65 @@ class CloudIndependenceVerifier:
         return results
 
     async def auto_switch_to_production(self, device_id: str,
-                                          min_patterns: int = 10,
-                                          min_match_rate: float = 80.0) -> bool:
-        """Automatically switch a device to production mode if conditions are met."""
+                                          min_patterns: int = MIN_PATTERNS_FOR_SWITCH,
+                                          min_match_rate: float = AUTO_SWITCH_MATCH_RATE) -> bool:
+        """Automatically switch a device to production mode if conditions are met.
+
+        Only switches if auto_switch_enabled is True for the device
+        and match rate meets the threshold (default 99%).
+        """
+        # Check if auto-switch is enabled for this device
+        async with self.db_manager.core_session() as session:
+            result = await session.execute(
+                select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
+            )
+            device = result.scalar_one_or_none()
+            if not device:
+                logger.warning(f"Auto-switch: device {device_id} not found")
+                return False
+            if not device.auto_switch_enabled:
+                logger.info(f"Auto-switch disabled for device {device_id}")
+                return False
+
         status = await self.check_cloud_independence(device_id)
-        if (status.get("patterns_learned", 0) >= min_patterns
-                and status.get("match_rate", 0) >= min_match_rate):
+        patterns = status.get("patterns_learned", 0)
+        match_rate = status.get("match_rate", 0)
+        total_reqs = status.get("total_requests", 0)
+
+        if (patterns >= min_patterns
+                and match_rate >= min_match_rate
+                and total_reqs >= MIN_TOTAL_REQUESTS):
             await self.db_manager.update_device_mode(device_id, "production")
             logger.info(f"Auto-switched {device_id} to production mode "
-                         f"({status['patterns_learned']} patterns, {status['match_rate']}% match rate)")
+                         f"({patterns} patterns, {match_rate}% match rate, "
+                         f"{total_reqs} total requests)")
             return True
+
+        logger.info(f"Auto-switch conditions not met for {device_id}: "
+                     f"{patterns} patterns, {match_rate}% match rate, "
+                     f"{total_reqs} requests (need {min_patterns}+ patterns, "
+                     f"{min_match_rate}% match rate, {MIN_TOTAL_REQUESTS}+ requests)")
+        return False
+
+    async def should_rollback_to_learning(self, device_id: str,
+                                           rollback_threshold: float = ROLLBACK_MATCH_RATE) -> bool:
+        """Check if a production device should roll back to learning mode.
+
+        Returns True if match rate has dropped below the rollback threshold (default 90%).
+        """
+        status = await self.check_cloud_independence(device_id)
+        match_rate = status.get("match_rate", 100.0)
+        total_reqs = status.get("total_requests", 0)
+
+        if status.get("mode") != "production":
+            return False
+
+        if match_rate < rollback_threshold and total_reqs >= MIN_TOTAL_REQUESTS:
+            logger.warning(f"Rollback triggered for {device_id}: "
+                           f"match rate {match_rate}% below {rollback_threshold}% threshold")
+            await self.db_manager.update_device_mode(device_id, "learning")
+            return True
+
         return False
 
     async def export_device_patterns(self, device_id: str) -> dict:
@@ -271,3 +346,62 @@ def register_resilience_routes(app, get_db, get_orch):
         verifier = CloudIndependenceVerifier(db)
         count = await verifier.import_device_patterns(device_id, body)
         return {"device_id": device_id, "patterns_imported": count}
+
+
+class AutoSwitchScheduler:
+    """Background scheduler that periodically checks and performs auto-switch to production.
+
+    Runs every CHECK_INTERVAL_SECONDS and checks:
+    - Devices with auto_switch_enabled=True in learning mode → switch to production at 99% match rate
+    - Devices in production mode → rollback to learning if match rate drops below 90%
+    """
+
+    def __init__(self, db_manager):
+        self.db_manager = db_manager
+        self.verifier = CloudIndependenceVerifier(db_manager)
+        self._task = None
+        self._running = False
+
+    async def start(self):
+        """Start the background check loop."""
+        if self._running:
+            logger.warning("AutoSwitchScheduler already running")
+            return
+        self._running = True
+        self._task = asyncio.create_task(self._run_loop())
+        logger.info("AutoSwitchScheduler started")
+
+    async def stop(self):
+        """Stop the background check loop."""
+        self._running = False
+        if self._task:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+            self._task = None
+        logger.info("AutoSwitchScheduler stopped")
+
+    async def _run_loop(self):
+        """Main loop: check all devices periodically."""
+        while self._running:
+            try:
+                await self._check_all_devices()
+            except Exception as e:
+                logger.error(f"AutoSwitchScheduler error: {e}", exc_info=True)
+            await asyncio.sleep(CHECK_INTERVAL_SECONDS)
+
+    async def _check_all_devices(self):
+        """Check all registered devices for auto-switch conditions."""
+        devices = await self.db_manager.list_devices()
+        for device in devices:
+            device_id = device["device_id"]
+            if device.get("mode") == "learning" and device.get("auto_switch_enabled", False):
+                switched = await self.verifier.auto_switch_to_production(device_id)
+                if switched:
+                    logger.info(f"AutoSwitchScheduler: {device_id} switched to production")
+            elif device.get("mode") == "production":
+                rolled_back = await self.verifier.should_rollback_to_learning(device_id)
+                if rolled_back:
+                    logger.warning(f"AutoSwitchScheduler: {device_id} rolled back to learning")

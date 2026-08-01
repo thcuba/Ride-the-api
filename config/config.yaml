@@ -113,10 +113,12 @@ learning:
   default_match_threshold: 0.85
   # Auto-switch to production when conditions are met
   auto_switch_to_production: false
-  # Minimum patterns needed before auto-switch
-  min_patterns_for_production: 10
-  # Minimum match rate before auto-switch
-  min_match_rate_for_production: 80.0
+    # Auto-switch check interval in seconds
+    auto_switch_check_interval: 60
+    # Minimum patterns needed before auto-switch
+    min_patterns_for_production: 10
+    # Minimum match rate before auto-switch (default 99%)
+    min_match_rate_for_production: 99.0
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONTROL LOGIC SETTINGS
