@@ -1037,7 +1037,6 @@ async def get_pattern_detail(device_id: str, pattern_id: str):
 
 
 # ── Pattern CRUD: Update, Patch, Delete ───────────────────────────────────────
-from sqlalchemy import delete as _sa_delete
 
 @app.put("/api/devices/{device_id}/patterns/{pattern_id}")
 async def put_pattern(device_id: str, pattern_id: str, request: Request):
