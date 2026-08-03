@@ -1051,12 +1051,26 @@ async def put_pattern(device_id: str, pattern_id: str, request: Request):
             result = await session.execute(select(RequestPattern).where(RequestPattern.pattern_id == pattern_id))
             pattern = result.scalar_one_or_none()
             if not pattern:
-                return JSONResponse(status_code=404, content={"error": "Pattern not found"})
+                # Upsert: create the pattern if it doesn't exist
+                pattern = RequestPattern(
+                    pattern_id=pattern_id,
+                    method=body.get("method", "GET"),
+                    path_pattern=body.get("path", body.get("path_pattern", "")),
+                    protocol=body.get("protocol", "http"),
+                    required_headers=body.get("required_headers", []),
+                    body_schema=body.get("body_schema", {}),
+                    query_param_keys=body.get("query_param_keys", []),
+                    intent=body.get("intent", ""),
+                    confidence=body.get("confidence", 0.0),
+                )
 
             # Replace pattern fields
             for f in ("method","path_pattern","protocol","required_headers","body_schema","query_param_keys","intent","confidence"):
                 if f in body:
                     setattr(pattern, f, body[f])
+            # Accept "path" as alias for "path_pattern"
+            if "path" in body and "path_pattern" not in body:
+                pattern.path_pattern = body["path"]
             session.add(pattern)
 
             # Response template
