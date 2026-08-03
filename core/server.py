@@ -11,6 +11,7 @@ import json
 import logging
 import signal
 import sys
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,6 +19,7 @@ from pathlib import Path
 # Path to webui directory (relative to project root)
 WEBUI_DIR = Path(__file__).resolve().parent.parent / "webui"
 DASHBOARD_HTML = WEBUI_DIR / "dashboard.html"
+PATTERNS_HTML = WEBUI_DIR / "patterns.html"
 
 import uvicorn
 
@@ -295,16 +297,16 @@ async def lifespan(app: FastAPI):
     yield
 
     # Cleanup
-        logger.info("Shutting down...")
-        config_manager.stop_watching()
+    logger.info("Shutting down...")
+    config_manager.stop_watching()
 
-        # Stop auto-switch scheduler
-        if auto_switch_scheduler:
-            try:
-                await auto_switch_scheduler.stop()
-                logger.info("Auto-switch scheduler stopped")
-            except Exception as e:
-                logger.error("Error stopping auto-switch scheduler: %s", e)
+    # Stop auto-switch scheduler
+    if auto_switch_scheduler:
+        try:
+            await auto_switch_scheduler.stop()
+            logger.info("Auto-switch scheduler stopped")
+        except Exception as e:
+            logger.error("Error stopping auto-switch scheduler: %s", e)
 
         # Stop protocol servers
     try:
@@ -810,22 +812,22 @@ async def set_device_mode(device_id: str, request: Request):
         return JSONResponse(status_code=404, content={"error": "Device not found"})
 
 
-    @app.put("/api/devices/{device_id}/auto-switch")
-    async def set_device_auto_switch(device_id: str, request: Request):
-        """Enable or disable auto-switch to production for a device."""
-        if not db_manager:
-            return JSONResponse(status_code=503, content={"error": "Service not ready"})
-        body = await request.json()
-        enabled = body.get("enabled", False)
-        if not isinstance(enabled, bool):
-            return JSONResponse(status_code=400, content={"error": "'enabled' must be a boolean"})
-        success = await db_manager.update_device_auto_switch(device_id, enabled)
-        if not success:
-            return JSONResponse(status_code=404, content={"error": "Device not found"})
-        return {"device_id": device_id, "auto_switch_enabled": enabled}
+@app.put("/api/devices/{device_id}/auto-switch")
+async def set_device_auto_switch(device_id: str, request: Request):
+    """Enable or disable auto-switch to production for a device."""
+    if not db_manager:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    body = await request.json()
+    enabled = body.get("enabled", False)
+    if not isinstance(enabled, bool):
+        return JSONResponse(status_code=400, content={"error": "'enabled' must be a boolean"})
+    success = await db_manager.update_device_auto_switch(device_id, enabled)
+    if not success:
+        return JSONResponse(status_code=404, content={"error": "Device not found"})
+    return {"device_id": device_id, "auto_switch_enabled": enabled}
 
 
-    @app.put("/api/devices/{device_id}/llm")
+@app.put("/api/devices/{device_id}/llm")
 async def configure_device_llm(device_id: str, request: Request):
     """Configure LLM settings for a device."""
     if not db_manager:
@@ -966,12 +968,18 @@ async def get_device_patterns(device_id: str):
                 "pattern_id": p.pattern_id,
                 "method": p.method,
                 "path": p.path_pattern,
+                "path_pattern": p.path_pattern,
+                "protocol": p.protocol,
                 "intent": p.intent,
                 "confidence": p.confidence,
                 "hit_count": p.hit_count,
+                "required_headers": p.required_headers,
+                "body_schema": p.body_schema,
+                "query_param_keys": p.query_param_keys,
                 "response_template": {
                     "status_code": tpl.status_code,
                     "body_template": tpl.body_template,
+                    "headers_template": tpl.headers_template,
                     "field_mappings": tpl.field_mappings,
                 } if tpl else None,
             })
@@ -1026,6 +1034,171 @@ async def get_pattern_detail(device_id: str, pattern_id: str):
             } if template else None,
             "field_mappings": mappings,
         }
+
+
+# ── Pattern CRUD: Update, Patch, Delete ───────────────────────────────────────
+from sqlalchemy import delete as _sa_delete
+
+@app.put("/api/devices/{device_id}/patterns/{pattern_id}")
+async def put_pattern(device_id: str, pattern_id: str, request: Request):
+    """Full update of a request pattern, its response template, and field mappings."""
+    if not db_manager:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    from core.database import RequestPattern, ResponseTemplate, FieldMapping
+    from sqlalchemy import select, delete
+    try:
+        body = await request.json()
+        async with db_manager.device_session(device_id) as session:
+            result = await session.execute(select(RequestPattern).where(RequestPattern.pattern_id == pattern_id))
+            pattern = result.scalar_one_or_none()
+            if not pattern:
+                return JSONResponse(status_code=404, content={"error": "Pattern not found"})
+
+            # Replace pattern fields
+            for f in ("method","path_pattern","protocol","required_headers","body_schema","query_param_keys","intent","confidence"):
+                if f in body:
+                    setattr(pattern, f, body[f])
+            session.add(pattern)
+
+            # Response template
+            tpl_data = body.get("response_template") or {}
+            tpl_result = await session.execute(select(ResponseTemplate).where(ResponseTemplate.pattern_id == pattern_id))
+            tpl = tpl_result.scalar_one_or_none()
+            if not tpl:
+                tpl = ResponseTemplate(
+                    template_id=(str(uuid.uuid4())[:16]),
+                    pattern_id=pattern_id,
+                    status_code=tpl_data.get("status_code", 200),
+                    headers_template=tpl_data.get("headers_template", {}),
+                    body_template=tpl_data.get("body_template", {}),
+                    field_mappings=tpl_data.get("field_mappings", {}),
+                    expected_variables=tpl_data.get("expected_variables", []),
+                )
+            else:
+                tpl.status_code = tpl_data.get("status_code", tpl.status_code)
+                tpl.headers_template = tpl_data.get("headers_template", tpl.headers_template)
+                tpl.body_template = tpl_data.get("body_template", tpl.body_template)
+                tpl.field_mappings = tpl_data.get("field_mappings", tpl.field_mappings)
+                tpl.expected_variables = tpl_data.get("expected_variables", tpl.expected_variables)
+            session.add(tpl)
+
+            # Field mappings: replace all mappings for this intent
+            fm_list = body.get("field_mappings")
+            if fm_list is not None:
+                await session.execute(delete(FieldMapping).where(FieldMapping.intent == pattern.intent))
+                for m in fm_list:
+                    mapping_id = m.get("mapping_id") or str(uuid.uuid4())[:16]
+                    fm = FieldMapping(
+                        mapping_id=mapping_id,
+                        request_field=m.get("request_field", ""),
+                        request_type=m.get("request_type", ""),
+                        response_field=m.get("response_field", ""),
+                        response_type=m.get("response_type", ""),
+                        transform=m.get("transform"),
+                        enum_values=m.get("enum_values"),
+                        intent=pattern.intent,
+                        confidence=m.get("confidence", 0.5),
+                    )
+                    session.add(fm)
+
+            await session.commit()
+            return {"status": "ok", "pattern_id": pattern_id}
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+
+
+@app.patch("/api/devices/{device_id}/patterns/{pattern_id}")
+async def patch_pattern(device_id: str, pattern_id: str, request: Request):
+    """Partial update for a pattern."""
+    if not db_manager:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    from core.database import RequestPattern, ResponseTemplate, FieldMapping
+    from sqlalchemy import select, delete
+    try:
+        body = await request.json()
+        async with db_manager.device_session(device_id) as session:
+            result = await session.execute(select(RequestPattern).where(RequestPattern.pattern_id == pattern_id))
+            pattern = result.scalar_one_or_none()
+            if not pattern:
+                return JSONResponse(status_code=404, content={"error": "Pattern not found"})
+
+            # Update only provided fields
+            for f in ("method","path_pattern","protocol","required_headers","body_schema","query_param_keys","intent","confidence"):
+                if f in body:
+                    setattr(pattern, f, body[f])
+            session.add(pattern)
+
+            tpl_data = body.get("response_template")
+            if tpl_data is not None:
+                tpl_result = await session.execute(select(ResponseTemplate).where(ResponseTemplate.pattern_id == pattern_id))
+                tpl = tpl_result.scalar_one_or_none()
+                if not tpl:
+                    tpl = ResponseTemplate(
+                        template_id=(str(uuid.uuid4())[:16]),
+                        pattern_id=pattern_id,
+                        status_code=tpl_data.get("status_code", 200),
+                        headers_template=tpl_data.get("headers_template", {}),
+                        body_template=tpl_data.get("body_template", {}),
+                        field_mappings=tpl_data.get("field_mappings", {}),
+                        expected_variables=tpl_data.get("expected_variables", []),
+                    )
+                else:
+                    if "status_code" in tpl_data: tpl.status_code = tpl_data["status_code"]
+                    if "headers_template" in tpl_data: tpl.headers_template = tpl_data["headers_template"]
+                    if "body_template" in tpl_data: tpl.body_template = tpl_data["body_template"]
+                    if "field_mappings" in tpl_data: tpl.field_mappings = tpl_data["field_mappings"]
+                    if "expected_variables" in tpl_data: tpl.expected_variables = tpl_data["expected_variables"]
+                session.add(tpl)
+
+            fm_list = body.get("field_mappings")
+            if fm_list is not None:
+                # Replace per-intent mappings
+                await session.execute(delete(FieldMapping).where(FieldMapping.intent == pattern.intent))
+                for m in fm_list:
+                    mapping_id = m.get("mapping_id") or str(uuid.uuid4())[:16]
+                    fm = FieldMapping(
+                        mapping_id=mapping_id,
+                        request_field=m.get("request_field", ""),
+                        request_type=m.get("request_type", ""),
+                        response_field=m.get("response_field", ""),
+                        response_type=m.get("response_type", ""),
+                        transform=m.get("transform"),
+                        enum_values=m.get("enum_values"),
+                        intent=pattern.intent,
+                        confidence=m.get("confidence", 0.5),
+                    )
+                    session.add(fm)
+
+            await session.commit()
+            return {"status": "ok", "pattern_id": pattern_id}
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+
+
+@app.delete("/api/devices/{device_id}/patterns/{pattern_id}")
+async def delete_pattern(device_id: str, pattern_id: str):
+    """Delete a pattern and its associated response template and field mappings."""
+    if not db_manager:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    from core.database import RequestPattern, ResponseTemplate, FieldMapping
+    from sqlalchemy import select, delete
+    try:
+        async with db_manager.device_session(device_id) as session:
+            result = await session.execute(select(RequestPattern).where(RequestPattern.pattern_id == pattern_id))
+            pattern = result.scalar_one_or_none()
+            if not pattern:
+                return JSONResponse(status_code=404, content={"error": "Pattern not found"})
+
+            # Delete response template
+            await session.execute(delete(ResponseTemplate).where(ResponseTemplate.pattern_id == pattern_id))
+            # Delete request pattern
+            await session.execute(delete(RequestPattern).where(RequestPattern.pattern_id == pattern_id))
+            # Delete field mappings for this intent
+            await session.execute(delete(FieldMapping).where(FieldMapping.intent == pattern.intent))
+            await session.commit()
+            return {"status": "deleted", "pattern_id": pattern_id}
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
 
 
 @app.get("/api/llm/profiles")
@@ -1130,6 +1303,17 @@ async def dashboard():
     except FileNotFoundError:
         logger.warning("Dashboard HTML not found at %s", DASHBOARD_HTML)
         html = "<!DOCTYPE html><html><body><h1>Dashboard not found</h1><p>Expected at webui/dashboard.html</p></body></html>"
+    return HTMLResponse(content=html, status_code=200)
+
+
+@app.get("/patterns/{device_id}", response_class=HTMLResponse)
+async def patterns_page(device_id: str):
+    """Serve the Patterns web UI for a device."""
+    try:
+        html = PATTERNS_HTML.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        logger.warning("Patterns HTML not found at %s", PATTERNS_HTML)
+        html = "<!DOCTYPE html><html><body><h1>Patterns page not found</h1><p>Expected at webui/patterns.html</p></body></html>"
     return HTMLResponse(content=html, status_code=200)
 
 

@@ -484,8 +484,11 @@ async function loadDeviceStats(deviceId) {
           <span class="tc-label">CA Certificate</span>
           <button class="btn btn-ghost" onclick="downloadCaCert()" style="padding:4px 10px;font-size:12px;" aria-label="Download CA certificate">Download</button>
         </div>
-        <div style="text-align:right;margin-top:8px;">
-          <button class="btn btn-primary" onclick="saveTlsConfig('${deviceId}')" style="padding:6px 16px;font-size:12px;">Save TLS Config</button>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px;gap:8px;">
+          <a class="btn btn-ghost" href="/patterns/${deviceId}" style="padding:6px 12px;font-size:12px;">View Patterns</a>
+          <div style="text-align:right;">
+            <button class="btn btn-primary" onclick="saveTlsConfig('${deviceId}')" style="padding:6px 16px;font-size:12px;">Save TLS Config</button>
+          </div>
         </div>
       </div>
     </div>`;
