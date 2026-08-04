@@ -58,6 +58,7 @@ A DNS interception proxy that sits between IoT devices and their cloud APIs, **l
 - **Template variables**: `{state.varname}`, `{request.body.path}`, `{uuid}` resolved at response time
 - **Field transforms**: direct, enum (value mapping), formula (eval context-aware)
 - **Export/import**: `.ride-capture.json` and `.ride-pattern.json` portable format — shareable, LLM-agnostic, cross-hardware
+- **JSON Schema validation** — imported files are validated against `capture-schema-v1.json` and `pattern-schema-v1.json` with protocol-aware checks for all 11 supported protocols (HTTP, MQTT, CoAP, Modbus, WebSocket, Raw TCP, HTTP/2, Zigbee, Z-Wave, Matter)
 - See [design doc](docs/portable-pattern-database.md) for full schema and examples
 
 ### Configurable LLM
@@ -246,6 +247,10 @@ The proxy handles requests locally:
 │   └── pattern_db/        # Portable pattern database engine
 │       ├── __init__.py    # Package init + Pydantic schemas
 │       ├── schemas.py     # CaptureDB & PatternDB Pydantic models
+│       ├── schemas/       # JSON Schema files for portable format validation
+│       │   ├── capture-schema-v1.json
+│       │   └── pattern-schema-v1.json
+│       ├── validator.py   # JSON Schema validation for import
 │       ├── state_manager.py   # Device state + virtual sensor simulation
 │       ├── buffer_manager.py  # Buffer accumulation + export/import
 │       ├── decipher_ingest.py # LLM output → pattern DB records
