@@ -85,6 +85,14 @@ A DNS interception proxy that sits between IoT devices and their cloud APIs, **l
 - Switch between learning and production mode
 - Configure LLM settings per device
 
+### Pattern Editor
+- Web UI at `http://localhost:8911/patterns/{device_id}`
+- View, create, edit, and delete request patterns with a dark-theme editor
+- Expandable cards showing method, path, headers, body schema, query params, response template, and field mappings
+- Tag-style inputs for headers, query params, expected variables
+- JSON editors for body schema, body template, headers template
+- Real-time save feedback with toast notifications
+
 ## Quick Start
 
 ### Prerequisites
@@ -274,8 +282,12 @@ The proxy handles requests locally:
 | `GET /api/devices/{id}/match-rate` | Match rate percentage |
 | `POST /api/devices/{id}/mode` | Switch learning/production |
 | `PUT /api/devices/{id}/llm` | Configure LLM for device |
+| `GET /patterns/{id}` | Web UI for manual pattern editing |
 | `GET /api/devices/{id}/patterns` | Learned patterns |
 | `GET /api/devices/{id}/patterns/{pid}` | Pattern detail + field mappings |
+| `PUT /api/devices/{id}/patterns/{pid}` | Create or full-update a pattern (upsert) |
+| `PATCH /api/devices/{id}/patterns/{pid}` | Partial update of a pattern |
+| `DELETE /api/devices/{id}/patterns/{pid}` | Delete pattern + response template + field mappings |
 | `GET /api/llm/profiles` | Available LLM profiles |
 | `GET /api/devices/{id}/patterns/export` | Export deciphered patterns (.ride-pattern.json) |
 | `POST /api/devices/{id}/patterns/import` | Import patterns from .ride-pattern.json |
@@ -303,7 +315,7 @@ The proxy handles requests locally:
 - [x] Modbus, WebSocket, Raw TCP, HTTP/2 protocol servers
 - [x] TLS certificate management API (upload, list, delete, rotate)
 - [x] Zigbee / Z-Wave / Matter bridge plugins
-- [ ] Web UI for manual pattern editing
+- [x] Web UI for manual pattern editing
 - [x] Encrypted traffic MITM support
 
 YES. it is all vibe coded i'm searching for people who like this idea and would like to help implement it
