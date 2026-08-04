@@ -409,4 +409,4 @@ Descrive cosa Ride-the-API deve **rispondere**:
 4. **Endpoint API**: `/api/devices/{id}/patterns/import`, `/export`, `/capture/export`
 5. **State persistence**: implementare `state_variables` nel device DB per risposte dinamiche
 6. **Virtual sensors**: motore di simulazione per sensori (temperatura, umidità, etc.)
-7. **Validazione**: JSON Schema validation all'import di entrambi i formati
+7. ✅ **Validazione**: JSON Schema validation all'import di entrambi i formati — vedi `core/pattern_db/validator.py` e gli schemi in `core/pattern_db/schemas/`
