@@ -30,6 +30,7 @@ from core.pattern_db.schemas import (
     FieldMapping as SchemaFieldMapping,
 )
 from sqlalchemy import select
+from core.pattern_db.validator import validate_pattern, ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -206,7 +207,12 @@ class DecipherIngest:
 
     async def import_patterns(self, device_id: str, pattern_db: PatternDB) -> int:
         """Import patterns from a portable PatternDB into the device DB."""
-        count = 0
+            # Validate against the portable JSON Schema before importing
+            result = validate_pattern(pattern_db.model_dump(by_alias=True, exclude_none=True))
+            if not result.valid:
+                raise ValidationError(result=result)
+
+            count = 0
         async with self.db_manager.device_session(device_id) as session:
             for ep in pattern_db.client.endpoints:
                 pattern_id = ep.id

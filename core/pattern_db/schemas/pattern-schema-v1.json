@@ -1,0 +1,201 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ride-the-api.dev/pattern-schema/v1",
+  "title": "Ride-the-API Pattern DB",
+  "description": "Portable deciphered pattern format (.ride-pattern.json) for sharing learned device protocol patterns.",
+  "type": "object",
+  "required": ["$schema", "meta", "client", "server"],
+  "properties": {
+    "$schema": {
+      "const": "https://ride-the-api.dev/pattern-schema/v1"
+    },
+    "meta": {
+      "type": "object",
+      "required": ["pattern_id", "vendor", "device_type"],
+      "properties": {
+        "version": { "type": "integer", "const": 1 },
+        "pattern_id": { "type": "string", "minLength": 1 },
+        "vendor": { "type": "string", "minLength": 1 },
+        "device_type": { "type": "string", "minLength": 1 },
+        "model": { "type": "string" },
+        "firmware_versions": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "description": { "type": "string" }
+      }
+    },
+    "client": {
+      "type": "object",
+      "properties": {
+        "protocols": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/protocol" },
+          "minItems": 1
+        },
+        "base_url": { "type": "string" },
+        "mqtt_topic_prefix": { "type": "string" },
+        "authentication": { "$ref": "#/$defs/authentication" },
+        "endpoints": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/endpoint" }
+        }
+      }
+    },
+    "server": {
+      "type": "object",
+      "properties": {
+        "state_variables": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/state_variable" }
+        },
+        "responses": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/server_response" }
+        },
+        "virtual_sensors": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/virtual_sensor" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "protocol": {
+      "type": "string",
+      "enum": ["http", "https", "mqtt", "coap", "modbus", "websocket", "raw_tcp", "http2", "zigbee", "zwave", "matter"]
+    },
+    "authentication": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["bearer", "basic", "custom", "none"]
+        },
+        "token_endpoint": { "type": "string" },
+        "credentials": { "type": "string" }
+      }
+    },
+    "endpoint_variant": {
+      "type": "object",
+      "properties": {
+        "firmware": { "type": "string" },
+        "path": { "type": "string" },
+        "body_schema": { "type": "object" }
+      }
+    },
+    "endpoint": {
+      "type": "object",
+      "required": ["id", "intent"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "intent": { "type": "string", "minLength": 1 },
+        "method": { "type": "string" },
+        "path": { "type": "string" },
+        "path_pattern": { "type": "string" },
+        "headers": {
+          "type": "object",
+          "properties": {
+            "required": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        },
+        "query_params": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "body_schema": { "type": "object" },
+        "response_fields": {
+          "type": "array",
+          "items": { "type": "object" }
+        },
+        "variants": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/endpoint_variant" }
+        }
+      }
+    },
+    "state_variable": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "type": {
+          "type": "string",
+          "enum": ["boolean", "integer", "float", "string", "enum"]
+        },
+        "default": {},
+        "min": { "type": "number" },
+        "max": { "type": "number" },
+        "enum": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "unit": { "type": "string" },
+        "persist": { "type": "boolean" },
+        "description": { "type": "string" }
+      }
+    },
+    "field_mapping": {
+      "type": "object",
+      "required": ["source", "target"],
+      "properties": {
+        "source": { "type": "string", "minLength": 1 },
+        "target": { "type": "string", "minLength": 1 },
+        "transform": {
+          "type": "string",
+          "enum": ["direct", "enum", "formula", "scale"]
+        },
+        "formula": { "type": "string" },
+        "mapping": { "type": "object" },
+        "description": { "type": "string" }
+      }
+    },
+    "server_response": {
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "triggers": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "status_code": { "type": "integer" },
+        "headers_template": { "type": "object" },
+        "body_template": { "type": "object" },
+        "field_mappings": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/field_mapping" }
+        }
+      }
+    },
+    "virtual_sensor": {
+      "type": "object",
+      "required": ["name", "behavior"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "type": {
+          "type": "string",
+          "enum": ["integer", "float", "boolean"]
+        },
+        "behavior": {
+          "type": "string",
+          "enum": ["static", "drift", "periodic", "random"]
+        },
+        "baseline": { "type": "string" },
+        "drift_range": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "period_s": { "type": "number", "minimum": 0 },
+        "amplitude": { "type": "number" },
+        "update_interval_s": { "type": "number", "minimum": 0 },
+        "description": { "type": "string" }
+      }
+    }
+  }
+}

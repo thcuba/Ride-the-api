@@ -23,6 +23,7 @@ from core.pattern_db.schemas import (
     RawPairWithResponse,
     RawResponse,
 )
+from core.pattern_db.validator import validate_capture, ValidationResult
 from sqlalchemy import and_, delete, select
 
 logger = logging.getLogger(__name__)
@@ -172,6 +173,12 @@ class BufferManager:
 
     async def import_capture(self, capture: CaptureDB) -> int:
         """Import a CaptureDB into the buffer. Returns number of pairs imported."""
+        # Validate against the portable JSON Schema before importing
+        result = validate_capture(capture.model_dump(by_alias=True, exclude_none=True))
+        if not result.valid:
+            from core.pattern_db.validator import ValidationError
+            raise ValidationError(result=result)
+
         count = 0
         for session_data in capture.sessions:
             for pair in session_data.pairs:
