@@ -1070,12 +1070,25 @@ async def import_patterns(device_id: str, request: Request):
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
     from core.pattern_db.schemas import PatternDB
     from core.pattern_db import decipher_ingest
+    from core.pattern_db.validator import validate_pattern, ValidationError
     try:
         body = await request.json()
+        # Validate against the portable JSON Schema
+        result = validate_pattern(body)
+        if not result.valid:
+            return JSONResponse(
+                status_code=422,
+                content={"error": "Pattern validation failed", "details": result.to_dict()},
+            )
         pattern_db = PatternDB.model_validate(body)
         ingester = decipher_ingest.DecipherIngest(db_manager)
         count = await ingester.import_patterns(device_id, pattern_db)
-        return {"imported": count, "device_id": device_id}
+        return {"imported": count, "device_id": device_id, "warnings": result.warnings}
+    except ValidationError as e:
+        return JSONResponse(
+            status_code=422,
+            content={"error": "Pattern validation failed", "details": e.to_dict()},
+        )
     except Exception as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
 
@@ -1108,12 +1121,25 @@ async def import_buffer(device_id: str, request: Request):
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
     from core.pattern_db.schemas import CaptureDB
     from core.pattern_db import buffer_manager
+    from core.pattern_db.validator import validate_capture, ValidationError
     manager = buffer_manager.BufferManager(db_manager)
     try:
         body = await request.json()
+        # Validate against the portable JSON Schema
+        result = validate_capture(body)
+        if not result.valid:
+            return JSONResponse(
+                status_code=422,
+                content={"error": "Capture validation failed", "details": result.to_dict()},
+            )
         capture = CaptureDB.model_validate(body)
         count = await manager.import_capture(capture)
-        return {"imported": count, "device_id": device_id}
+        return {"imported": count, "device_id": device_id, "warnings": result.warnings}
+    except ValidationError as e:
+        return JSONResponse(
+            status_code=422,
+            content={"error": "Capture validation failed", "details": e.to_dict()},
+        )
     except Exception as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
 
