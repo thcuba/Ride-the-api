@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Patterns — Ride the API</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0b0e14; --surface: #141820; --surface2: #1a1f2b; --border: #2d3648;
+    --text: #e1e6ed; --text2: #9ca8ba; --accent: #6c8cff; --accent2: #5b7ad0;
+    --green: #34d399; --yellow: #fbbf24; --red: #f87171; --blue: #60a5fa;
+    --radius: 12px; --shadow: 0 8px 32px rgba(0,0,0,.3);
+  }
+  body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color: var(--text); padding: 24px; min-height:100vh; }
+  a { color: inherit; text-decoration: none; }
+  .header { display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; }
+  .btn { padding:8px 14px; border-radius:8px; border:none; cursor:pointer; font-weight:600; }
+  .btn-ghost { background:var(--surface2); border:1px solid var(--border); color:var(--text); }
+  .btn-primary { background:linear-gradient(135deg,var(--accent),var(--accent2)); color:#fff; }
+  .container { max-width:1100px; margin:0 auto; }
+  .cards { display:grid; gap:12px; }
+  .pattern-card { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:14px; }
+  .pc-header { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+  .pc-title { font-weight:700; font-size:14px; color:var(--accent); }
+  .badge { padding:4px 8px; border-radius:10px; font-weight:700; font-size:12px; }
+  .badge-low { background:rgba(96,165,250,.08); color:var(--blue); border:1px solid rgba(96,165,250,.16); }
+  .pc-body { margin-top:12px; border-top:1px solid rgba(255,255,255,.02); padding-top:12px; display:none; }
+  .row { display:flex; gap:12px; margin-bottom:8px; }
+  .col { flex:1; }
+  label { display:block; font-size:13px; color:var(--text2); margin-bottom:6px; }
+  input[type=text], input[type=number], select, textarea { width:100%; background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:8px; border-radius:6px; font-family:inherit; }
+  textarea { min-height:100px; font-family:monospace; font-size:13px; }
+  .tags { display:flex; gap:8px; flex-wrap:wrap; padding:6px 0; }
+  .tag { background:var(--surface2); border:1px solid var(--border); padding:6px 8px; border-radius:999px; font-size:13px; display:inline-flex; gap:8px; align-items:center; }
+  .tag button { background:none;border:none;color:var(--text2);cursor:pointer;padding:0; }
+  .fm-list { margin-top:8px; }
+  .fm-item { display:flex; gap:8px; align-items:center; margin-bottom:8px; }
+  .fm-item input, .fm-item select { width:auto; min-width:120px; }
+  .actions { display:flex; gap:8px; justify-content:flex-end; margin-top:12px; }
+  .toast-container { position:fixed; top:20px; right:20px; z-index:1000; display:flex; flex-direction:column; gap:8px; }
+  .toast { padding:10px 14px; border-radius:8px; background:var(--surface); border:1px solid var(--border); }
+  @media (min-width:720px) { .cards { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div>
+        <h1 style="font-size:20px;color:var(--accent);">Patterns</h1>
+        <div style="color:var(--text2);font-size:13px;">Edit request/response patterns for device</div>
+      </div>
+      <div>
+        <a class="btn btn-ghost" href="/" aria-label="Back to dashboard">Back</a>
+      </div>
+    </div>
+
+    <div id="cards" class="cards">
+      <div class="empty">Loading patterns…</div>
+    </div>
+  </div>
+
+  <div class="toast-container" id="toasts"></div>
+
+<script>
+(function(){
+  const deviceId = window.location.pathname.split('/').slice(-1)[0] || '';
+  const cardsEl = document.getElementById('cards');
+  const toasts = document.getElementById('toasts');
+
+  function showToast(msg, type='info'){
+    const t = document.createElement('div'); t.className='toast '+type; t.textContent = msg; toasts.appendChild(t);
+    setTimeout(()=> t.remove(), 4000);
+  }
+
+  function el(tag,attrs={},children=[]){ const e=document.createElement(tag); for(const k in attrs){ if(k==='html') e.innerHTML=attrs[k]; else e.setAttribute(k,attrs[k]); } (Array.isArray(children)?children:[children]).forEach(c=>{ if(typeof c==='string') e.appendChild(document.createTextNode(c)); else if(c) e.appendChild(c); }); return e; }
+
+  async function loadPatterns(){
+    try{
+      const res = await fetch(`/api/devices/${deviceId}/patterns`);
+      if(!res.ok) throw new Error('Failed to load');
+      const json = await res.json();
+      renderPatterns(json.patterns || []);
+    }catch(e){ cardsEl.innerHTML = '<div class="empty">Failed to load patterns</div>'; showToast('Failed to load patterns','error'); }
+  }
+
+  function renderPatterns(list){
+    cardsEl.innerHTML='';
+    if(!list.length){ cardsEl.innerHTML = '<div class="empty">No patterns found</div>'; return; }
+    list.forEach(p=>{
+      const card = el('div',{class:'pattern-card',tabindex:0});
+      const header = el('div',{class:'pc-header'});
+      const title = el('div',{class:'pc-title'},`${p.method} ${p.path} — ${p.intent || ''}`);
+      const right = el('div',{},[]);
+      const badge = el('span',{class:'badge badge-low'}, (p.confidence||0).toFixed(2));
+      const hits = el('span',{style:'margin-left:8px;color:var(--text2);font-size:13px;'},`hits: ${p.hit_count||0}`);
+      right.appendChild(badge); right.appendChild(hits);
+      header.appendChild(title); header.appendChild(right);
+      card.appendChild(header);
+
+      const body = el('div',{class:'pc-body'});
+      // Build form fields
+      const form = el('div',{});
+      form.appendChild(fieldRow('Method', methodInput(p.method)));
+      form.appendChild(fieldRow('Path pattern', inputText('path_pattern', p.path||'')));
+      form.appendChild(fieldRow('Intent', inputText('intent', p.intent||'')));
+      form.appendChild(fieldRow('Required headers', tagInput('required_headers', p.required_headers||[])));
+      form.appendChild(fieldRow('Query params', tagInput('query_param_keys', p.query_param_keys||[])));
+      form.appendChild(fieldRow('Body schema (JSON)', textarea('body_schema', JSON.stringify(p.body_schema||{},null,2))));
+
+      // Response template
+      const tpl = p.response_template||{};
+      form.appendChild(el('h3',{},'Response'));
+      form.appendChild(fieldRow('Status code', inputNumber('status_code', tpl.status_code||200)));
+      form.appendChild(fieldRow('Headers template (JSON)', textarea('headers_template', JSON.stringify(tpl.headers_template||{},null,2))));
+      form.appendChild(fieldRow('Body template (JSON)', textarea('body_template', JSON.stringify(tpl.body_template||{},null,2))));
+
+      // Field mappings
+      const fmContainer = el('div',{class:'fm-list'});
+      const fmHeader = el('div',{},[]);
+      fmHeader.appendChild(el('strong',{},'Field mappings'));
+      fmHeader.appendChild(el('button',{class:'btn btn-ghost',style:'margin-left:8px;'},'Add mapping'));
+      fmContainer.appendChild(fmHeader);
+      const fms = (tpl.field_mappings && Array.isArray(tpl.field_mappings) ? tpl.field_mappings : []);
+      const fmItems = el('div',{});
+      fms.forEach(m=> fmItems.appendChild(mappingItem(m)));
+      fmContainer.appendChild(fmItems);
+      form.appendChild(fmContainer);
+
+      body.appendChild(form);
+
+      const actions = el('div',{class:'actions'});
+      const saveBtn = el('button',{class:'btn btn-primary'},'Save');
+      const delBtn = el('button',{class:'btn btn-ghost'},'Delete');
+      actions.appendChild(delBtn); actions.appendChild(saveBtn);
+      body.appendChild(actions);
+
+      card.appendChild(body);
+
+      // Toggle expand
+      header.addEventListener('click', ()=>{ body.style.display = body.style.display === 'none' ? 'block' : 'none'; });
+      // Keyboard accessible
+      card.addEventListener('keydown', (e)=>{ if(e.key==='Enter' || e.key===' ') { e.preventDefault(); header.click(); } });
+
+      // Save handler
+      saveBtn.addEventListener('click', async ()=>{
+        try{
+          const payload = collectPayload(form);
+          const resp = await fetch(`/api/devices/${deviceId}/patterns/${p.pattern_id}`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+          if(!resp.ok) throw new Error('save failed');
+          showToast('Pattern saved','success');
+          loadPatterns();
+        }catch(err){ showToast('Save failed','error'); }
+      });
+
+      delBtn.addEventListener('click', async ()=>{
+        if(!confirm('Delete this pattern?')) return;
+        try{
+          const resp = await fetch(`/api/devices/${deviceId}/patterns/${p.pattern_id}`, { method: 'DELETE' });
+          if(!resp.ok) throw new Error('delete failed');
+          showToast('Pattern deleted','success');
+          loadPatterns();
+        }catch(e){ showToast('Delete failed','error'); }
+      });
+
+      cardsEl.appendChild(card);
+    });
+  }
+
+  function fieldRow(labelText, inputEl){ const row = el('div',{class:'row'}); const col = el('div',{class:'col'}); col.appendChild(el('label',{},labelText)); col.appendChild(inputEl); row.appendChild(col); return row; }
+
+  function inputText(name, val){ const i=document.createElement('input'); i.type='text'; i.name=name; i.value = val||''; return i; }
+  function inputNumber(name, val){ const i=document.createElement('input'); i.type='number'; i.name=name; i.value = val||0; return i; }
+  function textarea(name, val){ const t=document.createElement('textarea'); t.name=name; t.value = val||''; return t; }
+  function methodInput(val){ const s=document.createElement('select'); ['GET','POST','PUT','PATCH','DELETE'].forEach(m=>{ const o=document.createElement('option'); o.value=m; o.textContent=m; if(m===val) o.selected=true; s.appendChild(o); }); s.name='method'; return s; }
+
+  function tagInput(name, items){ const wrap = document.createElement('div'); wrap.className='tags'; wrap.dataset.name = name; items = Array.isArray(items)?items.slice():[];
+      const input = document.createElement('input'); input.type='text'; input.placeholder='Add...';
+      function render(){ wrap.innerHTML=''; items.forEach((it,idx)=>{ const t = el('span',{class:'tag'}, [it, el('button',{},'×')]); t.querySelector('button').addEventListener('click', ()=>{ items.splice(idx,1); render(); }); wrap.appendChild(t); }); wrap.appendChild(input); }
+      input.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); const v = input.value.trim(); if(v){ items.push(v); input.value=''; render(); } } }); render(); return wrap; }
+
+  function mappingItem(m){ const div = el('div',{class:'fm-item'});
+    const src = inputText('request_field', m.request_field||''); const dst = inputText('response_field', m.response_field||''); const tr = el('select',{},[]); ['none','copy','transform','enum'].forEach(opt=>{ const o=document.createElement('option'); o.value=opt; o.textContent=opt; if(opt=== (m.transform||'none')) o.selected=true; tr.appendChild(o); });
+    const rem = el('button',{class:'btn btn-ghost'},'Remove'); rem.addEventListener('click', ()=> div.remove()); div.appendChild(src); div.appendChild(dst); div.appendChild(tr); div.appendChild(rem); return div; }
+
+  function collectPayload(form){ const payload = {};
+      const methodEl = form.querySelector('select[name=method]'); if(methodEl) payload.method = methodEl.value;
+      const pathEl = form.querySelector('input[name=path_pattern]'); if(pathEl) payload.path_pattern = pathEl.value;
+      const intentEl = form.querySelector('input[name=intent]'); if(intentEl) payload.intent = intentEl.value;
+      const tagWraps = form.querySelectorAll('.tags');
+      tagWraps.forEach(w => { if(w.dataset.name === 'required_headers' && typeof w.getValue === 'function') payload.required_headers = w.getValue(); });
+      tagWraps.forEach(w => { if(w.dataset.name === 'query_param_keys' && typeof w.getValue === 'function') payload.query_param_keys = w.getValue(); });
+      const bodySchemaEl = form.querySelector('textarea[name=body_schema]'); if(bodySchemaEl) try{ payload.body_schema = JSON.parse(bodySchemaEl.value); }catch(e){ payload.body_schema = {}; }
+      // response
+      payload.response_template = {};
+      const statusEl = form.querySelector('input[name=status_code]'); if(statusEl) payload.response_template.status_code = Number(statusEl.value||200);
+      const headersTpl = form.querySelector('textarea[name=headers_template]'); if(headersTpl) try{ payload.response_template.headers_template = JSON.parse(headersTpl.value); }catch(e){ payload.response_template.headers_template = {}; }
+      const bodyTpl = form.querySelector('textarea[name=body_template]'); if(bodyTpl) try{ payload.response_template.body_template = JSON.parse(bodyTpl.value); }catch(e){ payload.response_template.body_template = {}; }
+      // field mappings
+      const fmDiv = form.querySelector('.fm-list'); const mappings = [];
+      if(fmDiv){ const items = fmDiv.querySelectorAll('.fm-item'); items.forEach(it=>{
+        const inputs = it.querySelectorAll('input, select'); if(inputs.length>=3){ mappings.push({ request_field: inputs[0].value, response_field: inputs[1].value, transform: inputs[2].value }); }
+      }); }
+      payload.field_mappings = mappings;
+      return payload;
+    }
+
+  loadPatterns();
+})();
+</script>
+</body>
+</html>
