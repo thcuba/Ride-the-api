@@ -5,23 +5,30 @@ A DNS interception proxy that sits between IoT devices and their cloud APIs, **l
 ## Architecture
 
 ```
-┌──────────────┐     ┌──────────────────────────────────────────────────────┐     ┌──────────┐
-│  IoT Device  │────▶│  Ride-the-API (Local Cloud Replacement Proxy)        │────▶│  Vendor  │
-│  (Any Brand) │     │                                                      │     │  Cloud   │
-│              │     │  ┌─────────────────────────────────────────────────  │     │(Fallback)│
-│              │     │  │            LEARNING MODE                       │  │     └──────────┘
-│              │     │  │  Request → Correlate → Buffer → LLM → Patterns │  │           │
-│              │     │  └─────────────────────────────────────────────────  │           │
-│              │     │                                                      │           │
-│              │     │  ┌─────────────────────────────────────────────────  │           │
-│              │     │  │           PRODUCTION MODE                      │  │           │
-│              │     │  │  Request → Match Pattern → Local Response      │  │           │
-│              │     │  │     ↓ (if no match)                            │  │           │
-│              │     │  │  Forward to Cloud → Learn → Improve            │  │           │
-│              │     │  └─────────────────────────────────────────────────  │           │
-│              │     │                                                      │           │
-│              │     │  Match Rate  ◀── Real-time tracking                  │           │
-│              │     └──────────────────────────────────────────────────────┘           │
+┌──────────────┐     ┌──────────────────────────────────────────────────────────────────────┐     ┌──────────┐
+│  IoT Device  │────▶│  nginx (reverse proxy sidecar)                        ┌───────────┐   │────▶│  Vendor  │
+│  (Any Brand) │     │  ┌─────────────────────────────────────────────────── │  Ride-    │   │     │  Cloud   │
+│              │     │  │  port 443 (TLS) ←→ port 8911 (internal)          │  the-API  │   │     └──────────┘
+│              │     │  │  Dual-stack resolver: 8.8.8.8 / 1.1.1.1 + IPv6   │  (FastAPI) │   │
+│              │     │  │  502 → @cloud_redirect (loop-free forwarding)     │           │   │
+│              │     │  └─────────────────────────────────────────────────── │           │   │
+│              │     │                                                      │           │   │
+│              │     │  ┌─────────────────────────────────────────────────── │           │   │
+│              │     │  │            LEARNING MODE                         │           │   │
+│              │     │  │  Request → Correlate → Buffer → LLM → Patterns   │           │   │
+│              │     │  └─────────────────────────────────────────────────── │           │   │
+│              │     │                                                      │           │   │
+│              │     │  ┌─────────────────────────────────────────────────── │           │   │
+│              │     │  │           PRODUCTION MODE                        │           │   │
+│              │     │  │  Request → Match Pattern → Local Response        │           │   │
+│              │     │  │     ↓ (if no match + no_fallback)                │           │   │
+│              │     │  │  Return 501 (conclusive local-only response)     │           │   │
+│              │     │  └─────────────────────────────────────────────────── │           │   │
+│              │     │                                                      │           │   │
+│              │     │  ┌─────────────────────────────────────────────────── │           │   │
+│              │     │  │  Match Rate  ◀── Real-time tracking              │           │   │
+│              │     │  └───────────────────────────────────────────────────┴───────────┘   │
+│              │     └──────────────────────────────────────────────────────────────────────┘
 └──────────────┘
 ```
 
@@ -46,7 +53,9 @@ A DNS interception proxy that sits between IoT devices and their cloud APIs, **l
 - Matches incoming requests against learned patterns
 - Calculates similarity score (path, method, headers, body, query params)
 - If score ≥ threshold → serves response from local database with **state-aware pattern engine**
-- If score < threshold → forwards to cloud, captures and learns from the miss
+- If score < threshold and `production_no_fallback` is enabled → returns 501 (conclusive local-only response)
+- If score < threshold and `signal_forward_to_cloud` is enabled → signals nginx to forward to the real cloud via a dual-stack resolver (8.8.8.8/1.1.1.1 + IPv6), bypassing local DNS to prevent forwarding loops
+- If score < threshold and neither flag is set → forwards to cloud via `adapter.forward_to_cloud()`, captures and learns from the miss
 - Real-time match rate tracking: `hits / (hits + misses) * 100%`
 
 ### Portable Pattern Database
@@ -100,18 +109,7 @@ A DNS interception proxy that sits between IoT devices and their cloud APIs, **l
 - DNS server (dnsmasq, Pi-hole, or AdGuard Home) for device routing
 - An LLM API (OpenAI, Ollama, etc.)
 
-### Installation
-
-```bash
-git clone https://github.com/thcuba/Ride-the-api.git
-cd Ride-the-api
-pip install -e .
-cp config/config.example.yaml config/config.yaml
-```
-
 ### DNS Interception Setup
-
-Add DNS entries to redirect device traffic to the proxy:
 
 ```bash
 # /etc/dnsmasq.d/ride-api.conf
@@ -120,6 +118,35 @@ address=/api.example.com/192.168.1.100
 ```
 
 Restart your DNS server: `sudo systemctl restart dnsmasq`
+
+### Docker Deployment (recommended)
+
+Run the full stack (nginx sidecar + Ride-the-API) with Docker Compose:
+
+```bash
+docker compose -f deploy/docker-compose.yml up -d
+```
+
+This starts:
+- **nginx** on ports 80/443 (TLS) and 8883 (MQTT over TLS) — the stable entry point for devices
+- **Ride-the-API** on internal port 8911 (not exposed publicly)
+
+nginx resolves cloud hostnames via a dedicated dual-stack resolver (8.8.8.8 / 1.1.1.1, IPv6 enabled), bypassing the local DNS to prevent forwarding loops.
+
+### Manual Deployment
+
+```bash
+git clone https://github.com/thcuba/Ride-the-api.git
+cd Ride-the-api
+pip install -e .
+cp config/config.example.yaml config/config.yaml
+# Edit config.yaml — enable signal_forward_to_cloud or production_no_fallback as needed
+python -m core.server
+```
+
+Open `http://localhost:8911/` in your browser to see the dashboard.
+
+> When running without nginx, forward-to-cloud behavior depends on `signal_forward_to_cloud` and `production_no_fallback` in `config.yaml`. With the Docker stack, nginx handles loop-free cloud forwarding automatically.
 
 ### Configure LLM
 
@@ -141,14 +168,6 @@ For local Ollama:
       api_key: "ollama"
       model_id: "llama3.1:8b"
 ```
-
-### Run the Proxy
-
-```bash
-python -m core.server
-```
-
-Open `http://localhost:8911/` in your browser to see the dashboard.
 
 ### Protocol Server Configuration
 
@@ -209,11 +228,16 @@ Every request from the device is forwarded to the real cloud. The proxy:
 6. Buffer and correlation cache are cleared
 
 ### 2. Production Mode
+
 The proxy handles requests locally:
+
 1. Incoming request is matched against learned patterns
 2. Similarity score is calculated (method, path, headers, body, query params)
 3. If score ≥ threshold (default 85%): response is built from template with field mappings
-4. If score < threshold: forward to cloud, capture the miss, learn from it
+4. If score < threshold:
+   - `production_no_fallback` enabled → returns HTTP 501 (conclusive local-only response)
+   - `signal_forward_to_cloud` enabled → returns HTTP 502 + `X-Action: forward` header; nginx catches the 502 and proxies to the real cloud via a dedicated dual-stack resolver (8.8.8.8 / 1.1.1.1 + IPv6), avoiding DNS loops
+   - Neither flag set → forward via `adapter.forward_to_cloud()`, capture the miss, learn from it
 5. Match rate is updated in real-time
 
 ### Context Buffer
@@ -241,6 +265,7 @@ The proxy handles requests locally:
 │   ├── llm_decipher.py    # LLM analysis service
 │   ├── modification.py    # Request/response modification
 │   ├── traffic_selector.py # Intercept/passthrough rules
+│   ├── upstream_resolver.py # Dual-stack upstream DNS resolver (loop-free)
 │   ├── protocol_servers/  # IoT/industrial protocol server plugins
 │   │   ├── __init__.py    # ProtocolServerPlugin base + ProtocolServerManager
 │   │   ├── mqtt_server.py      # MQTT broker plugin
@@ -267,6 +292,8 @@ The proxy handles requests locally:
 │   └── config.yaml        # Main configuration
 ├── tests/
 ├── deploy/
+│   ├── nginx.conf          # nginx reverse proxy configuration
+│   └── docker-compose.yml  # Docker Compose (nginx + ride-the-api)
 └── docs/
 ```
 
@@ -310,7 +337,9 @@ The proxy handles requests locally:
 
 - [x] Auto-switch to production when match rate reaches 99% (per-device toggle, rollback safety) — see [design doc](docs/resilience.md)
 - [x] Portable pattern database (LLM-agnostic, shareable, cross-hardware) — see [design doc](docs/portable-pattern-database.md)
-- [ ] Built-in DNS server (no external dependency)
+- [x] nginx reverse proxy sidecar with dual-stack DNS resolver (8.8.8.8 / 1.1.1.1 + IPv6) for loop-free cloud forwarding — see [design doc](docs/nginx-architecture.md)
+- [x] Production no-fallback mode (conclusive local-only responses, no implicit cloud fallback)
+- [x] Forward signal mechanism (HTTP 502 + X-Action header) for reverse proxy integration
 - [x] MQTT/CoAP protocol support
 - [x] Modbus, WebSocket, Raw TCP, HTTP/2 protocol servers
 - [x] TLS certificate management API (upload, list, delete, rotate)
