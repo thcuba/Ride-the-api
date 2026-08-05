@@ -5,28 +5,28 @@ A DNS interception proxy that sits between IoT devices and their cloud APIs, **l
 ## Architecture
 
 ```
-┌──────────────┐     ┌──────────────────────────────────────────────────────────────────────┐     ┌──────────┐
+┌──────────────┐     ┌──────────────────────────────────────────────────────────────────────┐       ┌──────────┐
 │  IoT Device  │────▶│  nginx (reverse proxy sidecar)                        ┌───────────┐   │────▶│  Vendor  │
-│  (Any Brand) │     │  ┌─────────────────────────────────────────────────── │  Ride-    │   │     │  Cloud   │
-│              │     │  │  port 443 (TLS) ←→ port 8911 (internal)          │  the-API  │   │     └──────────┘
-│              │     │  │  Dual-stack resolver: 8.8.8.8 / 1.1.1.1 + IPv6   │  (FastAPI) │   │
-│              │     │  │  502 → @cloud_redirect (loop-free forwarding)     │           │   │
+│  (Any Brand) │     │  ┌─────────────────────────────────────────────────── │  Ride-    │   │      │  Cloud   │
+│              │     │  │  port 443 (TLS) ←→ port 8911 (internal)            │  the-API  │   │      └──────────┘
+│              │     │  │  Dual-stack resolver: 8.8.8.8 / 1.1.1.1 + IPv6     │ (FastAPI) │   │
+│              │     │  │  502 → @cloud_redirect (loop-free forwarding)      │           │   │
 │              │     │  └─────────────────────────────────────────────────── │           │   │
-│              │     │                                                      │           │   │
+│              │     │                                                       │           │   │
 │              │     │  ┌─────────────────────────────────────────────────── │           │   │
-│              │     │  │            LEARNING MODE                         │           │   │
-│              │     │  │  Request → Correlate → Buffer → LLM → Patterns   │           │   │
+│              │     │  │            LEARNING MODE                           │           │   │
+│              │     │  │  Request → Correlate → Buffer → LLM → Patterns     │           │   │
 │              │     │  └─────────────────────────────────────────────────── │           │   │
-│              │     │                                                      │           │   │
+│              │     │                                                       │           │   │
 │              │     │  ┌─────────────────────────────────────────────────── │           │   │
-│              │     │  │           PRODUCTION MODE                        │           │   │
-│              │     │  │  Request → Match Pattern → Local Response        │           │   │
-│              │     │  │     ↓ (if no match + no_fallback)                │           │   │
-│              │     │  │  Return 501 (conclusive local-only response)     │           │   │
+│              │     │  │           PRODUCTION MODE                          │           │   │
+│              │     │  │  Request → Match Pattern → Local Response          │           │   │
+│              │     │  │     ↓ (if no match + no_fallback)                  │           │   │
+│              │     │  │  Return 501 (conclusive local-only response)       │           │   │
 │              │     │  └─────────────────────────────────────────────────── │           │   │
-│              │     │                                                      │           │   │
+│              │     │                                                       │           │   │
 │              │     │  ┌─────────────────────────────────────────────────── │           │   │
-│              │     │  │  Match Rate  ◀── Real-time tracking              │           │   │
+│              │     │  │  Match Rate  ◀── Real-time tracking               │           │   │
 │              │     │  └───────────────────────────────────────────────────┴───────────┘   │
 │              │     └──────────────────────────────────────────────────────────────────────┘
 └──────────────┘
