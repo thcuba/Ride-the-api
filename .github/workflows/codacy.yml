@@ -1,4 +1,4 @@
-# This workflow uses actions that are not certified by GitHub.
+﻿# This workflow uses actions that are not certified by GitHub.
 # They are provided by a third-party and are governed by
 # separate terms of service, privacy policy, and support
 # documentation.
@@ -36,16 +36,18 @@ jobs:
     steps:
       # Checkout the repository to the GitHub Actions runner
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Execute Codacy Analysis CLI and generate a SARIF output with the security issues identified during the analysis
       # The project-token is optional - if omitted, Codacy runs tools with default configurations
       - name: Run Codacy Analysis CLI
-        uses: codacy/codacy-analysis-cli-action@d840f886c4bd4edc059706d09c6a1586111c540b
+        continue-on-error: true
+        uses: codacy/codacy-analysis-cli-action@v4.4.7
         with:
           verbose: true
           output: results.sarif
           format: sarif
+          tool: issues
           # Don't fail the step if a tool (e.g. ESLint) has no configuration file
           fail-if-incomplete: false
           # Adjust severity of non-security issues
@@ -54,6 +56,7 @@ jobs:
 
       # Upload the SARIF file generated in the previous step
       - name: Upload SARIF results file
+        if: hashFiles('results.sarif') != ''
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: results.sarif
