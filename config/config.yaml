@@ -106,7 +106,7 @@ models:
 
 learning:
   enabled: true
-  # Default mode for new devices: learning | production
+  # Default mode for new devices: learning | production | hybrid
   default_mode: "learning"
   # Match confidence threshold for production mode (0.0 to 1.0)
   # If local match score >= threshold, serve locally; otherwise forward to cloud
@@ -119,6 +119,13 @@ learning:
   min_patterns_for_production: 10
   # Minimum match rate before auto-switch (default 99%)
   min_match_rate_for_production: 99.0
+  # In production mode, serve ONLY from local DB — no implicit cloud fallback.
+  # Unmatched requests return a conclusive error (useful for a fully local setup).
+  production_no_fallback: false
+  # When true, unmatched requests return X-Action: forward so a reverse proxy
+  # (nginx) routes them to the real cloud via a dedicated resolver (8.8.8.8/1.1.1.1),
+  # avoiding DNS loops. Disable to forward via adapter.forward_to_cloud() instead.
+  signal_forward_to_cloud: false
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONTROL LOGIC SETTINGS
@@ -460,15 +467,30 @@ dns:
   # # iptables -t nat -A PREROUTING -d 192.168.1.100 -p tcp --dport 8883 -j REDIRECT --to-port 8911
   #
   # Then: sudo systemctl restart dnsmasq
-  
+   
   # Example Pi-hole custom DNS entries
   pihole_custom_dns: |
     192.168.1.100 mqtt.example.com
     192.168.1.100 api.example.com
     192.168.1.100 openapi.example.com
-  
+   
   # Example AdGuard Home rewrites
   adguard_rewrites: |
     mqtt.example.com -> 192.168.1.100
     api.example.com -> 192.168.1.100
     openapi.example.com -> 192.168.1.100
+
+  # Upstream DNS resolver for forwarding to the real cloud without loops.
+  # When signal_forward_to_cloud is enabled, the proxy signals nginx to
+  # route unmatched requests via a dedicated resolver that bypasses the
+  # local DNS (dnsmasq / Pi-hole / AdGuard Home).
+  upstream:
+    # Primary IPv4 DNS server
+    primary: "8.8.8.8"
+    # Fallback IPv4 DNS server
+    fallback: "1.1.1.1"
+    # IPv6 DNS servers (dual-stack)
+    v6_primary: "2001:4860:4860::8888"
+    v6_fallback: "2606:4700:4700::1111"
+    # Cache TTL for resolved addresses (seconds)
+    cache_ttl: 300

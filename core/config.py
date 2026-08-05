@@ -234,11 +234,20 @@ class CorrelationConfig(BaseModel):
 
 class LearningConfig(BaseModel):
     enabled: bool = True
-    default_mode: str = "learning"  # learning | production
+    default_mode: str = "learning"  # learning | production | hybrid
     default_match_threshold: float = 0.85
     auto_switch_to_production: bool = False
     min_patterns_for_production: int = 10
     min_match_rate_for_production: float = 80.0
+    # When True, production mode serves responses exclusively from the local
+    # database — no implicit cloud fallback. Unmatched requests return a
+    # conclusive error instead of forwarding to the vendor cloud.
+    production_no_fallback: bool = False
+    # When True, unmatched requests in production/hybrid mode return a special
+    # "forward to cloud" signal (X-Action: forward) instead of calling
+    # adapter.forward_to_cloud() internally. Intended for deployments behind a
+    # reverse proxy (nginx) that routes the request to the real cloud directly.
+    signal_forward_to_cloud: bool = False
 
 
 class PinningBypassConfig(BaseModel):
