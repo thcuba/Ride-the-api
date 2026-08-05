@@ -1,4 +1,4 @@
-﻿# This workflow uses actions that are not certified by GitHub.
+# This workflow uses actions that are not certified by GitHub.
 # They are provided by a third-party and are governed by
 # separate terms of service, privacy policy, and support
 # documentation.
@@ -46,10 +46,10 @@ jobs:
           verbose: true
           output: results.sarif
           format: sarif
-                # Don't fail the step if a tool (e.g. ESLint) has no configuration file
-                fail-if-incomplete: false
-                # Adjust severity of non-security issues
-                gh-code-scanning-compat: true
+          # Don't fail the step if a tool (e.g. ESLint) has no configuration file
+          fail-if-incomplete: false
+          # Adjust severity of non-security issues
+          gh-code-scanning-compat: true
           max-allowed-issues: 2147483647
 
       # Upload the SARIF file generated in the previous step
