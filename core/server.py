@@ -1460,28 +1460,54 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):
                 content=response.get("body", {}),
                 headers=response.get("headers", {}),
             )
-        else:
-            # Forward to cloud (passthrough)
-            # In production, this would forward to the actual cloud endpoint
-            # For now, return a simulated response that the adapter provides
-            cloud_response = await adapter.forward_to_cloud(intercepted)
-            if cloud_response and cloud_response.success:
-                # Process cloud response for learning
-                resp_body = cloud_response.data if hasattr(cloud_response, 'data') else {}
-                await orchestrator.handle_response(
-                    device_id=device_id,
-                    vendor=vendor,
-                    protocol="http",
-                    status_code=200,
-                    headers={"content-type": "application/json"},
-                    body=resp_body,
-                )
-                return JSONResponse(content=resp_body)
-            else:
-                return JSONResponse(
-                    status_code=502,
-                    content={"error": "Cloud passthrough failed", "detail": str(cloud_response.error) if cloud_response else "No response"},
-                )
+                elif result["action"] == "forward":
+                    # Forward to cloud (passthrough).
+                    #
+                    # When signal_forward_to_cloud is enabled, the proxy tells nginx
+                    # to route the request upstream rather than doing it internally.
+                    # This avoids the DNS loop: nginx resolves the cloud domain
+                    # via 8.8.8.8 / 1.1.1.1, bypassing the local DNS.
+                    config = config_manager.config
+                    if config.learning.signal_forward_to_cloud:
+                        # Signal nginx to forward the request to the real cloud upstream
+                        return JSONResponse(
+                            status_code=502,
+                            content={"action": "forward", "reason": result.get("reason", "no_match")},
+                            headers={"X-Action": "forward", "X-Original-Host": str(request.url)},
+                        )
+                    # Legacy path: forward via the adapter (may cause DNS loop)
+                    cloud_response = await adapter.forward_to_cloud(intercepted)
+                    if cloud_response and cloud_response.success:
+                        # Process cloud response for learning
+                        resp_body = cloud_response.data if hasattr(cloud_response, 'data') else {}
+                        await orchestrator.handle_response(
+                            device_id=device_id,
+                            vendor=vendor,
+                            protocol="http",
+                            status_code=200,
+                            headers={"content-type": "application/json"},
+                            body=resp_body,
+                        )
+                        return JSONResponse(content=resp_body)
+                    else:
+                        return JSONResponse(
+                            status_code=502,
+                            content={"error": "Cloud passthrough failed", "detail": str(cloud_response.error) if cloud_response else "No response"},
+                        )
+                elif result["action"] == "no_fallback":
+                    # Production mode with no_cloud_fallback enabled — conclusive
+                    # local-only response.  The request was not matched and we
+                    # deliberately refuse to contact the cloud.
+                    return JSONResponse(
+                        status_code=501,
+                        content={
+                            "error": "Not implemented",
+                            "detail": "No local pattern matched and cloud fallback is disabled.",
+                            "device_id": device_id,
+                            "mode": "production_no_fallback",
+                        },
+                    )
+                else:
 
     except Exception as e:
         logger.error(f"Error processing request: {e}", exc_info=True)

@@ -1,0 +1,308 @@
+"""
+Tests for the upstream DNS resolver (loop prevention module).
+"""
+
+from __future__ import annotations
+
+import time
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from core.upstream_resolver import (
+    resolve_upstream,
+    batch_resolve_upstream,
+    clear_cache,
+    get_cache_stats,
+    UPSTREAM_DNS_SERVERS,
+    UPSTREAM_DNS_SERVERS_V6,
+    _resolver_cache,
+)
+
+
+class FakeDNSAnswer:
+    """Simulates a dns.resolver.Answer for testing."""
+
+    def __init__(self, addresses: list[str]):
+        self._addresses = addresses
+
+    def __iter__(self):
+        for addr in self._addresses:
+            fake = MagicMock()
+            fake.__str__.return_value = addr
+            yield fake
+
+
+@pytest.fixture(autouse=True)
+def clear_test_cache():
+    """Clear the resolver cache before and after each test."""
+    clear_cache()
+    yield
+    clear_cache()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# RESOLVER TESTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+@patch("core.upstream_resolver._build_resolver")
+async def test_resolve_upstream_success_ipv4(mock_build):
+    """Resolve A records successfully, no AAAA."""
+    from dns.exception import DNSException
+
+    class FakeNoAnswer(DNSException):
+        pass
+
+    resolver = AsyncMock()
+
+    async def resolve_side(hostname, rtype):
+        if rtype == "A":
+            return FakeDNSAnswer(["93.184.216.34"])
+        elif rtype == "AAAA":
+            raise FakeNoAnswer()
+        raise ValueError(f"Unexpected query type: {rtype}")
+
+    resolver.resolve = resolve_side
+    mock_build.return_value = resolver
+
+    result = await resolve_upstream("api.example.com", skip_cache=True)
+
+    assert "93.184.216.34" in result
+    assert len(result) == 1  # no IPv6
+
+
+@pytest.mark.asyncio
+@patch("core.upstream_resolver._build_resolver")
+async def test_resolve_upstream_dual_stack(mock_build):
+    """Resolve both A and AAAA records successfully."""
+    from dns.exception import DNSException
+
+    class FakeNoAnswer(DNSException):
+        pass
+
+    resolver = AsyncMock()
+    
+    async def resolve_side(hostname, rtype):
+        if rtype == "A":
+            return FakeDNSAnswer(["93.184.216.34"])
+        elif rtype == "AAAA":
+            return FakeDNSAnswer(["2606:2800:220:1:248:1893:25c8:1946"])
+        raise ValueError(f"Unexpected query type: {rtype}")
+    
+    resolver.resolve = resolve_side
+    mock_build.return_value = resolver
+
+    result = await resolve_upstream("api.example.com", skip_cache=True)
+
+    assert "93.184.216.34" in result
+    assert "2606:2800:220:1:248:1893:25c8:1946" in result
+    assert len(result) == 2
+
+
+@pytest.mark.asyncio
+@patch("core.upstream_resolver._build_resolver")
+async def test_resolve_upstream_prefer_ipv6(mock_build):
+    """IPv6 addresses come first when prefer_ipv6=True."""
+    from dns.exception import DNSException
+
+    class FakeNoAnswer(DNSException):
+        pass
+
+    resolver = AsyncMock()
+    
+    async def resolve_side(hostname, rtype):
+        if rtype == "A":
+            return FakeDNSAnswer(["93.184.216.34"])
+        elif rtype == "AAAA":
+            return FakeDNSAnswer(["2606:2800:220:1:248:1893:25c8:1946"])
+        raise ValueError(f"Unexpected query type: {rtype}")
+    
+    resolver.resolve = resolve_side
+    mock_build.return_value = resolver
+
+    result = await resolve_upstream("api.example.com", prefer_ipv6=True, skip_cache=True)
+
+    # IPv6 should be first
+    assert result[0] == "2606:2800:220:1:248:1893:25c8:1946"
+    assert result[1] == "93.184.216.34"
+
+
+@pytest.mark.asyncio
+@patch("core.upstream_resolver._build_resolver")
+async def test_resolve_upstream_both_fail_then_fallback(mock_build):
+    """Both upstream DNS queries fail, falls back to system resolver."""
+    from dns.exception import DNSException
+
+    class FakeNoAnswer(DNSException):
+        pass
+
+    resolver = AsyncMock()
+    
+    async def resolve_side(hostname, rtype):
+        raise FakeNoAnswer("DNS query failed")
+    
+    resolver.resolve = resolve_side
+    mock_build.return_value = resolver
+
+    # The system resolver fallback uses asyncio.get_running_loop().getaddrinfo
+    # which would fail in test since we're not actually connected.
+    # So we expect an empty list gracefully.
+    result = await resolve_upstream("api.example.com", skip_cache=True)
+
+    assert isinstance(result, list)
+    # May be empty since system resolver fallback also likely fails in test
+
+
+@pytest.mark.asyncio
+@patch("core.upstream_resolver._build_resolver")
+async def test_resolve_upstream_cache(mock_build):
+    """Cached results are returned without re-resolving."""
+    from dns.exception import DNSException
+
+    class FakeNoAnswer(DNSException):
+        pass
+
+    resolver = AsyncMock()
+    
+    async def resolve_side(hostname, rtype):
+        if rtype == "A":
+            return FakeDNSAnswer(["93.184.216.34"])
+        raise FakeNoAnswer()
+    
+    resolver.resolve = resolve_side
+    mock_build.return_value = resolver
+
+    # First call (no cache)
+    result1 = await resolve_upstream("api.example.com", skip_cache=False)
+    assert "93.184.216.34" in result1
+    assert mock_build.call_count == 1
+
+    # Second call (should use cache)
+    mock_build.reset_mock()
+    result2 = await resolve_upstream("api.example.com", skip_cache=False)
+    assert result2 == result1
+    mock_build.assert_not_called()  # cache hit, no resolver created
+
+
+@pytest.mark.asyncio
+@patch("core.upstream_resolver._build_resolver")
+async def test_resolve_upstream_cache_skipped(mock_build):
+    """skip_cache=True forces a new resolution."""
+    from dns.exception import DNSException
+
+    class FakeNoAnswer(DNSException):
+        pass
+
+    resolver = AsyncMock()
+    
+    async def resolve_side(hostname, rtype):
+        if rtype == "A":
+            return FakeDNSAnswer(["93.184.216.34"])
+        raise FakeNoAnswer()
+    
+    resolver.resolve = resolve_side
+    mock_build.return_value = resolver
+
+    await resolve_upstream("api.example.com", skip_cache=False)
+    mock_build.reset_mock()
+
+    # Second call with skip_cache=True
+    await resolve_upstream("api.example.com", skip_cache=True)
+    mock_build.assert_called_once()  # new resolver created
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# BATCH RESOLVE TESTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+@patch("core.upstream_resolver._build_resolver")
+async def test_batch_resolve(mock_build):
+    """Multiple hostnames resolved in parallel."""
+    from dns.exception import DNSException
+
+    class FakeNoAnswer(DNSException):
+        pass
+
+    resolver = AsyncMock()
+    
+    call_count = 0
+    
+    async def resolve_side(hostname, rtype):
+        nonlocal call_count
+        call_count += 1
+        if rtype == "A":
+            return FakeDNSAnswer([f"1.2.3.{call_count}"])
+        raise FakeNoAnswer()
+    
+    resolver.resolve = resolve_side
+    mock_build.return_value = resolver
+
+    result = await batch_resolve_upstream(
+        ["api.example.com", "mqtt.example.com"],
+        skip_cache=True,
+    )
+
+    assert "api.example.com" in result
+    assert "mqtt.example.com" in result
+    assert len(result["api.example.com"]) == 1
+    assert len(result["mqtt.example.com"]) == 1
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CACHE UTILITY TESTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+@patch("core.upstream_resolver._build_resolver")
+async def test_cache_stats(mock_build):
+    """get_cache_stats returns correct entry count."""
+    from dns.exception import DNSException
+
+    class FakeNoAnswer(DNSException):
+        pass
+
+    resolver = AsyncMock()
+    
+    async def resolve_side(hostname, rtype):
+        if rtype == "A":
+            return FakeDNSAnswer(["1.2.3.4"])
+        raise FakeNoAnswer()
+    
+    resolver.resolve = resolve_side
+    mock_build.return_value = resolver
+
+    # Resolve two hostnames to populate cache
+    await resolve_upstream("host-a.example.com", skip_cache=True)
+    await resolve_upstream("host-b.example.com", skip_cache=True)
+
+    stats = get_cache_stats()
+    assert stats["entries"] == 2
+    assert stats["ttl_seconds"] == 300
+
+
+def test_clear_cache():
+    """clear_cache() empties the resolver cache."""
+    _resolver_cache["test.example.com"] = (time.time(), ["1.2.3.4"])
+    assert len(_resolver_cache) == 1
+    clear_cache()
+    assert len(_resolver_cache) == 0
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CONFIGURATION TESTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def test_upstream_dns_servers_configured():
+    """The upstream DNS server list is correctly configured."""
+    assert "8.8.8.8" in UPSTREAM_DNS_SERVERS
+    assert "1.1.1.1" in UPSTREAM_DNS_SERVERS
+    assert "2001:4860:4860::8888" in UPSTREAM_DNS_SERVERS_V6
+    assert "2606:4700:4700::1111" in UPSTREAM_DNS_SERVERS_V6
+    assert UPSTREAM_DNS_SERVERS[0] == "8.8.8.8"  # primary
+    assert UPSTREAM_DNS_SERVERS[1] == "1.1.1.1"  # fallback

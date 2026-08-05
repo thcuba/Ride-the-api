@@ -875,37 +875,52 @@ class LearningOrchestrator:
 
     async def _handle_production(self, device: DeviceRegistry, method: str, path: str,
                                     headers: dict, body: Any, query_params: dict) -> dict:
-        """Production mode: try local match, fall back to cloud forwarding + learning."""
-        pattern, template, score = await self.engine.find_best_match(
-            device.device_id, method, path, headers, body, query_params
-        )
+            """Production mode: try local match, fall back to cloud forwarding + learning.
 
-        if pattern and template and score >= device.match_threshold:
-            # Local hit -- build with state-aware engine
-            response = await self.engine.build_local_response(
-                device.device_id, template,
-                {"body": body, "headers": headers, "query_params": query_params}
+            When ``production_no_fallback`` is enabled on the device, unmatched
+            requests return a conclusive ``no_fallback`` action instead of
+            forwarding to the cloud.
+            """
+            pattern, template, score = await self.engine.find_best_match(
+                device.device_id, method, path, headers, body, query_params
             )
-            await self.tracker.record_result(device.device_id, MatchResult.LOCAL_HIT)
-            return {
-                "action": "local_response",
-                "response": response,
-                "match_score": score,
-                "pattern_id": getattr(pattern, "pattern_id", None),
-                "intent": getattr(pattern, "intent", None),
-            }
-        else:
-            # Miss -- forward to cloud, but also capture for learning
-            corr_key = await self._register_for_learning(
-                device, method, path, headers, body, query_params
-            )
-            await self.tracker.record_result(device.device_id, MatchResult.CLOUD_MISS)
-            return {
-                "action": "forward",
-                "correlation_key": corr_key,
-                "match_score": score,
-                "reason": "below_threshold" if pattern else "no_pattern",
-            }
+
+            if pattern and template and score >= device.match_threshold:
+                # Local hit -- build with state-aware engine
+                response = await self.engine.build_local_response(
+                    device.device_id, template,
+                    {"body": body, "headers": headers, "query_params": query_params}
+                )
+                await self.tracker.record_result(device.device_id, MatchResult.LOCAL_HIT)
+                return {
+                    "action": "local_response",
+                    "response": response,
+                    "match_score": score,
+                    "pattern_id": getattr(pattern, "pattern_id", None),
+                    "intent": getattr(pattern, "intent", None),
+                }
+            else:
+                # Miss
+                await self.tracker.record_result(device.device_id, MatchResult.CLOUD_MISS)
+
+                # Check production_no_fallback flag from device config
+                if device.config.get("production_no_fallback", False):
+                    return {
+                        "action": "no_fallback",
+                        "reason": "below_threshold" if pattern else "no_pattern",
+                        "match_score": score,
+                    }
+
+                # Forward to cloud + capture for learning
+                corr_key = await self._register_for_learning(
+                    device, method, path, headers, body, query_params
+                )
+                return {
+                    "action": "forward",
+                    "correlation_key": corr_key,
+                    "match_score": score,
+                    "reason": "below_threshold" if pattern else "no_pattern",
+                }
     async def _handle_hybrid(self, device: DeviceRegistry, method: str, path: str,
                                   headers: dict, body: Any, query_params: dict) -> dict:
         """Hybrid mode: try local match first; if confident serve locally, otherwise forward to cloud + learn."""

@@ -492,10 +492,20 @@ class DatabaseManager:
             )
             device = result.scalar_one_or_none()
             if not device:
+                # Inherit global learning defaults into the per-device config
+                from core.config import get_config
+                try:
+                    learning = get_config().learning
+                    device_config = {
+                        "production_no_fallback": learning.production_no_fallback,
+                    }
+                except Exception:
+                    device_config = {}
                 device = DeviceRegistry(
                     device_id=device_id, vendor=vendor,
                     device_type=device_type, name=name or device_id,
                     mode="learning",
+                    config=device_config,
                 )
                 session.add(device)
                 await session.commit()
