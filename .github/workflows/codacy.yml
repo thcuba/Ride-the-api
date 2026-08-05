@@ -46,10 +46,10 @@ jobs:
           verbose: true
           output: results.sarif
           format: sarif
-          # Adjust severity of non-security issues
-          gh-code-scanning-compat: true
-          # Force 0 exit code to allow SARIF file generation
-          # This will handover control about PR rejection to the GitHub side
+                # Don't fail the step if a tool (e.g. ESLint) has no configuration file
+                fail-if-incomplete: false
+                # Adjust severity of non-security issues
+                gh-code-scanning-compat: true
           max-allowed-issues: 2147483647
 
       # Upload the SARIF file generated in the previous step
