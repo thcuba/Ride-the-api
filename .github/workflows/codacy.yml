@@ -49,7 +49,11 @@ jobs:
           verbose: true
           output: results.sarif
           format: sarif
-          tool: issues
+          # Exclude problematic tools that fail without proper config
+          # - eslint: requires .eslintrc configuration
+          # - trivy: requires patterns configuration  
+          # - checkov: fails on non-infrastructure code
+          exclude-tools: 'eslint,eslint-legacy,trivy,checkov'
           # Don't fail the step if a tool (e.g. ESLint) has no configuration file
           fail-if-incomplete: false
           # Adjust severity of non-security issues
@@ -58,7 +62,7 @@ jobs:
 
       # Upload the SARIF file generated in the previous step
       - name: Upload SARIF results file
-        if: hashFiles('results.sarif') != ''
+        if: hashFiles('results.sarif') != '' && fileSize('results.sarif') > 100
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: results.sarif
