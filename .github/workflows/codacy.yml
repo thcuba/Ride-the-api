@@ -36,31 +36,26 @@ jobs:
     steps:
       # Checkout the repository to the GitHub Actions runner
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      # Execute Codacy Analysis CLI and generate a SARIF output with the security issues identified during the analysis
-      # The project-token is optional - if omitted, Codacy runs tools with default configurations
+      # Run Codacy Analysis CLI locally without account/token
+      # Generates SARIF report for GitHub Code Scanning
       - name: Run Codacy Analysis CLI
         continue-on-error: true
-        uses: codacy/codacy-analysis-cli-action@v4.4.7
+        uses: codacy/codacy-analysis-cli-action@master
         with:
-          verbose: true
+          verbose: false
           output: results.sarif
           format: sarif
-          # Exclude problematic tools that fail without proper config
-          # - eslint: requires .eslintrc configuration
-          # - trivy: requires patterns configuration  
-          # - checkov: fails on non-infrastructure code
-          exclude-tools: 'eslint,eslint-legacy,trivy,checkov'
-          # Don't fail the step if a tool (e.g. ESLint) has no configuration file
-          fail-if-incomplete: false
-          # Adjust severity of non-security issues
-          gh-code-scanning-compat: true
+          # Run with default security tools only
           max-allowed-issues: 2147483647
 
-      # Upload the SARIF file generated in the previous step
-      - name: Upload SARIF results file
-        if: hashFiles('results.sarif') != ''
+      # Upload the SARIF file to GitHub Code Scanning
+      - name: Upload SARIF results to GitHub Code Scanning
         uses: github/codeql-action/upload-sarif@v3
+        if: always()
         with:
           sarif_file: results.sarif
+          wait-for-processing: true
