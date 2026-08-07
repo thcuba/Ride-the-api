@@ -33,7 +33,6 @@ jobs:
       actions: read # only required for a private repository by github/codeql-action/upload-sarif to get the Action run status
     name: Codacy Security Scan
     runs-on: ubuntu-latest
-    timeout-minutes: 30
     steps:
       # Checkout the repository to the GitHub Actions runner
       - name: Checkout code
@@ -43,7 +42,6 @@ jobs:
       # The project-token is optional - if omitted, Codacy runs tools with default configurations
       - name: Run Codacy Analysis CLI
         continue-on-error: true
-        timeout-minutes: 25
         uses: codacy/codacy-analysis-cli-action@v4.4.7
         with:
           verbose: true
@@ -62,7 +60,7 @@ jobs:
 
       # Upload the SARIF file generated in the previous step
       - name: Upload SARIF results file
-        if: hashFiles('results.sarif') != '' && fileSize('results.sarif') > 100
+        if: hashFiles('results.sarif') != ''
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: results.sarif
