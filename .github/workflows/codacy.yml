@@ -54,8 +54,9 @@ jobs:
 
       # Upload the SARIF file to GitHub Code Scanning
       - name: Upload SARIF results to GitHub Code Scanning
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
           sarif_file: results.sarif
+          category: codacy
           wait-for-processing: true
