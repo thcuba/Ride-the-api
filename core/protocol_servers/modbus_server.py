@@ -16,22 +16,22 @@ This server translates Modbus function codes into device commands:
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import struct
-from datetime import datetime, timezone
-from typing import Any, Callable
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any
 
 try:
-    from pymodbus.server import StartAsyncTcpServer
-    from pymodbus.datastore import ModbusSlaveContext, ModbusServerContext
+    from pymodbus.datastore import ModbusServerContext, ModbusSlaveContext
     from pymodbus.device import ModbusDeviceIdentification
+    from pymodbus.server import StartAsyncTcpServer
     HAS_PYMODBUS = True
 except ImportError:
     HAS_PYMODBUS = False
 
+from adapters.base import CommandType, InterceptedRequest, ProtocolType
 from core.protocol_servers import ProtocolServerPlugin
-from adapters.base import InterceptedRequest, ProtocolType, CommandType
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +98,7 @@ class ModbusServerPlugin(ProtocolServerPlugin):
 
         request = InterceptedRequest(
             device_id=device_id,
-            timestamp=datetime.now(timezone.utc).timestamp(),
+            timestamp=datetime.now(UTC).timestamp(),
             protocol=ProtocolType.MODBUS,
             method=f"0x{function_code:02X}",
             path=f"/modbus/{function_code}/{address}",

@@ -88,7 +88,7 @@ USER rideapi
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:8080/health || exit 1
+    CMD curl -f http://localhost:8911/health || exit 1
 
 # Expose ports: 8911 proxy, 8080 health/metrics, 9090 optional metrics
 EXPOSE 8911 8080 9090
@@ -132,7 +132,7 @@ RUN mkdir -p /app/data/devices /app/data/core /app/models /app/certs /app/logs &
 USER rideapi
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:8080/health || exit 1
+    CMD curl -f http://localhost:8911/health || exit 1
 
 EXPOSE 8911 8080 9090
 

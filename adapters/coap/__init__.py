@@ -15,13 +15,19 @@ Typical CoAP resources:
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from typing import Any
 
 from adapters.base import (
-    Command, CommandResult, CommandType, DeviceCapability,
-    DeviceInfo, DeviceState, InterceptedRequest,
-    ProtocolAdapter, ProtocolType,
+    Command,
+    CommandResult,
+    CommandType,
+    DeviceCapability,
+    DeviceInfo,
+    DeviceState,
+    InterceptedRequest,
+    ProtocolAdapter,
+    ProtocolType,
 )
 
 logger = logging.getLogger(__name__)
@@ -137,7 +143,7 @@ class CoAPProtocolAdapter(ProtocolAdapter):
             return None
         return DeviceState(
             device_id=device_id,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             temp_actual=info.get("temperature"),
             humidity=info.get("humidity"),
             source="device",

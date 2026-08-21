@@ -10,18 +10,19 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
-from typing import Any, Callable
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any
 
 try:
     from gmqtt import Client as MQTTClient
-    from gmqtt.mqtt.constants import MQTTv311, MQTTv5
+    from gmqtt.mqtt.constants import MQTTv5, MQTTv311
     HAS_GMQTT = True
 except ImportError:
     HAS_GMQTT = False
 
-from core.protocol_servers import ProtocolServerPlugin
 from adapters.base import InterceptedRequest, ProtocolType
+from core.protocol_servers import ProtocolServerPlugin
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +75,7 @@ class MQTTServerPlugin(ProtocolServerPlugin):
 
         request = InterceptedRequest(
             device_id=client_id,
-            timestamp=datetime.now(timezone.utc).timestamp(),
+            timestamp=datetime.now(UTC).timestamp(),
             protocol=ProtocolType.MQTT,
             topic=topic,
             qos=qos,

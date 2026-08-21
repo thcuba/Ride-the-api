@@ -12,12 +12,13 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
-from core.database import DatabaseManager, RequestPattern, ResponseTemplate, FieldMapping
-from core.pattern_db.schemas import PatternDB, PatternMeta, ClientConfig, ServerConfig
-from core.pattern_db.state_manager import DeviceStateStore
 from sqlalchemy import select
+
+from core.database import DatabaseManager, RequestPattern, ResponseTemplate
+from core.pattern_db.schemas import PatternDB
+from core.pattern_db.state_manager import DeviceStateStore
 
 logger = logging.getLogger(__name__)
 
@@ -159,9 +160,7 @@ class PatternEngine:
             return 0.3 if abs(len(p_parts) - len(a_parts)) <= 1 else 0.0
         matches = 0
         for p, a in zip(p_parts, a_parts):
-            if p.startswith("{") and p.endswith("}"):
-                matches += 1
-            elif p == a:
+            if p.startswith("{") and p.endswith("}") or p == a:
                 matches += 1
         return matches / len(p_parts) if p_parts else 1.0
 
@@ -281,9 +280,9 @@ class PatternEngine:
                 from uuid import uuid4
                 obj = obj.replace("{uuid}", str(uuid4()))
             return obj
-        elif isinstance(obj, dict):
+        if isinstance(obj, dict):
             return {k: self._resolve_template_vars(v, store, request) for k, v in obj.items()}
-        elif isinstance(obj, list):
+        if isinstance(obj, list):
             return [self._resolve_template_vars(item, store, request) for item in obj]
         return obj
 

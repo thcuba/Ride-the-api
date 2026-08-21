@@ -13,7 +13,6 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # BUFFER DB — .ride-capture.json  (da decifrare)
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -67,7 +66,7 @@ class RawPairWithResponse(BaseModel):
     headers: dict[str, str] = Field(default_factory=dict)
     query_params: dict[str, str] = Field(default_factory=dict)
     body: Any = None
-    response: Optional[RawResponse] = None
+    response: RawResponse | None = None
 
 
 class CaptureSession(BaseModel):
@@ -119,21 +118,21 @@ class BodySchemaProperty(BaseModel):
     """A single property in a JSON Schema body."""
     type: str = "string"
     description: str = ""
-    enum: Optional[list[str]] = None
-    const: Optional[str] = None
-    minimum: Optional[float] = None
-    maximum: Optional[float] = None
-    properties: Optional[dict[str, "BodySchemaProperty"]] = None
-    items: Optional["BodySchemaProperty"] = None
-    required: Optional[list[str]] = None
-    min_items: Optional[int] = None
+    enum: list[str] | None = None
+    const: str | None = None
+    minimum: float | None = None
+    maximum: float | None = None
+    properties: dict[str, BodySchemaProperty] | None = None
+    items: BodySchemaProperty | None = None
+    required: list[str] | None = None
+    min_items: int | None = None
 
 
 class EndpointVariant(BaseModel):
     """A variant of an endpoint for different firmware/hardware versions."""
     firmware: str = "*"
-    path: Optional[str] = None
-    body_schema: Optional[dict[str, Any]] = None
+    path: str | None = None
+    body_schema: dict[str, Any] | None = None
 
 
 class ClientEndpoint(BaseModel):
@@ -145,7 +144,7 @@ class ClientEndpoint(BaseModel):
     path_pattern: str = ""
     headers: dict[str, list[str]] = Field(default_factory=lambda: {"required": []})
     query_params: list[str] = Field(default_factory=list)
-    body_schema: Optional[dict[str, Any]] = None
+    body_schema: dict[str, Any] | None = None
     response_fields: list[dict[str, str]] = Field(default_factory=list)
     variants: list[EndpointVariant] = Field(default_factory=list)
 
@@ -155,7 +154,7 @@ class ClientConfig(BaseModel):
     protocols: list[str] = Field(default_factory=lambda: ["http"])
     base_url: str = ""
     mqtt_topic_prefix: str = ""
-    authentication: Optional[AuthConfig] = None
+    authentication: AuthConfig | None = None
     endpoints: list[ClientEndpoint] = Field(default_factory=list)
 
 
@@ -166,9 +165,9 @@ class StateVariable(BaseModel):
     name: str
     type: str = "string"  # boolean, integer, float, string, enum
     default: Any = None
-    min: Optional[float] = None
-    max: Optional[float] = None
-    enum: Optional[list[str]] = None
+    min: float | None = None
+    max: float | None = None
+    enum: list[str] | None = None
     unit: str = ""
     persist: bool = True
     description: str = ""
@@ -180,7 +179,7 @@ class FieldMapping(BaseModel):
     target: str  # 'state.varname' or 'body.result.field'
     transform: str = "direct"  # direct, enum, formula, scale
     formula: str = ""
-    mapping: Optional[dict[str, Any]] = None
+    mapping: dict[str, Any] | None = None
     description: str = ""
 
 
@@ -200,9 +199,9 @@ class VirtualSensor(BaseModel):
     type: str = "integer"  # integer, float, boolean
     behavior: str = "static"  # static, drift, periodic, random
     baseline: str = ""  # reference to a state variable or constant
-    drift_range: Optional[list[float]] = None
+    drift_range: list[float] | None = None
     period_s: float = 0
-    amplitude: Optional[float] = None
+    amplitude: float | None = None
     update_interval_s: float = 60
     description: str = ""
 

@@ -10,7 +10,6 @@ import logging
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Optional
 
 from core.config import get_config_manager
 
@@ -47,11 +46,11 @@ class TrafficRule:
     action: TrafficAction
     priority: int = 10
     enabled: bool = True
-    
+
     # Compiled patterns for performance
-    _compiled_pattern: Optional[re.Pattern] = field(default=None, init=False, repr=False)
-    _cidr_network: Optional[ipaddress.IPv4Network | ipaddress.IPv6Network] = field(default=None, init=False, repr=False)
-    
+    _compiled_pattern: re.Pattern | None = field(default=None, init=False, repr=False)
+    _cidr_network: ipaddress.IPv4Network | ipaddress.IPv6Network | None = field(default=None, init=False, repr=False)
+
     def __post_init__(self):
         """Compile patterns after initialization."""
         if self.match_type == MatchType.HOSTNAME:
@@ -60,18 +59,18 @@ class TrafficRule:
             self._compiled_pattern = re.compile(f"^{pattern}$", re.IGNORECASE)
         elif self.match_type == MatchType.CIDR:
             self._cidr_network = ipaddress.ip_network(self.match_value, strict=False)
-    
+
     def matches(self, request_info: TrafficRequestInfo) -> bool:
         """Check if this rule matches the given request."""
         if not self.enabled:
             return False
-        
+
         # Scope must match
         if self.scope == TrafficScope.LOCAL and not request_info.is_local:
             return False
         if self.scope == TrafficScope.EXTERNAL and request_info.is_local:
             return False
-        
+
         # Match based on type
         if self.match_type == MatchType.CIDR:
             if request_info.client_ip and self._cidr_network:
@@ -80,18 +79,18 @@ class TrafficRule:
                 except ValueError:
                     return False
             return False
-        
-        elif self.match_type == MatchType.HOSTNAME:
+
+        if self.match_type == MatchType.HOSTNAME:
             if request_info.hostname and self._compiled_pattern:
                 return bool(self._compiled_pattern.match(request_info.hostname))
             return False
-        
-        elif self.match_type == MatchType.VENDOR:
+
+        if self.match_type == MatchType.VENDOR:
             return request_info.vendor and request_info.vendor.lower() == self.match_value.lower()
-        
-        elif self.match_type == MatchType.DEVICE_ID:
+
+        if self.match_type == MatchType.DEVICE_ID:
             return request_info.device_id and request_info.device_id == self.match_value
-        
+
         return False
 
 
@@ -99,12 +98,12 @@ class TrafficRule:
 class TrafficRequestInfo:
     """Information extracted from request for rule matching."""
     client_ip: str
-    hostname: Optional[str] = None
-    vendor: Optional[str] = None
-    device_id: Optional[str] = None
+    hostname: str | None = None
+    vendor: str | None = None
+    device_id: str | None = None
     is_local: bool = False
-    url: Optional[str] = None
-    path: Optional[str] = None
+    url: str | None = None
+    path: str | None = None
 
 
 class TrafficSelector:
@@ -112,35 +111,35 @@ class TrafficSelector:
     Evaluates traffic selection rules to determine intercept vs passthrough.
     Rules are evaluated in priority order (highest first).
     """
-    
+
     def __init__(self, config_manager=None):
         self.config_manager = config_manager or get_config_manager()
         self.rules: list[TrafficRule] = []
         self._default_action = TrafficAction.INTERCEPT
         self._load_rules()
-        
+
         # Watch for config changes
         self.config_manager.register_callback(self._on_config_change)
-    
+
     def _load_rules(self):
         """Load rules from configuration."""
         config = self.config_manager.config
         ts_config = getattr(config, 'traffic_selection', None)
-        
+
         if not ts_config:
             logger.warning("No traffic_selection config found, using defaults")
             self._default_action = TrafficAction.INTERCEPT
             self.rules = []
             return
-        
+
         # Default action
         default = getattr(ts_config, 'default_action', 'intercept')
         self._default_action = TrafficAction(default)
-        
+
         # Parse rules
         rules = getattr(ts_config, 'rules', [])
         self.rules = []
-        
+
         for rule_data in rules:
             try:
                 # Handle both Pydantic models and dicts
@@ -167,17 +166,17 @@ class TrafficSelector:
                 self.rules.append(rule)
             except Exception as e:
                 logger.error(f"Failed to parse traffic rule {rule_data}: {e}")
-        
+
         # Sort by priority (highest first)
         self.rules.sort(key=lambda r: r.priority, reverse=True)
-        
+
         logger.info(f"Loaded {len(self.rules)} traffic selection rules, default: {self._default_action.value}")
-    
+
     def _on_config_change(self, new_config):
         """Reload rules when config changes."""
         logger.info("Traffic selection config changed, reloading rules")
         self._load_rules()
-    
+
     def evaluate(self, request_info: TrafficRequestInfo) -> TrafficAction:
         """
         Evaluate request against rules and return action.
@@ -187,10 +186,10 @@ class TrafficSelector:
             if rule.matches(request_info):
                 logger.debug(f"Traffic rule '{rule.name}' matched: {rule.action.value}")
                 return rule.action
-        
+
         logger.debug(f"No rule matched, using default: {self._default_action.value}")
         return self._default_action
-    
+
     def get_rules(self) -> list[TrafficRule]:
         """Get all current rules."""
         return self.rules.copy()
@@ -199,13 +198,13 @@ class TrafficSelector:
     def default_action(self) -> TrafficAction:
         """Get the default traffic action."""
         return self._default_action
-    
+
     def add_rule(self, rule: TrafficRule) -> bool:
         """Add a new rule (will be re-sorted by priority)."""
         self.rules.append(rule)
         self.rules.sort(key=lambda r: r.priority, reverse=True)
         return True
-    
+
     def remove_rule(self, name: str) -> bool:
         """Remove rule by name."""
         for i, rule in enumerate(self.rules):
@@ -213,7 +212,7 @@ class TrafficSelector:
                 self.rules.pop(i)
                 return True
         return False
-    
+
     def update_rule(self, name: str, **kwargs) -> bool:
         """Update rule properties."""
         for rule in self.rules:
@@ -257,7 +256,7 @@ def create_request_info(
             is_local = ip.is_private or ip.is_loopback
         except ValueError:
             is_local = False
-    
+
     return TrafficRequestInfo(
         client_ip=client_ip,
         hostname=hostname,

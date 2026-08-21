@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from typing import Any
 
 from adapters.base import (
@@ -84,69 +84,69 @@ class ExampleProtocolAdapter(ProtocolAdapter):
     }
 
     FAN_STD_TO_VENDOR = {v: k for k, v in FAN_VENDOR_TO_STD.items()}
-    
+
     def __init__(self, vendor: str, config: dict[str, Any]):
         super().__init__(vendor, config)
         self.region = config.get("region", "eu")
         self.api_version = config.get("api_version", "v1.0")
         self._device_dp_codes: dict[str, dict[str, str]] = {}  # Per-device DP code overrides
-    
+
     @property
     def supported_protocols(self) -> list[ProtocolType]:
         return [ProtocolType.MQTT, ProtocolType.MQTTS, ProtocolType.HTTPS, ProtocolType.HTTP]
-    
+
     @property
     def vendor_hostnames(self) -> list[str]:
         return self.VENDOR_HOSTNAMES
-    
+
     # ══════════════════════════════════════════════════════════════════════════════
     # REQUEST PARSING
     # ══════════════════════════════════════════════════════════════════════════════
-    
+
     async def parse_request(self, request: InterceptedRequest) -> InterceptedRequest:
         """Parse request and extract intent."""
-        
+
         if request.protocol in (ProtocolType.MQTT, ProtocolType.MQTTS):
             return await self._parse_mqtt_request(request)
-        elif request.protocol in (ProtocolType.HTTP, ProtocolType.HTTPS):
+        if request.protocol in (ProtocolType.HTTP, ProtocolType.HTTPS):
             return await self._parse_http_request(request)
-        
+
         request.parsed_intent = CommandType.UNKNOWN
         return request
-    
+
     async def _parse_mqtt_request(self, request: InterceptedRequest) -> InterceptedRequest:
         """Parse MQTT message."""
         if not request.topic or not request.body:
             request.parsed_intent = CommandType.UNKNOWN
             return request
-        
+
             # Example MQTT topics:
         # - thing/status/device_id (device reports state)
         # - thing/command/device_id (cloud sends command)
         # - thing/property/device_id (property updates)
-        
+
         topic_parts = request.topic.split("/")
         if len(topic_parts) < 3:
             request.parsed_intent = CommandType.UNKNOWN
             return request
-        
+
         msg_type = topic_parts[1]  # status, command, property
         device_id = topic_parts[2]
         request.device_id = device_id
-        
+
         # Extract DP data from body
         dp_data = {}
         if "data" in request.body and isinstance(request.body["data"], dict):
             dp_data = request.body["data"]
         elif "dps" in request.body and isinstance(request.body["dps"], dict):
             dp_data = request.body["dps"]
-        
+
         # Map DP codes to standard params
         params = {}
         for dp_code, value in dp_data.items():
             std_name = self.DP_CODES_REV.get(dp_code, dp_code)
             params[std_name] = value
-        
+
         # Determine intent based on message type and content
         if msg_type == "command":
             # Cloud -> Device command
@@ -157,29 +157,29 @@ class ExampleProtocolAdapter(ProtocolAdapter):
             # Device -> Cloud state report
             request.parsed_intent = CommandType.GET_STATE
             request.parsed_params = params
-        
+
         return request
-    
+
     async def _parse_http_request(self, request: InterceptedRequest) -> InterceptedRequest:
         """Parse HTTP/HTTPS API request."""
         if not request.path:
             request.parsed_intent = CommandType.UNKNOWN
             return request
-        
+
             # Example API endpoints:
         # GET  /v1.0/devices/{device_id}                    - Get device info
         # GET  /v1.0/devices/{device_id}/status             - Get device status
         # POST /v1.0/devices/{device_id}/commands           - Send command
         # GET  /v1.0/devices/{device_id}/specifications     - Get device specs (DP codes)
         # POST /v1.0/devices/{device_id}/firmware/upgrade   - Firmware upgrade
-        
+
         # Extract device_id from path
         match = re.search(r"/devices/([^/]+)", request.path)
         if match:
             request.device_id = match.group(1)
-        
+
         method = request.method.upper() if request.method else "GET"
-        
+
         if "/status" in request.path and method == "GET":
             request.parsed_intent = CommandType.GET_STATE
         elif "/commands" in request.path and method == "POST":
@@ -201,9 +201,9 @@ class ExampleProtocolAdapter(ProtocolAdapter):
             request.parsed_intent = CommandType.GET_STATE  # Device info request
         else:
             request.parsed_intent = CommandType.UNKNOWN
-        
+
         return request
-    
+
     def _dp_params_to_intent(self, params: dict[str, Any]) -> CommandType:
         """Map DP params to command intent."""
         if "power" in params:
@@ -217,16 +217,16 @@ class ExampleProtocolAdapter(ProtocolAdapter):
         if "swing" in params:
             return CommandType.SET_SWING
         return CommandType.UNKNOWN
-    
+
     # ══════════════════════════════════════════════════════════════════════════════
     # REQUEST HANDLING (EDGE INFERENCE)
     # ══════════════════════════════════════════════════════════════════════════════
-    
+
     async def handle_request(self, request: InterceptedRequest) -> CommandResult:
         """Handle request locally via edge AI/control logic."""
         # This is where edge inference would happen
         # For now, return a basic response indicating local handling
-        
+
         if request.parsed_intent == CommandType.GET_STATE:
             # Return current known state (would come from vendor DB)
             state = await self.get_device_state(request.device_id)
@@ -237,7 +237,7 @@ class ExampleProtocolAdapter(ProtocolAdapter):
                     response=response_data,
                     forwarded=False,
                 )
-        
+
         elif request.parsed_intent in (
             CommandType.SET_TEMPERATURE,
             CommandType.SET_MODE,
@@ -256,10 +256,10 @@ class ExampleProtocolAdapter(ProtocolAdapter):
             # In real implementation, this would go through policy engine
             result = await self.send_command(request.device_id, command)
             return result
-        
+
         # Default: forward to cloud
         return await self.forward_to_cloud(request)
-    
+
     async def forward_to_cloud(self, request: InterceptedRequest) -> CommandResult:
         """Forward request to real cloud."""
         # Implementation would use the vendor's Cloud API
@@ -269,27 +269,26 @@ class ExampleProtocolAdapter(ProtocolAdapter):
             error="Cloud forward not implemented",
             forwarded=True,
         )
-    
+
     # ══════════════════════════════════════════════════════════════════════════════
     # RESPONSE BUILDING
     # ══════════════════════════════════════════════════════════════════════════════
-    
+
     async def build_response(self, request: InterceptedRequest, result: CommandResult) -> dict[str, Any]:
         """Build vendor-compatible response."""
         if request.protocol in (ProtocolType.MQTT, ProtocolType.MQTTS):
             return await self._build_mqtt_response(request, result)
-        else:
-            return await self._build_http_response(request, result)
-    
+        return await self._build_http_response(request, result)
+
     async def _build_mqtt_response(self, request: InterceptedRequest, result: CommandResult) -> dict[str, Any]:
         """Build MQTT response."""
         if not result.success:
             return {"success": False, "error": result.error}
-        
+
         # Example MQTT command response format
         device_id = request.device_id
-        t = int(int(datetime.now(timezone.utc).timestamp() * 1000))
-        
+        t = int(int(datetime.now(UTC).timestamp() * 1000))
+
         if request.parsed_intent == CommandType.GET_STATE:
             # Status response
             state_data = result.response or {}
@@ -298,7 +297,7 @@ class ExampleProtocolAdapter(ProtocolAdapter):
                 dp_code = self.DP_CODES.get(std_key)
                 if dp_code:
                     dps[dp_code] = value
-            
+
             return {
                 "tid": f"edge_{t}",
                 "bid": device_id,
@@ -306,16 +305,15 @@ class ExampleProtocolAdapter(ProtocolAdapter):
                 "data": {"dps": dps},
                 "time": t,
             }
-        else:
-            # Command response
-            return {
-                "tid": f"edge_{t}",
-                "bid": device_id,
-                "type": "thing.command.response",
-                "data": {"success": result.success},
-                "time": t,
-            }
-    
+        # Command response
+        return {
+            "tid": f"edge_{t}",
+            "bid": device_id,
+            "type": "thing.command.response",
+            "data": {"success": result.success},
+            "time": t,
+        }
+
     async def _build_http_response(self, request: InterceptedRequest, result: CommandResult) -> dict[str, Any]:
         """Build HTTP API response."""
         if not result.success:
@@ -323,9 +321,9 @@ class ExampleProtocolAdapter(ProtocolAdapter):
                 "success": False,
                 "error_code": "EDGE_ERROR",
                 "msg": result.error or "Edge processing failed",
-                "t": int(int(datetime.now(timezone.utc).timestamp() * 1000)),
+                "t": int(int(datetime.now(UTC).timestamp() * 1000)),
             }
-        
+
         if request.parsed_intent == CommandType.GET_STATE:
             state_data = result.response or {}
             # Convert to vendor status format
@@ -334,25 +332,24 @@ class ExampleProtocolAdapter(ProtocolAdapter):
                 dp_code = self.DP_CODES.get(std_key)
                 if dp_code:
                     dps[dp_code] = value
-            
+
             return {
                 "success": True,
-                "t": int(int(datetime.now(timezone.utc).timestamp() * 1000)),
+                "t": int(int(datetime.now(UTC).timestamp() * 1000)),
                 "result": {
                     "status": [{"code": k, "value": v} for k, v in dps.items()],
                 },
             }
-        else:
-            return {
-                "success": True,
-                "t": int(int(datetime.now(timezone.utc).timestamp() * 1000)),
-                "result": {},
-            }
-    
+        return {
+            "success": True,
+            "t": int(int(datetime.now(UTC).timestamp() * 1000)),
+            "result": {},
+        }
+
     # ══════════════════════════════════════════════════════════════════════════════
     # DEVICE INFO & STATE
     # ══════════════════════════════════════════════════════════════════════════════
-    
+
     async def get_device_info(self, device_id: str) -> DeviceInfo | None:
         """Get device info (would query vendor DB)."""
         # Placeholder - would query vendor DB
@@ -368,16 +365,16 @@ class ExampleProtocolAdapter(ProtocolAdapter):
                 DeviceCapability.POWER_MONITORING,
             ],
         )
-    
+
     async def get_device_state(self, device_id: str) -> DeviceState | None:
         """Get device state (would query vendor DB)."""
         # Placeholder - would query vendor DB for latest reading
         return None
-    
+
     # ══════════════════════════════════════════════════════════════════════════════
     # COMMAND EXECUTION
     # ══════════════════════════════════════════════════════════════════════════════
-    
+
     async def send_command(self, device_id: str, command: Command) -> CommandResult:
         """Send command to device via cloud API."""
         # Convert standard command to DP format
@@ -420,11 +417,11 @@ class ExampleProtocolAdapter(ProtocolAdapter):
                     cmds.append({"code": self.DP_CODES["swing"], "value": bool(swing)})
 
         return cmds
-    
+
     # ══════════════════════════════════════════════════════════════════════════════
     # STATE CONVERSION
     # ══════════════════════════════════════════════════════════════════════════════
-    
+
     async def _state_to_response(self, state: DeviceState) -> dict[str, Any]:
         """Convert standard state to DP format."""
         dps = {}
@@ -454,7 +451,7 @@ class ExampleProtocolAdapter(ProtocolAdapter):
 
         return DeviceState(
             device_id="",  # Set by caller
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             on_off=dps.get(self.DP_CODES["power"]),
                 mode=self.MODE_VENDOR_TO_STD.get(dps.get(self.DP_CODES["mode"])),
             temp_target=dps.get(self.DP_CODES["temp_set"], 0) / 10 if self.DP_CODES["temp_set"] in dps else None,
