@@ -1,4 +1,4 @@
-# This workflow uses actions that are not certified by GitHub.
+﻿# This workflow uses actions that are not certified by GitHub.
 # They are provided by a third-party and are governed by
 # separate terms of service, privacy policy, and support
 # documentation.
@@ -17,7 +17,6 @@ on:
   push:
     branches: [ "main" ]
   pull_request:
-    # The branches below must be a subset of the branches above
     branches: [ "main" ]
   schedule:
     - cron: '15 14 * * 0'
@@ -28,20 +27,17 @@ permissions:
 jobs:
   codacy-security-scan:
     permissions:
-      contents: read # for actions/checkout to fetch code
-      security-events: write # for github/codeql-action/upload-sarif to upload SARIF results
-      actions: read # only required for a private repository by github/codeql-action/upload-sarif to get the Action run status
+      contents: read
+      security-events: write
+      actions: read
     name: Codacy Security Scan
     runs-on: ubuntu-latest
     steps:
-      # Checkout the repository to the GitHub Actions runner
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      # Run Codacy Analysis CLI locally without account/token
-      # Generates SARIF report for GitHub Code Scanning
       - name: Run Codacy Analysis CLI
         continue-on-error: true
         uses: codacy/codacy-analysis-cli-action@master
@@ -49,28 +45,35 @@ jobs:
           verbose: false
           output: results.sarif
           format: sarif
-          # Run with default security tools only
           max-allowed-issues: 2147483647
 
-      # Add unique automationDetails category to each run in SARIF file to satisfy CodeQL Action upload requirement
-      - name: Set unique category per SARIF run
+      # Merge all SARIF runs into a single run to stay within GitHub's 20-run limit
+      - name: Merge SARIF runs
         if: always()
         run: |
           sudo chmod 666 results.sarif || true
           python3 -c "
           import json, os
-          if os.path.exists('results.sarif'):
-              with open('results.sarif', 'r') as f:
-                  data = json.load(f)
-              runs = data.get('runs', [])
-              for idx, run in enumerate(runs):
-                  tool_name = run.get('tool', {}).get('driver', {}).get('name', f'run_{idx}')
-                  run['automationDetails'] = {'id': f'codacy-{tool_name.lower()}-{idx}/'}
-              with open('results.sarif', 'w') as f:
-                  json.dump(data, f, indent=2)
+          if not os.path.exists('results.sarif'):
+              exit(0)
+          with open('results.sarif') as f:
+              data = json.load(f)
+          runs = data.get('runs', [])
+          if not runs:
+              exit(0)
+          all_results = []
+          for r in runs:
+              for result in r.get('results', []):
+                  all_results.append(result)
+          merged = runs[0]
+          merged['results'] = all_results
+          merged['tool']['driver']['name'] = 'Codacy (all tools)'
+          merged['automationDetails'] = {'id': 'codacy/merged/'}
+          data['runs'] = [merged]
+          with open('results.sarif', 'w') as f:
+              json.dump(data, f)
           "
 
-      # Upload the SARIF file to GitHub Code Scanning
       - name: Upload SARIF results to GitHub Code Scanning
         uses: github/codeql-action/upload-sarif@v4
         if: always()
