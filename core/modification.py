@@ -11,7 +11,10 @@ import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from adapters.base import InterceptedRequest
 
 from core.config import get_config_manager
 

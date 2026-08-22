@@ -52,6 +52,22 @@ class DecipherResult:
     timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
+@dataclass
+class RequestResponsePair:
+    """A correlated request/response pair captured from device traffic.
+
+    Used as the input to the LLM deciphering methods. ``request`` and
+    ``response`` are lightweight dict-like payloads produced by the
+    correlation layer (kept non-typed to stay agnostic of protocol).
+    """
+    pair_id: str
+    device_id: str
+    vendor: str
+    protocol: str
+    request: Any
+    response: Any
+
+
 class LLMDecipherService:
     """
     Service that uses LLMs to decipher intercepted device communications.

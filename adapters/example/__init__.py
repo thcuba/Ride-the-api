@@ -445,20 +445,20 @@ class ExampleProtocolAdapter(ProtocolAdapter):
 
         return {"dps": dps}
 
-        async def _response_to_state(self, data: dict[str, Any]) -> DeviceState:
-            """Convert DP data to standard state."""
-            dps = data.get("dps", data.get("data", {}))
+    async def _response_to_state(self, data: dict[str, Any]) -> DeviceState:
+        """Convert DP data to standard state."""
+        dps = data.get("dps", data.get("data", {}))
 
         return DeviceState(
             device_id="",  # Set by caller
             timestamp=datetime.now(UTC),
             on_off=dps.get(self.DP_CODES["power"]),
-                mode=self.MODE_VENDOR_TO_STD.get(dps.get(self.DP_CODES["mode"])),
+            mode=self.MODE_VENDOR_TO_STD.get(dps.get(self.DP_CODES["mode"])),
             temp_target=dps.get(self.DP_CODES["temp_set"], 0) / 10 if self.DP_CODES["temp_set"] in dps else None,
             temp_actual=dps.get(self.DP_CODES["temp_current"], 0) / 10 if self.DP_CODES["temp_current"] in dps else None,
-                fan_speed=self.FAN_VENDOR_TO_STD.get(dps.get(self.DP_CODES["fan_speed"])),
+            fan_speed=self.FAN_VENDOR_TO_STD.get(dps.get(self.DP_CODES["fan_speed"])),
             humidity=dps.get(self.DP_CODES["humidity"]),
             temp_outdoor=dps.get(self.DP_CODES["outdoor_temp"], 0) / 10 if self.DP_CODES["outdoor_temp"] in dps else None,
             power_watts=dps.get(self.DP_CODES["power_consumption"]),
-                vendor_data=data,
+            vendor_data=data,
         )
