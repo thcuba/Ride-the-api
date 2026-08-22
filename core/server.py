@@ -992,6 +992,27 @@ async def get_device_patterns(device_id: str):
         return {"device_id": device_id, "patterns": patterns_list}
 
 
+@app.get("/api/devices/{device_id}/patterns/export")
+async def export_patterns(device_id: str):
+    """Export deciphered patterns to portable .ride-pattern.json format."""
+    if not db_manager:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    from core.pattern_db import decipher_ingest
+    ingester = decipher_ingest.DecipherIngest(db_manager)
+    try:
+        async with db_manager.device_session(device_id) as session:
+            from sqlalchemy import select as sel
+
+            from core.database import DeviceRegistry
+            result = await session.execute(sel(DeviceRegistry).where(DeviceRegistry.device_id == device_id))
+            device = result.scalar_one_or_none()
+            vendor = device.vendor if device else "unknown"
+            device_type = device.device_type if device else "unknown"
+        pattern_db = await ingester.export_patterns(device_id, vendor, device_type)
+        return pattern_db.model_dump(by_alias=True, exclude_none=True)
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
 @app.get("/api/devices/{device_id}/patterns/{pattern_id}")
 async def get_pattern_detail(device_id: str, pattern_id: str):
     """Get detailed pattern info including field mappings."""
@@ -1407,28 +1428,6 @@ async def delete_user_profile(name: str):
 # ═══════════════════════════════════════════════════════════════════════════════
 # PORTABLE PATTERN DB ENDPOINTS
 # ═══════════════════════════════════════════════════════════════════════════════
-
-
-@app.get("/api/devices/{device_id}/patterns/export")
-async def export_patterns(device_id: str):
-    """Export deciphered patterns to portable .ride-pattern.json format."""
-    if not db_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    from core.pattern_db import decipher_ingest
-    ingester = decipher_ingest.DecipherIngest(db_manager)
-    try:
-        async with db_manager.device_session(device_id) as session:
-            from sqlalchemy import select as sel
-
-            from core.database import DeviceRegistry
-            result = await session.execute(sel(DeviceRegistry).where(DeviceRegistry.device_id == device_id))
-            device = result.scalar_one_or_none()
-            vendor = device.vendor if device else "unknown"
-            device_type = device.device_type if device else "unknown"
-        pattern_db = await ingester.export_patterns(device_id, vendor, device_type)
-        return pattern_db.model_dump(by_alias=True, exclude_none=True)
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
 
 
 @app.post("/api/devices/{device_id}/patterns/import")

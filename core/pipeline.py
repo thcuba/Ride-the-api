@@ -5,6 +5,7 @@ Handles: correlation, buffer management, LLM deciphering, pattern matching, and 
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from collections import defaultdict, deque
@@ -615,7 +616,15 @@ class LearningPipeline:
         if not matched:
             return None
 
-        latency_ms = (datetime.now(UTC) - matched["timestamp"]).total_seconds() * 1000
+        # Normalize timestamp to timezone-aware (SQLite/aiosqlite may return a
+        # naive datetime despite DateTime(timezone=True)); a naive value crashes
+        # the aware - naive subtraction below.
+        ts = matched.get("timestamp")
+        if not isinstance(ts, datetime):
+            ts = datetime.now(UTC)
+        elif ts.tzinfo is None:
+            ts = ts.replace(tzinfo=UTC)
+        latency_ms = (datetime.now(UTC) - ts).total_seconds() * 1000
 
         pair = CorrelatedPair(
             pair_id=str(uuid4()),
@@ -862,7 +871,10 @@ class LearningPipeline:
             stats = await session.execute(
                 select(MatchStats).where(MatchStats.device_id == device_id)
             )
-            stats_obj = stats.scalar_one_or_none() or MatchStats(device_id=device_id)
+            stats_obj = stats.scalar_one_or_none()
+            if stats_obj is None:
+                stats_obj = MatchStats(device_id=device_id)
+                session.add(stats_obj)
 
             for pattern_data in patterns:
                 intent = pattern_data.get("intent", "unknown")
@@ -870,7 +882,9 @@ class LearningPipeline:
                 path = pattern_data.get("path", pattern_data.get("request_path", "/unknown"))
 
                 # Create or update request pattern
-                pattern_id = f"{device_id}_{intent}_{hash(path) % 10000}"
+                # Use a deterministic hash so pattern IDs are stable across processes.
+                path_digest = hashlib.md5(path.encode("utf-8")).hexdigest()[:8]
+                pattern_id = f"{device_id}_{intent}_{path_digest}"
                 existing = await session.execute(
                     select(RequestPattern).where(RequestPattern.pattern_id == pattern_id)
                 )
