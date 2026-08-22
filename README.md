@@ -5,30 +5,34 @@ A DNS interception proxy that sits between IoT devices and their cloud APIs, **l
 ## Architecture
 
 ```
-┌──────────────┐     ┌──────────────────────────────────────────────────────────────────────┐       ┌──────────┐
-│  IoT Device  │────▶│  nginx (reverse proxy sidecar)                        ┌───────────┐   │────▶│  Vendor  │
-│  (Any Brand) │     │  ┌─────────────────────────────────────────────────── │  Ride-    │   │      │  Cloud   │
-│              │     │  │  port 443 (TLS) ←→ port 8911 (internal)            │  the-API  │   │      └──────────┘
-│              │     │  │  Dual-stack resolver: 8.8.8.8 / 1.1.1.1 + IPv6     │ (FastAPI) │   │
-│              │     │  │  502 → @cloud_redirect (loop-free forwarding)      │           │   │
-│              │     │  └─────────────────────────────────────────────────── │           │   │
-│              │     │                                                       │           │   │
-│              │     │  ┌─────────────────────────────────────────────────── │           │   │
-│              │     │  │            LEARNING MODE                           │           │   │
-│              │     │  │  Request → Correlate → Buffer → LLM → Patterns     │           │   │
-│              │     │  └─────────────────────────────────────────────────── │           │   │
-│              │     │                                                       │           │   │
-│              │     │  ┌─────────────────────────────────────────────────── │           │   │
-│              │     │  │           PRODUCTION MODE                          │           │   │
-│              │     │  │  Request → Match Pattern → Local Response          │           │   │
-│              │     │  │     ↓ (if no match + no_fallback)                  │           │   │
-│              │     │  │  Return 501 (conclusive local-only response)       │           │   │
-│              │     │  └─────────────────────────────────────────────────── │           │   │
-│              │     │                                                       │           │   │
-│              │     │  ┌─────────────────────────────────────────────────── │           │   │
-│              │     │  │  Match Rate  ◀── Real-time tracking               │           │   │
-│              │     │  └───────────────────────────────────────────────────┴───────────┘   │
-│              │     └──────────────────────────────────────────────────────────────────────┘
+┌──────────────┐     ┌──────────────────────────────────────────────────────────────────────────────┐       ┌──────────┐
+│  IoT Device  │────▶│  nginx (reverse proxy sidecar) / TLS MITM Server       ┌──────────────────┐  │────▶│  Vendor  │
+│  (Any Brand) │     │  ┌──────────────────────────────────────────────────── │  Ride-the-API    │  │      │  Cloud   │
+│              │     │  │  ● nginx: port 443 (TLS) ↔ port 8911 (internal)     │  (FastAPI)       │  │      └──────────┘
+│              │     │  │  ● TLS MITM Server: multi-port TLS interception     │  Core Pipeline   │  │
+│              │     │  │    with SNI extraction + dynamic cert generation     │  ┌───────────┐  │  │
+│              │     │  │  ● Dual-stack DNS resolver: 8.8.8.8/1.1.1.1+IPv6    │  │ resilience │  │  │
+│              │     │  │  ● 502 + X-Action: forward → loop-free forwarding   │  │ .py        │  │  │
+│              │     │  └──────────────────────────────────────────────────── │  └───────────┘  │  │
+│              │     │                                                       │                 │  │
+│              │     │  ┌─────────────────────────────────────────────────── │  ┌───────────┐  │  │
+│              │     │  │            LEARNING MODE                           │  │ pattern_db│  │  │
+│              │     │  │  Request → Correlate → Buffer → LLM → Patterns     │  │ engine    │  │  │
+│              │     │  └─────────────────────────────────────────────────── │  └───────────┘  │  │
+│              │     │                                                       │                 │  │
+│              │     │  ┌─────────────────────────────────────────────────── │  ┌───────────┐  │  │
+│              │     │  │           PRODUCTION MODE                          │  │ protocol  │  │  │
+│              │     │  │  Request → Match Pattern → Local Response          │  │ _servers  │  │  │
+│              │     │  │     ↓ (if no match + no_fallback)                  │  └───────────┘  │  │
+│              │     │  │  Return 501 (conclusive local-only response)       │                 │  │
+│              │     │  └─────────────────────────────────────────────────── │                 │  │
+│              │     │                                                       │                 │  │
+│              │     │  ┌─────────────────────────────────────────────────── │  ┌───────────┐  │  │
+│              │     │  │  Auto-Switch ── Match Rate ≥ 99% → Production     │  │ cert      │  │  │
+│              │     │  │  Rollback ──── Match Rate < 90% → Learning        │  │ _manager  │  │  │
+│              │     │  │  Real-time tracking: hits / (hits + misses) * 100  │  └───────────┘  │  │
+│              │     │  └───────────────────────────────────────────────────┴──────────────────┘  │
+│              │     └──────────────────────────────────────────────────────────────────────────────┘
 └──────────────┘
 ```
 
@@ -43,7 +47,7 @@ A DNS interception proxy that sits between IoT devices and their cloud APIs, **l
 ## Features
 
 ### Learning Pipeline
-- Intercepts device requests and cloud responses
+- Intercepts device requests and cloud responses (via HTTP proxy + TLS MITM Server)
 - Correlates request/response pairs via connection tracking, sequence numbers, and correlation IDs
 - Buffers pairs in a configurable sliding window (128KB to 10MB)
 - Sends batch to LLM for protocol analysis
@@ -57,6 +61,21 @@ A DNS interception proxy that sits between IoT devices and their cloud APIs, **l
 - If score < threshold and `signal_forward_to_cloud` is enabled → signals nginx to forward to the real cloud via a dual-stack resolver (8.8.8.8/1.1.1.1 + IPv6), bypassing local DNS to prevent forwarding loops
 - If score < threshold and neither flag is set → forwards to cloud via `adapter.forward_to_cloud()`, captures and learns from the miss
 - Real-time match rate tracking: `hits / (hits + misses) * 100%`
+
+### Auto-Switch & Rollback
+- **Auto-switch**: background scheduler checks every 60s — when match rate reaches 99% (≥ 10 patterns, ≥ 50 total requests), automatically switches device to production mode
+- **Rollback**: if match rate drops below 90% in production, automatically reverts to learning mode
+- **Cloud Independence Verifier**: REST API to check if a device can function without vendor cloud
+- Per-device toggle to enable/disable auto-switch, configurable thresholds
+
+### TLS MITM Server
+- **Multi-port TLS interception**: listens on configurable ports (default 8443, 9443, 10443, 11443, 12443, 13443, 14443, 15443, 16443, 17443, 18443, 19443, 443)
+- **SNI extraction**: parses raw TLS ClientHello to extract the target hostname without completing the handshake
+- **Dynamic certificate generation**: generates per-hostname certificates on-the-fly via CertManager
+- **IP-first device routing**: device identity is determined by source IP, not port or hostname
+- **Auto-registration**: unknown IPs are auto-registered with a dedicated device DB + passthrough=ON
+- **REST API**: manage ports, view stats, list unidentified devices, download CA cert
+- **Frida script integration**: dynamic instrumentation script for devices that pin certificates (`GET /api/tls/frida/script.js`)
 
 ### Portable Pattern Database
 - Two portable databases per device: **Buffer DB** (raw captures) and **Deciphered DB** (learned patterns)
@@ -139,14 +158,22 @@ nginx resolves cloud hostnames via a dedicated dual-stack resolver (8.8.8.8 / 1.
 git clone https://github.com/thcuba/Ride-the-api.git
 cd Ride-the-api
 pip install -e .
-cp config/config.example.yaml config/config.yaml
-# Edit config.yaml — enable signal_forward_to_cloud or production_no_fallback as needed
+# Edit config/config.yaml — set LLM profile, enable production mode, configure traffic rules
 python -m core.server
 ```
 
 Open `http://localhost:8911/` in your browser to see the dashboard.
 
 > When running without nginx, forward-to-cloud behavior depends on `signal_forward_to_cloud` and `production_no_fallback` in `config.yaml`. With the Docker stack, nginx handles loop-free cloud forwarding automatically.
+
+### Systemd Service (Linux)
+
+```bash
+sudo cp deploy/ride-the-api.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable ride-the-api
+sudo systemctl start ride-the-api
+```
 
 ### Configure LLM
 
@@ -246,6 +273,25 @@ The proxy handles requests locally:
 - On flush: all pairs sent to LLM for analysis, then buffer cleared
 - Correlation cache is also cleared after flush
 
+### 3. TLS MITM Interception
+
+Ride-the-API includes a built-in TLS MITM Server for intercepting encrypted device traffic without requiring a separate nginx proxy:
+
+1. **Listen**: starts on configurable TLS ports (default: 8443, 9443, …)
+2. **SNI extraction**: parses the TLS ClientHello to extract the target hostname
+3. **Dynamic cert generation**: generates a per-hostname certificate signed by the local CA
+4. **Termination**: completes the TLS handshake with the device using the generated cert
+5. **Routing**: passes the decrypted HTTP request to the pipeline, where device identity is determined by **source IP**
+6. **Auto-registration**: unknown IPs are automatically registered with a device DB in passthrough mode
+
+### 4. Auto-Switch & Rollback
+
+In the background, every 60 seconds the system evaluates all devices:
+
+- **Auto-switch to production**: devices in learning mode with `auto_switch_enabled=True`, match rate ≥ 99%, ≥ 10 patterns, and ≥ 50 total requests are automatically switched to production
+- **Rollback to learning**: devices in production mode whose match rate drops below 90% are reverted to learning
+- **Independence check**: REST API (`GET /api/independence/{id}`) evaluates whether a device can function without vendor cloud
+
 ## Project Structure
 
 ```
@@ -266,6 +312,8 @@ The proxy handles requests locally:
 │   ├── modification.py    # Request/response modification
 │   ├── traffic_selector.py # Intercept/passthrough rules
 │   ├── upstream_resolver.py # Dual-stack upstream DNS resolver (loop-free)
+│   ├── resilience.py      # Auto-switch scheduler + cloud independence verifier
+│   ├── tls_mitm.py        # Multi-port TLS MITM interception server
 │   ├── protocol_servers/  # IoT/industrial protocol server plugins
 │   │   ├── __init__.py    # ProtocolServerPlugin base + ProtocolServerManager
 │   │   ├── mqtt_server.py      # MQTT broker plugin
@@ -293,7 +341,9 @@ The proxy handles requests locally:
 ├── tests/
 ├── deploy/
 │   ├── nginx.conf          # nginx reverse proxy configuration
-│   └── docker-compose.yml  # Docker Compose (nginx + ride-the-api)
+│   ├── docker-compose.yml  # Docker Compose (nginx + ride-the-api)
+│   ├── Dockerfile          # Multi-stage Dockerfile (CPU + GPU)
+│   └── ride-the-api.service # systemd service unit
 └── docs/
 ```
 
@@ -307,15 +357,22 @@ The proxy handles requests locally:
 | `GET /api/devices/{id}` | Device details + stats |
 | `GET /api/devices/{id}/stats` | Real-time match statistics |
 | `GET /api/devices/{id}/match-rate` | Match rate percentage |
+| `GET /api/devices/by-ip/{ip}` | Find device by source IP |
 | `POST /api/devices/{id}/mode` | Switch learning/production |
+| `POST /api/devices/{id}/ip` | Update device IP mapping |
 | `PUT /api/devices/{id}/llm` | Configure LLM for device |
+| `PUT /api/devices/{id}/auto-switch` | Enable/disable auto-switch per device |
+| `PUT /api/devices/{id}/tls-config` | Update device TLS interception config |
+| `POST /api/devices/{id}/database` | Create/manage device protocol DB |
+| `GET /api/devices/{id}/database` | Get device database info |
+| `GET /api/databases` | List all device databases |
+| `GET /api/llm/profiles` | Available LLM profiles |
 | `GET /patterns/{id}` | Web UI for manual pattern editing |
 | `GET /api/devices/{id}/patterns` | Learned patterns |
 | `GET /api/devices/{id}/patterns/{pid}` | Pattern detail + field mappings |
 | `PUT /api/devices/{id}/patterns/{pid}` | Create or full-update a pattern (upsert) |
 | `PATCH /api/devices/{id}/patterns/{pid}` | Partial update of a pattern |
 | `DELETE /api/devices/{id}/patterns/{pid}` | Delete pattern + response template + field mappings |
-| `GET /api/llm/profiles` | Available LLM profiles |
 | `GET /api/devices/{id}/patterns/export` | Export deciphered patterns (.ride-pattern.json) |
 | `POST /api/devices/{id}/patterns/import` | Import patterns from .ride-pattern.json |
 | `GET /api/devices/{id}/capture/export` | Export raw buffer (.ride-capture.json) |
@@ -324,6 +381,14 @@ The proxy handles requests locally:
 | `POST /api/protocol-servers/{name}/start` | Start a protocol server |
 | `POST /api/protocol-servers/{name}/stop` | Stop a protocol server |
 | `GET /api/protocol-servers/{name}/config` | Get protocol server configuration |
+| `GET /api/tls/ca-cert` | Download MITM CA certificate (PEM) |
+| `GET /api/tls/stats` | TLS interception statistics |
+| `GET /api/tls/ports` | List configured TLS listen ports |
+| `POST /api/tls/ports` | Add a TLS listen port |
+| `DELETE /api/tls/ports/{port}` | Remove a TLS listen port |
+| `GET /api/tls/device-ports` | Device-to-port mapping |
+| `GET /api/tls/unidentified` | List unidentified devices (unknown IPs) |
+| `GET /api/tls/frida/script.js` | Frida dynamic instrumentation script |
 | `POST /api/tls/certs/upload` | Upload TLS certificate + key (multipart) |
 | `POST /api/tls/certs/upload-json` | Upload TLS certificate + key (JSON) |
 | `GET /api/tls/certs` | List all imported TLS certificates |
@@ -331,6 +396,11 @@ The proxy handles requests locally:
 | `DELETE /api/tls/certs/{hostname}` | Delete an imported certificate |
 | `POST /api/tls/certs/{hostname}/rotate` | Regenerate a device leaf certificate |
 | `POST /api/tls/root-ca/download` | Download the MITM root CA certificate |
+| `GET /api/independence` | Check cloud independence for all devices |
+| `GET /api/independence/{id}` | Check cloud independence for a device |
+| `POST /api/independence/{id}/auto-switch` | Trigger auto-switch to production |
+| `GET /api/independence/{id}/export` | Export learned patterns for backup |
+| `POST /api/independence/{id}/import` | Import patterns from backup |
 | `/{vendor}/{path:path}` | Proxy endpoint for device traffic |
 
 ## Roadmap
