@@ -1,8 +1,8 @@
-"""
-Pattern Engine — matches incoming requests against deciphered patterns,
+﻿"""
+Pattern Engine â€” matches incoming requests against deciphered patterns,
 builds local responses, manages device state, and handles sensor simulation.
 
-This is step ④ in the Engine flow, extending the existing PatternMatcher
+This is step â‘£ in the Engine flow, extending the existing PatternMatcher
 with state management and .ride-pattern.json import/export.
 """
 
@@ -39,7 +39,7 @@ class PatternEngine:
         self._state_stores: dict[str, DeviceStateStore] = {}
         self._cached_patterns: dict[str, PatternDB] = {}
 
-    # ── State Management ──────────────────────────────────────────────────────
+    # â”€â”€ State Management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def get_state_store(self, device_id: str) -> DeviceStateStore:
         """Get or create the state store for a device."""
@@ -54,7 +54,7 @@ class PatternEngine:
         store.apply_virtual_sensors(pattern_db.server.virtual_sensors)
         self._cached_patterns[device_id] = pattern_db
 
-    # ── Pattern Matching ──────────────────────────────────────────────────────
+    # â”€â”€ Pattern Matching â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     async def find_best_match(
         self, device_id: str, method: str, path: str,
@@ -174,7 +174,7 @@ class PatternEngine:
         intersection = schema_keys & body_keys
         return len(intersection) / len(schema_keys)
 
-    # ── Response Building ─────────────────────────────────────────────────────
+    # â”€â”€ Response Building â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     async def build_local_response(
         self, device_id: str, template, original_request: dict,
@@ -266,19 +266,21 @@ class PatternEngine:
                                 request: dict) -> Any:
         """Recursively resolve {state.x} and {request.x} placeholders in a template."""
         if isinstance(obj, str):
-            if "{state." in obj:
-                for match in re.finditer(r"\{state\.(\w+)\}", obj):
-                    name = match.group(1)
-                    val = store.get(name, "")
-                    obj = obj.replace(match.group(0), str(val))
-            if "{request." in obj:
-                for match in re.finditer(r"\{request\.(\w+(?:\.\w+)*)\}", obj):
-                    path = match.group(1)
-                    val = self._resolve_source(f"request.{path}", request, store)
-                    obj = obj.replace(match.group(0), str(val or ""))
-            if "{uuid}" in obj:
-                from uuid import uuid4
-                obj = obj.replace("{uuid}", str(uuid4()))
+            if "{state." in obj or "{request." in obj or "{uuid}" in obj:
+                def _replacer(m: re.Match) -> str:
+                    if m.group(1):  # state.<name>
+                        return str(store.get(m.group(1), ""))
+                    if m.group(2):  # request.<path>
+                        val = self._resolve_source(f"request.{m.group(2)}", request, store)
+                        return str(val or "")
+                    # {uuid}
+                    from uuid import uuid4
+                    return str(uuid4())
+                obj = re.sub(
+                    r"\{state\.(\w+)\}|\{request\.(\w+(?:\.\w+)*)\}|\{uuid\}",
+                    _replacer,
+                    obj,
+                )
             return obj
         if isinstance(obj, dict):
             return {k: self._resolve_template_vars(v, store, request) for k, v in obj.items()}
@@ -289,16 +291,19 @@ class PatternEngine:
     def _eval_formula(self, formula: str, request: dict, store: DeviceStateStore) -> Any:
         """Evaluate a simple formula expression."""
         try:
-            # Replace variable references
-            resolved = formula
-            for match in re.finditer(r"\{state\.(\w+)\}", resolved):
-                name = match.group(1)
-                val = store.get(name, 0)
-                resolved = resolved.replace(match.group(0), str(val))
-            for match in re.finditer(r"\{request\.(\w+(?:\.\w+)*)\}", resolved):
-                path = match.group(1)
-                val = self._resolve_source(f"request.{path}", request, store)
-                resolved = resolved.replace(match.group(0), str(val or 0))
+            # Replace variable references with re.sub (single pass, no intermediate strings)
+            def _var_replacer(m: re.Match) -> str:
+                if m.group(1):  # state.<name>
+                    return str(store.get(m.group(1), 0))
+                if m.group(2):  # request.<path>
+                    val = self._resolve_source(f"request.{m.group(2)}", request, store)
+                    return str(val or 0)
+                return m.group(0)
+            resolved = re.sub(
+                r"\{state\.(\w+)\}|\{request\.(\w+(?:\.\w+)*)\}",
+                _var_replacer,
+                formula,
+            )
             # Replace function calls
             resolved = re.sub(r"random\(([^,]+),\s*([^)]+)\)",
                               lambda m: str(__import__("random").uniform(float(m.group(1)), float(m.group(2)))),
@@ -311,7 +316,7 @@ class PatternEngine:
             logger.warning("Formula eval failed: %s (%s)", formula, e)
             return 0
 
-    # ── Pattern DB File I/O ───────────────────────────────────────────────────
+    # â”€â”€ Pattern DB File I/O â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def load_pattern_file(self, device_id: str, filepath: str) -> PatternDB:
         """Load a .ride-pattern.json file and cache it for a device."""
