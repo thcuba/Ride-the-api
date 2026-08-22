@@ -403,20 +403,6 @@ In the background, every 60 seconds the system evaluates all devices:
 | `POST /api/independence/{id}/import` | Import patterns from backup |
 | `/{vendor}/{path:path}` | Proxy endpoint for device traffic |
 
-## Roadmap
-
-- [x] Auto-switch to production when match rate reaches 99% (per-device toggle, rollback safety) — see [design doc](docs/resilience.md)
-- [x] Portable pattern database (LLM-agnostic, shareable, cross-hardware) — see [design doc](docs/portable-pattern-database.md)
-- [x] nginx reverse proxy sidecar with dual-stack DNS resolver (8.8.8.8 / 1.1.1.1 + IPv6) for loop-free cloud forwarding — see [design doc](docs/nginx-architecture.md)
-- [x] Production no-fallback mode (conclusive local-only responses, no implicit cloud fallback)
-- [x] Forward signal mechanism (HTTP 502 + X-Action header) for reverse proxy integration
-- [x] MQTT/CoAP protocol support
-- [x] Modbus, WebSocket, Raw TCP, HTTP/2 protocol servers
-- [x] TLS certificate management API (upload, list, delete, rotate)
-- [x] Zigbee / Z-Wave / Matter bridge plugins
-- [x] Web UI for manual pattern editing
-- [x] Encrypted traffic MITM support
-
 YES. it is all vibe coded i'm searching for people who like this idea and would like to help implement it
 ## License
 
