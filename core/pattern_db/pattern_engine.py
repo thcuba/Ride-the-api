@@ -1,8 +1,8 @@
 """
-Pattern Engine â€” matches incoming requests against deciphered patterns,
+Pattern Engine — matches incoming requests against deciphered patterns,
 builds local responses, manages device state, and handles sensor simulation.
 
-This is step â‘£ in the Engine flow, extending the existing PatternMatcher
+This is step ④ in the Engine flow, extending the existing PatternMatcher
 with state management and .ride-pattern.json import/export.
 """
 
@@ -133,7 +133,7 @@ class PatternEngine:
         self._state_stores: dict[str, DeviceStateStore] = {}
         self._cached_patterns: dict[str, PatternDB] = {}
 
-    # â”€â”€ State Management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── State Management ──────────────────────────────────────────────────────
 
     def get_state_store(self, device_id: str) -> DeviceStateStore:
         """Get or create the state store for a device."""
@@ -148,7 +148,7 @@ class PatternEngine:
         store.apply_virtual_sensors(pattern_db.server.virtual_sensors)
         self._cached_patterns[device_id] = pattern_db
 
-    # â”€â”€ Pattern Matching â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Pattern Matching ──────────────────────────────────────────────────────
 
     async def find_best_match(
         self, device_id: str, method: str, path: str,
@@ -268,7 +268,7 @@ class PatternEngine:
         intersection = schema_keys & body_keys
         return len(intersection) / len(schema_keys)
 
-    # â”€â”€ Response Building â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Response Building ─────────────────────────────────────────────────────
 
     async def build_local_response(
         self, device_id: str, template, original_request: dict,
@@ -407,7 +407,7 @@ class PatternEngine:
             logger.warning("Formula eval failed: %s (%s)", formula, e)
             return 0
 
-    # â”€â”€ Pattern DB File I/O â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Pattern DB File I/O ───────────────────────────────────────────────────
 
     def load_pattern_file(self, device_id: str, filepath: str) -> PatternDB:
         """Load a .ride-pattern.json file and cache it for a device."""
