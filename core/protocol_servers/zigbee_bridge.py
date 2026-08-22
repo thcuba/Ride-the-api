@@ -10,11 +10,10 @@ This plugin connects to the Zigbee2MQTT MQTT broker and:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
-from datetime import datetime, timezone
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 try:
     from gmqtt import Client as MQTTClient
@@ -23,7 +22,6 @@ except ImportError:
     HAS_GMQTT = False
 
 from core.protocol_servers import ProtocolServerPlugin
-from adapters.base import InterceptedRequest, ProtocolType
 
 logger = logging.getLogger(__name__)
 

@@ -9,7 +9,7 @@ from adapters.base import ProtocolAdapterRegistry, get_adapter_registry
 def register_all_adapters() -> ProtocolAdapterRegistry:
     """Register all available protocol adapters."""
     registry = get_adapter_registry()
-    
+
     # Import and register the example reference adapter
     from adapters.example import ExampleProtocolAdapter
 
@@ -30,12 +30,12 @@ def register_all_adapters() -> ProtocolAdapterRegistry:
     # Shelly adapter
     from adapters.shelly import ShellyProtocolAdapter
     registry.register(ShellyProtocolAdapter("shelly", {}))
-    
+
     # Users/community: add your own adapter registrations here, e.g.:
     # from adapters.my_protocol import MyProtocolAdapter
     # my_adapter = MyProtocolAdapter("my_protocol", {})
     # registry.register(my_adapter)
-    
+
     return registry
 
 

@@ -11,7 +11,7 @@ from typing import Any
 
 import yaml
 from pydantic import BaseModel, Field
-from watchfiles import watch, Change
+from watchfiles import Change, watch
 
 
 class ContextBufferSizes(str, Enum):
@@ -394,7 +394,7 @@ class Config(BaseModel):
 
 class ConfigManager:
     """Manages configuration with hot-reload support."""
-    
+
     def __init__(self, config_path: str | Path = "config/config.yaml"):
         self.config_path = Path(config_path)
         self._config: Config | None = None
@@ -402,22 +402,22 @@ class ConfigManager:
         self._callbacks: list[callable] = []
         self._watch_thread: threading.Thread | None = None
         self._stop_watch = threading.Event()
-    
+
     def load(self) -> Config:
         """Load configuration from file."""
         if not self.config_path.exists():
             raise FileNotFoundError(f"Config file not found: {self.config_path}")
-        
-        with open(self.config_path, "r", encoding="utf-8") as f:
+
+        with open(self.config_path, encoding="utf-8") as f:
             data = yaml.safe_load(f)
-        
+
         config = Config(**data)
-        
+
         with self._lock:
             self._config = config
-        
+
         return config
-    
+
     @property
     def config(self) -> Config:
         """Get current configuration (loads if not loaded)."""
@@ -425,16 +425,16 @@ class ConfigManager:
             if self._config is None:
                 return self.load()
             return self._config
-    
+
     def get_vendor_config(self, vendor: str) -> VendorConfig | None:
         """Get vendor-specific configuration."""
         return self.config.vendors.get(vendor)
-    
+
     def register_callback(self, callback: callable) -> None:
         """Register callback for config changes."""
         with self._lock:
             self._callbacks.append(callback)
-    
+
     def _notify_callbacks(self) -> None:
         """Notify all callbacks of config change."""
         with self._lock:
@@ -445,22 +445,22 @@ class ConfigManager:
                     # Log but don't crash
                     import logging
                     logging.getLogger(__name__).error(f"Config callback error: {e}")
-    
+
     def start_watching(self) -> None:
         """Start watching config file for changes."""
         if self._watch_thread and self._watch_thread.is_alive():
             return
-        
+
         self._stop_watch.clear()
         self._watch_thread = threading.Thread(target=self._watch_loop, daemon=True)
         self._watch_thread.start()
-    
+
     def stop_watching(self) -> None:
         """Stop watching config file."""
         self._stop_watch.set()
         if self._watch_thread:
             self._watch_thread.join(timeout=5)
-    
+
     def _watch_loop(self) -> None:
         """Watch loop for config file changes."""
         try:

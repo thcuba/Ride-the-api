@@ -15,14 +15,13 @@ import asyncio
 import logging
 import os
 import re
+import ssl
 import struct
 import tempfile
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from collections.abc import Callable, Coroutine
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Callable, Coroutine
-
-import ssl
 
 from core.cert_manager import CertManager
 
@@ -302,7 +301,7 @@ class TLSMITMServer:
         # Read the ClientHello
         try:
             data = await asyncio.wait_for(reader.read(4096), timeout=10)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.debug("TLS MITM: timeout reading from %s", client_ip)
             writer.close()
             return
@@ -449,7 +448,7 @@ class TLSMITMServer:
                 # Read more data from the client
                 try:
                     more = await asyncio.wait_for(reader.read(4096), timeout=30)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     logger.warning("TLS MITM: handshake timeout")
                     return False
                 if not more:
@@ -495,7 +494,7 @@ class TLSMITMServer:
                 # Need more encrypted data from the wire
                 try:
                     more = await asyncio.wait_for(reader.read(4096), timeout=30)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     logger.warning("TLS MITM: timeout reading from %s", client_ip)
                     break
                 if not more:
@@ -577,7 +576,7 @@ class TLSMITMServer:
     ) -> None:
         """Register a device connection for port/IP tracking."""
         async with self._device_ports_lock:
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             if client_ip in self.device_ports:
                 info = self.device_ports[client_ip]
                 info.last_seen = now

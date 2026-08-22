@@ -7,12 +7,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
-from typing import Any
+from datetime import UTC, datetime
 
-from core.database import DatabaseManager, DeviceRegistry, get_db_manager
-from core.pipeline import LearningOrchestrator, PatternMatcher
-from sqlalchemy import select, func
+from sqlalchemy import select
+
+from core.database import DatabaseManager, DeviceRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -202,7 +201,7 @@ class CloudIndependenceVerifier:
 
     async def export_device_patterns(self, device_id: str) -> dict:
         """Export learned patterns for backup/sharing."""
-        from core.database import RequestPattern, ResponseTemplate, FieldMapping
+        from core.database import FieldMapping, RequestPattern, ResponseTemplate
         async with self.db_manager.device_session(device_id) as session:
             patterns = await session.execute(select(RequestPattern))
             templates = await session.execute(select(ResponseTemplate))
@@ -210,7 +209,7 @@ class CloudIndependenceVerifier:
 
         return {
             "device_id": device_id,
-            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "exported_at": datetime.now(UTC).isoformat(),
             "format_version": "1.0",
             "patterns": [
                 {
@@ -253,7 +252,7 @@ class CloudIndependenceVerifier:
 
     async def import_device_patterns(self, device_id: str, data: dict) -> int:
         """Import previously exported patterns (for sharing between devices)."""
-        from core.database import RequestPattern, ResponseTemplate, FieldMapping
+        from core.database import FieldMapping, RequestPattern, ResponseTemplate
         count = 0
         async with self.db_manager.device_session(device_id) as session:
             for p_data in data.get("patterns", []):

@@ -10,21 +10,20 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
-from typing import Any, Optional
+from datetime import UTC, datetime
 from uuid import uuid4
+
+from sqlalchemy import and_, delete, select
 
 from core.database import DatabaseManager, LLMContextBuffer, MatchStats, SessionCache
 from core.pattern_db.schemas import (
     CaptureDB,
     CaptureMeta,
-    CaptureDeviceInfo,
     CaptureSession,
     RawPairWithResponse,
     RawResponse,
 )
-from core.pattern_db.validator import validate_capture, ValidationResult
-from sqlalchemy import and_, delete, select
+from core.pattern_db.validator import validate_capture
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +96,7 @@ class BufferManager:
                     )
                 )
             )
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             count = 0
             for entry in result.scalars().all():
                 entry.flushed = True
@@ -139,7 +138,7 @@ class BufferManager:
             pair_data = p["pair"]
             rp = RawPairWithResponse(
                 pair_id=pair_data.get("pair_id", str(uuid4())),
-                timestamp=pair_data.get("timestamp", datetime.now(timezone.utc)),
+                timestamp=pair_data.get("timestamp", datetime.now(UTC)),
                 protocol=pair_data.get("protocol", "http"),
                 method=pair_data.get("method", ""),
                 path=pair_data.get("path", ""),
@@ -157,15 +156,15 @@ class BufferManager:
 
         return CaptureDB(
             meta=CaptureMeta(
-                capture_id=f"{device_id}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}",
+                capture_id=f"{device_id}-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}",
                 vendor=vendor or "unknown",
                 device_type=device_type or "unknown",
-                capture_date=datetime.now(timezone.utc),
+                capture_date=datetime.now(UTC),
             ),
             sessions=[
                 CaptureSession(
                     session_id="export_001",
-                    timestamp_start=datetime.now(timezone.utc),
+                    timestamp_start=datetime.now(UTC),
                     pairs=session_pairs,
                 )
             ],
@@ -207,8 +206,9 @@ class BufferManager:
     def _get_max_buffer_size(self, device_id: str, session) -> int:
         """Get configured max buffer size for this device (default 512KB)."""
         try:
-            from core.database import DeviceRegistry
             import sqlalchemy as sa
+
+            from core.database import DeviceRegistry
             result = session.execute(
                 sa.select(DeviceRegistry.context_buffer_size)
                 .where(DeviceRegistry.device_id == device_id)

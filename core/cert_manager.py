@@ -14,8 +14,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import logging
-import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from cryptography import x509
@@ -96,7 +95,7 @@ class CertManager:
             x509.NameAttribute(NameOID.COUNTRY_NAME, "XX"),
         ])
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         cert = (
             x509.CertificateBuilder()
             .subject_name(subject)
@@ -179,7 +178,7 @@ class CertManager:
             key_size=self.leaf_key_size,
         )
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # Build subject/issuer
         try:
@@ -290,7 +289,7 @@ class CertManager:
             meta = {
                 "hostname": hostname,
                 "label": label,
-                "imported_at": dt.now(timezone.utc).isoformat(),
+                "imported_at": dt.now(UTC).isoformat(),
                 "type": "imported",
                 "issuer": cert_info.get("issuer", ""),
                 "subject": cert_info.get("subject", ""),

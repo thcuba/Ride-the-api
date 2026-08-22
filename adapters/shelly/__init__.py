@@ -13,13 +13,19 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from typing import Any
 
 from adapters.base import (
-    Command, CommandResult, CommandType, DeviceCapability,
-    DeviceInfo, DeviceState, InterceptedRequest,
-    ProtocolAdapter, ProtocolType,
+    Command,
+    CommandResult,
+    CommandType,
+    DeviceCapability,
+    DeviceInfo,
+    DeviceState,
+    InterceptedRequest,
+    ProtocolAdapter,
+    ProtocolType,
 )
 
 logger = logging.getLogger(__name__)
@@ -69,9 +75,9 @@ class ShellyProtocolAdapter(ProtocolAdapter):
         """Parse Shelly HTTP/CoAP/MQTT/WS request."""
         if request.protocol in (ProtocolType.HTTP, ProtocolType.HTTPS):
             return await self._parse_http(request)
-        elif request.protocol == ProtocolType.COAP:
+        if request.protocol == ProtocolType.COAP:
             return await self._parse_coap(request)
-        elif request.protocol in (ProtocolType.MQTT, ProtocolType.WEBSOCKET):
+        if request.protocol in (ProtocolType.MQTT, ProtocolType.WEBSOCKET):
             return await self._parse_mqtt_ws(request)
         return request
 
@@ -173,7 +179,7 @@ class ShellyProtocolAdapter(ProtocolAdapter):
             return None
         return DeviceState(
             device_id=device_id,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             power_watts=info.get("power"),
             temp_actual=info.get("temperature"),
             humidity=info.get("humidity"),

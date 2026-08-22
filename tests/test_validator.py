@@ -3,20 +3,18 @@ Tests for the JSON Schema validation of portable pattern database files.
 """
 
 import json
-from datetime import datetime, timezone
 
 import pytest
 
 from core.pattern_db.validator import (
-    validate_capture,
-    validate_pattern,
-    validate_capture_file,
-    validate_pattern_file,
     ValidationError,
     get_capture_schema,
     get_pattern_schema,
+    validate_capture,
+    validate_capture_file,
+    validate_pattern,
+    validate_pattern_file,
 )
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # FIXTURES

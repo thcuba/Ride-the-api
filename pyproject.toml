@@ -65,6 +65,9 @@ dev = [
     "mypy>=1.10.0",
     "pre-commit>=3.7.0",
     "black>=24.3.0",
+    "pytest>=8.2.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",
 ]
 gpu = [
     "onnxruntime-gpu>=1.18.0",
@@ -84,8 +87,10 @@ include = ["core*", "adapters*", "tests*"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.ruff.lint]
 select = ["E", "F", "I", "UP", "W", "C90", "ANN", "T20", "PT", "PTH", "ERA", "RET", "SIM", "TCH", "ARG", "PL", "TRY"]
-ignore = ["ANN001", "ANN002", "ANN003", "D100", "D101", "D102", "D103", "D104", "D105", "D107", "TRY003"]
+ignore = ["ANN001", "ANN002", "ANN003", "ANN201", "ANN202", "D100", "D101", "D102", "D103", "D104", "D105", "D107", "TRY003"]
 
 [tool.ruff.format]
 quote-style = "double"

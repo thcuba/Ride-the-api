@@ -13,7 +13,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Optional
 
 import dns.asyncresolver
 import dns.exception

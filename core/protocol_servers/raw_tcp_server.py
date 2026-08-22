@@ -10,11 +10,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
-from typing import Any, Callable
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any
 
-from core.protocol_servers import ProtocolServerPlugin
 from adapters.base import InterceptedRequest, ProtocolType
+from core.protocol_servers import ProtocolServerPlugin
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +81,7 @@ class RawTCPServerPlugin(ProtocolServerPlugin):
 
             request = InterceptedRequest(
                 device_id=device_id,
-                timestamp=datetime.now(timezone.utc).timestamp(),
+                timestamp=datetime.now(UTC).timestamp(),
                 protocol=proto,
                 body={"raw": data.hex(), "length": len(data), "port": remote_port},
             )
@@ -91,7 +92,7 @@ class RawTCPServerPlugin(ProtocolServerPlugin):
                 else:
                     self.handler(request)
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.debug("Raw TCP timeout from %s", remote_ip)
         except Exception as e:
             logger.error("Raw TCP handler error from %s: %s", remote_ip, e)

@@ -11,7 +11,7 @@ import logging
 import math
 import random
 import time
-from typing import Any, Optional
+from typing import Any
 
 from core.pattern_db.schemas import StateVariable, VirtualSensor
 

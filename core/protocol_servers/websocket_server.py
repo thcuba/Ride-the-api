@@ -11,8 +11,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
-from typing import Any, Callable
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any
 
 try:
     import websockets
@@ -21,8 +22,8 @@ try:
 except ImportError:
     HAS_WEBSOCKETS = False
 
-from core.protocol_servers import ProtocolServerPlugin
 from adapters.base import InterceptedRequest, ProtocolType
+from core.protocol_servers import ProtocolServerPlugin
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,7 @@ class WebSocketServerPlugin(ProtocolServerPlugin):
 
             request = InterceptedRequest(
                 device_id=device_id,
-                timestamp=datetime.now(timezone.utc).timestamp(),
+                timestamp=datetime.now(UTC).timestamp(),
                 protocol=ProtocolType.WEBSOCKET,
                 method="WS",
                 path=path or self.config.path,

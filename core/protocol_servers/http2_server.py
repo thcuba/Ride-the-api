@@ -11,22 +11,21 @@ communication. This server handles:
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 try:
     import h2.config
     import h2.connection
-    import h2.events
     import h2.errors
+    import h2.events
     import h2.settings
     HAS_H2 = True
 except ImportError:
     HAS_H2 = False
 
 from core.protocol_servers import ProtocolServerPlugin
-from adapters.base import InterceptedRequest, ProtocolType
 
 logger = logging.getLogger(__name__)
 

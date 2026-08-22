@@ -52,6 +52,24 @@ jobs:
           # Run with default security tools only
           max-allowed-issues: 2147483647
 
+      # Add unique automationDetails category to each run in SARIF file to satisfy CodeQL Action upload requirement
+      - name: Set unique category per SARIF run
+        if: always()
+        run: |
+          sudo chmod 666 results.sarif || true
+          python3 -c "
+          import json, os
+          if os.path.exists('results.sarif'):
+              with open('results.sarif', 'r') as f:
+                  data = json.load(f)
+              runs = data.get('runs', [])
+              for idx, run in enumerate(runs):
+                  tool_name = run.get('tool', {}).get('driver', {}).get('name', f'run_{idx}')
+                  run['automationDetails'] = {'id': f'codacy-{tool_name.lower()}-{idx}/'}
+              with open('results.sarif', 'w') as f:
+                  json.dump(data, f, indent=2)
+          "
+
       # Upload the SARIF file to GitHub Code Scanning
       - name: Upload SARIF results to GitHub Code Scanning
         uses: github/codeql-action/upload-sarif@v4

@@ -9,11 +9,9 @@ import asyncio
 import base64
 import json
 import logging
-import signal
-import sys
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 # Path to webui directory (relative to project root)
@@ -22,32 +20,36 @@ DASHBOARD_HTML = WEBUI_DIR / "dashboard.html"
 PATTERNS_HTML = WEBUI_DIR / "patterns.html"
 
 import uvicorn
-
-from fastapi import FastAPI, Request, Response, UploadFile, File, Form
+from fastapi import FastAPI, File, Form, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import select
 
-from core.config import get_config_manager
-from core.database import DatabaseManager, Base, init_db_manager, get_db_manager, DeviceRegistry
-from core.llm_decipher import get_llm_decipher, LLMDecipherService
-from core.pipeline import (
-    LearningOrchestrator, get_orchestrator, ContextBuffer,
-    PatternMatcher, MatchRateTracker, PipelineMode,
-)
-from core.resilience import CloudIndependenceVerifier, register_resilience_routes, AutoSwitchScheduler
-from core.traffic_selector import get_traffic_selector, TrafficSelector, TrafficRequestInfo
-from core.cert_manager import get_cert_manager, CertManager
-from core.tls_mitm import (
-    get_tls_mitm_server, TLSMITMServer,
-    DecryptedRequest,
-)
 from adapters import get_registered_registry
 from adapters.base import (
-    ProtocolAdapterRegistry, InterceptedRequest, ProtocolType,
-    Command, CommandType,
+    InterceptedRequest,
+    ProtocolAdapterRegistry,
+    ProtocolType,
 )
-from sqlalchemy import select
+from core.cert_manager import CertManager, get_cert_manager
+from core.config import get_config_manager
+from core.database import DatabaseManager, DeviceRegistry, init_db_manager
+from core.llm_decipher import LLMDecipherService, get_llm_decipher
+from core.pipeline import (
+    LearningOrchestrator,
+    get_orchestrator,
+)
+from core.resilience import (
+    AutoSwitchScheduler,
+    register_resilience_routes,
+)
+from core.tls_mitm import (
+    DecryptedRequest,
+    TLSMITMServer,
+    get_tls_mitm_server,
+)
+from core.traffic_selector import TrafficRequestInfo, get_traffic_selector
 
 # Configure logging
 logging.basicConfig(
@@ -124,11 +126,12 @@ async def handle_tls_decrypted_request(req: DecryptedRequest) -> dict | None:
             handler_adapter = adapter_registry._adapters[device_vendor]
 
         # Build intercepted request for pipeline
-        from adapters.base import InterceptedRequest as AdapterInterceptedRequest, ProtocolType
+        from adapters.base import InterceptedRequest as AdapterInterceptedRequest
+        from adapters.base import ProtocolType
 
         intercepted = AdapterInterceptedRequest(
             device_id=device_id,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             protocol=ProtocolType.HTTPS,
             method=req.method,
             path=req.path,
@@ -234,12 +237,12 @@ async def lifespan(app: FastAPI):
         try:
             from core.protocol_servers import get_protocol_server_manager
             proto_mgr = get_protocol_server_manager(protocol_servers_cfg)
-            from core.protocol_servers.mqtt_server import MQTTServerPlugin
             from core.protocol_servers.coap_server import CoAPServerPlugin
-            from core.protocol_servers.modbus_server import ModbusServerPlugin
-            from core.protocol_servers.websocket_server import WebSocketServerPlugin
-            from core.protocol_servers.raw_tcp_server import RawTCPServerPlugin
             from core.protocol_servers.http2_server import HTTP2ServerPlugin
+            from core.protocol_servers.modbus_server import ModbusServerPlugin
+            from core.protocol_servers.mqtt_server import MQTTServerPlugin
+            from core.protocol_servers.raw_tcp_server import RawTCPServerPlugin
+            from core.protocol_servers.websocket_server import WebSocketServerPlugin
 
             # Register plugins based on config
             if getattr(protocol_servers_cfg.mqtt, "enabled", False):
@@ -895,6 +898,7 @@ async def get_device_database(device_id: str):
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
     async with db_manager.core_session() as session:
         from sqlalchemy import select
+
         from core.database import DeviceRegistry
         result = await session.execute(
             select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
@@ -932,6 +936,7 @@ async def register_device_ip(device_id: str, request: Request):
         return JSONResponse(status_code=400, content={"error": "Provide 'ip_address'"})
     async with db_manager.core_session() as session:
         from sqlalchemy import select
+
         from core.database import DeviceRegistry
         result = await session.execute(
             select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
@@ -952,8 +957,9 @@ async def get_device_patterns(device_id: str):
     """Get learned patterns for a device."""
     if not db_manager:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    from core.database import RequestPattern, ResponseTemplate, FieldMapping
     from sqlalchemy import select
+
+    from core.database import RequestPattern, ResponseTemplate
     async with db_manager.device_session(device_id) as session:
         patterns = await session.execute(
             select(RequestPattern).order_by(RequestPattern.confidence.desc())
@@ -991,8 +997,9 @@ async def get_pattern_detail(device_id: str, pattern_id: str):
     """Get detailed pattern info including field mappings."""
     if not db_manager:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    from core.database import RequestPattern, ResponseTemplate, FieldMapping
     from sqlalchemy import select
+
+    from core.database import FieldMapping, RequestPattern, ResponseTemplate
     async with db_manager.device_session(device_id) as session:
         result = await session.execute(
             select(RequestPattern).where(RequestPattern.pattern_id == pattern_id)
@@ -1043,8 +1050,9 @@ async def put_pattern(device_id: str, pattern_id: str, request: Request):
     """Full update of a request pattern, its response template, and field mappings."""
     if not db_manager:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    from core.database import RequestPattern, ResponseTemplate, FieldMapping
-    from sqlalchemy import select, delete
+    from sqlalchemy import delete, select
+
+    from core.database import FieldMapping, RequestPattern, ResponseTemplate
     try:
         body = await request.json()
         async with db_manager.device_session(device_id) as session:
@@ -1125,8 +1133,9 @@ async def patch_pattern(device_id: str, pattern_id: str, request: Request):
     """Partial update for a pattern."""
     if not db_manager:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    from core.database import RequestPattern, ResponseTemplate, FieldMapping
-    from sqlalchemy import select, delete
+    from sqlalchemy import delete, select
+
+    from core.database import FieldMapping, RequestPattern, ResponseTemplate
     try:
         body = await request.json()
         async with db_manager.device_session(device_id) as session:
@@ -1193,8 +1202,9 @@ async def delete_pattern(device_id: str, pattern_id: str):
     """Delete a pattern and its associated response template and field mappings."""
     if not db_manager:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    from core.database import RequestPattern, ResponseTemplate, FieldMapping
-    from sqlalchemy import select, delete
+    from sqlalchemy import delete, select
+
+    from core.database import FieldMapping, RequestPattern, ResponseTemplate
     try:
         async with db_manager.device_session(device_id) as session:
             result = await session.execute(select(RequestPattern).where(RequestPattern.pattern_id == pattern_id))
@@ -1237,8 +1247,9 @@ async def export_patterns(device_id: str):
     ingester = decipher_ingest.DecipherIngest(db_manager)
     try:
         async with db_manager.device_session(device_id) as session:
-            from core.database import DeviceRegistry
             from sqlalchemy import select as sel
+
+            from core.database import DeviceRegistry
             result = await session.execute(sel(DeviceRegistry).where(DeviceRegistry.device_id == device_id))
             device = result.scalar_one_or_none()
             vendor = device.vendor if device else "unknown"
@@ -1254,9 +1265,9 @@ async def import_patterns(device_id: str, request: Request):
     """Import patterns from portable .ride-pattern.json format."""
     if not db_manager:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    from core.pattern_db.schemas import PatternDB
     from core.pattern_db import decipher_ingest
-    from core.pattern_db.validator import validate_pattern, ValidationError
+    from core.pattern_db.schemas import PatternDB
+    from core.pattern_db.validator import ValidationError, validate_pattern
     try:
         body = await request.json()
         # Validate against the portable JSON Schema
@@ -1288,8 +1299,9 @@ async def export_buffer(device_id: str):
     manager = buffer_manager.BufferManager(db_manager)
     try:
         async with db_manager.device_session(device_id) as session:
-            from core.database import DeviceRegistry
             from sqlalchemy import select as sel
+
+            from core.database import DeviceRegistry
             result = await session.execute(sel(DeviceRegistry).where(DeviceRegistry.device_id == device_id))
             device = result.scalar_one_or_none()
             vendor = device.vendor if device else "unknown"
@@ -1305,9 +1317,9 @@ async def import_buffer(device_id: str, request: Request):
     """Import raw pairs from portable .ride-capture.json into buffer."""
     if not db_manager:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    from core.pattern_db.schemas import CaptureDB
     from core.pattern_db import buffer_manager
-    from core.pattern_db.validator import validate_capture, ValidationError
+    from core.pattern_db.schemas import CaptureDB
+    from core.pattern_db.validator import ValidationError, validate_capture
     manager = buffer_manager.BufferManager(db_manager)
     try:
         body = await request.json()
@@ -1419,7 +1431,7 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):
     # Build intercepted request
     intercepted = InterceptedRequest(
         device_id="",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
         protocol=ProtocolType.HTTPS if request.url.scheme == "https" else ProtocolType.HTTP,
         method=request.method,
         path=f"/{path}",
@@ -1460,54 +1472,56 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):
                 content=response.get("body", {}),
                 headers=response.get("headers", {}),
             )
-                elif result["action"] == "forward":
-                    # Forward to cloud (passthrough).
-                    #
-                    # When signal_forward_to_cloud is enabled, the proxy tells nginx
-                    # to route the request upstream rather than doing it internally.
-                    # This avoids the DNS loop: nginx resolves the cloud domain
-                    # via 8.8.8.8 / 1.1.1.1, bypassing the local DNS.
-                    config = config_manager.config
-                    if config.learning.signal_forward_to_cloud:
-                        # Signal nginx to forward the request to the real cloud upstream
-                        return JSONResponse(
-                            status_code=502,
-                            content={"action": "forward", "reason": result.get("reason", "no_match")},
-                            headers={"X-Action": "forward", "X-Original-Host": str(request.url)},
-                        )
-                    # Legacy path: forward via the adapter (may cause DNS loop)
-                    cloud_response = await adapter.forward_to_cloud(intercepted)
-                    if cloud_response and cloud_response.success:
-                        # Process cloud response for learning
-                        resp_body = cloud_response.data if hasattr(cloud_response, 'data') else {}
-                        await orchestrator.handle_response(
-                            device_id=device_id,
-                            vendor=vendor,
-                            protocol="http",
-                            status_code=200,
-                            headers={"content-type": "application/json"},
-                            body=resp_body,
-                        )
-                        return JSONResponse(content=resp_body)
-                    else:
-                        return JSONResponse(
-                            status_code=502,
-                            content={"error": "Cloud passthrough failed", "detail": str(cloud_response.error) if cloud_response else "No response"},
-                        )
-                elif result["action"] == "no_fallback":
-                    # Production mode with no_cloud_fallback enabled — conclusive
-                    # local-only response.  The request was not matched and we
-                    # deliberately refuse to contact the cloud.
-                    return JSONResponse(
-                        status_code=501,
-                        content={
-                            "error": "Not implemented",
-                            "detail": "No local pattern matched and cloud fallback is disabled.",
-                            "device_id": device_id,
-                            "mode": "production_no_fallback",
-                        },
-                    )
-                else:
+        if result["action"] == "forward":
+            # Forward to cloud (passthrough).
+            #
+            # When signal_forward_to_cloud is enabled, the proxy tells nginx
+            # to route the request upstream rather than doing it internally.
+            # This avoids the DNS loop: nginx resolves the cloud domain
+            # via 8.8.8.8 / 1.1.1.1, bypassing the local DNS.
+            config = config_manager.config
+            if config.learning.signal_forward_to_cloud:
+                # Signal nginx to forward the request to the real cloud upstream
+                return JSONResponse(
+                    status_code=502,
+                    content={"action": "forward", "reason": result.get("reason", "no_match")},
+                    headers={"X-Action": "forward", "X-Original-Host": str(request.url)},
+                )
+            # Legacy path: forward via the adapter (may cause DNS loop)
+            cloud_response = await adapter.forward_to_cloud(intercepted)
+            if cloud_response and cloud_response.success:
+                # Process cloud response for learning
+                resp_body = cloud_response.data if hasattr(cloud_response, 'data') else {}
+                await orchestrator.handle_response(
+                    device_id=device_id,
+                    vendor=vendor,
+                    protocol="http",
+                    status_code=200,
+                    headers={"content-type": "application/json"},
+                    body=resp_body,
+                )
+                return JSONResponse(content=resp_body)
+            return JSONResponse(
+                status_code=502,
+                content={"error": "Cloud passthrough failed", "detail": str(cloud_response.error) if cloud_response else "No response"},
+            )
+        if result["action"] == "no_fallback":
+            # Production mode with no_cloud_fallback enabled — conclusive
+            # local-only response.  The request was not matched and we
+            # deliberately refuse to contact the cloud.
+            return JSONResponse(
+                status_code=501,
+                content={
+                    "error": "Not implemented",
+                    "detail": "No local pattern matched and cloud fallback is disabled.",
+                    "device_id": device_id,
+                    "mode": "production_no_fallback",
+                },
+            )
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Unknown action: {result.get('action')}"},
+        )
 
     except Exception as e:
         logger.error(f"Error processing request: {e}", exc_info=True)

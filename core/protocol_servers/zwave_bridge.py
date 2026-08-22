@@ -7,8 +7,6 @@ This plugin connects and converts Z-Wave events to the pipeline.
 
 from __future__ import annotations
 
-import asyncio
-import json
 import logging
 from typing import Any
 

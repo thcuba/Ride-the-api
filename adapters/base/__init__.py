@@ -159,24 +159,24 @@ class InterceptedRequest:
 
 class ProtocolAdapter(abc.ABC):
     """Abstract base class for vendor protocol adapters."""
-    
+
     def __init__(self, vendor: str, config: dict[str, Any]):
         self.vendor = vendor
         self.config = config
         self._device_sessions: dict[str, dict[str, Any]] = {}  # Per-device state
-    
+
     @property
     @abc.abstractmethod
     def supported_protocols(self) -> list[ProtocolType]:
         """List of protocols this adapter supports."""
         pass
-    
+
     @property
     @abc.abstractmethod
     def vendor_hostnames(self) -> list[str]:
         """Hostnames this adapter handles (for DNS routing)."""
         pass
-    
+
     @abc.abstractmethod
     async def parse_request(self, request: InterceptedRequest) -> InterceptedRequest:
         """
@@ -184,7 +184,7 @@ class ProtocolAdapter(abc.ABC):
         Updates request.parsed_intent and request.parsed_params.
         """
         pass
-    
+
     @abc.abstractmethod
     async def handle_request(self, request: InterceptedRequest) -> CommandResult:
         """
@@ -192,7 +192,7 @@ class ProtocolAdapter(abc.ABC):
         Returns CommandResult with response to send back to device.
         """
         pass
-    
+
     @abc.abstractmethod
     async def forward_to_cloud(self, request: InterceptedRequest) -> CommandResult:
         """
@@ -200,7 +200,7 @@ class ProtocolAdapter(abc.ABC):
         Used for fallback or pass-through.
         """
         pass
-    
+
     @abc.abstractmethod
     async def build_response(self, request: InterceptedRequest, result: CommandResult) -> dict[str, Any]:
         """
@@ -208,36 +208,36 @@ class ProtocolAdapter(abc.ABC):
         Must match vendor's expected response format exactly.
         """
         pass
-    
+
     @abc.abstractmethod
     async def get_device_info(self, device_id: str) -> DeviceInfo | None:
         """Get standardized device info."""
         pass
-    
+
     @abc.abstractmethod
     async def get_device_state(self, device_id: str) -> DeviceState | None:
         """Get current device state."""
         pass
-    
+
     @abc.abstractmethod
     async def send_command(self, device_id: str, command: Command) -> CommandResult:
         """Send command to device (via cloud or local)."""
         pass
-    
+
     # Optional: override for vendor-specific behavior
-    
+
     async def on_device_connect(self, device_id: str, initial_data: dict[str, Any]) -> None:
         """Called when device first connects."""
         pass
-    
+
     async def on_device_disconnect(self, device_id: str) -> None:
         """Called when device disconnects."""
         pass
-    
+
     async def on_heartbeat(self, device_id: str) -> None:
         """Called on device heartbeat/keepalive."""
         pass
-    
+
     def is_firmware_request(self, request: InterceptedRequest) -> bool:
         """Check if request is firmware update related. Default implementation."""
         fw_paths = ["/fota", "/firmware", "/ota", "/update", "/upgrade"]
@@ -246,7 +246,7 @@ class ProtocolAdapter(abc.ABC):
         if request.topic:
             return any(p in request.topic.lower() for p in ["fota", "firmware", "ota"])
         return False
-    
+
     def is_auth_request(self, request: InterceptedRequest) -> bool:
         """Check if request is authentication related. Default implementation."""
         auth_paths = ["/auth", "/login", "/token", "/oauth", "/session"]
@@ -257,32 +257,32 @@ class ProtocolAdapter(abc.ABC):
 
 class ProtocolAdapterRegistry:
     """Registry for protocol adapters."""
-    
+
     def __init__(self):
         self._adapters: dict[str, ProtocolAdapter] = {}
         self._hostname_map: dict[str, str] = {}  # hostname -> vendor
-    
+
     def register(self, adapter: ProtocolAdapter) -> None:
         """Register an adapter."""
         self._adapters[adapter.vendor] = adapter
         for hostname in adapter.vendor_hostnames:
             self._hostname_map[hostname] = adapter.vendor
-    
+
     def get_adapter(self, vendor: str) -> ProtocolAdapter | None:
         """Get adapter by vendor name."""
         return self._adapters.get(vendor)
-    
+
     def get_adapter_by_hostname(self, hostname: str) -> ProtocolAdapter | None:
         """Get adapter by hostname (for DNS routing)."""
         vendor = self._hostname_map.get(hostname)
         if vendor:
             return self._adapters.get(vendor)
         return None
-    
+
     def get_adapter_by_protocol(self, protocol: ProtocolType) -> list[ProtocolAdapter]:
         """Get all adapters supporting a protocol."""
         return [a for a in self._adapters.values() if protocol in a.supported_protocols]
-    
+
     def list_vendors(self) -> list[str]:
         """List all registered vendors."""
         return list(self._adapters.keys())

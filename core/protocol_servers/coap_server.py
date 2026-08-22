@@ -16,20 +16,21 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
-from typing import Any, Callable
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any
 
 try:
     import aiocoap
-    from aiocoap import Context, Message, POST, GET, PUT, DELETE
-    from aiocoap.numbers.contentformat import ContentFormat
+    from aiocoap import DELETE, GET, POST, PUT, Context, Message
     from aiocoap.error import ConstructionError
+    from aiocoap.numbers.contentformat import ContentFormat
     HAS_AIOCOAP = True
 except ImportError:
     HAS_AIOCOAP = False
 
-from core.protocol_servers import ProtocolServerPlugin
 from adapters.base import InterceptedRequest, ProtocolType
+from core.protocol_servers import ProtocolServerPlugin
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +81,7 @@ class CoAPServerPlugin(ProtocolServerPlugin):
 
         intercepted = InterceptedRequest(
             device_id=f"coap-{request.remote.sockname[0] if hasattr(request, 'remote') else 'unknown'}",
-            timestamp=datetime.now(timezone.utc).timestamp(),
+            timestamp=datetime.now(UTC).timestamp(),
             protocol=ProtocolType.COAP,
             method=coap_method,
             path=f"/{path}",

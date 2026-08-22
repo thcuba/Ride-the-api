@@ -2,26 +2,29 @@
 Tests for the Local Cloud Replacement Proxy architecture.
 """
 
+import tempfile
+from datetime import UTC, datetime
+from pathlib import Path
+
 import pytest
 import pytest_asyncio
-from pathlib import Path
-import tempfile
-import json
-from datetime import datetime, timezone
-
-from core.database import (
-    DatabaseManager, Base, init_db_manager, get_db_manager,
-    DeviceRegistry, RequestPattern, ResponseTemplate, FieldMapping,
-    MatchStats, SessionCache, LLMContextBuffer,
-)
-from core.pipeline import (
-    ContextBuffer, PatternMatcher, MatchRateTracker,
-    LearningPipeline, LearningOrchestrator, CorrelatedPair,
-    MatchResult, PipelineMode,
-)
-from core.llm_decipher import LLMDecipherService, LLMProfile
 from sqlalchemy import select
 
+from core.database import (
+    DatabaseManager,
+    DeviceRegistry,
+    FieldMapping,
+    MatchStats,
+    RequestPattern,
+    ResponseTemplate,
+)
+from core.pipeline import (
+    ContextBuffer,
+    CorrelatedPair,
+    MatchRateTracker,
+    MatchResult,
+    PatternMatcher,
+)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # FIXTURES
@@ -74,7 +77,7 @@ def sample_correlated_pair():
         response_body={"result": {"data": {"1": False, "3": 240}}},
         latency_ms=150.0,
         correlation_confidence=0.9,
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(UTC),
     )
 
 
@@ -402,11 +405,12 @@ class TestProtocolAdapter:
     @pytest.mark.asyncio
     async def test_parse_mqtt_request(self, example_adapter):
         """Test parsing MQTT request."""
+        from datetime import datetime
+
         from adapters.base import InterceptedRequest, ProtocolType
-        from datetime import datetime, timezone
         request = InterceptedRequest(
             device_id="",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             protocol=ProtocolType.MQTT,
             topic="thing/command/device_123",
             body={"data": {"1": True, "3": 240}},
@@ -419,11 +423,12 @@ class TestProtocolAdapter:
     @pytest.mark.asyncio
     async def test_parse_http_request(self, example_adapter):
         """Test parsing HTTP request."""
+        from datetime import datetime
+
         from adapters.base import InterceptedRequest, ProtocolType
-        from datetime import datetime, timezone
         request = InterceptedRequest(
             device_id="",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             protocol=ProtocolType.HTTPS,
             method="POST",
             path="/v1.0/devices/device_456/commands",
@@ -474,7 +479,12 @@ async def test_update_device_auto_switch_not_found(db_manager):
 @pytest.mark.asyncio
 async def test_auto_switch_threshold_constants():
     """Verify the auto-switch thresholds are set correctly."""
-    from core.resilience import AUTO_SWITCH_MATCH_RATE, ROLLBACK_MATCH_RATE, MIN_TOTAL_REQUESTS, MIN_PATTERNS_FOR_SWITCH
+    from core.resilience import (
+        AUTO_SWITCH_MATCH_RATE,
+        MIN_PATTERNS_FOR_SWITCH,
+        MIN_TOTAL_REQUESTS,
+        ROLLBACK_MATCH_RATE,
+    )
     assert AUTO_SWITCH_MATCH_RATE == 99.0
     assert ROLLBACK_MATCH_RATE == 90.0
     assert MIN_TOTAL_REQUESTS >= 50

@@ -10,13 +10,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from core.upstream_resolver import (
-    resolve_upstream,
-    batch_resolve_upstream,
-    clear_cache,
-    get_cache_stats,
     UPSTREAM_DNS_SERVERS,
     UPSTREAM_DNS_SERVERS_V6,
     _resolver_cache,
+    batch_resolve_upstream,
+    clear_cache,
+    get_cache_stats,
+    resolve_upstream,
 )
 
 
@@ -60,7 +60,7 @@ async def test_resolve_upstream_success_ipv4(mock_build):
     async def resolve_side(hostname, rtype):
         if rtype == "A":
             return FakeDNSAnswer(["93.184.216.34"])
-        elif rtype == "AAAA":
+        if rtype == "AAAA":
             raise FakeNoAnswer()
         raise ValueError(f"Unexpected query type: {rtype}")
 
@@ -83,14 +83,14 @@ async def test_resolve_upstream_dual_stack(mock_build):
         pass
 
     resolver = AsyncMock()
-    
+
     async def resolve_side(hostname, rtype):
         if rtype == "A":
             return FakeDNSAnswer(["93.184.216.34"])
-        elif rtype == "AAAA":
+        if rtype == "AAAA":
             return FakeDNSAnswer(["2606:2800:220:1:248:1893:25c8:1946"])
         raise ValueError(f"Unexpected query type: {rtype}")
-    
+
     resolver.resolve = resolve_side
     mock_build.return_value = resolver
 
@@ -111,14 +111,14 @@ async def test_resolve_upstream_prefer_ipv6(mock_build):
         pass
 
     resolver = AsyncMock()
-    
+
     async def resolve_side(hostname, rtype):
         if rtype == "A":
             return FakeDNSAnswer(["93.184.216.34"])
-        elif rtype == "AAAA":
+        if rtype == "AAAA":
             return FakeDNSAnswer(["2606:2800:220:1:248:1893:25c8:1946"])
         raise ValueError(f"Unexpected query type: {rtype}")
-    
+
     resolver.resolve = resolve_side
     mock_build.return_value = resolver
 
@@ -139,10 +139,10 @@ async def test_resolve_upstream_both_fail_then_fallback(mock_build):
         pass
 
     resolver = AsyncMock()
-    
+
     async def resolve_side(hostname, rtype):
         raise FakeNoAnswer("DNS query failed")
-    
+
     resolver.resolve = resolve_side
     mock_build.return_value = resolver
 
@@ -165,12 +165,12 @@ async def test_resolve_upstream_cache(mock_build):
         pass
 
     resolver = AsyncMock()
-    
+
     async def resolve_side(hostname, rtype):
         if rtype == "A":
             return FakeDNSAnswer(["93.184.216.34"])
         raise FakeNoAnswer()
-    
+
     resolver.resolve = resolve_side
     mock_build.return_value = resolver
 
@@ -196,12 +196,12 @@ async def test_resolve_upstream_cache_skipped(mock_build):
         pass
 
     resolver = AsyncMock()
-    
+
     async def resolve_side(hostname, rtype):
         if rtype == "A":
             return FakeDNSAnswer(["93.184.216.34"])
         raise FakeNoAnswer()
-    
+
     resolver.resolve = resolve_side
     mock_build.return_value = resolver
 
@@ -228,16 +228,16 @@ async def test_batch_resolve(mock_build):
         pass
 
     resolver = AsyncMock()
-    
+
     call_count = 0
-    
+
     async def resolve_side(hostname, rtype):
         nonlocal call_count
         call_count += 1
         if rtype == "A":
             return FakeDNSAnswer([f"1.2.3.{call_count}"])
         raise FakeNoAnswer()
-    
+
     resolver.resolve = resolve_side
     mock_build.return_value = resolver
 
@@ -267,12 +267,12 @@ async def test_cache_stats(mock_build):
         pass
 
     resolver = AsyncMock()
-    
+
     async def resolve_side(hostname, rtype):
         if rtype == "A":
             return FakeDNSAnswer(["1.2.3.4"])
         raise FakeNoAnswer()
-    
+
     resolver.resolve = resolve_side
     mock_build.return_value = resolver
 

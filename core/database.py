@@ -7,21 +7,16 @@ from __future__ import annotations
 
 import contextlib
 import logging
+from collections.abc import AsyncGenerator
 from pathlib import Path
-from typing import Any, AsyncGenerator, Optional
 
 from sqlalchemy import (
-    Column,
+    JSON,
     DateTime,
     Float,
-    ForeignKey,
     Index,
     Integer,
-    JSON,
     String,
-    Text,
-    create_engine,
-    event,
     func,
     select,
 )
@@ -31,7 +26,7 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.pool import NullPool
 
 logger = logging.getLogger(__name__)

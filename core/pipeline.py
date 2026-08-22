@@ -5,26 +5,29 @@ Handles: correlation, buffer management, LLM deciphering, pattern matching, and 
 
 from __future__ import annotations
 
-import asyncio
-import hashlib
 import json
 import logging
-import time
-import uuid
 from collections import defaultdict, deque
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 from uuid import uuid4
 
+from sqlalchemy import and_, delete, select
+
 from core.database import (
-    DatabaseManager, DeviceRegistry, RequestPattern, ResponseTemplate,
-    FieldMapping, LLMContextBuffer, SessionCache, MatchStats,
+    DatabaseManager,
+    DeviceRegistry,
+    FieldMapping,
+    LLMContextBuffer,
+    MatchStats,
+    RequestPattern,
+    ResponseTemplate,
+    SessionCache,
     get_db_manager,
 )
-from core.llm_decipher import LLMDecipherService, DecipherResult, LLMProfile
-from sqlalchemy import select, delete, func as sql_func, and_, desc
+from core.llm_decipher import LLMDecipherService, LLMProfile
 
 logger = logging.getLogger(__name__)
 
@@ -139,7 +142,7 @@ class ContextBuffer:
                     )
                 )
             )
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             count = 0
             for entry in result.scalars().all():
                 entry.flushed = True
@@ -347,9 +350,9 @@ class PatternMatcher:
 
         if source == "body" and isinstance(body, dict):
             return self._get_nested(body, key)
-        elif source == "headers":
+        if source == "headers":
             return headers.get(key)
-        elif source == "query":
+        if source == "query":
             return query.get(key)
         return None
 
@@ -421,7 +424,7 @@ class MatchRateTracker:
             recent = list(stats.recent_results or [])
             recent.append({
                 "result": result.value,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
             })
             if len(recent) > self._rolling_window:
                 recent = recent[-self._rolling_window:]
@@ -491,7 +494,7 @@ class LearningPipeline:
             "headers": headers,
             "body": body,
             "query_params": query_params,
-            "timestamp": datetime.now(timezone.utc),
+            "timestamp": datetime.now(UTC),
         }
 
         self._correlation_cache[device_id].append(entry)
@@ -553,7 +556,7 @@ class LearningPipeline:
                             "timestamp": cache_entry.created_at,
                         }
                         cache_entry.correlated = True
-                        cache_entry.correlated_at = datetime.now(timezone.utc)
+                        cache_entry.correlated_at = datetime.now(UTC)
                         cache_entry.response_status = status_code
                         cache_entry.response_headers = headers
                         cache_entry.response_body = body
@@ -563,7 +566,7 @@ class LearningPipeline:
         if not matched:
             return None
 
-        latency_ms = (datetime.now(timezone.utc) - matched["timestamp"]).total_seconds() * 1000
+        latency_ms = (datetime.now(UTC) - matched["timestamp"]).total_seconds() * 1000
 
         pair = CorrelatedPair(
             pair_id=str(uuid4()),
@@ -580,7 +583,7 @@ class LearningPipeline:
             response_body=body,
             latency_ms=latency_ms,
             correlation_confidence=0.8,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
         )
 
         # Store in the _correlation_cache for the pipeline
@@ -593,7 +596,7 @@ class LearningPipeline:
                 headers=headers,
                 body=body,
                 correlated=True,
-                correlated_at=datetime.now(timezone.utc),
+                correlated_at=datetime.now(UTC),
                 response_status=status_code,
                 response_headers=headers,
                 response_body=body,
@@ -868,10 +871,9 @@ class LearningOrchestrator:
 
         if device.mode == PipelineMode.PRODUCTION.value:
             return await self._handle_production(device, method, path, headers, body, query_params)
-        elif device.mode == PipelineMode.HYBRID.value:
+        if device.mode == PipelineMode.HYBRID.value:
             return await self._handle_hybrid(device, method, path, headers, body, query_params)
-        else:
-            return await self._handle_learning(device, method, path, headers, body, query_params)
+        return await self._handle_learning(device, method, path, headers, body, query_params)
 
     async def _handle_production(self, device: DeviceRegistry, method: str, path: str,
                                     headers: dict, body: Any, query_params: dict) -> dict:
@@ -899,28 +901,27 @@ class LearningOrchestrator:
                     "pattern_id": getattr(pattern, "pattern_id", None),
                     "intent": getattr(pattern, "intent", None),
                 }
-            else:
-                # Miss
-                await self.tracker.record_result(device.device_id, MatchResult.CLOUD_MISS)
+            # Miss
+            await self.tracker.record_result(device.device_id, MatchResult.CLOUD_MISS)
 
-                # Check production_no_fallback flag from device config
-                if device.config.get("production_no_fallback", False):
-                    return {
-                        "action": "no_fallback",
-                        "reason": "below_threshold" if pattern else "no_pattern",
-                        "match_score": score,
-                    }
-
-                # Forward to cloud + capture for learning
-                corr_key = await self._register_for_learning(
-                    device, method, path, headers, body, query_params
-                )
+            # Check production_no_fallback flag from device config
+            if device.config.get("production_no_fallback", False):
                 return {
-                    "action": "forward",
-                    "correlation_key": corr_key,
-                    "match_score": score,
+                    "action": "no_fallback",
                     "reason": "below_threshold" if pattern else "no_pattern",
+                    "match_score": score,
                 }
+
+            # Forward to cloud + capture for learning
+            corr_key = await self._register_for_learning(
+                device, method, path, headers, body, query_params
+            )
+            return {
+                "action": "forward",
+                "correlation_key": corr_key,
+                "match_score": score,
+                "reason": "below_threshold" if pattern else "no_pattern",
+            }
     async def _handle_hybrid(self, device: DeviceRegistry, method: str, path: str,
                                   headers: dict, body: Any, query_params: dict) -> dict:
         """Hybrid mode: try local match first; if confident serve locally, otherwise forward to cloud + learn."""
@@ -943,19 +944,18 @@ class LearningOrchestrator:
                 "intent": getattr(pattern, "intent", None),
                 "mode": "hybrid",
             }
-        else:
-            # Not confident -- forward to cloud but also capture for learning
-            corr_key = await self._register_for_learning(
-                device, method, path, headers, body, query_params
-            )
-            await self.tracker.record_result(device.device_id, MatchResult.CLOUD_MISS)
-            return {
-                "action": "forward",
-                "correlation_key": corr_key,
-                "match_score": score,
-                "reason": "below_threshold" if pattern else "no_pattern",
-                "mode": "hybrid",
-            }
+        # Not confident -- forward to cloud but also capture for learning
+        corr_key = await self._register_for_learning(
+            device, method, path, headers, body, query_params
+        )
+        await self.tracker.record_result(device.device_id, MatchResult.CLOUD_MISS)
+        return {
+            "action": "forward",
+            "correlation_key": corr_key,
+            "match_score": score,
+            "reason": "below_threshold" if pattern else "no_pattern",
+            "mode": "hybrid",
+        }
     async def _handle_learning(self, device: DeviceRegistry, method: str, path: str,
                                   headers: dict, body: Any, query_params: dict) -> dict:
         """Learning mode: forward all to cloud, correlate, and build patterns."""
@@ -1013,17 +1013,16 @@ class LearningOrchestrator:
                 "pair_id": pair.pair_id,
                 "buffer_flushed": needs_flush,
             }
-        else:
-            # Production mode: record miss and learn
-            await self.tracker.record_result(device_id, MatchResult.CLOUD_MISS)
-            needs_flush = await self.pipeline.process_learning_pair(
-                device_id, pair, device.context_buffer_size
-            )
-            return {
-                "action": "learned_from_miss",
-                "pair_id": pair.pair_id,
-                "buffer_flushed": needs_flush,
-            }
+        # Production mode: record miss and learn
+        await self.tracker.record_result(device_id, MatchResult.CLOUD_MISS)
+        needs_flush = await self.pipeline.process_learning_pair(
+            device_id, pair, device.context_buffer_size
+        )
+        return {
+            "action": "learned_from_miss",
+            "pair_id": pair.pair_id,
+            "buffer_flushed": needs_flush,
+        }
 
     async def get_device_stats(self, device_id: str) -> dict:
         """Get comprehensive stats for a device."""
