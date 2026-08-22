@@ -803,16 +803,16 @@ async def set_device_mode(device_id: str, request: Request):
     return {"device_id": device_id, "mode": mode}
 
 
-    @app.get("/api/devices/{device_id}/auto-switch")
-    async def get_device_auto_switch(device_id: str):
-        """Get auto-switch status for a device."""
-        if not db_manager:
-            return JSONResponse(status_code=503, content={"error": "Service not ready"})
-        devices = await db_manager.list_devices()
-        for d in devices:
-            if d["device_id"] == device_id:
-                return {"device_id": device_id, "auto_switch_enabled": d.get("auto_switch_enabled", False)}
-        return JSONResponse(status_code=404, content={"error": "Device not found"})
+@app.get("/api/devices/{device_id}/auto-switch")
+async def get_device_auto_switch(device_id: str):
+    """Get auto-switch status for a device."""
+    if not db_manager:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    devices = await db_manager.list_devices()
+    for d in devices:
+        if d["device_id"] == device_id:
+            return {"device_id": device_id, "auto_switch_enabled": d.get("auto_switch_enabled", False)}
+    return JSONResponse(status_code=404, content={"error": "Device not found"})
 
 
 @app.put("/api/devices/{device_id}/auto-switch")
