@@ -156,7 +156,7 @@ class ContextBuffer:
 
             return count
 
-        async def flush_selected(self, device_id: str, entry_ids: list[int]) -> int:
+    async def flush_selected(self, device_id: str, entry_ids: list[int]) -> int:
             """Mark only the specified buffer entries as flushed."""
             async with self.db_manager.device_session(device_id) as session:
                 result = await session.execute(
@@ -185,7 +185,7 @@ class ContextBuffer:
 
                 return count
 
-        async def delete_entry(self, device_id: str, entry_id: int) -> bool:
+    async def delete_entry(self, device_id: str, entry_id: int) -> bool:
             """Delete a single buffer entry."""
             async with self.db_manager.device_session(device_id) as session:
                 result = await session.execute(
