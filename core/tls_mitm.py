@@ -34,6 +34,16 @@ TLS_HANDSHAKE = 0x16
 TLS_CLIENT_HELLO = 0x01
 TLS_EXTENSION_SNI = 0x0000
 
+_HTTP_STATUS = {
+    200: "OK", 201: "Created", 202: "Accepted", 204: "No Content",
+    301: "Moved Permanently", 302: "Found", 304: "Not Modified",
+    400: "Bad Request", 401: "Unauthorized", 403: "Forbidden",
+    404: "Not Found", 405: "Method Not Allowed", 408: "Request Timeout",
+    409: "Conflict", 414: "URI Too Long",
+    500: "Internal Server Error", 501: "Not Implemented",
+    502: "Bad Gateway", 503: "Service Unavailable", 504: "Gateway Timeout",
+}
+
 # HTTP pattern for parsing decrypted request
 HTTP_REQUEST_RE = re.compile(
     rb"(?P<method>[A-Z]+) (?P<path>[^ ]+) HTTP/(?P<version>1\.[01])\r\n"
@@ -362,7 +372,15 @@ class TLSMITMServer:
 
             # Pass to external handler (if set)
             if self.request_handler:
-                await self.request_handler(decrypted_req)
+                handler_result = await self.request_handler(decrypted_req)
+                # If the handler produced a local response, send it back to the
+                # device encrypted over TLS (previously it was silently dropped,
+                # leaving the device waiting forever).
+                response = handler_result.get("response") if isinstance(handler_result, dict) else None
+                if response is not None:
+                    await self._write_http_response(
+                        ssl_obj, outgoing, writer, response, client_ip,
+                    )
             else:
                 logger.warning(
                     "TLS MITM: no request_handler set — dropping decrypted request"
@@ -524,6 +542,49 @@ class TLSMITMServer:
         return self._parse_http_request(
             bytes(app_buffer), client_ip, client_port, dst_port, hostname,
         )
+
+    async def _write_http_response(
+        self,
+        ssl_obj: ssl.SSLObject,
+        outgoing: ssl.MemoryBIO,
+        writer: asyncio.StreamWriter,
+        response: dict,
+        client_ip: str,
+    ) -> None:
+        """Encrypt and send an HTTP/1.1 response back to the device."""
+        import json
+
+        try:
+            status_code = int(response.get("status_code", 200))
+            headers = response.get("headers") or {}
+            body = response.get("body")
+            if not isinstance(body, (str, bytes, bytearray)):
+                body = json.dumps(body, default=str) if body is not None else ""
+            if isinstance(body, str):
+                body = body.encode("utf-8")
+            body = bytes(body)
+
+            reason = _HTTP_STATUS.get(status_code, "OK")
+            lines = [f"HTTP/1.1 {status_code} {reason}"]
+            for k, v in (headers or {}).items():
+                lines.append(f"{k}: {v}")
+            lines.append(f"Content-Length: {len(body)}")
+            lines.append("Connection: close")
+            lines.append("")
+            raw = ("\r\n".join(lines) + "\r\n").encode("utf-8") + body
+
+            try:
+                ssl_obj.write(raw)
+            except (ssl.SSLWantReadError, ssl.SSLWantWriteError):
+                pass
+            if outgoing.pending:
+                try:
+                    writer.write(outgoing.read(65536))
+                    await writer.drain()
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.warning("TLS MITM: failed sending response to %s: %s", client_ip, e)
 
     @staticmethod
     def _parse_http_request(
