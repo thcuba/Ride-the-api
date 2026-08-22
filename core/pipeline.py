@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -514,12 +516,13 @@ class LearningPipeline:
 
     def __init__(self, db_manager: DatabaseManager, llm_decipher: LLMDecipherService,
                  buffer: ContextBuffer, matcher: PatternMatcher,
-                 tracker: MatchRateTracker):
+                 tracker: MatchRateTracker, engine=None):
         self.db_manager = db_manager
         self.llm_decipher = llm_decipher
         self.buffer = buffer
         self.matcher = matcher
         self.tracker = tracker
+        self.engine = engine
         self._correlation_cache: dict[str, deque] = defaultdict(
             lambda: deque(maxlen=1000)
         )
@@ -723,6 +726,7 @@ class LearningPipeline:
             return {"success": False, "error": "LLM analysis failed", "pairs_count": len(pairs), "patterns_count": 0}
 
         await self._save_patterns(device_id, llm_analysis)
+        await self._export_and_sync_patterns(device_id)
 
         if pair_ids is not None:
             await self.buffer.flush_selected(device_id, pair_ids)
@@ -775,8 +779,40 @@ class LearningPipeline:
         """Internal flush: all pairs, no context notes override."""
         await self.flush_and_learn(device_id)
 
+    async def _export_and_sync_patterns(self, device_id: str) -> None:
+        """Export learned patterns to .ride-pattern.json and sync with PatternEngine.
+
+        Called after each learning cycle so the PatternEngine's in-memory cache
+        has the latest patterns for subsequent production/hybrid requests.
+        """
+        if not self.engine:
+            return
+        try:
+            from core.pattern_db.decipher_ingest import DecipherIngest
+            ingester = DecipherIngest(self.db_manager)
+
+            device_info = await self._load_device(device_id)
+            vendor = device_info.vendor if device_info else "unknown"
+            device_type = device_info.device_type if device_info else "unknown"
+            pattern_db = await ingester.export_patterns(device_id, vendor, device_type)
+
+            if not pattern_db.client.endpoints:
+                logger.debug("No patterns to export for %s", device_id)
+                return
+
+            patterns_dir = Path("patterns")
+            patterns_dir.mkdir(parents=True, exist_ok=True)
+
+            filepath = patterns_dir / f"{device_id}.ride-pattern.json"
+            self.engine.save_pattern_file(pattern_db, str(filepath))
+            self.engine.apply_pattern_db(device_id, pattern_db)
+            logger.info("Exported and synced %d patterns for %s to %s",
+                        len(pattern_db.client.endpoints), device_id, filepath.name)
+        except Exception as e:
+            logger.warning("Failed to export/sync patterns for %s: %s", device_id, e)
+
     async def _analyze_with_llm(self, context: dict, profile_name: str,
-                                  base_url: str | None, model_id: str | None) -> dict | None:
+                              base_url: str | None, model_id: str | None) -> dict | None:
         """Send context to LLM for protocol analysis."""
         try:
             profile = self.llm_decipher.get_profile(profile_name)
@@ -955,12 +991,48 @@ class LearningOrchestrator:
         self.pipeline = None
 
     def initialize(self, llm_decipher: LLMDecipherService):
-        """Initialize the orchestrator with required services."""
-        self.llm_decipher = llm_decipher
-        from core.pattern_db.pattern_engine import PatternEngine
-        self.engine = PatternEngine(self.db_manager)
-        self.matcher = PatternMatcher(self.db_manager)
-        self.tracker = MatchRateTracker(self.db_manager)
+            """Initialize the orchestrator with required services.
+
+            Sets up the PatternEngine, PatternMatcher, and MatchRateTracker.
+            Auto-loads any .ride-pattern.json files found in the patterns/
+            or data/ directories so pre-seeded or exported patterns are
+            available immediately for production/hybrid serving.
+            """
+            self.llm_decipher = llm_decipher
+            from core.pattern_db.pattern_engine import PatternEngine
+            self.engine = PatternEngine(self.db_manager)
+            self._auto_load_patterns()
+            self.matcher = PatternMatcher(self.db_manager)
+            self.tracker = MatchRateTracker(self.db_manager)
+
+    def _auto_load_patterns(self):
+        """Scan for .ride-pattern.json files and load them into the engine."""
+        search_dirs = [
+            Path("patterns"),
+            Path("data"),
+            Path("data/patterns"),
+            Path.cwd() / "patterns",
+            Path.cwd() / "data",
+        ]
+        loaded = 0
+        for search_dir in search_dirs:
+            if not search_dir.exists():
+                continue
+            for pattern_file in search_dir.glob("*.ride-pattern.json"):
+                device_id = pattern_file.stem
+                if device_id.endswith(".ride-pattern"):
+                    device_id = device_id.replace(".ride-pattern", "")
+                try:
+                    self.engine.load_pattern_file(device_id, str(pattern_file))
+                    loaded += 1
+                    logger.info("Auto-loaded patterns for %s from %s",
+                                device_id, pattern_file.name)
+                except Exception as e:
+                    logger.warning("Failed to load %s: %s", pattern_file.name, e)
+        if loaded:
+            logger.info("Pattern DB: auto-loaded %d pattern files", loaded)
+        else:
+            logger.debug("Pattern DB: no .ride-pattern.json files found to auto-load")
 
     async def ensure_buffer(self, device_id: str, buffer_size: int = 524288) -> ContextBuffer:
         """Get or create a context buffer for a device with the right size."""
@@ -1087,7 +1159,7 @@ class LearningOrchestrator:
             buffer = await self.ensure_buffer(device.device_id, device.context_buffer_size)
             self.pipeline = LearningPipeline(
                 self.db_manager, self.llm_decipher, buffer,
-                self.matcher, self.tracker,
+                    self.matcher, self.tracker, self.engine,
             )
         return await self.pipeline.register_request(
             device.device_id, device.vendor, "http",
