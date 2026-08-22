@@ -31,6 +31,18 @@ def register_all_adapters() -> ProtocolAdapterRegistry:
     from adapters.shelly import ShellyProtocolAdapter
     registry.register(ShellyProtocolAdapter("shelly", {}))
 
+    # Zigbee (open protocol)
+    from adapters.zigbee import ZigbeeProtocolAdapter
+    registry.register(ZigbeeProtocolAdapter("zigbee", {}))
+
+    # Z-Wave (open protocol)
+    from adapters.zwave import ZWaveProtocolAdapter
+    registry.register(ZWaveProtocolAdapter("zwave", {}))
+
+    # Thread / Matter (open protocol)
+    from adapters.thread_matter import MatterProtocolAdapter
+    registry.register(MatterProtocolAdapter("matter", {}))
+
     # Users/community: add your own adapter registrations here, e.g.:
     # from adapters.my_protocol import MyProtocolAdapter
     # my_adapter = MyProtocolAdapter("my_protocol", {})
