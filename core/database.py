@@ -82,6 +82,9 @@ class DeviceRegistry(Base):
     # Context buffer configuration
     context_buffer_size: Mapped[int] = mapped_column(Integer, default=524288, nullable=False)  # 512KB default
 
+    # User-defined context notes for LLM analysis (injected as {context_notes})
+    llm_context_notes: Mapped[str | None] = mapped_column(String(4096), nullable=True)
+
     status: Mapped[str] = mapped_column(String(32), default="online", nullable=False)
     last_seen: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -106,8 +109,25 @@ class ModelRegistry(Base):
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# DEVICE-SPECIFIC DATABASE MODELS (each device gets its own DB with these tables)
+    class LLMProfile(Base):
+        """User-saved LLM decipher profiles/templates."""
+        __tablename__ = "llm_profiles"
+
+        id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+        name: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+        description: Mapped[str | None] = mapped_column(String(512), nullable=True)
+        base_url: Mapped[str] = mapped_column(String(512), nullable=False)
+        api_key: Mapped[str] = mapped_column(String(512), default="", nullable=False)
+        model_id: Mapped[str] = mapped_column(String(128), nullable=False)
+        prompt_template: Mapped[str] = mapped_column(String(16384), nullable=False)
+        enabled: Mapped[bool] = mapped_column(default=True, nullable=False)
+        is_default: Mapped[bool] = mapped_column(default=False, nullable=False)
+        created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+        updated_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+    # ═══════════════════════════════════════════════════════════════════════════════
+    # DEVICE-SPECIFIC DATABASE MODELS (each device gets its own DB with these tables)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class RequestPattern(Base):
@@ -549,8 +569,10 @@ class DatabaseManager:
                     "context_buffer_size": d.context_buffer_size,
                     "llm_model_id": d.llm_model_id,
                     "llm_base_url": d.llm_base_url,
-                    "auto_switch_enabled": d.auto_switch_enabled,
-                }
+                                    "llm_profile_name": d.llm_profile_name,
+                                    "llm_context_notes": d.llm_context_notes,
+                                    "auto_switch_enabled": d.auto_switch_enabled,
+                                }
                 for d in result.scalars().all()
             ]
 
@@ -601,6 +623,136 @@ class DatabaseManager:
             await session.commit()
             logger.info(f"Device {device_id} auto-switch {'enabled' if enabled else 'disabled'}")
             return True
+
+        # ── Context notes ────────────────────────────────────────────────────────
+
+        async def update_device_context_notes(self, device_id: str, notes: str) -> bool:
+            """Update custom context notes for a device (injected as {context_notes})."""
+            async with await self.get_core_session() as session:
+                result = await session.execute(
+                    select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
+                )
+                device = result.scalar_one_or_none()
+                if not device:
+                    return False
+                device.llm_context_notes = notes
+                await session.commit()
+                return True
+
+        async def get_device_context_notes(self, device_id: str) -> str | None:
+            """Get custom context notes for a device."""
+            async with await self.get_core_session() as session:
+                result = await session.execute(
+                    select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
+                )
+                device = result.scalar_one_or_none()
+                return device.llm_context_notes if device else None
+
+        # ── LLM Profile CRUD ────────────────────────────────────────────────────
+
+        async def list_llm_profiles(self) -> list[dict]:
+            """List all user-saved LLM profiles."""
+            async with await self.get_core_session() as session:
+                result = await session.execute(
+                    select(LLMProfile).order_by(LLMProfile.name)
+                )
+                return [
+                    {
+                        "name": p.name,
+                        "description": p.description,
+                        "base_url": p.base_url,
+                        "model_id": p.model_id,
+                        "prompt_template": p.prompt_template,
+                        "enabled": p.enabled,
+                        "is_default": p.is_default,
+                        "created_at": p.created_at.isoformat() if p.created_at else None,
+                        "updated_at": p.updated_at.isoformat() if p.updated_at else None,
+                    }
+                    for p in result.scalars().all()
+                ]
+
+        async def get_llm_profile(self, name: str) -> dict | None:
+            """Get a single LLM profile by name."""
+            async with await self.get_core_session() as session:
+                result = await session.execute(
+                    select(LLMProfile).where(LLMProfile.name == name)
+                )
+                p = result.scalar_one_or_none()
+                if not p:
+                    return None
+                return {
+                    "name": p.name,
+                    "description": p.description,
+                    "base_url": p.base_url,
+                    "model_id": p.model_id,
+                    "api_key": "***" if p.api_key else "",
+                    "prompt_template": p.prompt_template,
+                    "enabled": p.enabled,
+                    "is_default": p.is_default,
+                    "created_at": p.created_at.isoformat() if p.created_at else None,
+                    "updated_at": p.updated_at.isoformat() if p.updated_at else None,
+                }
+
+        async def create_llm_profile(self, data: dict) -> bool:
+            """Create a new LLM profile."""
+            async with await self.get_core_session() as session:
+                existing = await session.execute(
+                    select(LLMProfile).where(LLMProfile.name == data["name"])
+                )
+                if existing.scalar_one_or_none():
+                    return False
+                profile = LLMProfile(
+                    name=data["name"],
+                    description=data.get("description"),
+                    base_url=data.get("base_url", ""),
+                    api_key=data.get("api_key", ""),
+                    model_id=data.get("model_id", ""),
+                    prompt_template=data.get("prompt_template", ""),
+                    enabled=data.get("enabled", True),
+                    is_default=data.get("is_default", False),
+                )
+                session.add(profile)
+                await session.commit()
+                return True
+
+        async def update_llm_profile(self, name: str, data: dict) -> bool:
+            """Update an existing LLM profile."""
+            async with await self.get_core_session() as session:
+                result = await session.execute(
+                    select(LLMProfile).where(LLMProfile.name == name)
+                )
+                p = result.scalar_one_or_none()
+                if not p:
+                    return False
+                if "description" in data:
+                    p.description = data["description"]
+                if "base_url" in data:
+                    p.base_url = data["base_url"]
+                if "api_key" in data:
+                    p.api_key = data["api_key"]
+                if "model_id" in data:
+                    p.model_id = data["model_id"]
+                if "prompt_template" in data:
+                    p.prompt_template = data["prompt_template"]
+                if "enabled" in data:
+                    p.enabled = data["enabled"]
+                if "is_default" in data:
+                    p.is_default = data["is_default"]
+                await session.commit()
+                return True
+
+        async def delete_llm_profile(self, name: str) -> bool:
+            """Delete an LLM profile."""
+            async with await self.get_core_session() as session:
+                result = await session.execute(
+                    select(LLMProfile).where(LLMProfile.name == name)
+                )
+                p = result.scalar_one_or_none()
+                if not p:
+                    return False
+                await session.delete(p)
+                await session.commit()
+                return True
 
     async def close(self) -> None:
         """Close all database connections."""

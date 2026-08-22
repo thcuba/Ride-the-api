@@ -219,6 +219,75 @@
   .icon-svg-sm { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
   .global-stat .icon-svg { width: 22px; height: 22px; margin-bottom: 6px; color: var(--text2); }
   .empty-icon .icon-svg { width: 48px; height: 48px; }
+
+  /* ── LLM Context & Template Section ──────────────────────────────────────── */
+  .llm-section { margin-top: 16px; }
+  .llm-header {
+    font-size: 14px; font-weight: 700; color: var(--accent); margin-bottom: 12px;
+    display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none;
+  }
+  .llm-body { padding: 0 0 4px 0; }
+  .llm-body.collapsed { display: none; }
+  .llm-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; font-size: 13px; border-bottom: 1px solid rgba(45,54,72,.5); gap: 8px; }
+  .llm-row:last-child { border-bottom: none; }
+  .llm-row label { color: var(--text2); flex-shrink: 0; min-width: 80px; }
+  .llm-row input, .llm-row select, .llm-row textarea {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+    padding: 4px 8px; color: var(--text); font-size: 13px; font-family: inherit; width: 100%;
+  }
+  .llm-row input:focus, .llm-row select:focus, .llm-row textarea:focus { outline: none; border-color: var(--accent); }
+  .llm-row textarea { min-height: 60px; resize: vertical; font-size: 12px; }
+  .llm-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; justify-content: flex-end; }
+  .llm-buffer { max-height: 240px; overflow-y: auto; margin: 8px 0; }
+  .buffer-entry {
+    display: flex; align-items: flex-start; gap: 8px; padding: 6px 8px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 6px; margin-bottom: 4px;
+    font-size: 12px; cursor: pointer;
+  }
+  .buffer-entry:hover { border-color: var(--accent); }
+  .buffer-entry.be-checked { border-color: var(--green); }
+  .buffer-entry input[type="checkbox"] { margin-top: 2px; flex-shrink: 0; accent-color: var(--accent); }
+  .buffer-entry .be-info { flex: 1; min-width: 0; }
+  .buffer-entry .be-pair { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .buffer-entry .be-meta { color: var(--text2); font-size: 11px; margin-top: 1px; }
+  .buffer-entry .be-delete { background: none; border: none; color: var(--red); cursor: pointer; font-size: 14px; padding: 0 2px; line-height: 1; }
+  .buffer-entry .be-delete:hover { opacity: .7; }
+  .buffer-entry-detail {
+    display: none; margin: 4px 0 4px 24px; padding: 8px; background: var(--surface2);
+    border-radius: 6px; font-size: 11px; font-family: 'Courier New', monospace; white-space: pre-wrap;
+    word-break: break-all; max-height: 120px; overflow-y: auto;
+  }
+  .buffer-entry-detail.open { display: block; }
+  .be-summary { display: flex; align-items: center; gap: 4px; color: var(--text2); font-size: 11px; }
+  .analysis-box {
+    margin-top: 12px; padding: 12px; background: var(--surface2); border: 1px solid var(--accent);
+    border-radius: 8px;
+  }
+  .analysis-box h4 { font-size: 13px; font-weight: 700; margin-bottom: 8px; }
+  .analysis-box textarea {
+    width: 100%; min-height: 150px; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 6px; padding: 8px; color: var(--text); font-family: 'Courier New', monospace;
+    font-size: 12px; resize: vertical;
+  }
+  .profile-modal {
+    position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,.6);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .profile-modal-content {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 24px; max-width: 500px; width: 90%; max-height: 80vh; overflow-y: auto;
+  }
+  .profile-modal-content h3 { font-size: 16px; margin-bottom: 16px; }
+  .profile-modal-content .pm-row { margin-bottom: 12px; }
+  .profile-modal-content label { display: block; font-size: 13px; color: var(--text2); margin-bottom: 4px; }
+  .profile-modal-content input, .profile-modal-content textarea {
+    width: 100%; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px;
+    padding: 8px; color: var(--text); font-family: inherit;
+  }
+  .profile-modal-content textarea { min-height: 80px; font-size: 12px; font-family: 'Courier New', monospace; }
+  .profile-modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+  .btn-danger { background: var(--red); color: #fff; }
+  .btn-danger:hover { opacity: .8; }
 </style>
 </head>
 <body>
@@ -490,14 +559,86 @@ async function loadDeviceStats(deviceId) {
             <button class="btn btn-primary" onclick="saveTlsConfig('${deviceId}')" style="padding:6px 16px;font-size:12px;">Save TLS Config</button>
           </div>
         </div>
-      </div>
-    </div>`;
+
+                      <!-- LLM Context & Template Section -->
+              <div class="llm-section" role="region" aria-label="LLM decoding context">
+                <div class="llm-header" onclick="toggleLLMSection('${deviceId}')">
+                  <svg class="icon-svg-sm" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+                  LLM Context &amp; Template
+                  <span style="margin-left:auto;font-size:12px;color:var(--text2);" id="llm-toggle-${deviceId}">&#x25BC;</span>
+                </div>
+                <div class="llm-body" id="llm-body-${deviceId}">
+
+                  <!-- Profile selector -->
+                  <div class="llm-row">
+                    <label>Template</label>
+                    <select id="profile-select-${deviceId}" style="flex:1;" onchange="onProfileChange('${deviceId}')">
+                      <option value="default">Default</option>
+                    </select>
+                    <button class="btn btn-ghost" style="padding:4px 8px;font-size:11px;" onclick="saveAsNewProfile('${deviceId}')">Save As</button>
+                  </div>
+                  <div class="llm-row" style="justify-content:flex-end;gap:6px;border:none;padding-top:0;">
+                    <button class="btn btn-ghost" style="padding:2px 8px;font-size:11px;" onclick="editProfile('${deviceId}')">Edit</button>
+                    <button class="btn btn-ghost" style="padding:2px 8px;font-size:11px;" onclick="deleteProfile('${deviceId}')" id="delete-profile-btn-${deviceId}">Delete</button>
+                  </div>
+
+                  <!-- Context notes -->
+                  <div class="llm-row" style="flex-direction:column;align-items:stretch;">
+                    <label style="min-width:0;margin-bottom:4px;">Context Notes</label>
+                    <textarea id="context-notes-${deviceId}" placeholder="Add context for LLM analysis&#10;e.g.: &#34;This endpoint controls device pairing&#34;"></textarea>
+                    <div style="display:flex;gap:6px;margin-top:4px;justify-content:flex-end;">
+                      <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px;" onclick="saveContextNotes('${deviceId}')">Save Notes</button>
+                    </div>
+                  </div>
+
+                  <!-- Buffer entries -->
+                  <div class="llm-row" style="flex-direction:column;align-items:stretch;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;width:100%;">
+                      <label style="min-width:0;">Buffer</label>
+                      <div style="display:flex;gap:6px;align-items:center;" id="buffer-actions-${deviceId}">
+                        <span id="buf-count-${deviceId}" style="font-size:11px;color:var(--text2);">0 entries</span>
+                        <label style="font-size:11px;color:var(--text2);display:flex;align-items:center;gap:4px;cursor:pointer;">
+                          <input type="checkbox" id="select-all-buf-${deviceId}" onchange="toggleSelectAll('${deviceId}')"> All
+                        </label>
+                      </div>
+                    </div>
+                    <div class="llm-buffer" id="buffer-list-${deviceId}">
+                      <div style="color:var(--text2);font-size:12px;text-align:center;padding:12px;">Loading buffer...</div>
+                    </div>
+                  </div>
+
+                  <!-- Actions -->
+                  <div class="llm-actions">
+                    <button class="btn btn-ghost" onclick="previewAnalysis('${deviceId}')" id="preview-btn-${deviceId}">&#x1F50D; Preview &amp; Edit</button>
+                    <button class="btn btn-primary" onclick="sendToLLM('${deviceId}')" id="send-btn-${deviceId}">&#x27A4; Send to LLM</button>
+                  </div>
+
+                  <!-- Analysis preview (hidden) -->
+                  <div class="analysis-box" id="analysis-box-${deviceId}" style="display:none;">
+                    <h4>&#x1F4DD; LLM Analysis Preview</h4>
+                    <textarea id="analysis-text-${deviceId}" style="min-height:120px;"></textarea>
+                    <div style="font-size:12px;color:var(--text2);margin:4px 0;">Edit the analysis above before committing, then click Commit to save patterns.</div>
+                    <div class="llm-actions">
+                      <button class="btn btn-ghost" onclick="discardPreview('${deviceId}')">Discard</button>
+                      <button class="btn btn-primary" onclick="commitPatterns('${deviceId}')">&#x2714; Commit Patterns</button>
+                    </div>
+                  </div>
+
+                </div>
+              </div>
+
+              </div>`;
 
     // Focus the detail panel for accessibility
     const focusTarget = detail.querySelector('h2');
     if (focusTarget) focusTarget.focus();
-  } catch(e) { showToast('Failed to load device details', 'error'); }
-}
+
+        // Load LLM section data
+        loadLLMProfiles(deviceId);
+        loadContextNotes(deviceId);
+        loadBufferEntries(deviceId);
+      } catch(e) { showToast('Failed to load device details', 'error'); }
+    }
 
 function closeDetails() {
   const detail = document.getElementById('details');
@@ -620,6 +761,284 @@ async function saveTlsConfig(deviceId) {
     loadDevices();
   } catch(e) { showToast('Failed to save config', 'error'); }
 }
-</script>
-</body>
-</html>
+
+// ── LLM Context & Template ───────────────────────────────────────────────────
+
+function toggleLLMSection(id) {
+  const body = document.getElementById('llm-body-' + id);
+  const toggle = document.getElementById('llm-toggle-' + id);
+  if (!body) return;
+  const collapsed = body.classList.toggle('collapsed');
+  toggle.innerHTML = collapsed ? '&#x25B6;' : '&#x25BC;';
+}
+
+async function loadLLMProfiles(deviceId) {
+  try {
+    const res = await fetch('/api/llm/user-profiles');
+    if (!res.ok) return;
+    const data = await res.json();
+    const sel = document.getElementById('profile-select-' + deviceId);
+    if (!sel) return;
+    const current = sel.value;
+    sel.innerHTML = '<option value="default">Default</option>';
+    (data.profiles || []).forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.name; opt.textContent = p.name;
+      sel.appendChild(opt);
+    });
+    sel.value = current !== 'default' && [...sel.options].some(o => o.value === current) ? current : 'default';
+    onProfileChange(deviceId);
+  } catch(e) { /* ignore */ }
+}
+
+function onProfileChange(deviceId) {
+  const sel = document.getElementById('profile-select-' + deviceId);
+  const delBtn = document.getElementById('delete-profile-btn-' + deviceId);
+  if (!sel || !delBtn) return;
+  delBtn.style.display = sel.value === 'default' ? 'none' : '';
+}
+
+async function saveAsNewProfile(deviceId) {
+  const name = prompt('Profile name:');
+  if (!name || !name.trim()) return;
+  const description = prompt('Description (optional):') || '';
+  const promptTemplate = prompt('Prompt template (use {vendor}, {device_type}, {pairs}, {device_id}, {context_notes}):');
+  if (!promptTemplate) return showToast('Prompt template required', 'error');
+  try {
+    const res = await fetch('/api/llm/user-profiles', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name: name.trim(), description, prompt_template: promptTemplate}),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      return showToast(err.error || 'Failed to create profile', 'error');
+    }
+    showToast('Profile "' + name.trim() + '" created', 'success');
+    loadLLMProfiles(deviceId);
+  } catch(e) { showToast('Failed to create profile', 'error'); }
+}
+
+async function editProfile(deviceId) {
+  const sel = document.getElementById('profile-select-' + deviceId);
+  if (!sel || sel.value === 'default') return;
+  try {
+    const res = await fetch('/api/llm/user-profiles/' + encodeURIComponent(sel.value));
+    if (!res.ok) return showToast('Failed to load profile', 'error');
+    const p = await res.json();
+    // Simple inline edit via prompt
+    const name = prompt('Profile name:', p.name) || p.name;
+    const desc = prompt('Description:', p.description || '') || '';
+    const pt = prompt('Prompt template:', p.prompt_template) || p.prompt_template;
+    const upRes = await fetch('/api/llm/user-profiles/' + encodeURIComponent(sel.value), {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name, description: desc, prompt_template: pt}),
+    });
+    if (!upRes.ok) return showToast('Failed to update profile', 'error');
+    showToast('Profile updated', 'success');
+    loadLLMProfiles(deviceId);
+  } catch(e) { showToast('Failed to edit profile', 'error'); }
+}
+
+async function deleteProfile(deviceId) {
+  const sel = document.getElementById('profile-select-' + deviceId);
+  if (!sel || sel.value === 'default') return;
+  if (!confirm('Delete profile "' + sel.value + '"?')) return;
+  try {
+    const res = await fetch('/api/llm/user-profiles/' + encodeURIComponent(sel.value), { method: 'DELETE' });
+    if (!res.ok) return showToast('Failed to delete profile', 'error');
+    showToast('Profile deleted', 'success');
+    loadLLMProfiles(deviceId);
+  } catch(e) { showToast('Failed to delete profile', 'error'); }
+}
+
+async function loadContextNotes(deviceId) {
+  try {
+    const res = await fetch(`/api/devices/${deviceId}/context`);
+    if (!res.ok) return;
+    const data = await res.json();
+    const ta = document.getElementById('context-notes-' + deviceId);
+    if (ta) ta.value = data.context_notes || '';
+  } catch(e) { /* ignore */ }
+}
+
+async function saveContextNotes(deviceId) {
+  const ta = document.getElementById('context-notes-' + deviceId);
+  if (!ta) return;
+  try {
+    const res = await fetch(`/api/devices/${deviceId}/context`, {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({context_notes: ta.value}),
+    });
+    if (!res.ok) return showToast('Failed to save notes', 'error');
+    showToast('Context notes saved', 'success');
+  } catch(e) { showToast('Failed to save notes', 'error'); }
+}
+
+async function loadBufferEntries(deviceId) {
+  const container = document.getElementById('buffer-list-' + deviceId);
+  const countSpan = document.getElementById('buf-count-' + deviceId);
+  if (!container) return;
+  try {
+    const res = await fetch(`/api/devices/${deviceId}/buffer`);
+    if (!res.ok) {
+      container.innerHTML = '<div style="color:var(--text2);font-size:12px;text-align:center;padding:12px;">Failed to load buffer</div>';
+      return;
+    }
+    const data = await res.json();
+    const entries = data.entries || [];
+    if (countSpan) countSpan.textContent = entries.length + ' entries (' + (data.total_size_bytes / 1024).toFixed(1) + ' KB)';
+    if (entries.length === 0) {
+      container.innerHTML = '<div style="color:var(--text2);font-size:12px;text-align:center;padding:12px;">No buffer entries</div>';
+      return;
+    }
+    container.innerHTML = entries.map(e => {
+          const method = e.pair?.method || '';
+          const path = e.pair?.path || '';
+          const status = e.pair?.response_status || '';
+          const reqPreview = (e.pair?.request_body || '').slice(0, 80);
+          const resPreview = (e.pair?.response_body || '').slice(0, 80);
+          const reqFull = JSON.stringify(e.pair?.request_body || '', null, 2).slice(0, 300);
+          const resFull = JSON.stringify(e.pair?.response_body || '', null, 2).slice(0, 300);
+          const ts = e.timestamp ? new Date(e.timestamp).toLocaleString() : '';
+      return `<div class="buffer-entry" id="buf-entry-${deviceId}-${e.id}" onclick="toggleBufDetail('${deviceId}', ${e.id})">
+              <input type="checkbox" id="buf-chk-${deviceId}-${e.id}" onclick="event.stopPropagation()" onchange="updateSelectedCount('${deviceId}")">
+        <div class="be-info">
+                <div class="be-pair"><span style="color:var(--accent)">${method}</span> ${path}</div>
+                <div class="be-summary">&#x2192; ${status} &middot; ${(e.size || 0) / 1024} KB${ts ? ' &middot; ' + ts : ''}</div>
+        </div>
+        <button class="be-delete" onclick="event.stopPropagation();deleteBufferEntry('${deviceId}', ${e.id})" title="Delete entry">&times;</button>
+      </div>
+      <div class="buffer-entry-detail" id="buf-detail-${deviceId}-${e.id}">
+<b>Request:</b> ${reqFull}
+<b>Response:</b> ${resFull}
+      </div>`;
+    }).join('');
+  } catch(e) {
+    container.innerHTML = '<div style="color:var(--red);font-size:12px;text-align:center;padding:12px;">Error loading buffer</div>';
+  }
+}
+
+function toggleBufDetail(deviceId, entryId) {
+  const detail = document.getElementById('buf-detail-' + deviceId + '-' + entryId);
+  if (detail) detail.classList.toggle('open');
+}
+
+function toggleSelectAll(deviceId) {
+  const checked = document.getElementById('select-all-buf-' + deviceId).checked;
+  const container = document.getElementById('buffer-list-' + deviceId);
+  if (!container) return;
+  container.querySelectorAll('.buffer-entry input[type="checkbox"]').forEach(cb => cb.checked = checked);
+}
+
+function getSelectedPairIds(deviceId) {
+  const ids = [];
+  const container = document.getElementById('buffer-list-' + deviceId);
+  if (!container) return ids;
+  container.querySelectorAll('.buffer-entry input[type="checkbox"]').forEach(cb => {
+    if (cb.checked) {
+      const id = parseInt(cb.id.split('-').pop());
+      if (!isNaN(id)) ids.push(id);
+    }
+  });
+  return ids;
+}
+
+function updateSelectedCount(deviceId) {
+  const ids = getSelectedPairIds(deviceId);
+  const previewBtn = document.getElementById('preview-btn-' + deviceId);
+  const sendBtn = document.getElementById('send-btn-' + deviceId);
+  if (previewBtn) previewBtn.textContent = ids.length ? '\u{1F50D} Preview (' + ids.length + ')' : '\u{1F50D} Preview & Edit';
+  if (sendBtn) sendBtn.textContent = ids.length ? '\u{27A4} Send (' + ids.length + ')' : '\u{27A4} Send to LLM';
+}
+
+async function deleteBufferEntry(deviceId, entryId) {
+  try {
+    const res = await fetch(`/api/devices/${deviceId}/buffer/${entryId}`, { method: 'DELETE' });
+    if (!res.ok) return showToast('Failed to delete entry', 'error');
+    showToast('Entry deleted', 'success');
+    loadBufferEntries(deviceId);
+    updateSelectedCount(deviceId);
+  } catch(e) { showToast('Failed to delete entry', 'error'); }
+}
+
+async function previewAnalysis(deviceId) {
+  const pairIds = getSelectedPairIds(deviceId);
+  if (pairIds.length === 0) {
+    showToast('Select at least one buffer entry', 'warning');
+    return;
+  }
+  const notes = (document.getElementById('context-notes-' + deviceId) || {}).value || '';
+  showToast('Running LLM analysis...', 'info');
+  try {
+    const res = await fetch(`/api/devices/${deviceId}/llm/preview`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({pair_ids: pairIds, context_notes: notes}),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      return showToast(err.error || 'Analysis failed', 'error');
+    }
+    const data = await res.json();
+    const box = document.getElementById('analysis-box-' + deviceId);
+    const ta = document.getElementById('analysis-text-' + deviceId);
+    if (box) box.style.display = '';
+    if (ta) ta.value = JSON.stringify(data.analysis || data, null, 2);
+    showToast('Preview ready — review and commit or discard', 'success');
+  } catch(e) { showToast('Analysis failed: ' + e.message, 'error'); }
+}
+
+function discardPreview(deviceId) {
+  const box = document.getElementById('analysis-box-' + deviceId);
+  if (box) box.style.display = 'none';
+}
+
+async function commitPatterns(deviceId) {
+  const pairIds = getSelectedPairIds(deviceId);
+  const notes = (document.getElementById('context-notes-' + deviceId) || {}).value || '';
+  showToast('Saving patterns...', 'info');
+  try {
+    const res = await fetch(`/api/devices/${deviceId}/llm/flush`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({pair_ids: pairIds, context_notes: notes}),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      return showToast(err.error || 'Failed to commit', 'error');
+    }
+    const data = await res.json();
+    discardPreview(deviceId);
+    showToast(data.patterns_count + ' patterns saved', 'success');
+    loadBufferEntries(deviceId);
+    updateSelectedCount(deviceId);
+    loadDevices();
+  } catch(e) { showToast('Failed to commit: ' + e.message, 'error'); }
+}
+
+async function sendToLLM(deviceId) {
+  const pairIds = getSelectedPairIds(deviceId);
+  const notes = (document.getElementById('context-notes-' + deviceId) || {}).value || '';
+  if (pairIds.length === 0) {
+    showToast('Select at least one buffer entry', 'warning');
+    return;
+  }
+  if (!confirm('Send ' + pairIds.length + ' selected entries to LLM for decoding?')) return;
+  showToast('Sending to LLM...', 'info');
+  try {
+    const res = await fetch(`/api/devices/${deviceId}/llm/flush`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({pair_ids: pairIds, context_notes: notes}),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      return showToast(err.error || 'LLM processing failed', 'error');
+    }
+    const data = await res.json();
+    showToast(data.patterns_count + ' patterns learned from ' + data.pairs_count + ' pairs', 'success');
+    loadBufferEntries(deviceId);
+    updateSelectedCount(deviceId);
+    loadDevices();
+  } catch(e) { showToast('LLM processing failed: ' + e.message, 'error'); }
+}
+  </script>
+  </body>
+  </html>

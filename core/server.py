@@ -34,7 +34,7 @@ from adapters.base import (
 )
 from core.cert_manager import CertManager, get_cert_manager
 from core.config import get_config_manager
-from core.database import DatabaseManager, DeviceRegistry, init_db_manager
+from core.database import DatabaseManager, DeviceRegistry, LLMContextBuffer, init_db_manager
 from core.llm_decipher import LLMDecipherService, get_llm_decipher
 from core.pipeline import (
     LearningOrchestrator,
@@ -1226,11 +1226,182 @@ async def delete_pattern(device_id: str, pattern_id: str):
 
 @app.get("/api/llm/profiles")
 async def list_llm_profiles():
-    """List available LLM profiles."""
+    """List available LLM profiles (system-level)."""
     if not llm_decipher_service:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
     profiles = llm_decipher_service.list_profiles()
     return {"profiles": profiles}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# LLM CONTEXT & BUFFER ENDPOINTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@app.get("/api/devices/{device_id}/buffer")
+async def list_buffer_entries(device_id: str):
+    """List unflushed buffer entries for a device."""
+    if not db_manager or not orchestrator:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    try:
+        buf = orchestrator.buffer.get(device_id)
+        if not buf:
+            buf = await orchestrator.ensure_buffer(device_id)
+        pairs = await buf.get_buffer_pairs(device_id)
+        total_size = sum(p["size"] for p in pairs)
+        return {
+            "device_id": device_id,
+            "entries": pairs,
+            "total_entries": len(pairs),
+            "total_size_bytes": total_size,
+        }
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.delete("/api/devices/{device_id}/buffer/{entry_id}")
+async def delete_buffer_entry(device_id: str, entry_id: int):
+    """Delete a single buffer entry."""
+    if not db_manager or not orchestrator:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    try:
+        buf = orchestrator.buffer.get(device_id)
+        if not buf:
+            return JSONResponse(status_code=404, content={"error": "Buffer not found"})
+        success = await buf.delete_entry(device_id, entry_id)
+        if not success:
+            return JSONResponse(status_code=404, content={"error": "Entry not found"})
+        return {"device_id": device_id, "entry_id": entry_id, "status": "deleted"}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.get("/api/devices/{device_id}/context")
+async def get_device_context(device_id: str):
+    """Get custom context notes for a device."""
+    if not db_manager:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    notes = await db_manager.get_device_context_notes(device_id)
+    return {"device_id": device_id, "context_notes": notes or ""}
+
+
+@app.put("/api/devices/{device_id}/context")
+async def update_device_context(device_id: str, request: Request):
+    """Update custom context notes for a device."""
+    if not db_manager:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    body = await request.json()
+    notes = body.get("context_notes", "")
+    success = await db_manager.update_device_context_notes(device_id, notes)
+    if not success:
+        return JSONResponse(status_code=404, content={"error": "Device not found"})
+    return {"device_id": device_id, "context_notes": notes, "status": "updated"}
+
+
+@app.post("/api/devices/{device_id}/llm/flush")
+async def flush_buffer_to_llm(device_id: str, request: Request):
+    """Flush selected buffer entries to LLM with optional context notes."""
+    if not db_manager or not orchestrator:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    body = await request.json()
+    pair_ids = body.get("pair_ids")  # optional: list of int entry IDs
+    context_notes = body.get("context_notes")
+    result = await orchestrator.flush_and_learn(
+        device_id,
+        pair_ids=pair_ids,
+        context_notes=context_notes,
+    )
+    if not result.get("success"):
+        status = 500 if "failed" in result.get("error", "") else 400
+        return JSONResponse(status_code=status, content=result)
+    return result
+
+
+@app.post("/api/devices/{device_id}/llm/preview")
+async def preview_llm_analysis(device_id: str, request: Request):
+    """Run LLM analysis without saving patterns. Returns analysis for review."""
+    if not db_manager or not orchestrator:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    body = await request.json()
+    pair_ids = body.get("pair_ids")
+    context_notes = body.get("context_notes")
+    result = await orchestrator.preview_analysis(
+        device_id,
+        pair_ids=pair_ids,
+        context_notes=context_notes,
+    )
+    if not result.get("success"):
+        status = 500 if "failed" in result.get("error", "") else 400
+        return JSONResponse(status_code=status, content=result)
+    return result
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# USER LLM PROFILES (persisted templates)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@app.get("/api/llm/user-profiles")
+async def list_user_profiles():
+    """List all user-saved LLM profile templates."""
+    if not db_manager:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    profiles = await db_manager.list_llm_profiles()
+    return {"profiles": profiles}
+
+
+@app.post("/api/llm/user-profiles")
+async def create_user_profile(request: Request):
+    """Create a new user LLM profile template."""
+    if not db_manager:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    body = await request.json()
+    if not body.get("name") or not body.get("prompt_template"):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "name and prompt_template are required"},
+        )
+    success = await db_manager.create_llm_profile(body)
+    if not success:
+        return JSONResponse(
+            status_code=409,
+            content={"error": f"Profile '{body['name']}' already exists"},
+        )
+    return {"name": body["name"], "status": "created"}
+
+
+@app.get("/api/llm/user-profiles/{name}")
+async def get_user_profile(name: str):
+    """Get a single user LLM profile."""
+    if not db_manager:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    profile = await db_manager.get_llm_profile(name)
+    if not profile:
+        return JSONResponse(status_code=404, content={"error": "Profile not found"})
+    return profile
+
+
+@app.put("/api/llm/user-profiles/{name}")
+async def update_user_profile(name: str, request: Request):
+    """Update an existing user LLM profile."""
+    if not db_manager:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    body = await request.json()
+    success = await db_manager.update_llm_profile(name, body)
+    if not success:
+        return JSONResponse(status_code=404, content={"error": "Profile not found"})
+    return {"name": name, "status": "updated"}
+
+
+@app.delete("/api/llm/user-profiles/{name}")
+async def delete_user_profile(name: str):
+    """Delete a user LLM profile."""
+    if not db_manager:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    success = await db_manager.delete_llm_profile(name)
+    if not success:
+        return JSONResponse(status_code=404, content={"error": "Profile not found"})
+    return {"name": name, "status": "deleted"}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

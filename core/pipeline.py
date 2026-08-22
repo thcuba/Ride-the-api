@@ -156,6 +156,55 @@ class ContextBuffer:
 
             return count
 
+        async def flush_selected(self, device_id: str, entry_ids: list[int]) -> int:
+            """Mark only the specified buffer entries as flushed."""
+            async with self.db_manager.device_session(device_id) as session:
+                result = await session.execute(
+                    select(LLMContextBuffer)
+                    .where(
+                        and_(
+                            LLMContextBuffer.device_id == device_id,
+                            LLMContextBuffer.flushed == False,
+                            LLMContextBuffer.id.in_(entry_ids),
+                        )
+                    )
+                )
+                now = datetime.now(UTC)
+                flushed_size = 0
+                count = 0
+                for entry in result.scalars().all():
+                    entry.flushed = True
+                    entry.flushed_at = now
+                    flushed_size += entry.estimated_size_bytes
+                    count += 1
+
+                stats = await self._get_or_create_stats(session, device_id)
+                stats.current_buffer_size_bytes = max(0, stats.current_buffer_size_bytes - flushed_size)
+                stats.last_flush_at = now
+                stats.buffer_flushes += 1
+
+                return count
+
+        async def delete_entry(self, device_id: str, entry_id: int) -> bool:
+            """Delete a single buffer entry."""
+            async with self.db_manager.device_session(device_id) as session:
+                result = await session.execute(
+                    select(LLMContextBuffer).where(
+                        and_(
+                            LLMContextBuffer.id == entry_id,
+                            LLMContextBuffer.device_id == device_id,
+                        )
+                    )
+                )
+                entry = result.scalar_one_or_none()
+                if not entry:
+                    return False
+                size = entry.estimated_size_bytes
+                await session.delete(entry)
+                stats = await self._get_or_create_stats(session, device_id)
+                stats.current_buffer_size_bytes = max(0, stats.current_buffer_size_bytes - size)
+                return True
+
     async def clear_cache(self, device_id: str):
         """Clear session cache for a device after flush."""
         async with self.db_manager.device_session(device_id) as session:
@@ -607,7 +656,7 @@ class LearningPipeline:
         return pair
 
     async def process_learning_pair(self, device_id: str, pair: CorrelatedPair,
-                                      context_buffer_max: int) -> bool:
+                                          context_buffer_max: int) -> bool:
         """Process a correlated pair in learning mode.
 
         Returns: True if buffer was flushed (LLM analysis triggered).
@@ -619,50 +668,112 @@ class LearningPipeline:
             return True
         return False
 
-    async def _flush_and_learn(self, device_id: str):
-        """Flush buffer to LLM, analyze batch, and save learned patterns."""
-        logger.info(f"Flushing context buffer for device {device_id}")
-
-        pairs = await self.buffer.get_buffer_pairs(device_id)
-        if not pairs:
-            return
-
-        # Get device info for LLM config
+    async def _load_device(self, device_id: str) -> DeviceRegistry | None:
+        """Load device from registry."""
         async with self.db_manager.core_session() as session:
             result = await session.execute(
                 select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
             )
-            device = result.scalar_one_or_none()
-            if not device:
-                logger.warning(f"Device {device_id} not found in registry")
-                return
+            return result.scalar_one_or_none()
 
-        # Build context for LLM
-        context = {
+    async def _build_context(self, device_id: str, device: DeviceRegistry,
+                              pairs: list[dict], context_notes: str | None = None) -> dict:
+        """Build context dict for LLM analysis."""
+        return {
             "device_id": device_id,
             "vendor": device.vendor,
             "device_type": device.device_type,
             "pairs": [p["pair"] for p in pairs],
             "total_pairs": len(pairs),
             "total_size_bytes": sum(p["size"] for p in pairs),
+            "context_notes": context_notes or device.llm_context_notes or "",
         }
 
-        # Call LLM
+    async def flush_and_learn(self, device_id: str, pair_ids: list[int] | None = None,
+                               context_notes: str | None = None) -> dict:
+        """Public flush: filter by optional pair_ids, inject context_notes, save patterns.
+
+        Returns dict with success, pairs_count, patterns_count.
+        """
+        logger.info(f"Flushing context buffer for device {device_id}")
+
+        all_pairs = await self.buffer.get_buffer_pairs(device_id)
+        if not all_pairs:
+            return {"success": False, "error": "No buffer entries to flush", "pairs_count": 0, "patterns_count": 0}
+
+        if pair_ids is not None:
+            pairs = [p for p in all_pairs if p["id"] in pair_ids]
+            if not pairs:
+                return {"success": False, "error": "No matching buffer entries found", "pairs_count": 0, "patterns_count": 0}
+        else:
+            pairs = all_pairs
+
+        device = await self._load_device(device_id)
+        if not device:
+            return {"success": False, "error": "Device not found", "pairs_count": 0, "patterns_count": 0}
+
+        context = await self._build_context(device_id, device, pairs, context_notes)
+
         profile_name = device.llm_profile_name or "default"
         llm_analysis = await self._analyze_with_llm(context, profile_name,
                                                      device.llm_base_url,
                                                      device.llm_model_id)
 
-        # Save learned patterns
-        if llm_analysis:
-            await self._save_patterns(device_id, llm_analysis)
+        if not llm_analysis:
+            return {"success": False, "error": "LLM analysis failed", "pairs_count": len(pairs), "patterns_count": 0}
 
-        # Clear buffer and cache
-        await self.buffer.flush(device_id)
+        await self._save_patterns(device_id, llm_analysis)
+
+        if pair_ids is not None:
+            await self.buffer.flush_selected(device_id, pair_ids)
+        else:
+            await self.buffer.flush(device_id)
         await self.buffer.clear_cache(device_id)
 
-        logger.info(f"Learning cycle complete for device {device_id}: "
-                     f"{len(pairs)} pairs analyzed")
+        patterns_count = len(llm_analysis.get("patterns", llm_analysis.get("decoded_patterns", [])))
+        logger.info(f"Learning cycle complete for device {device_id}: {len(pairs)} pairs, {patterns_count} patterns")
+        return {"success": True, "pairs_count": len(pairs), "patterns_count": patterns_count}
+
+    async def preview_analysis(self, device_id: str, pair_ids: list[int] | None = None,
+                                context_notes: str | None = None) -> dict:
+        """Run LLM analysis WITHOUT saving patterns. Returns raw analysis for user review."""
+        logger.info(f"Preview analysis for device {device_id}")
+
+        all_pairs = await self.buffer.get_buffer_pairs(device_id)
+        if not all_pairs:
+            return {"success": False, "error": "No buffer entries to analyze", "pairs_count": 0}
+
+        if pair_ids is not None:
+            pairs = [p for p in all_pairs if p["id"] in pair_ids]
+            if not pairs:
+                return {"success": False, "error": "No matching buffer entries found", "pairs_count": 0}
+        else:
+            pairs = all_pairs
+
+        device = await self._load_device(device_id)
+        if not device:
+            return {"success": False, "error": "Device not found", "pairs_count": 0}
+
+        context = await self._build_context(device_id, device, pairs, context_notes)
+
+        profile_name = device.llm_profile_name or "default"
+        llm_analysis = await self._analyze_with_llm(context, profile_name,
+                                                     device.llm_base_url,
+                                                     device.llm_model_id)
+
+        if not llm_analysis:
+            return {"success": False, "error": "LLM analysis failed", "pairs_count": len(pairs)}
+
+        return {
+            "success": True,
+            "pairs_count": len(pairs),
+            "analysis": llm_analysis,
+            "context": context,
+        }
+
+    async def _flush_and_learn(self, device_id: str):
+        """Internal flush: all pairs, no context notes override."""
+        await self.flush_and_learn(device_id)
 
     async def _analyze_with_llm(self, context: dict, profile_name: str,
                                   base_url: str | None, model_id: str | None) -> dict | None:
@@ -717,6 +828,7 @@ class LearningPipeline:
             "{device_type}": context.get("device_type", "unknown"),
             "{pairs}": pairs_json,
             "{device_id}": context.get("device_id", "unknown"),
+                "{context_notes}": context.get("context_notes", ""),
         }
         for placeholder, value in replacements.items():
             prompt = prompt.replace(placeholder, value)
