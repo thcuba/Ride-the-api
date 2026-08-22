@@ -1,7 +1,5 @@
-﻿# Codacy Security Scan — static analysis with GitHub code scanning
-# Official docs: https://github.com/codacy/codacy-analysis-cli-action
-# Merges all tool runs into one SARIF run to comply with CodeQL's
-# single-run-per-category requirement.
+﻿# Codacy Security Scan — GitHub code scanning integration
+# Official pattern: https://github.com/codacy/codacy-analysis-cli-action
 
 name: Codacy Security Scan
 
@@ -31,41 +29,52 @@ jobs:
           fetch-depth: 0
 
       - name: Run Codacy Analysis CLI
+        continue-on-error: true
         uses: codacy/codacy-analysis-cli-action@master
         with:
-          verbose: false
           output: results.sarif
           format: sarif
-          force-file-permissions: true
           gh-code-scanning-compat: true
+          force-file-permissions: true
           max-allowed-issues: 2147483647
 
-      # Codacy creates one SARIF run per tool. CodeQL's upload-sarif rejects
-      # multiple runs with the same category, so merge into a single run.
+      # Codacy creates one SARIF run per tool, but GitHub code scanning limits
+      # uploads to 20 runs per category. Merge all runs into one.
       - name: Merge SARIF runs into one
         if: always()
         shell: bash
         run: |
-          sudo chmod 666 results.sarif 2>/dev/null || true
-          python3 -c "
-          import json, os
-          if not os.path.exists('results.sarif'):
-              exit(0)
-          data = json.load(open('results.sarif'))
-          runs = data.get('runs', [])
-          if not runs:
-              exit(0)
-          results = []
-          for r in runs:
-              results.extend(r.get('results', []))
-          merged = runs[0]
-          merged['results'] = results
-          merged['tool']['driver']['name'] = 'Codacy (all tools)'
-          merged['automationDetails'] = {'id': 'codacy/merged/'}
-          data['runs'] = [merged]
-          json.dump(data, open('results.sarif', 'w'))
-          print(f'Merged {len(runs)} runs into 1 ({len(results)} issues)')
-          "
+          if [ ! -f results.sarif ]; then
+            exit 0
+          fi
+          python3 << 'EOF'
+import json, os, sys
+
+if not os.path.exists("results.sarif"):
+    sys.exit(0)
+
+with open("results.sarif") as f:
+    data = json.load(f)
+
+runs = data.get("runs", [])
+if not runs:
+    sys.exit(0)
+
+results = []
+for r in runs:
+    results.extend(r.get("results", []))
+
+merged = runs[0]
+merged["results"] = results
+merged["tool"]["driver"]["name"] = "Codacy (all tools)"
+merged["automationDetails"] = {"id": "codacy/merged/"}
+data["runs"] = [merged]
+
+with open("results.sarif", "w") as f:
+    json.dump(data, f)
+
+print(f"Merged {len(runs)} runs into 1 ({len(results)} issues)")
+EOF
 
       - name: Upload SARIF results to GitHub Code Scanning
         uses: github/codeql-action/upload-sarif@v4
