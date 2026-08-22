@@ -62,7 +62,7 @@ class BufferManager:
             stats = await self._get_or_create_stats(session, device_id)
             stats.current_buffer_size_bytes += estimated_size
 
-            if stats.current_buffer_size_bytes >= self._get_max_buffer_size(device_id, session):
+            if stats.current_buffer_size_bytes >= await self._get_max_buffer_size(device_id, session):
                 return True
             return False
 
@@ -203,13 +203,13 @@ class BufferManager:
 
     # ── Internal helpers ───────────────────────────────────────────────────────
 
-    def _get_max_buffer_size(self, device_id: str, session) -> int:
+    async def _get_max_buffer_size(self, device_id: str, session) -> int:
         """Get configured max buffer size for this device (default 512KB)."""
         try:
             import sqlalchemy as sa
 
             from core.database import DeviceRegistry
-            result = session.execute(
+            result = await session.execute(
                 sa.select(DeviceRegistry.context_buffer_size)
                 .where(DeviceRegistry.device_id == device_id)
             )

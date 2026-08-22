@@ -134,6 +134,11 @@ async def resolve_upstream(
     # Update cache
     if addresses:
         _resolver_cache[hostname] = (now, list(addresses))
+        # Opportunistic sweep: drop expired entries so the global cache cannot
+        # grow unbounded with long-lived distinct hostnames.
+        expired = [h for h, (ts, _) in _resolver_cache.items() if (now - ts) >= CACHE_TTL]
+        for h in expired:
+            _resolver_cache.pop(h, None)
 
     logger.debug("Resolved %s → %s", hostname, addresses)
     return addresses
