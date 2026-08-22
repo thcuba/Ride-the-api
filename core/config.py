@@ -420,11 +420,18 @@ class ConfigManager:
 
     @property
     def config(self) -> Config:
-        """Get current configuration (loads if not loaded)."""
-        with self._lock:
-            if self._config is None:
-                return self.load()
-            return self._config
+        """Get current configuration (loads if not loaded).
+
+        Uses atomic attribute read for the common case (already loaded)
+        to avoid lock contention on every access.
+        """
+        c = self._config
+        if c is None:
+            with self._lock:
+                if self._config is None:
+                    return self.load()
+                return self._config
+        return c
 
     def get_vendor_config(self, vendor: str) -> VendorConfig | None:
         """Get vendor-specific configuration."""
