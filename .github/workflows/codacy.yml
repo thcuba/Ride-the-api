@@ -1,4 +1,4 @@
-﻿# This workflow uses actions that are not certified by GitHub.
+# This workflow uses actions that are not certified by GitHub.
 # They are provided by a third-party and are governed by
 # separate terms of service, privacy policy, and support
 # documentation.
@@ -38,6 +38,21 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Cache Docker images downloaded by Codacy CLI to avoid re-pulling 25+ tool images
+      - name: Cache Codacy Docker images
+        id: cache-codacy
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/.codacy-cache
+          key: ${{ runner.os }}-codacy-v1
+
+      - name: Restore cached Docker images
+        if: steps.cache-codacy.outputs.cache-hit == 'true'
+        run: |
+          for f in /home/runner/.codacy-cache/*.tar; do
+            [ -f "$f" ] && docker load -i "$f" || true
+          done
+
       - name: Run Codacy Analysis CLI
         continue-on-error: true
         uses: codacy/codacy-analysis-cli-action@master
@@ -46,6 +61,16 @@ jobs:
           output: results.sarif
           format: sarif
           max-allowed-issues: 2147483647
+
+      # Save pulled Docker images to cache so subsequent runs skip the pull
+      - name: Save Docker images to cache
+        if: always() && steps.cache-codacy.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p /home/runner/.codacy-cache
+          docker images --format "{{.Repository}}::{{.Tag}}" | grep -i codacy | while IFS='::' read -r repo tag; do
+            safe=$(echo "${repo}_${tag}" | tr '/:.' '_')
+            docker save "${repo}:${tag}" -o "/home/runner/.codacy-cache/${safe}.tar" || true
+          done
 
       # Merge all SARIF runs into a single run to stay within GitHub's 20-run limit
       - name: Merge SARIF runs
