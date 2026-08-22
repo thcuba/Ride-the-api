@@ -1,4 +1,4 @@
-﻿"""
+"""
 LLM Deciphering Service - Uses configurable LLMs to analyze and decipher
 intercepted request/response pairs for protocol understanding and field mapping.
 """

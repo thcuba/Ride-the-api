@@ -430,7 +430,7 @@ class MatchRateTracker:
         self.db_manager = db_manager
         self._rolling_window = 1000
 
-    async def record_result(self, device_id: str, result: MatchResult):
+    async def record_result(self, device_id: str, match_result: MatchResult):
         """Record a match result and update stats."""
         async with self.db_manager.device_session(device_id) as session:
             result_obj = await session.execute(
@@ -455,9 +455,9 @@ class MatchRateTracker:
 
             stats.total_requests += 1
 
-            if result == MatchResult.LOCAL_HIT:
+            if match_result == MatchResult.LOCAL_HIT:
                 stats.local_hits += 1
-            elif result == MatchResult.CLOUD_MISS:
+            elif match_result == MatchResult.CLOUD_MISS:
                 stats.cloud_misses += 1
             else:
                 stats.errors += 1
@@ -472,7 +472,7 @@ class MatchRateTracker:
             # Rolling window
             recent = list(stats.recent_results or [])
             recent.append({
-                "result": result.value,
+                "result": match_result.value,
                 "timestamp": datetime.now(UTC).isoformat(),
             })
             if len(recent) > self._rolling_window:

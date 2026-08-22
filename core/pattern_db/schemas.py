@@ -118,6 +118,20 @@ class EndpointVariant(BaseModel):
     body_schema: dict[str, Any] | None = None
 
 
+class BodySchemaProperty(BaseModel):
+    """A single property in a JSON Schema body."""
+    type: str = "string"
+    description: str = ""
+    enum: list[str] | None = None
+    const: str | None = None
+    minimum: float | None = None
+    maximum: float | None = None
+    properties: dict[str, BodySchemaProperty] | None = None
+    items: BodySchemaProperty | None = None
+    required: list[str] | None = None
+    min_items: int | None = None
+
+
 class ClientEndpoint(BaseModel):
     """A single endpoint the device calls."""
     id: str

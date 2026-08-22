@@ -79,6 +79,9 @@ class DeviceRegistry(Base):
     llm_model_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     llm_profile_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
+    # Extra attributes for TLS passthrough, pinning bypass, etc.
+    extra_attributes: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+
     # Context buffer configuration
     context_buffer_size: Mapped[int] = mapped_column(Integer, default=524288, nullable=False)  # 512KB default
 

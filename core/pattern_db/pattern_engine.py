@@ -1,4 +1,4 @@
-﻿"""
+"""
 Pattern Engine â€” matches incoming requests against deciphered patterns,
 builds local responses, manages device state, and handles sensor simulation.
 

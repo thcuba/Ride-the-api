@@ -1,4 +1,4 @@
-﻿"""
+"""
 Resilience Module — ensures brand-cloud independence.
 Verifies that devices can function without vendor cloud APIs.
 """

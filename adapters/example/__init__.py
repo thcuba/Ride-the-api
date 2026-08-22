@@ -1,4 +1,4 @@
-﻿"""
+"""
 Example Protocol Adapter - Reference Implementation.
 
 Demonstrates how to implement a protocol adapter for an HVAC device

@@ -1,4 +1,4 @@
-﻿"""
+"""
 Traffic Selection Engine - Determines intercept vs passthrough for incoming requests.
 Rules can be managed via UI/API and are evaluated in priority order.
 """

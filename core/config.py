@@ -14,14 +14,14 @@ from pydantic import BaseModel, Field
 from watchfiles import Change, watch
 
 
-class ContextBufferSizes(str, Enum):
-    KB_128 = "131072"
-    KB_256 = "262144"
-    KB_512 = "524288"
-    MB_1 = "1048576"
-    MB_2 = "2097152"
-    MB_5 = "5242880"
-    MB_10 = "10485760"
+class ContextBufferSizes(int, Enum):
+    KB_128 = 131072
+    KB_256 = 262144
+    KB_512 = 524288
+    MB_1 = 1048576
+    MB_2 = 2097152
+    MB_5 = 5242880
+    MB_10 = 10485760
 
 
 class CoreConfig(BaseModel):
