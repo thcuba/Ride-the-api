@@ -49,7 +49,7 @@ class DecipherResult:
     success: bool = True
     error: str | None = None
     processing_time_ms: float = 0
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 class LLMDecipherService:
