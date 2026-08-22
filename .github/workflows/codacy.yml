@@ -77,7 +77,7 @@ jobs:
       # Merge all SARIF runs into a single run to stay within GitHub's 20-run limit
       - name: Merge SARIF runs
         if: always()
-        shell: python3
+        shell: python3 {0}
         run: |
           import json, os
 
