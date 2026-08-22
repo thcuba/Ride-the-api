@@ -226,10 +226,9 @@ class PatternEngine:
     def _resolve_source(self, source: str, request: dict, store: DeviceStateStore) -> Any:
         """Resolve a source reference like 'request.body.x.y' or 'state.varname'."""
         if source.startswith("request."):
-            # e.g. request.body.commands[0].value
-            parts = source.split(".", 1)
-            if len(parts) > 1:
-                return self._resolve_json_path(request.get(parts[0], {}), parts[1])
+            # e.g. request.body.commands[0].value -> resolve "body.commands[0].value" in request
+            path = source[8:]  # strip "request." prefix
+            return self._resolve_json_path(request, path)
         elif source.startswith("state."):
             return store.get(source[6:])
         elif source.startswith("constant."):
@@ -257,7 +256,7 @@ class PatternEngine:
     def _set_nested(self, d: dict, path: str, value: Any):
         parts = path.split(".")
         for p in parts[:-1]:
-            if p not in d:
+            if p not in d or d[p] is None:
                 d[p] = {}
             d = d[p]
         d[parts[-1]] = value
