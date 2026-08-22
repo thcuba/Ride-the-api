@@ -8,6 +8,7 @@ with state management and .ride-pattern.json import/export.
 
 from __future__ import annotations
 
+import ast
 import json
 import logging
 import re
@@ -21,6 +22,99 @@ from core.pattern_db.schemas import PatternDB
 from core.pattern_db.state_manager import DeviceStateStore
 
 logger = logging.getLogger(__name__)
+
+# Allowed names exposed inside formulas (safe math helpers only).
+_FORMULA_SAFE_NAMES = {
+    "abs": abs, "min": min, "max": max, "round": round,
+    "int": int, "float": float, "str": str,
+}
+
+
+def _eval_formula_safe(formula: str) -> Any:
+    """Evaluate a restricted arithmetic formula without eval().
+
+    Formulas may contain literals, the math helpers in ``_FORMULA_SAFE_NAMES``
+    and basic arithmetic/comparison operators. The AST is walked directly
+    (no ``eval``/``exec``), so attribute access, subscripting, imports, and
+    arbitrary calls are structurally impossible — the model cannot escape.
+    """
+    try:
+        tree = ast.parse(formula, mode="eval").body
+    except SyntaxError as exc:
+        raise ValueError(f"Invalid formula: {exc}") from exc
+    return _interp(tree)
+
+
+def _interp(node) -> Any:
+    """Direct interpreter over the whitelisted AST subset (no eval)."""
+    if isinstance(node, ast.Constant):
+        return node.value
+    if isinstance(node, ast.Name):
+        try:
+            return _FORMULA_SAFE_NAMES[node.id]
+        except KeyError:
+            raise ValueError(f"Unknown name in formula: {node.id}") from None
+    if isinstance(node, ast.UnaryOp):
+        op = node.op
+        v = _interp(node.operand)
+        if isinstance(op, ast.UAdd):
+            return +v
+        if isinstance(op, ast.USub):
+            return -v
+        if isinstance(op, ast.Not):
+            return not v
+        raise ValueError(f"Unsupported unary op: {type(op).__name__}")
+    if isinstance(node, ast.BinOp):
+        lhs, rhs = _interp(node.left), _interp(node.right)
+        op = node.op
+        if isinstance(op, ast.Add):
+            return lhs + rhs
+        if isinstance(op, ast.Sub):
+            return lhs - rhs
+        if isinstance(op, ast.Mult):
+            return lhs * rhs
+        if isinstance(op, ast.Div):
+            return lhs / rhs
+        if isinstance(op, ast.FloorDiv):
+            return lhs // rhs
+        if isinstance(op, ast.Mod):
+            return lhs % rhs
+        if isinstance(op, ast.Pow):
+            return lhs ** rhs
+        raise ValueError(f"Unsupported binop: {type(op).__name__}")
+    if isinstance(node, ast.BoolOp):
+        values = [_interp(v) for v in node.values]
+        if isinstance(node.op, ast.And):
+            return all(values)
+        if isinstance(node.op, ast.Or):
+            return any(values)
+        raise ValueError("Unsupported bool op")
+    if isinstance(node, ast.Compare):
+        left = _interp(node.left)
+        result = True
+        for op, comparator in zip(node.ops, node.comparators):
+            right = _interp(comparator)
+            if isinstance(op, ast.Eq):
+                result = result and left == right
+            elif isinstance(op, ast.NotEq):
+                result = result and left != right
+            elif isinstance(op, ast.Lt):
+                result = result and left < right
+            elif isinstance(op, ast.LtE):
+                result = result and left <= right
+            elif isinstance(op, ast.Gt):
+                result = result and left > right
+            elif isinstance(op, ast.GtE):
+                result = result and left >= right
+            else:
+                raise ValueError(f"Unsupported compare op: {type(op).__name__}")
+            left = right
+        return result
+    if isinstance(node, ast.Call):
+        fn = _interp(node.func)
+        args = [_interp(a) for a in node.args]
+        return fn(*args)
+    raise ValueError(f"Forbidden expression element: {type(node).__name__}")
 
 
 class PatternEngine:
@@ -289,7 +383,7 @@ class PatternEngine:
         return obj
 
     def _eval_formula(self, formula: str, request: dict, store: DeviceStateStore) -> Any:
-        """Evaluate a simple formula expression."""
+        """Evaluate a simple formula expression (restricted, safe AST interpreter)."""
         try:
             # Replace variable references with re.sub (single pass, no intermediate strings)
             def _var_replacer(m: re.Match) -> str:
@@ -308,10 +402,7 @@ class PatternEngine:
             resolved = re.sub(r"random\(([^,]+),\s*([^)]+)\)",
                               lambda m: str(__import__("random").uniform(float(m.group(1)), float(m.group(2)))),
                               resolved)
-            return eval(resolved, {"__builtins__": {}}, {
-                "abs": abs, "min": min, "max": max, "round": round,
-                "int": int, "float": float, "str": str,
-            })
+            return _eval_formula_safe(resolved)
         except Exception as e:
             logger.warning("Formula eval failed: %s (%s)", formula, e)
             return 0
