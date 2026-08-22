@@ -1,15 +1,6 @@
-# This workflow uses actions that are not certified by GitHub.
-# They are provided by a third-party and are governed by
-# separate terms of service, privacy policy, and support
-# documentation.
-
-# This workflow checks out code, performs a Codacy security scan
-# and integrates the results with the
-# GitHub Advanced Security code scanning feature.  For more information on
-# the Codacy security scan action usage and parameters, see
-# https://github.com/codacy/codacy-analysis-cli-action.
-# For more information on Codacy Analysis CLI in general, see
-# https://github.com/codacy/codacy-analysis-cli.
+# Codacy Security Scan — static analysis with Docker image caching
+# Caches the 25+ Codacy tool Docker images so subsequent runs skip re-pulling
+# them. Cache auto-invalidates when the workflow file changes.
 
 name: Codacy Security Scan
 
@@ -38,16 +29,19 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Cache Docker images downloaded by Codacy CLI to avoid re-pulling 25+ tool images
-      - name: Cache Codacy Docker images
-        id: cache-codacy
-        uses: actions/cache@v4
+      # Restore cached Codacy Docker tool images from a prior run
+      - name: Restore cached Codacy Docker images
+        id: cache-restore
+        uses: actions/cache/restore@v5
         with:
           path: /home/runner/.codacy-cache
-          key: ${{ runner.os }}-codacy-v1
+          key: ${{ runner.os }}-codacy-${{ hashFiles('.github/workflows/codacy.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-codacy-
 
-      - name: Restore cached Docker images
-        if: steps.cache-codacy.outputs.cache-hit == 'true'
+      - name: Load cached Docker images
+        if: steps.cache-restore.outputs.cache-hit == 'true'
+        shell: bash
         run: |
           for f in /home/runner/.codacy-cache/*.tar; do
             [ -f "$f" ] && docker load -i "$f" || true
@@ -62,9 +56,10 @@ jobs:
           format: sarif
           max-allowed-issues: 2147483647
 
-      # Save pulled Docker images to cache so subsequent runs skip the pull
+      # Save pulled Docker images so subsequent runs skip the pull
       - name: Save Docker images to cache
-        if: always() && steps.cache-codacy.outputs.cache-hit != 'true'
+        if: always() && steps.cache-restore.outputs.cache-hit != 'true'
+        shell: bash
         run: |
           mkdir -p /home/runner/.codacy-cache
           docker images --format "{{.Repository}}::{{.Tag}}" | grep -i codacy | while IFS='::' read -r repo tag; do
@@ -72,32 +67,42 @@ jobs:
             docker save "${repo}:${tag}" -o "/home/runner/.codacy-cache/${safe}.tar" || true
           done
 
+      - name: Persist cache for next run
+        if: always() && steps.cache-restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: /home/runner/.codacy-cache
+          key: ${{ runner.os }}-codacy-${{ hashFiles('.github/workflows/codacy.yml') }}
+
       # Merge all SARIF runs into a single run to stay within GitHub's 20-run limit
       - name: Merge SARIF runs
         if: always()
+        shell: python3 {0}
         run: |
-          sudo chmod 666 results.sarif || true
-          python3 -c "
           import json, os
+
           if not os.path.exists('results.sarif'):
               exit(0)
+
           with open('results.sarif') as f:
               data = json.load(f)
+
           runs = data.get('runs', [])
           if not runs:
               exit(0)
+
           all_results = []
           for r in runs:
-              for result in r.get('results', []):
-                  all_results.append(result)
+              all_results.extend(r.get('results', []))
+
           merged = runs[0]
           merged['results'] = all_results
           merged['tool']['driver']['name'] = 'Codacy (all tools)'
           merged['automationDetails'] = {'id': 'codacy/merged/'}
           data['runs'] = [merged]
+
           with open('results.sarif', 'w') as f:
               json.dump(data, f)
-          "
 
       - name: Upload SARIF results to GitHub Code Scanning
         uses: github/codeql-action/upload-sarif@v4

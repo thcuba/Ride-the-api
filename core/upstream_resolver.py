@@ -120,7 +120,7 @@ async def resolve_upstream(
         try:
             loop = asyncio.get_running_loop()
             addrinfo = await asyncio.wait_for(
-                loop.getaddrinfo(hostname, None, type=int), timeout=5.0
+                loop.getaddrinfo(hostname, None, type=0), timeout=5.0
             )
             seen: set[str] = set()
             for family, _, _, _, sockaddr in addrinfo:

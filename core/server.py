@@ -545,178 +545,178 @@ Java.perform(function() {
     return Response(content=script, media_type="application/javascript")
 
 
-    # ═══════════════════════════════════════════════════════════════════════════════
-    # TLS CERTIFICATE MANAGEMENT API
-    # ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
+# TLS CERTIFICATE MANAGEMENT API
+# ═══════════════════════════════════════════════════════════════════════════════
 
 
-    @app.get("/api/tls/certs")
-    async def tls_list_certs():
-        """List all imported and auto-generated certificates."""
-        if not cert_manager:
-            return JSONResponse(status_code=503, content={"error": "Cert manager not ready"})
-        try:
-            imported = cert_manager.list_imported_certs()
-            return {"certs": imported}
-        except Exception as e:
-            return JSONResponse(status_code=500, content={"error": str(e)})
+@app.get("/api/tls/certs")
+async def tls_list_certs():
+    """List all imported and auto-generated certificates."""
+    if not cert_manager:
+        return JSONResponse(status_code=503, content={"error": "Cert manager not ready"})
+    try:
+        imported = cert_manager.list_imported_certs()
+        return {"certs": imported}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-    @app.get("/api/tls/certs/{hostname}")
-    async def tls_get_cert_info(hostname: str):
-        """Get detailed info about a specific certificate."""
-        if not cert_manager:
-            return JSONResponse(status_code=503, content={"error": "Cert manager not ready"})
-        try:
-            info = cert_manager.get_cert_info(hostname)
-            if not info:
-                return JSONResponse(status_code=404, content={"error": f"No certificate found for '{hostname}'"})
-            return {"cert": info}
-        except Exception as e:
-            return JSONResponse(status_code=500, content={"error": str(e)})
+@app.get("/api/tls/certs/{hostname}")
+async def tls_get_cert_info(hostname: str):
+    """Get detailed info about a specific certificate."""
+    if not cert_manager:
+        return JSONResponse(status_code=503, content={"error": "Cert manager not ready"})
+    try:
+        info = cert_manager.get_cert_info(hostname)
+        if not info:
+            return JSONResponse(status_code=404, content={"error": f"No certificate found for '{hostname}'"})
+        return {"cert": info}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-    @app.post("/api/tls/certs/upload")
-    async def tls_upload_cert(
-        hostname: str = Form(...),
-        cert: UploadFile = File(...),
-        key: UploadFile = File(...),
-    ):
-        """Upload a certificate + private key (PEM format) for a specific hostname."""
-        if not cert_manager:
-            return JSONResponse(status_code=503, content={"error": "Cert manager not ready"})
-        try:
-            cert_pem = await cert.read()
-            key_pem = await key.read()
-            cert_manager.import_cert(hostname, cert_pem.decode("utf-8"), key_pem.decode("utf-8"))
-            return {"status": "ok", "hostname": hostname, "message": f"Certificate imported for '{hostname}'"}
-        except Exception as e:
-            return JSONResponse(status_code=400, content={"error": str(e)})
+@app.post("/api/tls/certs/upload")
+async def tls_upload_cert(
+    hostname: str = Form(...),
+    cert: UploadFile = File(...),
+    key: UploadFile = File(...),
+):
+    """Upload a certificate + private key (PEM format) for a specific hostname."""
+    if not cert_manager:
+        return JSONResponse(status_code=503, content={"error": "Cert manager not ready"})
+    try:
+        cert_pem = await cert.read()
+        key_pem = await key.read()
+        cert_manager.import_cert(hostname, cert_pem.decode("utf-8"), key_pem.decode("utf-8"))
+        return {"status": "ok", "hostname": hostname, "message": f"Certificate imported for '{hostname}'"}
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
 
 
-    @app.post("/api/tls/certs/upload-json")
-    async def tls_upload_cert_json(request: Request):
-        """Upload a certificate + private key as JSON (base64-encoded PEM)."""
-        if not cert_manager:
-            return JSONResponse(status_code=503, content={"error": "Cert manager not ready"})
-        try:
-            body = await request.json()
-            hostname = body.get("hostname")
-            cert_b64 = body.get("cert_base64")
-            key_b64 = body.get("key_base64")
-            if not all([hostname, cert_b64, key_b64]):
-                return JSONResponse(
-                    status_code=400,
-                    content={"error": "Missing 'hostname', 'cert_base64', or 'key_base64'"},
-                )
-            cert_pem = base64.b64decode(cert_b64).decode("utf-8")
-            key_pem = base64.b64decode(key_b64).decode("utf-8")
-            cert_manager.import_cert(hostname, cert_pem, key_pem)
-            return {"status": "ok", "hostname": hostname}
-        except Exception as e:
-            return JSONResponse(status_code=400, content={"error": str(e)})
-
-
-    @app.delete("/api/tls/certs/{hostname}")
-    async def tls_delete_cert(hostname: str):
-        """Delete an imported certificate, reverting to auto-generated."""
-        if not cert_manager:
-            return JSONResponse(status_code=503, content={"error": "Cert manager not ready"})
-        try:
-            cert_manager.delete_cert(hostname)
-            return {"status": "ok", "hostname": hostname, "message": f"Certificate deleted for '{hostname}'"}
-        except Exception as e:
-            return JSONResponse(status_code=400, content={"error": str(e)})
-
-
-    @app.post("/api/tls/certs/{hostname}/rotate")
-    async def tls_rotate_cert(hostname: str, request: Request):
-        """Replace an existing certificate without downtime."""
-        if not cert_manager:
-            return JSONResponse(status_code=503, content={"error": "Cert manager not ready"})
-        try:
-            body = await request.json()
-            cert_b64 = body.get("cert_base64")
-            key_b64 = body.get("key_base64")
-            if not all([cert_b64, key_b64]):
-                return JSONResponse(status_code=400, content={"error": "Missing 'cert_base64' or 'key_base64'"})
-            cert_pem = base64.b64decode(cert_b64).decode("utf-8")
-            key_pem = base64.b64decode(key_b64).decode("utf-8")
-            cert_manager.import_cert(hostname, cert_pem, key_pem)
-            return {"status": "ok", "hostname": hostname, "message": f"Certificate rotated for '{hostname}'"}
-        except Exception as e:
-            return JSONResponse(status_code=400, content={"error": str(e)})
-
-
-    @app.post("/api/tls/root-ca/download")
-    async def tls_download_root_ca():
-        """Download the root CA certificate for manual installation on devices."""
-        if not cert_manager:
-            return JSONResponse(status_code=503, content={"error": "Cert manager not ready"})
-        try:
-            ca_pem = cert_manager.ca_cert_pem()
-            return Response(
-                content=ca_pem,
-                media_type="application/x-pem-file",
-                headers={"Content-Disposition": "attachment; filename=ride-the-api-ca.pem"},
+@app.post("/api/tls/certs/upload-json")
+async def tls_upload_cert_json(request: Request):
+    """Upload a certificate + private key as JSON (base64-encoded PEM)."""
+    if not cert_manager:
+        return JSONResponse(status_code=503, content={"error": "Cert manager not ready"})
+    try:
+        body = await request.json()
+        hostname = body.get("hostname")
+        cert_b64 = body.get("cert_base64")
+        key_b64 = body.get("key_base64")
+        if not all([hostname, cert_b64, key_b64]):
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Missing 'hostname', 'cert_base64', or 'key_base64'"},
             )
-        except Exception as e:
-            return JSONResponse(status_code=500, content={"error": str(e)})
+        cert_pem = base64.b64decode(cert_b64).decode("utf-8")
+        key_pem = base64.b64decode(key_b64).decode("utf-8")
+        cert_manager.import_cert(hostname, cert_pem, key_pem)
+        return {"status": "ok", "hostname": hostname}
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
 
 
-    # ═══════════════════════════════════════════════════════════════════════════════
-    # PROTOCOL SERVER MANAGEMENT API
-    # ═══════════════════════════════════════════════════════════════════════════════
+@app.delete("/api/tls/certs/{hostname}")
+async def tls_delete_cert(hostname: str):
+    """Delete an imported certificate, reverting to auto-generated."""
+    if not cert_manager:
+        return JSONResponse(status_code=503, content={"error": "Cert manager not ready"})
+    try:
+        cert_manager.delete_cert(hostname)
+        return {"status": "ok", "hostname": hostname, "message": f"Certificate deleted for '{hostname}'"}
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
 
 
-    @app.get("/api/protocol-servers")
-    async def protocol_servers_status():
-        """List all protocol servers and their status."""
-        from core.protocol_servers import get_protocol_server_manager
-        manager = get_protocol_server_manager()
-        status_list = await manager.get_all_status()
-        return {"servers": status_list}
+@app.post("/api/tls/certs/{hostname}/rotate")
+async def tls_rotate_cert(hostname: str, request: Request):
+    """Replace an existing certificate without downtime."""
+    if not cert_manager:
+        return JSONResponse(status_code=503, content={"error": "Cert manager not ready"})
+    try:
+        body = await request.json()
+        cert_b64 = body.get("cert_base64")
+        key_b64 = body.get("key_base64")
+        if not all([cert_b64, key_b64]):
+            return JSONResponse(status_code=400, content={"error": "Missing 'cert_base64' or 'key_base64'"})
+        cert_pem = base64.b64decode(cert_b64).decode("utf-8")
+        key_pem = base64.b64decode(key_b64).decode("utf-8")
+        cert_manager.import_cert(hostname, cert_pem, key_pem)
+        return {"status": "ok", "hostname": hostname, "message": f"Certificate rotated for '{hostname}'"}
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
 
 
-    @app.post("/api/protocol-servers/{name}/start")
-    async def protocol_server_start(name: str):
-        """Start a specific protocol server."""
-        from core.protocol_servers import get_protocol_server_manager
-        manager = get_protocol_server_manager()
-        success = await manager.start_plugin(name)
-        if not success:
-            plugin = manager.get_plugin(name)
-            if plugin is None:
-                return JSONResponse(status_code=404, content={"error": f"Server '{name}' not found"})
-            return JSONResponse(status_code=500, content={"error": f"Failed to start '{name}'"})
-        return {"status": "ok", "server": name, "running": True}
+@app.post("/api/tls/root-ca/download")
+async def tls_download_root_ca():
+    """Download the root CA certificate for manual installation on devices."""
+    if not cert_manager:
+        return JSONResponse(status_code=503, content={"error": "Cert manager not ready"})
+    try:
+        ca_pem = cert_manager.ca_cert_pem()
+        return Response(
+            content=ca_pem,
+            media_type="application/x-pem-file",
+            headers={"Content-Disposition": "attachment; filename=ride-the-api-ca.pem"},
+        )
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-    @app.post("/api/protocol-servers/{name}/stop")
-    async def protocol_server_stop(name: str):
-        """Stop a specific protocol server."""
-        from core.protocol_servers import get_protocol_server_manager
-        manager = get_protocol_server_manager()
-        success = await manager.stop_plugin(name)
-        if not success:
-            plugin = manager.get_plugin(name)
-            if plugin is None:
-                return JSONResponse(status_code=404, content={"error": f"Server '{name}' not found"})
-            return JSONResponse(status_code=500, content={"error": f"Failed to stop '{name}'"})
-        return {"status": "ok", "server": name, "running": False}
+# ═══════════════════════════════════════════════════════════════════════════════
+# PROTOCOL SERVER MANAGEMENT API
+# ═══════════════════════════════════════════════════════════════════════════════
 
 
-    @app.get("/api/protocol-servers/{name}/config")
-    async def protocol_server_config(name: str):
-        """Get configuration for a specific protocol server."""
-        from core.protocol_servers import get_protocol_server_manager
-        manager = get_protocol_server_manager()
+@app.get("/api/protocol-servers")
+async def protocol_servers_status():
+    """List all protocol servers and their status."""
+    from core.protocol_servers import get_protocol_server_manager
+    manager = get_protocol_server_manager()
+    status_list = await manager.get_all_status()
+    return {"servers": status_list}
+
+
+@app.post("/api/protocol-servers/{name}/start")
+async def protocol_server_start(name: str):
+    """Start a specific protocol server."""
+    from core.protocol_servers import get_protocol_server_manager
+    manager = get_protocol_server_manager()
+    success = await manager.start_plugin(name)
+    if not success:
         plugin = manager.get_plugin(name)
-        if not plugin:
+        if plugin is None:
             return JSONResponse(status_code=404, content={"error": f"Server '{name}' not found"})
-        cfg = plugin.config
-        config_dict = cfg.model_dump() if hasattr(cfg, "model_dump") else vars(cfg)
-        return {"name": name, "config": config_dict}
+        return JSONResponse(status_code=500, content={"error": f"Failed to start '{name}'"})
+    return {"status": "ok", "server": name, "running": True}
+
+
+@app.post("/api/protocol-servers/{name}/stop")
+async def protocol_server_stop(name: str):
+    """Stop a specific protocol server."""
+    from core.protocol_servers import get_protocol_server_manager
+    manager = get_protocol_server_manager()
+    success = await manager.stop_plugin(name)
+    if not success:
+        plugin = manager.get_plugin(name)
+        if plugin is None:
+            return JSONResponse(status_code=404, content={"error": f"Server '{name}' not found"})
+        return JSONResponse(status_code=500, content={"error": f"Failed to stop '{name}'"})
+    return {"status": "ok", "server": name, "running": False}
+
+
+@app.get("/api/protocol-servers/{name}/config")
+async def protocol_server_config(name: str):
+    """Get configuration for a specific protocol server."""
+    from core.protocol_servers import get_protocol_server_manager
+    manager = get_protocol_server_manager()
+    plugin = manager.get_plugin(name)
+    if not plugin:
+        return JSONResponse(status_code=404, content={"error": f"Server '{name}' not found"})
+    cfg = plugin.config
+    config_dict = cfg.model_dump() if hasattr(cfg, "model_dump") else vars(cfg)
+    return {"name": name, "config": config_dict}
 
 
     # ═══════════════════════════════════════════════════════════════════════════════

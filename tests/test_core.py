@@ -1,4 +1,4 @@
-﻿"""
+"""
 Tests for the Local Cloud Replacement Proxy architecture.
 """
 
