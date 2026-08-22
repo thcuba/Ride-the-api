@@ -1,6 +1,5 @@
-# Codacy Security Scan — static analysis with Docker image caching
-# Caches the 25+ Codacy tool Docker images so subsequent runs skip re-pulling
-# them. Cache auto-invalidates when the workflow file changes.
+﻿# Codacy Security Scan — GitHub code scanning integration
+# Official pattern: https://github.com/codacy/codacy-analysis-cli-action
 
 name: Codacy Security Scan
 
@@ -29,80 +28,53 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Restore cached Codacy Docker tool images from a prior run
-      - name: Restore cached Codacy Docker images
-        id: cache-restore
-        uses: actions/cache/restore@v5
-        with:
-          path: /home/runner/.codacy-cache
-          key: ${{ runner.os }}-codacy-${{ hashFiles('.github/workflows/codacy.yml') }}
-          restore-keys: |
-            ${{ runner.os }}-codacy-
-
-      - name: Load cached Docker images
-        if: steps.cache-restore.outputs.cache-hit == 'true'
-        shell: bash
-        run: |
-          for f in /home/runner/.codacy-cache/*.tar; do
-            [ -f "$f" ] && docker load -i "$f" || true
-          done
-
       - name: Run Codacy Analysis CLI
         continue-on-error: true
         uses: codacy/codacy-analysis-cli-action@master
         with:
-          verbose: false
           output: results.sarif
           format: sarif
+          gh-code-scanning-compat: true
+          force-file-permissions: true
           max-allowed-issues: 2147483647
 
-      # Save pulled Docker images so subsequent runs skip the pull
-      - name: Save Docker images to cache
-        if: always() && steps.cache-restore.outputs.cache-hit != 'true'
+      # Codacy creates one SARIF run per tool, but GitHub code scanning limits
+      # uploads to 20 runs per category. Merge all runs into one.
+      - name: Merge SARIF runs into one
+        if: always()
         shell: bash
         run: |
-          mkdir -p /home/runner/.codacy-cache
-          docker images --format "{{.Repository}}::{{.Tag}}" | grep -i codacy | while IFS='::' read -r repo tag; do
-            safe=$(echo "${repo}_${tag}" | tr '/:.' '_')
-            docker save "${repo}:${tag}" -o "/home/runner/.codacy-cache/${safe}.tar" || true
-          done
+          if [ ! -f results.sarif ]; then
+            exit 0
+          fi
+          python3 << 'EOF'
+import json, os, sys
 
-      - name: Persist cache for next run
-        if: always() && steps.cache-restore.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
-        with:
-          path: /home/runner/.codacy-cache
-          key: ${{ runner.os }}-codacy-${{ hashFiles('.github/workflows/codacy.yml') }}
+if not os.path.exists("results.sarif"):
+    sys.exit(0)
 
-      # Merge all SARIF runs into a single run to stay within GitHub's 20-run limit
-      - name: Merge SARIF runs
-        if: always()
-        shell: python3 {0}
-        run: |
-          import json, os
+with open("results.sarif") as f:
+    data = json.load(f)
 
-          if not os.path.exists('results.sarif'):
-              exit(0)
+runs = data.get("runs", [])
+if not runs:
+    sys.exit(0)
 
-          with open('results.sarif') as f:
-              data = json.load(f)
+results = []
+for r in runs:
+    results.extend(r.get("results", []))
 
-          runs = data.get('runs', [])
-          if not runs:
-              exit(0)
+merged = runs[0]
+merged["results"] = results
+merged["tool"]["driver"]["name"] = "Codacy (all tools)"
+merged["automationDetails"] = {"id": "codacy/merged/"}
+data["runs"] = [merged]
 
-          all_results = []
-          for r in runs:
-              all_results.extend(r.get('results', []))
+with open("results.sarif", "w") as f:
+    json.dump(data, f)
 
-          merged = runs[0]
-          merged['results'] = all_results
-          merged['tool']['driver']['name'] = 'Codacy (all tools)'
-          merged['automationDetails'] = {'id': 'codacy/merged/'}
-          data['runs'] = [merged]
-
-          with open('results.sarif', 'w') as f:
-              json.dump(data, f)
+print(f"Merged {len(runs)} runs into 1 ({len(results)} issues)")
+EOF
 
       - name: Upload SARIF results to GitHub Code Scanning
         uses: github/codeql-action/upload-sarif@v4
