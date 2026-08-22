@@ -44,7 +44,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /home/runner/.codacy-cache
-          key: ${{ runner.os }}-codacy-v1
+          key: ${{ runner.os }}-codacy-v2
 
       - name: Restore cached Docker images
         if: steps.cache-codacy.outputs.cache-hit == 'true'
