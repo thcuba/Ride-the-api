@@ -1761,8 +1761,10 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
             # Legacy path: forward via the adapter (may cause DNS loop)
             cloud_response = await adapter.forward_to_cloud(intercepted)
             if cloud_response and cloud_response.success:
-                # Process cloud response for learning
-                resp_body = cloud_response.data if hasattr(cloud_response, "data") else {}
+                # Process cloud response for learning. The payload lives in
+                # `CommandResult.response`, not `.data` — the old code read a
+                # nonexistent attribute, so the device always got an empty body.
+                resp_body = cloud_response.response or {}
                 await orchestrator.handle_response(
                     device_id=device_id,
                     vendor=vendor,
