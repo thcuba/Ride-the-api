@@ -86,18 +86,27 @@ class CoAPServerPlugin(ProtocolServerPlugin):
             except (UnicodeDecodeError, json.JSONDecodeError):
                 body = {"raw": request.payload.hex()}
 
-        intercepted = InterceptedRequest(
-            device_id=(
-                f"coap-{request.remote.sockname[0] if hasattr(request, 'remote') else 'unknown'}"
-            ),
-            timestamp=datetime.now(UTC).timestamp(),
-            protocol=ProtocolType.COAP,
-            method=coap_method,
-            path=f"/{path}",
-            headers={},
-            query_params=dict(request.opt.uri_query or []),
-            body=body,
-        )
+            # aiocoap returns uri_query as a list of full "k=v" strings, so
+            # dict([...]) would raise ValueError (sequence element length).
+            query_params = {}
+            for item in request.opt.uri_query or []:
+                if "=" in item:
+                    k, _, v = item.partition("=")
+                    query_params[k] = v
+                else:
+                    query_params[item] = ""
+            # Could be absent when the request lacks a remote address
+            remote_ip = request.remote.sockname[0] if hasattr(request, "remote") else "unknown"
+            intercepted = InterceptedRequest(
+                device_id=f"coap-{remote_ip}",
+                timestamp=datetime.now(UTC).timestamp(),
+                protocol=ProtocolType.COAP,
+                method=coap_method,
+                path=f"/{path}",
+                headers={},
+                query_params=query_params,
+                body=body,
+            )
 
         try:
             if asyncio.iscoroutinefunction(self.handler):
@@ -111,7 +120,7 @@ class CoAPServerPlugin(ProtocolServerPlugin):
                 response.content_format = ContentFormat.JSON
                 return response
         except Exception:
-            logger.exception("CoAP handler error: %s")
+            logger.exception("CoAP handler error:")
 
         return Message(code=aiocoap.NOT_FOUND)
 

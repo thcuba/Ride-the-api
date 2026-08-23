@@ -91,7 +91,7 @@ class WebSocketServerPlugin(ProtocolServerPlugin):
                     if result and isinstance(result, dict):
                         await websocket.send(json.dumps(result))
                 except Exception:
-                    logger.exception("WebSocket handler error: %s")
+                    logger.exception("WebSocket handler error:")
 
     async def get_status(self) -> dict:
         return {
