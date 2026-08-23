@@ -1049,7 +1049,7 @@ async def export_patterns(device_id: str):
 
     ingester = decipher_ingest.DecipherIngest(db_manager)
     try:
-        async with db_manager.device_session(device_id) as session:
+        async with db_manager.core_session() as session:
             result = await session.execute(
                 select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
             )
@@ -1557,7 +1557,7 @@ async def export_buffer(device_id: str):
 
     manager = buffer_manager.BufferManager(db_manager)
     try:
-        async with db_manager.device_session(device_id) as session:
+        async with db_manager.core_session() as session:
             result = await session.execute(
                 select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
             )
