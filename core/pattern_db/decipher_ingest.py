@@ -66,6 +66,16 @@ class DecipherIngest:
             for pat in patterns:
                 pattern_id = pat.get("pattern_id", f"pat_{uuid4().hex[:8]}")
 
+                # Idempotency guard: skip patterns already present, so a
+                # re-import of the same LLM output does not raise a UNIQUE
+                # constraint violation that would roll back the whole batch.
+                exists = await session.execute(
+                    select(RequestPattern).where(RequestPattern.pattern_id == pattern_id)
+                )
+                if exists.scalar_one_or_none():
+                    logger.warning("Pattern %s already exists, skipping", pattern_id)
+                    continue
+
                 # Create RequestPattern
                 request_pattern = RequestPattern(
                     pattern_id=pattern_id,
@@ -117,14 +127,29 @@ class DecipherIngest:
 
                 count += 1
 
-            # Update stats
+            # Update stats (create the row on first ingest — it is not otherwise
+            # materialized, so `if stats:` alone would leave counters at 0).
             result = await session.execute(
                 select(MatchStats).where(MatchStats.device_id == device_id)
             )
             stats = result.scalar_one_or_none()
-            if stats:
-                stats.patterns_learned = (stats.patterns_learned or 0) + count
-                stats.templates_created = (stats.templates_created or 0) + count
+            if stats is None:
+                stats = MatchStats(
+                    device_id=device_id,
+                    total_requests=0,
+                    local_hits=0,
+                    cloud_misses=0,
+                    errors=0,
+                    match_rate_pct=0.0,
+                    recent_results=[],
+                    patterns_learned=0,
+                    templates_created=0,
+                    buffer_flushes=0,
+                    current_buffer_size_bytes=0,
+                )
+                session.add(stats)
+            stats.patterns_learned = (stats.patterns_learned or 0) + count
+            stats.templates_created = (stats.templates_created or 0) + count
 
         logger.info("Ingested %d patterns for device %s", count, device_id)
         return count
