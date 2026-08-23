@@ -138,6 +138,31 @@ class TestDeviceRegistry:
         resolved = await db_manager.resolve_device_id("10.0.0.99")
         assert resolved is None
 
+    @pytest.mark.asyncio
+    async def test_resolve_device_id_partial_ip_does_not_match(self, db_manager):
+        """A partial IPv4 prefix must NOT resolve to a device storing a longer IP.
+
+        Regression for the old ``JSON.contains`` substring match, where
+        resolving ``192.168.1.1`` matched a device storing ``192.168.1.100`` and
+        routed that traffic to the wrong device DB.
+        """
+        await db_manager.get_or_create_device(
+            device_id="device-002",
+            vendor="shelly",
+            device_type="plug",
+        )
+        async with db_manager.core_session() as session:
+            result = await session.execute(
+                select(DeviceRegistry).where(DeviceRegistry.device_id == "device-002")
+            )
+            dev = result.scalar_one()
+            dev.ip_addresses = ["192.168.1.100"]
+
+        assert await db_manager.resolve_device_id("192.168.1.1") is None
+        assert await db_manager.resolve_device_id("192.168.1.10") is None
+        # And the exact IP still resolves
+        assert await db_manager.resolve_device_id("192.168.1.100") == "device-002"
+
 
 # ---------------------------------------------------------------------------
 #  Device Session (per-device DB)

@@ -447,14 +447,19 @@ class DatabaseManager:
             return None
 
     async def resolve_device_id(self, ip_address: str) -> str | None:
-        """Resolve device_id from an IP address (reverse lookup)."""
+        """Resolve device_id from an IP address (reverse lookup).
+
+        Matches exact IPv4 membership in the per-device ``ip_addresses`` list.
+        ``JSON.contains`` is a substring test (``LIKE '%ip%'``) — a partial
+        IPv4 like ``192.168.1.1`` matched a device storing ``192.168.1.100`` and
+        routed its traffic to the wrong device DB. Load candidate rows and test
+        exact membership in Python for portable SQLite/Postgres behaviour.
+        """
         async with await self.get_core_session() as session:
-            result = await session.execute(
-                select(DeviceRegistry).where(DeviceRegistry.ip_addresses.contains(ip_address))
-            )
-            device = result.scalar_one_or_none()
-            if device:
-                return device.device_id
+            result = await session.execute(select(DeviceRegistry))
+            for device in result.scalars().all():
+                if ip_address in (device.ip_addresses or []):
+                    return device.device_id
             return None
 
     async def assign_device_database(
