@@ -380,18 +380,16 @@ class CertManager:
     def _ext_dir(self, hostname: str) -> Path:
         """Get path to external cert directory for hostname.
 
-        Path is confined to the base external-certs directory. Even though
-        ``_safe_filename`` strips path separators, an explicit containment
-        guard is applied so a malformed hostname can never produce a path
-        outside the base (defence in depth against traversal, incl. abs-path
-        and ``..`` escape).
+        The hostname is validated by ``_validate_hostname`` and the returned
+        (already-sanitized) value is what is joined into the path. The join is
+        then resolved and confined to the base directory as a second guard.
         """
         base = getattr(self, "external_certs_dir", None)
         if base is None:
             base = Path("./data/external_certs")
         base = Path(base).resolve()
-        self._validate_hostname(hostname)
-        ext = (base / self._safe_filename(hostname)).resolve()
+        safe = self._safe_filename(self._validate_hostname(hostname))
+        ext = (base / safe).resolve()
         if base != ext and base not in ext.parents:
             raise ValueError(f"Unsafe hostname path: {hostname!r}")
         return ext
@@ -416,8 +414,7 @@ class CertManager:
     def _device_cert_files(self, hostname: str) -> tuple[Path, Path]:
         """Return (cert, key) paths under the device certs dir for hostname."""
         base = self.device_certs_dir.resolve()
-        self._validate_hostname(hostname)
-        safe = self._safe_filename(hostname)
+        safe = self._safe_filename(self._validate_hostname(hostname))
         cert = (base / f"{safe}.pem").resolve()
         key = (base / f"{safe}.key").resolve()
         for p in (cert, key):
