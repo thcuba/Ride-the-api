@@ -175,6 +175,27 @@ class TestTrafficSelector:
         assert updated.priority == 5  # noqa: PLR2004
         assert selector.update_rule("nonexistent", priority=1) is False
 
+    def test_update_rule_recompiles_hostname_pattern(self):
+        """Editing match_value must recompile the cached regex (not stay stale)."""
+        selector = TrafficSelector()
+        rule = TrafficRule(
+            name="host",
+            scope=TrafficScope.EXTERNAL,
+            match_type=MatchType.HOSTNAME,
+            match_value="*.example.com",
+            action=TrafficAction.INTERCEPT,
+        )
+        selector.add_rule(rule)
+        old = TrafficRequestInfo(client_ip="8.8.8.8", hostname="www.example.com")
+        assert rule.matches(old) is True
+
+        # Change the match pattern; the compiled regex must follow.
+        selector.update_rule("host", match_value="*.other.com")
+        new = TrafficRequestInfo(client_ip="8.8.8.8", hostname="www.other.com")
+        old2 = TrafficRequestInfo(client_ip="8.8.8.8", hostname="www.example.com")
+        assert rule.matches(new) is True
+        assert rule.matches(old2) is False
+
     def test_priority_ordering(self):
         selector = TrafficSelector()
         low = TrafficRule(
