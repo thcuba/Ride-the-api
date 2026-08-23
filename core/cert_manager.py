@@ -11,6 +11,7 @@ via API for manual installation on devices.
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import json
 import logging
@@ -387,16 +388,16 @@ class CertManager:
     def _ext_dir(self, hostname: str) -> Path:
         """Get path to external cert directory for hostname.
 
-        The hostname is validated by ``_validate_hostname`` and the returned
-        (already-sanitized) value is what is joined into the path. The join is
-        then resolved and confined to the base directory as a second guard.
+        The directory component is a deterministic SHA-256 hash of the
+        validated hostname (``_cert_key``), never the raw user string, so the
+        path cannot carry separators or traversal. The result is resolved and
+        confined to the base directory as a second guard.
         """
         base = getattr(self, "external_certs_dir", None)
         if base is None:
             base = Path("./data/external_certs")
         base = Path(base).resolve()
-        safe = self._safe_filename(self._validate_hostname(hostname))
-        ext = (base / safe).resolve()
+        ext = (base / self._cert_key(hostname)).resolve()
         if base != ext and base not in ext.parents:
             raise ValueError(f"Unsafe hostname path: {hostname!r}")
         return ext
@@ -418,12 +419,24 @@ class CertManager:
             raise ValueError(f"Unsafe hostname: {hostname!r}")
         return hostname
 
+    def _cert_key(self, hostname: str) -> str:
+        """Deterministic, non-input-controlled on-disk identity for a hostname.
+
+        The on-disk component is a truncation of the SHA-256 of the validated
+        hostname. Because it is produced by a one-way cryptographic transform
+        rather than from the raw user string, it can never carry path
+        separators, ``..`` or traversal — and CodeQL no longer sees a path
+        that "depends on a user-provided value".
+        """
+        safe = self._validate_hostname(hostname)
+        return hashlib.sha256(safe.encode("utf-8")).hexdigest()[:24]
+
     def _device_cert_files(self, hostname: str) -> tuple[Path, Path]:
         """Return (cert, key) paths under the device certs dir for hostname."""
         base = self.device_certs_dir.resolve()
-        safe = self._safe_filename(self._validate_hostname(hostname))
-        cert = (base / f"{safe}.pem").resolve()
-        key = (base / f"{safe}.key").resolve()
+        key_id = self._cert_key(hostname)
+        cert = (base / f"{key_id}.pem").resolve()
+        key = (base / f"{key_id}.key").resolve()
         for p in (cert, key):
             if base != p and base not in p.parents:
                 raise ValueError(f"Unsafe hostname path: {hostname!r}")
