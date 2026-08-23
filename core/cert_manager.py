@@ -155,6 +155,7 @@ class CertManager:
 
     def get_cert_for_hostname(self, hostname: str) -> tuple[str, str]:
         """Get (cert_pem, key_pem) for a hostname, generating + caching if needed."""
+        self._validate_hostname(hostname)
         # Check in-memory cache
         if hostname in self._cache:
             return self._cache[hostname]
@@ -300,6 +301,7 @@ class CertManager:
         Stores in data/external_certs/{hostname}/ and adds metadata.
         Once imported, get_cert_for_hostname() will return the external cert.
         """
+        self._validate_hostname(hostname)
         ext_dir = self._ext_dir(hostname)
         ext_dir.mkdir(parents=True, exist_ok=True)
 
@@ -340,6 +342,7 @@ class CertManager:
 
     def delete_cert(self, hostname: str) -> bool:
         """Delete an imported external certificate. Falls back to auto-generated."""
+        self._validate_hostname(hostname)
         ext_dir = self._ext_dir(hostname)
         if not ext_dir.exists():
             return False
@@ -358,6 +361,7 @@ class CertManager:
 
     def get_cert_info(self, hostname: str) -> dict | None:
         """Get metadata for a specific external certificate."""
+        self._validate_hostname(hostname)
         meta_path = self._ext_dir(hostname) / "meta.json"
         if meta_path.exists():
             try:
@@ -369,6 +373,7 @@ class CertManager:
 
     def has_external_cert(self, hostname: str) -> bool:
         """Check if an external certificate exists for hostname."""
+        self._validate_hostname(hostname)
         return (self._ext_dir(hostname) / "cert.pem").exists()
 
     def _ext_dir(self, hostname: str) -> Path:
