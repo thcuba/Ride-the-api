@@ -7,8 +7,11 @@ from __future__ import annotations
 
 import contextlib
 import logging
-from collections.abc import AsyncGenerator
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
 
 from sqlalchemy import (
     JSON,
@@ -29,6 +32,8 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.pool import NullPool
 
+from core.config import get_config
+
 logger = logging.getLogger(__name__)
 
 
@@ -36,8 +41,10 @@ logger = logging.getLogger(__name__)
 # BASE CLASSES
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class Base(DeclarativeBase):
     """Base class for all models."""
+
     pass
 
 
@@ -45,13 +52,17 @@ class Base(DeclarativeBase):
 # CORE DATABASE MODELS (shared across all devices)
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class DeviceRegistry(Base):
     """Core device registry - maps device_id to its protocol DB."""
+
     __tablename__ = "device_registry"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     device_id: Mapped[str] = mapped_column(String(128), unique=True, index=True, nullable=False)
-    vendor: Mapped[str] = mapped_column(String(32), index=True, nullable=False)  # protocol identifier
+    vendor: Mapped[str] = mapped_column(
+        String(32), index=True, nullable=False
+    )  # protocol identifier
     device_type: Mapped[str] = mapped_column(String(64), nullable=False)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     location: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -66,7 +77,9 @@ class DeviceRegistry(Base):
     database_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     # Learning / Production / Hybrid mode
-    mode: Mapped[str] = mapped_column(String(16), default="learning", nullable=False)  # learning | production | hybrid
+    mode: Mapped[str] = mapped_column(
+        String(16), default="learning", nullable=False
+    )  # learning | production | hybrid
 
     # Match threshold for production mode
     match_threshold: Mapped[float] = mapped_column(Float, default=0.85, nullable=False)
@@ -83,7 +96,9 @@ class DeviceRegistry(Base):
     extra_attributes: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
 
     # Context buffer configuration
-    context_buffer_size: Mapped[int] = mapped_column(Integer, default=524288, nullable=False)  # 512KB default
+    context_buffer_size: Mapped[int] = mapped_column(
+        Integer, default=524288, nullable=False
+    )  # 512KB default
 
     # User-defined context notes for LLM analysis (injected as {context_notes})
     llm_context_notes: Mapped[str | None] = mapped_column(String(4096), nullable=True)
@@ -91,11 +106,14 @@ class DeviceRegistry(Base):
     status: Mapped[str] = mapped_column(String(32), default="online", nullable=False)
     last_seen: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    updated_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
 
 class ModelRegistry(Base):
     """Core model registry - tracks models per device."""
+
     __tablename__ = "model_registry"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -111,9 +129,9 @@ class ModelRegistry(Base):
     is_default: Mapped[bool] = mapped_column(default=False, nullable=False)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-
     class LLMProfile(Base):
         """User-saved LLM decipher profiles/templates."""
+
         __tablename__ = "llm_profiles"
 
         id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -125,16 +143,23 @@ class ModelRegistry(Base):
         prompt_template: Mapped[str] = mapped_column(String(16384), nullable=False)
         enabled: Mapped[bool] = mapped_column(default=True, nullable=False)
         is_default: Mapped[bool] = mapped_column(default=False, nullable=False)
-        created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-        updated_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-
+        created_at: Mapped[DateTime] = mapped_column(
+            DateTime(timezone=True), server_default=func.now()
+        )
+        updated_at: Mapped[DateTime] = mapped_column(
+            DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+        )
 
     # ═══════════════════════════════════════════════════════════════════════════════
     # DEVICE-SPECIFIC DATABASE MODELS (each device gets its own DB with these tables)
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class RequestPattern(Base):
     """Learned request pattern for matching incoming requests."""
+
     __tablename__ = "request_patterns"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -165,11 +190,14 @@ class RequestPattern(Base):
     last_matched: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    updated_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
 
 class ResponseTemplate(Base):
     """Learned response template for local response building."""
+
     __tablename__ = "response_templates"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -197,11 +225,14 @@ class ResponseTemplate(Base):
     last_used: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    updated_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
 
 class FieldMapping(Base):
     """LLM-decoded field mapping between request and response."""
+
     __tablename__ = "field_mappings"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -232,6 +263,7 @@ class FieldMapping(Base):
 
 class LLMContextBuffer(Base):
     """Sliding-window context buffer for LLM batch analysis."""
+
     __tablename__ = "llm_context_buffer"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -250,12 +282,15 @@ class LLMContextBuffer(Base):
     flushed: Mapped[bool] = mapped_column(default=False, nullable=False)
 
     # Timestamps
-    captured_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    captured_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
     flushed_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class SessionCache(Base):
     """Temporary correlation cache - cleared after each learning cycle flush."""
+
     __tablename__ = "session_cache"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -289,6 +324,7 @@ class SessionCache(Base):
 
 class MatchStats(Base):
     """Real-time match statistics per device."""
+
     __tablename__ = "match_stats"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -313,19 +349,22 @@ class MatchStats(Base):
     current_buffer_size_bytes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     last_flush_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    updated_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    updated_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
 
 class InterceptedRequest(Base):
     """Raw intercepted request/response pair for audit / training data."""
+
     __tablename__ = "intercepted_requests"
-    __table_args__ = (
-        Index("ix_intercepted_device_ts", "device_id", "captured_at"),
-    )
+    __table_args__ = (Index("ix_intercepted_device_ts", "device_id", "captured_at"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     device_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
-    captured_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    captured_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
 
     method: Mapped[str] = mapped_column(String(16), nullable=False)
     path: Mapped[str] = mapped_column(String(512), nullable=False)
@@ -347,6 +386,7 @@ class InterceptedRequest(Base):
 # DATABASE MANAGER
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class DatabaseManager:
     """Manages core DB + per-device DBs."""
 
@@ -356,7 +396,7 @@ class DatabaseManager:
         device_db_dir: Path,
         device_db_urls: dict[str, str] | None = None,
         echo: bool = False,
-    ):
+    ) -> None:
         self.core_db_url = core_db_url
         self.device_db_dir = Path(device_db_dir)
         self.device_db_dir.mkdir(parents=True, exist_ok=True)
@@ -371,10 +411,14 @@ class DatabaseManager:
     async def initialize(self) -> None:
         """Initialize all databases."""
         self._core_engine = create_async_engine(
-            self.core_db_url, echo=self.echo, poolclass=NullPool,
+            self.core_db_url,
+            echo=self.echo,
+            poolclass=NullPool,
         )
         self._core_session_factory = async_sessionmaker(
-            self._core_engine, class_=AsyncSession, expire_on_commit=False,
+            self._core_engine,
+            class_=AsyncSession,
+            expire_on_commit=False,
         )
         async with self._core_engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
@@ -384,10 +428,10 @@ class DatabaseManager:
     def _is_ip(value: str) -> bool:
         """Check if a string looks like an IPv4 address."""
         parts = value.split(".")
-        if len(parts) != 4:
+        if len(parts) != 4:  # noqa: PLR2004
             return False
         try:
-            return all(0 <= int(p) <= 255 for p in parts)
+            return all(0 <= int(p) <= 255 for p in parts)  # noqa: PLR2004
         except ValueError:
             return False
 
@@ -406,9 +450,7 @@ class DatabaseManager:
         """Resolve device_id from an IP address (reverse lookup)."""
         async with await self.get_core_session() as session:
             result = await session.execute(
-                select(DeviceRegistry).where(
-                    DeviceRegistry.ip_addresses.contains(ip_address)
-                )
+                select(DeviceRegistry).where(DeviceRegistry.ip_addresses.contains(ip_address))
             )
             device = result.scalar_one_or_none()
             if device:
@@ -416,7 +458,9 @@ class DatabaseManager:
             return None
 
     async def assign_device_database(
-        self, device_id: str, database_url: str | None = None,
+        self,
+        device_id: str,
+        database_url: str | None = None,
         database_name: str | None = None,
     ) -> bool:
         """Assign a specific database URL or name to a device."""
@@ -451,11 +495,13 @@ class DatabaseManager:
             if not db_url:
                 db_path = self.device_db_dir / f"{device_id}.db"
                 db_url = f"sqlite+aiosqlite:///{db_path}"
-            databases.append({
-                "device_id": device_id,
-                "database_url": db_url,
-                "is_active": True,
-            })
+            databases.append(
+                {
+                    "device_id": device_id,
+                    "database_url": db_url,
+                    "is_active": True,
+                }
+            )
         return databases
 
     async def get_device_engine(self, device_id: str) -> AsyncEngine:
@@ -486,10 +532,13 @@ class DatabaseManager:
             await conn.run_sync(Base.metadata.create_all)
         self._device_engines[device_id] = engine
         self._device_sessions[device_id] = async_sessionmaker(
-            engine, class_=AsyncSession, expire_on_commit=False,
+            engine,
+            class_=AsyncSession,
+            expire_on_commit=False,
         )
         logger.info(f"Device database '{device_id}' initialized at {db_url}")
         return engine
+
     async def get_device_session(self, device_id: str) -> AsyncSession:
         """Get an async session for a device database."""
         await self.get_device_engine(device_id)
@@ -501,8 +550,9 @@ class DatabaseManager:
             raise RuntimeError("Core database not initialized")
         return self._core_session_factory()
 
-    async def get_or_create_device(self, device_id: str, vendor: str,
-                                    device_type: str = "unknown", name: str = "") -> None:
+    async def get_or_create_device(
+        self, device_id: str, vendor: str, device_type: str = "unknown", name: str = ""
+    ) -> None:
         """Ensure a device exists in the registry and create its DB."""
         async with await self.get_core_session() as session:
             result = await session.execute(
@@ -511,7 +561,6 @@ class DatabaseManager:
             device = result.scalar_one_or_none()
             if not device:
                 # Inherit global learning defaults into the per-device config
-                from core.config import get_config
                 try:
                     learning = get_config().learning
                     device_config = {
@@ -520,8 +569,10 @@ class DatabaseManager:
                 except Exception:
                     device_config = {}
                 device = DeviceRegistry(
-                    device_id=device_id, vendor=vendor,
-                    device_type=device_type, name=name or device_id,
+                    device_id=device_id,
+                    vendor=vendor,
+                    device_type=device_type,
+                    name=name or device_id,
                     mode="learning",
                     config=device_config,
                 )
@@ -564,18 +615,21 @@ class DatabaseManager:
             )
             return [
                 {
-                    "device_id": d.device_id, "vendor": d.vendor,
-                    "device_type": d.device_type, "name": d.name,
-                    "mode": d.mode, "match_threshold": d.match_threshold,
+                    "device_id": d.device_id,
+                    "vendor": d.vendor,
+                    "device_type": d.device_type,
+                    "name": d.name,
+                    "mode": d.mode,
+                    "match_threshold": d.match_threshold,
                     "status": d.status,
                     "last_seen": d.last_seen.isoformat() if d.last_seen else None,
                     "context_buffer_size": d.context_buffer_size,
                     "llm_model_id": d.llm_model_id,
                     "llm_base_url": d.llm_base_url,
-                                    "llm_profile_name": d.llm_profile_name,
-                                    "llm_context_notes": d.llm_context_notes,
-                                    "auto_switch_enabled": d.auto_switch_enabled,
-                                }
+                    "llm_profile_name": d.llm_profile_name,
+                    "llm_context_notes": d.llm_context_notes,
+                    "auto_switch_enabled": d.auto_switch_enabled,
+                }
                 for d in result.scalars().all()
             ]
 
@@ -593,9 +647,13 @@ class DatabaseManager:
             logger.info(f"Device {device_id} switched to {mode} mode")
             return True
 
-    async def update_device_llm_config(self, device_id: str, base_url: str | None = None,
-                                        model_id: str | None = None,
-                                        profile_name: str | None = None) -> bool:
+    async def update_device_llm_config(
+        self,
+        device_id: str,
+        base_url: str | None = None,
+        model_id: str | None = None,
+        profile_name: str | None = None,
+    ) -> bool:
         """Update LLM configuration for a device."""
         async with await self.get_core_session() as session:
             result = await session.execute(
@@ -627,7 +685,7 @@ class DatabaseManager:
             logger.info(f"Device {device_id} auto-switch {'enabled' if enabled else 'disabled'}")
             return True
 
-# ── Context notes ────────────────────────────────────────────────────────
+    # ── Context notes ────────────────────────────────────────────────────────
 
     async def update_device_context_notes(self, device_id: str, notes: str) -> bool:
         """Update custom context notes for a device (injected as {context_notes})."""
@@ -700,7 +758,9 @@ class DatabaseManager:
         """Create a new LLM profile."""
         async with await self.get_core_session() as session:
             existing = await session.execute(
-                select(ModelRegistry.LLMProfile).where(ModelRegistry.LLMProfile.name == data["name"])
+                select(ModelRegistry.LLMProfile).where(
+                    ModelRegistry.LLMProfile.name == data["name"]
+                )
             )
             if existing.scalar_one_or_none():
                 return False
@@ -772,16 +832,18 @@ _db_manager: DatabaseManager | None = None
 
 def get_db_manager() -> DatabaseManager:
     """Get or create global database manager instance."""
-    global _db_manager
     if _db_manager is None:
         raise RuntimeError("DatabaseManager not initialized. Call init_db_manager first.")
     return _db_manager
 
 
-def init_db_manager(core_db_url: str, device_db_dir: Path,
-                    device_db_urls: dict[str, str] | None = None,
-                    echo: bool = False) -> DatabaseManager:
+def init_db_manager(
+    core_db_url: str,
+    device_db_dir: Path,
+    device_db_urls: dict[str, str] | None = None,
+    echo: bool = False,
+) -> DatabaseManager:
     """Initialize the global database manager."""
-    global _db_manager
+    global _db_manager  # noqa: PLW0603
     _db_manager = DatabaseManager(core_db_url, device_db_dir, device_db_urls, echo)
     return _db_manager

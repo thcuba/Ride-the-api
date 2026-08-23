@@ -18,14 +18,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import struct
-from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 try:
     from pymodbus.datastore import ModbusServerContext, ModbusSlaveContext
-    from pymodbus.device import ModbusDeviceIdentification
-    from pymodbus.server import StartAsyncTcpServer
+
     HAS_PYMODBUS = True
 except ImportError:
     HAS_PYMODBUS = False
@@ -51,7 +52,7 @@ class ModbusServerPlugin(ProtocolServerPlugin):
 
     name = "modbus"
 
-    def __init__(self, config: Any, handler: Callable | None = None):
+    def __init__(self, config: Any, handler: Callable | None = None) -> None:  # noqa: ANN401
         super().__init__(config)
         self.handler = handler
         self._context: ModbusServerContext | None = None
@@ -69,7 +70,8 @@ class ModbusServerPlugin(ProtocolServerPlugin):
         # Initialize default register store
         store = ModbusSlaveContext(
             zero_mode=True,
-            di=None, do=None,  # discrete inputs/outputs
+            di=None,
+            do=None,  # discrete inputs/outputs
             ir=struct.pack(">HHHHHHHH", 0, 0, 0, 0, 0, 0, 0, 0),  # input registers
             hr=struct.pack(">HHHHHHHH", 0, 0, 0, 0, 0, 0, 0, 0),  # holding registers
         )
@@ -82,14 +84,20 @@ class ModbusServerPlugin(ProtocolServerPlugin):
         await super().stop()
         logger.info("Modbus server stopped")
 
-    async def handle_modbus_request(self, device_id: str, function_code: int,
-                                     address: int, values: list[int] | None = None) -> dict | None:
+    async def handle_modbus_request(
+        self, device_id: str, function_code: int, address: int, values: list[int] | None = None
+    ) -> dict | None:
         """Convert Modbus request to pipeline command."""
         if not self.handler:
             return None
 
         cmd_type = CommandType.UNKNOWN
-        if function_code in (READ_HOLDING_REGISTERS, READ_INPUT_REGISTERS, READ_COILS, READ_DISCRETE_INPUTS):
+        if function_code in (
+            READ_HOLDING_REGISTERS,
+            READ_INPUT_REGISTERS,
+            READ_COILS,
+            READ_DISCRETE_INPUTS,
+        ):
             cmd_type = CommandType.GET_STATE
         elif function_code in (WRITE_SINGLE_REGISTER, WRITE_MULTIPLE_REGISTERS):
             cmd_type = CommandType.UNKNOWN  # Will be mapped by adapter
@@ -111,8 +119,8 @@ class ModbusServerPlugin(ProtocolServerPlugin):
             if asyncio.iscoroutinefunction(self.handler):
                 return await self.handler(request)
             return self.handler(request)
-        except Exception as e:
-            logger.error("Modbus handler error: %s", e)
+        except Exception:
+            logger.exception("Modbus handler error: %s")
             return None
 
     async def get_status(self) -> dict:

@@ -10,6 +10,8 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import select
 
+from adapters.base import InterceptedRequest, ProtocolType
+from adapters.example import ExampleProtocolAdapter
 from core.database import (
     DatabaseManager,
     DeviceRegistry,
@@ -25,16 +27,24 @@ from core.pipeline import (
     MatchResult,
     PatternMatcher,
 )
+from core.resilience import (
+    AUTO_SWITCH_MATCH_RATE,
+    MIN_PATTERNS_FOR_SWITCH,
+    MIN_TOTAL_REQUESTS,
+    ROLLBACK_MATCH_RATE,
+    CloudIndependenceVerifier,
+)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # FIXTURES
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 @pytest_asyncio.fixture
 async def db_manager():
     """Create a test database manager with temporary SQLite databases."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmpdir = Path(tmpdir)
+    with tempfile.TemporaryDirectory() as raw_tmpdir:
+        tmpdir = Path(raw_tmpdir)
         core_db = f"sqlite+aiosqlite:///{tmpdir}/core.db"
         device_db_dir = tmpdir / "devices"
 
@@ -53,9 +63,7 @@ async def db_manager():
 @pytest_asyncio.fixture
 async def device_db(db_manager):
     """Get a device database session with a registered device."""
-    await db_manager.get_or_create_device(
-        "test_device_001", "example", "ac", "Test AC"
-    )
+    await db_manager.get_or_create_device("test_device_001", "example", "ac", "Test AC")
     return db_manager
 
 
@@ -139,6 +147,7 @@ async def sample_patterns(device_db):
 # ═══════════════════════════════════════════════════════════════════════════════
 # DATABASE TESTS
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class TestCoreDatabase:
     """Test core database operations."""
@@ -225,7 +234,7 @@ class TestCoreDatabase:
         await db_manager.get_or_create_device("list_dev_1", "example", "ac", "Device 1")
         await db_manager.get_or_create_device("list_dev_2", "example", "heat_pump", "Device 2")
         devices = await db_manager.list_devices()
-        assert len(devices) == 2
+        assert len(devices) == 2  # noqa: PLR2004
         assert any(d["device_id"] == "list_dev_1" for d in devices)
         assert any(d["device_id"] == "list_dev_2" for d in devices)
 
@@ -251,6 +260,7 @@ class TestCoreDatabase:
 # ═══════════════════════════════════════════════════════════════════════════════
 # PIPELINE TESTS
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class TestContextBuffer:
     """Test context buffer operations."""
@@ -284,10 +294,13 @@ class TestContextBuffer:
         assert len(pairs) == 0
 
 
+_MATCH_FLOOR = 0.8
+
+
 class TestPatternMatcher:
     """Test pattern matching engine."""
 
-    async def test_find_best_match(self, db_manager, sample_patterns):
+    async def test_find_best_match(self, db_manager, sample_patterns):  # noqa: ARG002
         """Test finding best matching pattern."""
         matcher = PatternMatcher(db_manager)
         pattern, template, score = await matcher.find_best_match(
@@ -301,9 +314,9 @@ class TestPatternMatcher:
 
         assert pattern is not None
         assert template is not None
-        assert score >= 0.8
+        assert score >= _MATCH_FLOOR
 
-    async def test_no_match(self, db_manager, sample_patterns):
+    async def test_no_match(self, db_manager, sample_patterns):  # noqa: ARG002
         """Test no match for different request."""
         matcher = PatternMatcher(db_manager)
         pattern, template, score = await matcher.find_best_match(
@@ -317,9 +330,9 @@ class TestPatternMatcher:
 
         # Should find some match but with lower score
         assert pattern is not None
-        assert score < 0.8
+        assert score < _MATCH_FLOOR
 
-    async def test_build_local_response(self, db_manager, sample_patterns):
+    async def test_build_local_response(self, db_manager, sample_patterns):  # noqa: ARG002
         """Test building local response from template."""
         matcher = PatternMatcher(db_manager)
         pattern, template, _ = await matcher.find_best_match(
@@ -334,10 +347,13 @@ class TestPatternMatcher:
         response = await matcher.build_local_response(
             "test_device_001",
             template,
-            {"body": {"commands": [{"code": "temp_set", "value": 240}], "headers": {}}, "query_params": {}},
+            {
+                "body": {"commands": [{"code": "temp_set", "value": 240}], "headers": {}},
+                "query_params": {},
+            },
         )
 
-        assert response["status_code"] == 200
+        assert response["status_code"] == 200  # noqa: PLR2004
         assert "body" in response
 
 
@@ -356,10 +372,10 @@ class TestMatchRateTracker:
             await tracker.record_result("tracker_test", MatchResult.CLOUD_MISS)
 
         stats = await tracker.get_stats("tracker_test")
-        assert stats["total_requests"] == 10
-        assert stats["local_hits"] == 7
-        assert stats["cloud_misses"] == 3
-        assert stats["match_rate_pct"] == 70.0
+        assert stats["total_requests"] == 10  # noqa: PLR2004
+        assert stats["local_hits"] == 7  # noqa: PLR2004
+        assert stats["cloud_misses"] == 3  # noqa: PLR2004
+        assert stats["match_rate_pct"] == 70.0  # noqa: PLR2004
 
     async def test_empty_stats(self, db_manager):
         """Test stats for device with no requests."""
@@ -374,18 +390,18 @@ class TestMatchRateTracker:
 # PROTOCOL ADAPTER TESTS
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class TestProtocolAdapter:
     """Test protocol adapter functionality (from adapters/example)."""
 
     @pytest.fixture
     def example_adapter(self):
-        from adapters.example import ExampleProtocolAdapter
         return ExampleProtocolAdapter("example", {"region": "eu", "api_version": "v1.0"})
 
     def test_supported_protocols(self, example_adapter):
         """Test supported protocols."""
         protocols = example_adapter.supported_protocols
-        from adapters.base import ProtocolType
+
         assert ProtocolType.MQTT in protocols
         assert ProtocolType.HTTPS in protocols
 
@@ -405,9 +421,6 @@ class TestProtocolAdapter:
     @pytest.mark.asyncio
     async def test_parse_mqtt_request(self, example_adapter):
         """Test parsing MQTT request."""
-        from datetime import datetime
-
-        from adapters.base import InterceptedRequest, ProtocolType
         request = InterceptedRequest(
             device_id="",
             timestamp=datetime.now(UTC),
@@ -418,14 +431,11 @@ class TestProtocolAdapter:
         parsed = await example_adapter.parse_request(request)
         assert parsed.device_id == "device_123"
         assert parsed.parsed_params.get("power") is True
-        assert parsed.parsed_params.get("temp_set") == 240
+        assert parsed.parsed_params.get("temp_set") == 240  # noqa: PLR2004
 
     @pytest.mark.asyncio
     async def test_parse_http_request(self, example_adapter):
         """Test parsing HTTP request."""
-        from datetime import datetime
-
-        from adapters.base import InterceptedRequest, ProtocolType
         request = InterceptedRequest(
             device_id="",
             timestamp=datetime.now(UTC),
@@ -442,6 +452,7 @@ class TestProtocolAdapter:
 # ═══════════════════════════════════════════════════════════════════════════════
 # RESILIENCE / AUTO-SWITCH TESTS
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 @pytest.mark.asyncio
 async def test_auto_switch_disabled_by_default(db_manager):
@@ -479,22 +490,16 @@ async def test_update_device_auto_switch_not_found(db_manager):
 @pytest.mark.asyncio
 async def test_auto_switch_threshold_constants():
     """Verify the auto-switch thresholds are set correctly."""
-    from core.resilience import (
-        AUTO_SWITCH_MATCH_RATE,
-        MIN_PATTERNS_FOR_SWITCH,
-        MIN_TOTAL_REQUESTS,
-        ROLLBACK_MATCH_RATE,
-    )
-    assert AUTO_SWITCH_MATCH_RATE == 99.0
-    assert ROLLBACK_MATCH_RATE == 90.0
-    assert MIN_TOTAL_REQUESTS >= 50
-    assert MIN_PATTERNS_FOR_SWITCH >= 10
+    assert AUTO_SWITCH_MATCH_RATE == 99.0  # noqa: PLR2004
+    assert ROLLBACK_MATCH_RATE == 90.0  # noqa: PLR2004
+    assert MIN_TOTAL_REQUESTS >= 50  # noqa: PLR2004
+    assert MIN_PATTERNS_FOR_SWITCH >= 10  # noqa: PLR2004
 
 
 @pytest.mark.asyncio
 async def test_auto_switch_to_production_disabled(device_db, sample_patterns):
     """Auto-switch should not happen when auto_switch_enabled is False."""
-    from core.resilience import CloudIndependenceVerifier
+
     verifier = CloudIndependenceVerifier(device_db)
     result = await verifier.auto_switch_to_production(sample_patterns)
     assert result is False  # auto_switch_enabled is False by default
@@ -503,7 +508,7 @@ async def test_auto_switch_to_production_disabled(device_db, sample_patterns):
 @pytest.mark.asyncio
 async def test_auto_switch_to_production_enabled_but_low_match(device_db, sample_patterns):
     """Auto-switch should not happen when match rate is below 99%."""
-    from core.resilience import CloudIndependenceVerifier
+
     await device_db.update_device_auto_switch(sample_patterns, True)
     verifier = CloudIndependenceVerifier(device_db)
     result = await verifier.auto_switch_to_production(sample_patterns)
@@ -513,7 +518,7 @@ async def test_auto_switch_to_production_enabled_but_low_match(device_db, sample
 @pytest.mark.asyncio
 async def test_cloud_independence_verifier_returns_auto_switch_field(device_db, sample_patterns):
     """Check_cloud_independence should return auto_switch_enabled field."""
-    from core.resilience import CloudIndependenceVerifier
+
     verifier = CloudIndependenceVerifier(device_db)
     status = await verifier.check_cloud_independence(sample_patterns)
     assert "auto_switch_enabled" in status
@@ -523,7 +528,7 @@ async def test_cloud_independence_verifier_returns_auto_switch_field(device_db, 
 @pytest.mark.asyncio
 async def test_should_rollback_not_production(device_db, sample_patterns):
     """Rollback should not trigger for devices not in production mode."""
-    from core.resilience import CloudIndependenceVerifier
+
     verifier = CloudIndependenceVerifier(device_db)
     result = await verifier.should_rollback_to_learning(sample_patterns)
     assert result is False  # device is in learning mode

@@ -21,15 +21,18 @@ class MatterBridgePlugin(ProtocolServerPlugin):
 
     name = "matter_bridge"
 
-    def __init__(self, config: Any, handler=None):
+    def __init__(self, config: Any, handler=None) -> None:  # noqa: ANN401
         super().__init__(config)
         self.handler = handler
         self._connected = False
 
     async def start(self) -> None:
         self._running = True
-        logger.info("Matter bridge enabled (port=%d, fabric=%d)",
-                     self.config.controller_port, self.config.fabric_id)
+        logger.info(
+            "Matter bridge enabled (port=%d, fabric=%d)",
+            self.config.controller_port,
+            self.config.fabric_id,
+        )
 
     async def stop(self) -> None:
         self._connected = False

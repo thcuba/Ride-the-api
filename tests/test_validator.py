@@ -20,6 +20,7 @@ from core.pattern_db.validator import (
 # FIXTURES
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 @pytest.fixture
 def valid_capture() -> dict:
     return {
@@ -81,9 +82,7 @@ def valid_pattern() -> dict:
             ],
         },
         "server": {
-            "state_variables": [
-                {"name": "power", "type": "boolean", "default": False}
-            ],
+            "state_variables": [{"name": "power", "type": "boolean", "default": False}],
             "responses": [
                 {
                     "id": "rsp_login",
@@ -101,6 +100,7 @@ def valid_pattern() -> dict:
 # SCHEMA LOADING
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 def test_schemas_load():
     """Both JSON Schemas should load from disk."""
     capture = get_capture_schema()
@@ -112,6 +112,7 @@ def test_schemas_load():
 # ═══════════════════════════════════════════════════════════════════════════════
 # VALID CAPTURE
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 def test_valid_capture(valid_capture):
     result = validate_capture(valid_capture)
@@ -157,6 +158,7 @@ def test_capture_path_for_http(valid_capture):
 # ═══════════════════════════════════════════════════════════════════════════════
 # MQTT / CoAP / MODBUS CAPTURES
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 def test_capture_mqtt_valid():
     data = {
@@ -312,6 +314,7 @@ def test_capture_modbus_invalid_path():
 # VALID PATTERN
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 def test_valid_pattern(valid_pattern):
     result = validate_pattern(valid_pattern)
     assert result.valid, result.errors
@@ -384,6 +387,7 @@ def test_pattern_bad_field_mapping_transform(valid_pattern):
 # FILE VALIDATION
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 def test_validate_capture_file(tmp_path, valid_capture):
     path = tmp_path / "capture.ride-capture.json"
     path.write_text(json.dumps(valid_capture), encoding="utf-8")
@@ -415,6 +419,7 @@ def test_validate_file_invalid_json(tmp_path):
 # ═══════════════════════════════════════════════════════════════════════════════
 # ValidationError
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 def test_validation_error_dict(valid_capture):
     """ValidationError should include errors from protocol-specific checks."""

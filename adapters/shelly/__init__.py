@@ -11,9 +11,8 @@ This adapter translates Shelly API calls to standardized CommandTypes.
 
 from __future__ import annotations
 
-import json
 import logging
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from adapters.base import (
@@ -58,14 +57,19 @@ class ShellyProtocolAdapter(ProtocolAdapter):
     VENDOR_CODE = "shelly"
     VENDOR_HOSTNAMES = ["shelly-*.local", "shelly-*"]
 
-    def __init__(self, vendor: str, config: dict[str, Any]):
+    def __init__(self, vendor: str, config: dict[str, Any]) -> None:
         super().__init__(vendor, config)
         self._devices: dict[str, dict] = {}
 
     @property
     def supported_protocols(self) -> list[ProtocolType]:
-        return [ProtocolType.HTTP, ProtocolType.HTTPS, ProtocolType.COAP,
-                ProtocolType.MQTT, ProtocolType.WEBSOCKET]
+        return [
+            ProtocolType.HTTP,
+            ProtocolType.HTTPS,
+            ProtocolType.COAP,
+            ProtocolType.MQTT,
+            ProtocolType.WEBSOCKET,
+        ]
 
     @property
     def vendor_hostnames(self) -> list[str]:
@@ -84,8 +88,6 @@ class ShellyProtocolAdapter(ProtocolAdapter):
     async def _parse_http(self, request: InterceptedRequest) -> InterceptedRequest:
         """Parse Shelly HTTP REST API call."""
         path = request.path or "/"
-        method = (request.method or "GET").upper()
-
         # Gen1 status endpoint
         if "/status" in path:
             request.parsed_intent = CommandType.GET_STATE
@@ -141,18 +143,21 @@ class ShellyProtocolAdapter(ProtocolAdapter):
         """Handle Shelly request locally."""
         state = await self.get_device_state(request.device_id)
         if state and request.parsed_intent == CommandType.GET_STATE:
-            return CommandResult(success=True, response={
-                "power": state.power_watts,
-                "temperature": state.temp_actual,
-                "humidity": state.humidity,
-                "mode": state.mode,
-            })
+            return CommandResult(
+                success=True,
+                response={
+                    "power": state.power_watts,
+                    "temperature": state.temp_actual,
+                    "humidity": state.humidity,
+                    "mode": state.mode,
+                },
+            )
         return await self.forward_to_cloud(request)
 
-    async def forward_to_cloud(self, request: InterceptedRequest) -> CommandResult:
+    async def forward_to_cloud(self, request: InterceptedRequest) -> CommandResult:  # noqa: ARG002
         return CommandResult(success=False, error="Cloud forward not implemented", forwarded=True)
 
-    async def build_response(self, request: InterceptedRequest, result: CommandResult) -> dict:
+    async def build_response(self, request: InterceptedRequest, result: CommandResult) -> dict:  # noqa: ARG002
         if result.success and result.response:
             return result.response
         return {"success": False, "error": result.error or "unknown"}
@@ -187,7 +192,7 @@ class ShellyProtocolAdapter(ProtocolAdapter):
             quality="good",
         )
 
-    async def send_command(self, device_id: str, command: Command) -> CommandResult:
+    async def send_command(self, device_id: str, command: Command) -> CommandResult:  # noqa: ARG002
         return CommandResult(success=False, error="Send not implemented")
 
     async def on_device_connect(self, device_id: str, initial_data: dict) -> None:

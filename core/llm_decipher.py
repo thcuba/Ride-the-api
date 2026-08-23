@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class LLMProfile:
     """Configuration for an LLM provider."""
+
     name: str
     base_url: str
     api_key: str
@@ -37,6 +38,7 @@ class LLMProfile:
 @dataclass
 class DecipherResult:
     """Result of LLM deciphering."""
+
     pair_id: str
     device_id: str
     vendor: str
@@ -60,6 +62,7 @@ class RequestResponsePair:
     ``response`` are lightweight dict-like payloads produced by the
     correlation layer (kept non-typed to stay agnostic of protocol).
     """
+
     pair_id: str
     device_id: str
     vendor: str
@@ -74,7 +77,7 @@ class LLMDecipherService:
     Supports multiple LLM providers (OpenAI-compatible APIs, local Ollama, etc.)
     """
 
-    def __init__(self, config_manager=None):
+    def __init__(self, config_manager=None) -> None:
         self.config_manager = config_manager or get_config_manager()
         self._config = None
         self._profiles: dict[str, LLMProfile] = {}
@@ -88,26 +91,26 @@ class LLMDecipherService:
     def _load_config(self):
         """Load LLM deciphering configuration."""
         config = self.config_manager.config
-        self._config = getattr(config, 'llm_decipher', None)
+        self._config = getattr(config, "llm_decipher", None)
 
         if not self._config:
             logger.warning("No LLM decipher config found, using defaults")
             return
 
-        self._default_profile = getattr(self._config, 'default_profile', 'default')
+        self._default_profile = getattr(self._config, "default_profile", "default")
 
         # Load profiles
-        profiles_config = getattr(self._config, 'profiles', {})
+        profiles_config = getattr(self._config, "profiles", {})
         for name, profile_config in profiles_config.items():
             profile = LLMProfile(
                 name=name,
-                        base_url=getattr(profile_config, 'base_url', 'https://api.openai.com/v1'),
-                        api_key=self._resolve_api_key(getattr(profile_config, 'api_key', '')),
-                        model_id=getattr(profile_config, 'model_id', 'gpt-4o-mini'),
-                        prompt_template=getattr(profile_config, 'prompt_template', ''),
-                        enabled=getattr(profile_config, 'enabled', True),
-                        timeout=getattr(profile_config, 'timeout', 30),
-                        max_retries=getattr(profile_config, 'max_retries', 2),
+                base_url=getattr(profile_config, "base_url", "https://api.openai.com/v1"),
+                api_key=self._resolve_api_key(getattr(profile_config, "api_key", "")),
+                model_id=getattr(profile_config, "model_id", "gpt-4o-mini"),
+                prompt_template=getattr(profile_config, "prompt_template", ""),
+                enabled=getattr(profile_config, "enabled", True),
+                timeout=getattr(profile_config, "timeout", 30),
+                max_retries=getattr(profile_config, "max_retries", 2),
             )
             self._profiles[name] = profile
 
@@ -118,12 +121,12 @@ class LLMDecipherService:
 
     def _resolve_api_key(self, api_key: str) -> str:
         """Resolve API key from environment variable if it starts with ${}."""
-        if api_key.startswith('${') and api_key.endswith('}'):
+        if api_key.startswith("${") and api_key.endswith("}"):
             env_var = api_key[2:-1]
-            return os.environ.get(env_var, '')
+            return os.environ.get(env_var, "")
         return api_key
 
-    def _on_config_change(self, new_config):
+    def _on_config_change(self, _new_config):
         """Reload config on change."""
         logger.info("LLM decipher config changed, reloading")
         self._load_config()
@@ -145,61 +148,61 @@ class LLMDecipherService:
 
     async def decipher_with_params(
         self,
-            context: dict,
-            base_url: str | None = None,
-            model_id: str | None = None,
-            profile_name: str | None = None,
-        ) -> dict:
-            """Decipher using on-the-fly overridden parameters. Used by pipeline."""
-            profile = self.get_profile(profile_name)
-            if not profile:
-                return {"success": False, "error": f"Profile not found: {profile_name}"}
+        context: dict,
+        base_url: str | None = None,
+        model_id: str | None = None,
+        profile_name: str | None = None,
+    ) -> dict:
+        """Decipher using on-the-fly overridden parameters. Used by pipeline."""
+        profile = self.get_profile(profile_name)
+        if not profile:
+            return {"success": False, "error": f"Profile not found: {profile_name}"}
 
-            # Override base_url/model_id if provided
-            effective = profile
-            if base_url or model_id:
-                effective = LLMProfile(
-                    name=profile.name,
-                    base_url=base_url or profile.base_url,
-                    api_key=profile.api_key,
-                    model_id=model_id or profile.model_id,
-                    prompt_template=profile.prompt_template,
-                    enabled=profile.enabled,
-                    timeout=profile.timeout,
-                    max_retries=profile.max_retries,
-                )
+        # Override base_url/model_id if provided
+        effective = profile
+        if base_url or model_id:
+            effective = LLMProfile(
+                name=profile.name,
+                base_url=base_url or profile.base_url,
+                api_key=profile.api_key,
+                model_id=model_id or profile.model_id,
+                prompt_template=profile.prompt_template,
+                enabled=profile.enabled,
+                timeout=profile.timeout,
+                max_retries=profile.max_retries,
+            )
 
-            pairs_text = json.dumps(context.get("pairs", []), indent=2, default=str)
-            prompt = effective.prompt_template
-            replacements = {
-                "{vendor}": context.get("vendor", "unknown"),
-                "{device_type}": context.get("device_type", "unknown"),
-                "{pairs}": pairs_text,
-                "{device_id}": context.get("device_id", "unknown"),
-            }
-            for placeholder, value in replacements.items():
-                prompt = prompt.replace(placeholder, value)
+        pairs_text = json.dumps(context.get("pairs", []), indent=2, default=str)
+        prompt = effective.prompt_template
+        replacements = {
+            "{vendor}": context.get("vendor", "unknown"),
+            "{device_type}": context.get("device_type", "unknown"),
+            "{pairs}": pairs_text,
+            "{device_id}": context.get("device_id", "unknown"),
+        }
+        for placeholder, value in replacements.items():
+            prompt = prompt.replace(placeholder, value)
 
-            try:
-                result = await self.call_llm(effective, prompt)
-                if result["success"]:
-                    content = result["content"]
-                    if "```json" in content:
-                        content = content.split("```json")[1].split("```")[0]
-                    elif "```" in content:
-                        content = content.split("```")[1].split("```")[0]
-                    return {"success": True, "analysis": json.loads(content)}
-                return {"success": False, "error": result.get("error")}
-            except Exception as e:
-                return {"success": False, "error": str(e)}
+        try:
+            result = await self.call_llm(effective, prompt)
+            if result["success"]:
+                content = result["content"]
+                if "```json" in content:
+                    content = content.split("```json")[1].split("```")[0]
+                elif "```" in content:
+                    content = content.split("```")[1].split("```")[0]
+                return {"success": True, "analysis": json.loads(content)}
+            return {"success": False, "error": result.get("error")}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
 
     def _build_prompt(
-            self,
-            profile: LLMProfile,
-            pair: RequestResponsePair,
-            db_schema: str,
-            recent_patterns: list[dict],
-        ) -> str:
+        self,
+        profile: LLMProfile,
+        pair: RequestResponsePair,
+        db_schema: str,
+        recent_patterns: list[dict],
+    ) -> str:
         """Build the prompt for the LLM."""
         # Format request/response pairs
         req = pair.request
@@ -211,12 +214,12 @@ Request:
   Path: {req.path}
   Headers: {json.dumps(req.headers, indent=2)}
   Query Params: {json.dumps(req.query_params, indent=2)}
-  Body: {json.dumps(req.body, indent=2) if req.body else 'empty'}
+  Body: {json.dumps(req.body, indent=2) if req.body else "empty"}
 
 Response:
   Status: {resp.status_code}
   Headers: {json.dumps(resp.headers, indent=2)}
-  Body: {json.dumps(resp.body, indent=2) if resp.body else 'empty'}
+  Body: {json.dumps(resp.body, indent=2) if resp.body else "empty"}
   Latency: {resp.latency_ms:.1f}ms
 """
 
@@ -270,7 +273,9 @@ Response:
         db_schema = self._get_db_schema(pair.vendor)
 
         # Get recent patterns for this vendor/device_type
-        recent_patterns = self._get_recent_patterns(pair.vendor, pair.request.metadata.get('device_type'))
+        recent_patterns = self._get_recent_patterns(
+            pair.vendor, pair.request.metadata.get("device_type")
+        )
 
         # Build prompt
         prompt = self._build_prompt(profile, pair, db_schema, recent_patterns)
@@ -280,7 +285,7 @@ Response:
 
         processing_time = (time.time() - start_time) * 1000
 
-        if not result['success']:
+        if not result["success"]:
             return DecipherResult(
                 pair_id=pair.pair_id,
                 device_id=pair.device_id,
@@ -289,25 +294,25 @@ Response:
                 fields={},
                 confidence=0.0,
                 success=False,
-                error=result['error'],
+                error=result["error"],
                 processing_time_ms=processing_time,
-                raw_response=result.get('raw', ''),
+                raw_response=result.get("raw", ""),
             )
 
         # Parse LLM response
         try:
-            analysis = json.loads(result['content'])
+            analysis = json.loads(result["content"])
         except json.JSONDecodeError:
             # Try to extract JSON from markdown
-            content = result['content']
-            if '```json' in content:
-                content = content.split('```json')[1].split('```')[0]
-            elif '```' in content:
-                content = content.split('```')[1].split('```')[0]
+            content = result["content"]
+            if "```json" in content:
+                content = content.split("```json")[1].split("```")[0]
+            elif "```" in content:
+                content = content.split("```")[1].split("```")[0]
             try:
                 analysis = json.loads(content)
             except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse LLM response: {e}")
+                logger.error(f"Failed to parse LLM response: {e}")  # noqa: TRY400
                 return DecipherResult(
                     pair_id=pair.pair_id,
                     device_id=pair.device_id,
@@ -318,7 +323,7 @@ Response:
                     success=False,
                     error=f"Failed to parse LLM response: {e}",
                     processing_time_ms=processing_time,
-                    raw_response=result['content'],
+                    raw_response=result["content"],
                 )
 
         # Create result
@@ -326,12 +331,12 @@ Response:
             pair_id=pair.pair_id,
             device_id=pair.device_id,
             vendor=pair.vendor,
-            intent=analysis.get('intent', 'unknown'),
-            fields=analysis.get('fields', {}),
-            confidence=float(analysis.get('confidence', 0.0)),
-            suggested_dp_codes=analysis.get('suggested_dp_codes', {}),
-            protocol_notes=analysis.get('protocol_notes', ''),
-            raw_response=result['content'],
+            intent=analysis.get("intent", "unknown"),
+            fields=analysis.get("fields", {}),
+            confidence=float(analysis.get("confidence", 0.0)),
+            suggested_dp_codes=analysis.get("suggested_dp_codes", {}),
+            protocol_notes=analysis.get("protocol_notes", ""),
+            raw_response=result["content"],
             success=True,
             processing_time_ms=processing_time,
         )
@@ -339,7 +344,10 @@ Response:
         # Cache result
         self._cache[cache_key] = decipher_result
 
-        logger.info(f"Deciphered pair {pair.pair_id}: intent={decipher_result.intent}, confidence={decipher_result.confidence:.2f}")
+        logger.info(
+            f"Deciphered pair {pair.pair_id}: "
+            f"intent={decipher_result.intent}, confidence={decipher_result.confidence:.2f}"
+        )
         return decipher_result
 
     async def call_llm(self, profile: LLMProfile, prompt: str) -> dict:
@@ -354,7 +362,13 @@ Response:
         payload = {
             "model": profile.model_id,
             "messages": [
-                {"role": "system", "content": "You are a protocol analysis expert. Analyze IoT device communications and output structured JSON only."},
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a protocol analysis expert. Analyze IoT device "
+                        "communications and output structured JSON only."
+                    ),
+                },
                 {"role": "user", "content": prompt},
             ],
             "temperature": 0.1,
@@ -371,24 +385,28 @@ Response:
                     timeout=profile.timeout,
                 )
 
-                if response.status_code == 200:
+                if response.status_code == 200:  # noqa: PLR2004
                     data = response.json()
-                    content = data['choices'][0]['message']['content']
-                    return {'success': True, 'content': content}
+                    content = data["choices"][0]["message"]["content"]
+                    return {"success": True, "content": content}
                 error = f"LLM API error: {response.status_code} - {response.text}"
-                logger.warning(f"LLM call failed (attempt {attempt+1}/{profile.max_retries+1}): {error}")
+                logger.warning(
+                    f"LLM call failed (attempt {attempt + 1}/{profile.max_retries + 1}): {error}"
+                )
 
             except httpx.TimeoutException:
                 error = f"LLM request timeout after {profile.timeout}s"
-                logger.warning(f"LLM timeout (attempt {attempt+1}/{profile.max_retries+1})")
+                logger.warning(f"LLM timeout (attempt {attempt + 1}/{profile.max_retries + 1})")
             except Exception as e:
                 error = f"LLM call failed: {e}"
-                logger.error(f"LLM call error (attempt {attempt+1}/{profile.max_retries+1}): {e}")
+                logger.error(  # noqa: TRY400
+                    f"LLM call error (attempt {attempt + 1}/{profile.max_retries + 1}): {e}"
+                )
 
             if attempt < profile.max_retries:
                 await asyncio.sleep(1 * (attempt + 1))  # Exponential backoff
 
-        return {'success': False, 'error': error, 'raw': ''}
+        return {"success": False, "error": error, "raw": ""}
 
     def _get_db_schema(self, vendor: str) -> str:
         """Get database schema for vendor (simplified)."""
@@ -404,11 +422,11 @@ Tables:
 - intercepted_requests (device_id, protocol, method, path, body, parsed_intent, parsed_params)
 """
 
-    def _get_recent_patterns(self, vendor: str, device_type: str | None) -> list[dict]:
-            """Get recent successful deciphering patterns for context."""
-            return []
-            # TODO: Load from device database patterns table
-            # patterns = await db.get_recent_patterns(vendor, limit=10)
+    def _get_recent_patterns(self, _vendor: str, _device_type: str | None) -> list[dict]:
+        """Get recent successful deciphering patterns for context."""
+        return []
+        # TODO: Load from device database patterns table  # noqa: ERA001
+        # patterns = await db.get_recent_patterns(vendor, limit=10)  # noqa: ERA001
 
     async def decipher_batch(
         self,
@@ -423,16 +441,18 @@ Tables:
         for i, result in enumerate(results):
             if isinstance(result, Exception):
                 logger.error(f"Batch decipher error for pair {pairs[i].pair_id}: {result}")
-                deciphered.append(DecipherResult(
-                    pair_id=pairs[i].pair_id,
-                    device_id=pairs[i].device_id,
-                    vendor=pairs[i].vendor,
-                    intent="error",
-                    fields={},
-                    confidence=0.0,
-                    success=False,
-                    error=str(result),
-                ))
+                deciphered.append(
+                    DecipherResult(
+                        pair_id=pairs[i].pair_id,
+                        device_id=pairs[i].device_id,
+                        vendor=pairs[i].vendor,
+                        intent="error",
+                        fields={},
+                        confidence=0.0,
+                        success=False,
+                        error=str(result),
+                    )
+                )
             else:
                 deciphered.append(result)
 
@@ -450,8 +470,7 @@ _llm_decipher: LLMDecipherService | None = None
 
 def get_llm_decipher() -> LLMDecipherService:
     """Get or create global LLM decipher service instance."""
-    global _llm_decipher
+    global _llm_decipher  # noqa: PLW0603
     if _llm_decipher is None:
         _llm_decipher = LLMDecipherService()
     return _llm_decipher
-

@@ -10,17 +10,18 @@ communication. This server handles:
 
 from __future__ import annotations
 
-import asyncio
+import asyncio  # noqa: TC003
 import logging
-from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 try:
-    import h2.config
-    import h2.connection
-    import h2.errors
-    import h2.events
-    import h2.settings
+    import h2.config  # noqa: F401
+    import h2.connection  # noqa: F401
+    import h2.errors  # noqa: F401
+
     HAS_H2 = True
 except ImportError:
     HAS_H2 = False
@@ -35,7 +36,7 @@ class HTTP2ServerPlugin(ProtocolServerPlugin):
 
     name = "http2"
 
-    def __init__(self, config: Any, handler: Callable | None = None):
+    def __init__(self, config: Any, handler: Callable | None = None) -> None:  # noqa: ANN401
         super().__init__(config)
         self.handler = handler
         self._server: asyncio.AbstractServer | None = None
@@ -48,8 +49,14 @@ class HTTP2ServerPlugin(ProtocolServerPlugin):
 
         cfg = self.config
         self._running = True
-        logger.info("HTTP/2 server enabled on %s:%d (cleartext: %s:%d, TLS: %s)",
-                     cfg.host, cfg.port, cfg.host, cfg.cleartext_port, cfg.tls_enabled)
+        logger.info(
+            "HTTP/2 server enabled on %s:%d (cleartext: %s:%d, TLS: %s)",
+            cfg.host,
+            cfg.port,
+            cfg.host,
+            cfg.cleartext_port,
+            cfg.tls_enabled,
+        )
 
     async def stop(self) -> None:
         if self._server:

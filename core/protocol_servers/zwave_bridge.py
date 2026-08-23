@@ -20,15 +20,18 @@ class ZWaveBridgePlugin(ProtocolServerPlugin):
 
     name = "zwave_bridge"
 
-    def __init__(self, config: Any, handler=None):
+    def __init__(self, config: Any, handler=None) -> None:  # noqa: ANN401
         super().__init__(config)
         self.handler = handler
         self._connected = False
 
     async def start(self) -> None:
         self._running = True
-        logger.info("Z-Wave bridge enabled (type=%s, host=%s)",
-                     self.config.connection_type, self.config.host)
+        logger.info(
+            "Z-Wave bridge enabled (type=%s, host=%s)",
+            self.config.connection_type,
+            self.config.host,
+        )
 
     async def stop(self) -> None:
         self._connected = False

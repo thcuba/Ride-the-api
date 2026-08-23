@@ -8,11 +8,10 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -31,27 +30,33 @@ from core.database import (
     get_db_manager,
 )
 from core.llm_decipher import LLMDecipherService, LLMProfile
+from core.pattern_db import decipher_ingest
+from core.pattern_db.pattern_engine import PatternEngine
+from core.pattern_db.schemas import PatternDB
 
 logger = logging.getLogger(__name__)
 
 
-class PipelineMode(str, Enum):
+class PipelineMode(StrEnum):
     """Operation mode for the pipeline."""
+
     LEARNING = "learning"
     PRODUCTION = "production"
     HYBRID = "hybrid"
 
 
-class MatchResult(str, Enum):
+class MatchResult(StrEnum):
     """Result of a pattern match attempt."""
-    LOCAL_HIT = "local_hit"          # Served from local database
-    CLOUD_MISS = "cloud_miss"        # Forwarded to cloud, will learn
-    ERROR = "error"                  # Processing error
+
+    LOCAL_HIT = "local_hit"  # Served from local database
+    CLOUD_MISS = "cloud_miss"  # Forwarded to cloud, will learn
+    ERROR = "error"  # Processing error
 
 
 @dataclass
 class CorrelatedPair:
     """A correlated request/response pair ready for buffer and analysis."""
+
     pair_id: str
     device_id: str
     vendor: str
@@ -72,7 +77,7 @@ class CorrelatedPair:
 class ContextBuffer:
     """Sliding-window context buffer per device."""
 
-    def __init__(self, db_manager: DatabaseManager, max_size_bytes: int = 524288):
+    def __init__(self, db_manager: DatabaseManager, max_size_bytes: int = 524288) -> None:
         self.db_manager = db_manager
         self.max_size_bytes = max_size_bytes
         self._current_sequence: dict[str, int] = defaultdict(int)
@@ -113,9 +118,7 @@ class ContextBuffer:
             stats.current_buffer_size_bytes += estimated_size
 
             # Check if full
-            if stats.current_buffer_size_bytes >= self.max_size_bytes:
-                return True
-            return False
+            return stats.current_buffer_size_bytes >= self.max_size_bytes
 
     async def get_buffer_pairs(self, device_id: str) -> list[dict]:
         """Get all unflushed buffer entries for a device."""
@@ -125,23 +128,24 @@ class ContextBuffer:
                 .where(
                     and_(
                         LLMContextBuffer.device_id == device_id,
-                        LLMContextBuffer.flushed == False,
+                        LLMContextBuffer.flushed == False,  # noqa: E712
                     )
                 )
                 .order_by(LLMContextBuffer.sequence)
             )
-            return [{"id": e.id, "pair": e.correlated_pair, "size": e.estimated_size_bytes}
-                    for e in result.scalars().all()]
+            return [
+                {"id": e.id, "pair": e.correlated_pair, "size": e.estimated_size_bytes}
+                for e in result.scalars().all()
+            ]
 
     async def flush(self, device_id: str) -> int:
         """Mark all buffer entries for a device as flushed and clear buffer size."""
         async with self.db_manager.device_session(device_id) as session:
             result = await session.execute(
-                select(LLMContextBuffer)
-                .where(
+                select(LLMContextBuffer).where(
                     and_(
                         LLMContextBuffer.device_id == device_id,
-                        LLMContextBuffer.flushed == False,
+                        LLMContextBuffer.flushed == False,  # noqa: E712
                     )
                 )
             )
@@ -160,66 +164,61 @@ class ContextBuffer:
             return count
 
     async def flush_selected(self, device_id: str, entry_ids: list[int]) -> int:
-            """Mark only the specified buffer entries as flushed."""
-            async with self.db_manager.device_session(device_id) as session:
-                result = await session.execute(
-                    select(LLMContextBuffer)
-                    .where(
-                        and_(
-                            LLMContextBuffer.device_id == device_id,
-                            LLMContextBuffer.flushed == False,
-                            LLMContextBuffer.id.in_(entry_ids),
-                        )
+        """Mark only the specified buffer entries as flushed."""
+        async with self.db_manager.device_session(device_id) as session:
+            result = await session.execute(
+                select(LLMContextBuffer).where(
+                    and_(
+                        LLMContextBuffer.device_id == device_id,
+                        LLMContextBuffer.flushed == False,  # noqa: E712
+                        LLMContextBuffer.id.in_(entry_ids),
                     )
                 )
-                now = datetime.now(UTC)
-                flushed_size = 0
-                count = 0
-                for entry in result.scalars().all():
-                    entry.flushed = True
-                    entry.flushed_at = now
-                    flushed_size += entry.estimated_size_bytes
-                    count += 1
+            )
+            now = datetime.now(UTC)
+            flushed_size = 0
+            count = 0
+            for entry in result.scalars().all():
+                entry.flushed = True
+                entry.flushed_at = now
+                flushed_size += entry.estimated_size_bytes
+                count += 1
 
-                stats = await self._get_or_create_stats(session, device_id)
-                stats.current_buffer_size_bytes = max(0, stats.current_buffer_size_bytes - flushed_size)
-                stats.last_flush_at = now
-                stats.buffer_flushes += 1
+            stats = await self._get_or_create_stats(session, device_id)
+            stats.current_buffer_size_bytes = max(0, stats.current_buffer_size_bytes - flushed_size)
+            stats.last_flush_at = now
+            stats.buffer_flushes += 1
 
-                return count
+            return count
 
     async def delete_entry(self, device_id: str, entry_id: int) -> bool:
-            """Delete a single buffer entry."""
-            async with self.db_manager.device_session(device_id) as session:
-                result = await session.execute(
-                    select(LLMContextBuffer).where(
-                        and_(
-                            LLMContextBuffer.id == entry_id,
-                            LLMContextBuffer.device_id == device_id,
-                        )
+        """Delete a single buffer entry."""
+        async with self.db_manager.device_session(device_id) as session:
+            result = await session.execute(
+                select(LLMContextBuffer).where(
+                    and_(
+                        LLMContextBuffer.id == entry_id,
+                        LLMContextBuffer.device_id == device_id,
                     )
                 )
-                entry = result.scalar_one_or_none()
-                if not entry:
-                    return False
-                size = entry.estimated_size_bytes
-                await session.delete(entry)
-                stats = await self._get_or_create_stats(session, device_id)
-                stats.current_buffer_size_bytes = max(0, stats.current_buffer_size_bytes - size)
-                return True
+            )
+            entry = result.scalar_one_or_none()
+            if not entry:
+                return False
+            size = entry.estimated_size_bytes
+            await session.delete(entry)
+            stats = await self._get_or_create_stats(session, device_id)
+            stats.current_buffer_size_bytes = max(0, stats.current_buffer_size_bytes - size)
+            return True
 
     async def clear_cache(self, device_id: str):
         """Clear session cache for a device after flush."""
         async with self.db_manager.device_session(device_id) as session:
-            await session.execute(
-                delete(SessionCache).where(SessionCache.device_id == device_id)
-            )
+            await session.execute(delete(SessionCache).where(SessionCache.device_id == device_id))
             logger.info(f"Cleared session cache for device {device_id}")
 
     async def _get_or_create_stats(self, session, device_id: str) -> MatchStats:
-        result = await session.execute(
-            select(MatchStats).where(MatchStats.device_id == device_id)
-        )
+        result = await session.execute(select(MatchStats).where(MatchStats.device_id == device_id))
         stats = result.scalar_one_or_none()
         if not stats:
             stats = MatchStats(
@@ -251,20 +250,25 @@ class ContextBuffer:
 class PatternMatcher:
     """Matches incoming requests against learned patterns and builds local responses."""
 
-    def __init__(self, db_manager: DatabaseManager):
+    def __init__(self, db_manager: DatabaseManager) -> None:
         self.db_manager = db_manager
 
-    async def find_best_match(self, device_id: str, method: str, path: str,
-                                headers: dict, body: Any, query_params: dict) -> tuple:
+    async def find_best_match(  # noqa: PLR0913
+        self,
+        device_id: str,
+        method: str,
+        path: str,
+        headers: dict,
+        body: Any,  # noqa: ANN401
+        query_params: dict,
+    ) -> tuple:
         """Find the best matching request pattern for an incoming request.
 
         Returns: (pattern, response_template, similarity_score) or (None, None, 0)
         """
         async with self.db_manager.device_session(device_id) as session:
-                    result = await session.execute(
-                        select(RequestPattern)
-                    )
-                    patterns = result.scalars().all()
+            result = await session.execute(select(RequestPattern))
+            patterns = result.scalars().all()
 
         best_score = 0.0
         best_pattern = None
@@ -276,7 +280,7 @@ class PatternMatcher:
                 best_score = score
                 best_pattern = pattern
 
-        if best_pattern and best_score >= 0.5:
+        if best_pattern and best_score >= 0.5:  # noqa: PLR2004
             async with self.db_manager.device_session(device_id) as session:
                 result = await session.execute(
                     select(ResponseTemplate).where(
@@ -287,8 +291,15 @@ class PatternMatcher:
 
         return best_pattern, best_template, best_score
 
-    def _calculate_similarity(self, pattern: RequestPattern, method: str, path: str,
-                                headers: dict, body: Any, query_params: dict) -> float:
+    def _calculate_similarity(  # noqa: PLR0913
+        self,
+        pattern: RequestPattern,
+        method: str,
+        path: str,
+        headers: dict,
+        body: Any,  # noqa: ANN401
+        query_params: dict,
+    ) -> float:
         """Calculate similarity between a request and a learned pattern (0.0 to 1.0)."""
         score = 0.0
         total_weight = 0.0
@@ -356,17 +367,16 @@ class PatternMatcher:
         intersection = schema_keys & body_keys
         return len(intersection) / len(schema_keys)
 
-    async def build_local_response(self, device_id: str, template: ResponseTemplate,
-                                     original_request: dict) -> dict:
+    async def build_local_response(
+        self, device_id: str, template: ResponseTemplate, original_request: dict
+    ) -> dict:
         """Build a local response from a template, filling in variables from the request."""
         # Start with template
         body = dict(template.body_template)
 
         # Apply field mappings
         async with self.db_manager.device_session(device_id) as session:
-            result = await session.execute(
-                select(FieldMapping)
-            )
+            result = await session.execute(select(FieldMapping))
             mappings = result.scalars().all()
 
         req = original_request.get("body", {})
@@ -417,7 +427,7 @@ class PatternMatcher:
                 return None
         return d
 
-    def _set_nested(self, d: dict, path: str, value: Any):
+    def _set_nested(self, d: dict, path: str, value: Any) -> None:  # noqa: ANN401
         parts = path.split(".")
         for p in parts[:-1]:
             if p not in d:
@@ -429,7 +439,7 @@ class PatternMatcher:
 class MatchRateTracker:
     """Tracks real-time match hit/miss rate per device."""
 
-    def __init__(self, db_manager: DatabaseManager):
+    def __init__(self, db_manager: DatabaseManager) -> None:
         self.db_manager = db_manager
         self._rolling_window = 1000
 
@@ -474,12 +484,14 @@ class MatchRateTracker:
 
             # Rolling window
             recent = list(stats.recent_results or [])
-            recent.append({
-                "result": match_result.value,
-                "timestamp": datetime.now(UTC).isoformat(),
-            })
+            recent.append(
+                {
+                    "result": match_result.value,
+                    "timestamp": datetime.now(UTC).isoformat(),
+                }
+            )
             if len(recent) > self._rolling_window:
-                recent = recent[-self._rolling_window:]
+                recent = recent[-self._rolling_window :]
             stats.recent_results = recent
 
     async def get_stats(self, device_id: str) -> dict:
@@ -491,9 +503,13 @@ class MatchRateTracker:
             stats = result.scalar_one_or_none()
             if not stats:
                 return {
-                    "total_requests": 0, "local_hits": 0, "cloud_misses": 0,
-                    "match_rate_pct": 0.0, "errors": 0,
-                    "patterns_learned": 0, "buffer_flushes": 0,
+                    "total_requests": 0,
+                    "local_hits": 0,
+                    "cloud_misses": 0,
+                    "match_rate_pct": 0.0,
+                    "errors": 0,
+                    "patterns_learned": 0,
+                    "buffer_flushes": 0,
                     "current_buffer_size_bytes": 0,
                     "recent_results": [],
                 }
@@ -515,22 +531,34 @@ class MatchRateTracker:
 class LearningPipeline:
     """Orchestrates the learning flow: correlate → buffer → LLM → save patterns."""
 
-    def __init__(self, db_manager: DatabaseManager, llm_decipher: LLMDecipherService,
-                 buffer: ContextBuffer, matcher: PatternMatcher,
-                 tracker: MatchRateTracker, engine=None):
+    def __init__(  # noqa: PLR0913
+        self,
+        db_manager: DatabaseManager,
+        llm_decipher: LLMDecipherService,
+        buffer: ContextBuffer,
+        matcher: PatternMatcher,
+        tracker: MatchRateTracker,
+        engine=None,
+    ) -> None:
         self.db_manager = db_manager
         self.llm_decipher = llm_decipher
         self.buffer = buffer
         self.matcher = matcher
         self.tracker = tracker
         self.engine = engine
-        self._correlation_cache: dict[str, deque] = defaultdict(
-            lambda: deque(maxlen=1000)
-        )
+        self._correlation_cache: dict[str, deque] = defaultdict(lambda: deque(maxlen=1000))
 
-    async def register_request(self, device_id: str, vendor: str, protocol: str,
-                                 method: str, path: str, headers: dict,
-                                 body: Any, query_params: dict) -> str:
+    async def register_request(  # noqa: PLR0913
+        self,
+        device_id: str,
+        vendor: str,
+        protocol: str,
+        method: str,
+        path: str,
+        headers: dict,
+        body: Any,  # noqa: ANN401
+        query_params: dict,
+    ) -> str:
         """Register an outgoing request and generate a correlation key.
 
         Returns: correlation_key for later matching with response.
@@ -567,8 +595,15 @@ class LearningPipeline:
 
         return corr_key
 
-    async def match_response(self, device_id: str, vendor: str, protocol: str,
-                               status_code: int, headers: dict, body: Any) -> CorrelatedPair | None:
+    async def match_response(  # noqa: PLR0913
+        self,
+        device_id: str,
+        vendor: str,
+        protocol: str,
+        status_code: int,
+        headers: dict,
+        body: Any,  # noqa: ANN401
+    ) -> CorrelatedPair | None:
         """Match an incoming response to a pending request. Returns correlated pair."""
         # Try memory cache first
         pending = self._correlation_cache.get(device_id, deque())
@@ -588,7 +623,7 @@ class LearningPipeline:
                     .where(
                         and_(
                             SessionCache.device_id == device_id,
-                            SessionCache.correlated == False,
+                            SessionCache.correlated == False,  # noqa: E712
                         )
                     )
                     .order_by(SessionCache.created_at.desc())
@@ -667,8 +702,9 @@ class LearningPipeline:
 
         return pair
 
-    async def process_learning_pair(self, device_id: str, pair: CorrelatedPair,
-                                          context_buffer_max: int) -> bool:
+    async def process_learning_pair(
+        self, device_id: str, pair: CorrelatedPair, _context_buffer_max: int
+    ) -> bool:
         """Process a correlated pair in learning mode.
 
         Returns: True if buffer was flushed (LLM analysis triggered).
@@ -688,8 +724,13 @@ class LearningPipeline:
             )
             return result.scalar_one_or_none()
 
-    async def _build_context(self, device_id: str, device: DeviceRegistry,
-                              pairs: list[dict], context_notes: str | None = None) -> dict:
+    async def _build_context(
+        self,
+        device_id: str,
+        device: DeviceRegistry,
+        pairs: list[dict],
+        context_notes: str | None = None,
+    ) -> dict:
         """Build context dict for LLM analysis."""
         return {
             "device_id": device_id,
@@ -701,8 +742,9 @@ class LearningPipeline:
             "context_notes": context_notes or device.llm_context_notes or "",
         }
 
-    async def flush_and_learn(self, device_id: str, pair_ids: list[int] | None = None,
-                               context_notes: str | None = None) -> dict:
+    async def flush_and_learn(
+        self, device_id: str, pair_ids: list[int] | None = None, context_notes: str | None = None
+    ) -> dict:
         """Public flush: filter by optional pair_ids, inject context_notes, save patterns.
 
         Returns dict with success, pairs_count, patterns_count.
@@ -711,28 +753,48 @@ class LearningPipeline:
 
         all_pairs = await self.buffer.get_buffer_pairs(device_id)
         if not all_pairs:
-            return {"success": False, "error": "No buffer entries to flush", "pairs_count": 0, "patterns_count": 0}
+            return {
+                "success": False,
+                "error": "No buffer entries to flush",
+                "pairs_count": 0,
+                "patterns_count": 0,
+            }
 
         if pair_ids is not None:
             pairs = [p for p in all_pairs if p["id"] in pair_ids]
             if not pairs:
-                return {"success": False, "error": "No matching buffer entries found", "pairs_count": 0, "patterns_count": 0}
+                return {
+                    "success": False,
+                    "error": "No matching buffer entries found",
+                    "pairs_count": 0,
+                    "patterns_count": 0,
+                }
         else:
             pairs = all_pairs
 
         device = await self._load_device(device_id)
         if not device:
-            return {"success": False, "error": "Device not found", "pairs_count": 0, "patterns_count": 0}
+            return {
+                "success": False,
+                "error": "Device not found",
+                "pairs_count": 0,
+                "patterns_count": 0,
+            }
 
         context = await self._build_context(device_id, device, pairs, context_notes)
 
         profile_name = device.llm_profile_name or "default"
-        llm_analysis = await self._analyze_with_llm(context, profile_name,
-                                                     device.llm_base_url,
-                                                     device.llm_model_id)
+        llm_analysis = await self._analyze_with_llm(
+            context, profile_name, device.llm_base_url, device.llm_model_id
+        )
 
         if not llm_analysis:
-            return {"success": False, "error": "LLM analysis failed", "pairs_count": len(pairs), "patterns_count": 0}
+            return {
+                "success": False,
+                "error": "LLM analysis failed",
+                "pairs_count": len(pairs),
+                "patterns_count": 0,
+            }
 
         await self._save_patterns(device_id, llm_analysis)
         await self._export_and_sync_patterns(device_id)
@@ -744,11 +806,15 @@ class LearningPipeline:
         await self.buffer.clear_cache(device_id)
 
         patterns_count = len(llm_analysis.get("patterns", llm_analysis.get("decoded_patterns", [])))
-        logger.info(f"Learning cycle complete for device {device_id}: {len(pairs)} pairs, {patterns_count} patterns")
+        logger.info(
+            f"Learning cycle complete for device {device_id}: {len(pairs)} pairs, "
+            f"{patterns_count} patterns"
+        )
         return {"success": True, "pairs_count": len(pairs), "patterns_count": patterns_count}
 
-    async def preview_analysis(self, device_id: str, pair_ids: list[int] | None = None,
-                                context_notes: str | None = None) -> dict:
+    async def preview_analysis(
+        self, device_id: str, pair_ids: list[int] | None = None, context_notes: str | None = None
+    ) -> dict:
         """Run LLM analysis WITHOUT saving patterns. Returns raw analysis for user review."""
         logger.info(f"Preview analysis for device {device_id}")
 
@@ -759,7 +825,11 @@ class LearningPipeline:
         if pair_ids is not None:
             pairs = [p for p in all_pairs if p["id"] in pair_ids]
             if not pairs:
-                return {"success": False, "error": "No matching buffer entries found", "pairs_count": 0}
+                return {
+                    "success": False,
+                    "error": "No matching buffer entries found",
+                    "pairs_count": 0,
+                }
         else:
             pairs = all_pairs
 
@@ -770,9 +840,9 @@ class LearningPipeline:
         context = await self._build_context(device_id, device, pairs, context_notes)
 
         profile_name = device.llm_profile_name or "default"
-        llm_analysis = await self._analyze_with_llm(context, profile_name,
-                                                     device.llm_base_url,
-                                                     device.llm_model_id)
+        llm_analysis = await self._analyze_with_llm(
+            context, profile_name, device.llm_base_url, device.llm_model_id
+        )
 
         if not llm_analysis:
             return {"success": False, "error": "LLM analysis failed", "pairs_count": len(pairs)}
@@ -797,8 +867,7 @@ class LearningPipeline:
         if not self.engine:
             return
         try:
-            from core.pattern_db.decipher_ingest import DecipherIngest
-            ingester = DecipherIngest(self.db_manager)
+            ingester = decipher_ingest.DecipherIngest(self.db_manager)
 
             device_info = await self._load_device(device_id)
             vendor = device_info.vendor if device_info else "unknown"
@@ -815,13 +884,18 @@ class LearningPipeline:
             filepath = patterns_dir / f"{device_id}.ride-pattern.json"
             self.engine.save_pattern_file(pattern_db, str(filepath))
             self.engine.apply_pattern_db(device_id, pattern_db)
-            logger.info("Exported and synced %d patterns for %s to %s",
-                        len(pattern_db.client.endpoints), device_id, filepath.name)
+            logger.info(
+                "Exported and synced %d patterns for %s to %s",
+                len(pattern_db.client.endpoints),
+                device_id,
+                filepath.name,
+            )
         except Exception as e:
             logger.warning("Failed to export/sync patterns for %s: %s", device_id, e)
 
-    async def _analyze_with_llm(self, context: dict, profile_name: str,
-                              base_url: str | None, model_id: str | None) -> dict | None:
+    async def _analyze_with_llm(
+        self, context: dict, profile_name: str, base_url: str | None, model_id: str | None
+    ) -> dict | None:
         """Send context to LLM for protocol analysis."""
         try:
             profile = self.llm_decipher.get_profile(profile_name)
@@ -855,13 +929,13 @@ class LearningPipeline:
                         content = content.split("```")[1].split("```")[0]
                     return json.loads(content)
                 except json.JSONDecodeError:
-                    logger.error("Failed to parse LLM analysis result")
+                    logger.exception("Failed to parse LLM analysis result")
                     return None
             else:
                 logger.error(f"LLM analysis failed: {result.get('error')}")
                 return None
-        except Exception as e:
-            logger.error(f"Error in LLM analysis: {e}")
+        except Exception:
+            logger.exception("Error in LLM analysis")
             return None
 
     def _build_learning_prompt(self, profile, context: dict) -> str:
@@ -873,13 +947,13 @@ class LearningPipeline:
             "{device_type}": context.get("device_type", "unknown"),
             "{pairs}": pairs_json,
             "{device_id}": context.get("device_id", "unknown"),
-                "{context_notes}": context.get("context_notes", ""),
+            "{context_notes}": context.get("context_notes", ""),
         }
         for placeholder, value in replacements.items():
             prompt = prompt.replace(placeholder, value)
         return prompt
 
-    async def _save_patterns(self, device_id: str, analysis: dict):
+    async def _save_patterns(self, device_id: str, analysis: dict):  # noqa: C901, PLR0912
         """Save LLM-decoded patterns to the device database.
 
         Uses DecipherIngest for structured output; falls back to the
@@ -887,16 +961,15 @@ class LearningPipeline:
         """
         # Try structured ingest (PatternDB format) first
         if "meta" in analysis and "client" in analysis and "server" in analysis:
-            from core.pattern_db import decipher_ingest
-            from core.pattern_db.schemas import PatternDB
             try:
                 pattern_db = PatternDB.model_validate(analysis)
                 ingester = decipher_ingest.DecipherIngest(self.db_manager)
                 count = await ingester.import_patterns(device_id, pattern_db)
                 logger.info("DecipherIngest saved %d patterns for %s", count, device_id)
-                return
             except Exception as e:
                 logger.warning("Structured ingest failed, falling back: %s", e)
+            else:
+                return
 
         patterns = analysis.get("patterns", analysis.get("decoded_patterns", []))
         if not patterns:
@@ -946,9 +1019,7 @@ class LearningPipeline:
                 if resp_data:
                     template_id = f"tpl_{pattern_id}"
                     existing_tpl = await session.execute(
-                        select(ResponseTemplate).where(
-                            ResponseTemplate.template_id == template_id
-                        )
+                        select(ResponseTemplate).where(ResponseTemplate.template_id == template_id)
                     )
                     template = existing_tpl.scalar_one_or_none()
                     if not template:
@@ -970,12 +1041,10 @@ class LearningPipeline:
                 if isinstance(mappings, dict):
                     for req_field, resp_info in mappings.items():
                         if isinstance(resp_info, str):
-                            resp_info = {"response_field": resp_info, "type": "string"}
+                            resp_info = {"response_field": resp_info, "type": "string"}  # noqa: PLW2901
                         mapping_id = f"map_{device_id}_{intent}_{req_field.replace('.', '_')}"
                         existing_map = await session.execute(
-                            select(FieldMapping).where(
-                                FieldMapping.mapping_id == mapping_id
-                            )
+                            select(FieldMapping).where(FieldMapping.mapping_id == mapping_id)
                         )
                         if not existing_map.scalar_one_or_none():
                             fmap = FieldMapping(
@@ -995,7 +1064,7 @@ class LearningPipeline:
 class LearningOrchestrator:
     """Orchestrates the full learning/production pipeline per device."""
 
-    def __init__(self, db_manager: DatabaseManager):
+    def __init__(self, db_manager: DatabaseManager) -> None:
         self.db_manager = db_manager
         self.llm_decipher = None
         self.buffer: dict[str, ContextBuffer] = {}
@@ -1005,19 +1074,18 @@ class LearningOrchestrator:
         self.pipeline = None
 
     def initialize(self, llm_decipher: LLMDecipherService):
-            """Initialize the orchestrator with required services.
+        """Initialize the orchestrator with required services.
 
-            Sets up the PatternEngine, PatternMatcher, and MatchRateTracker.
-            Auto-loads any .ride-pattern.json files found in the patterns/
-            or data/ directories so pre-seeded or exported patterns are
-            available immediately for production/hybrid serving.
-            """
-            self.llm_decipher = llm_decipher
-            from core.pattern_db.pattern_engine import PatternEngine
-            self.engine = PatternEngine(self.db_manager)
-            self._auto_load_patterns()
-            self.matcher = PatternMatcher(self.db_manager)
-            self.tracker = MatchRateTracker(self.db_manager)
+        Sets up the PatternEngine, PatternMatcher, and MatchRateTracker.
+        Auto-loads any .ride-pattern.json files found in the patterns/
+        or data/ directories so pre-seeded or exported patterns are
+        available immediately for production/hybrid serving.
+        """
+        self.llm_decipher = llm_decipher
+        self.engine = PatternEngine(self.db_manager)
+        self._auto_load_patterns()
+        self.matcher = PatternMatcher(self.db_manager)
+        self.tracker = MatchRateTracker(self.db_manager)
 
     def _auto_load_patterns(self):
         """Scan for .ride-pattern.json files and load them into the engine."""
@@ -1039,8 +1107,7 @@ class LearningOrchestrator:
                 try:
                     self.engine.load_pattern_file(device_id, str(pattern_file))
                     loaded += 1
-                    logger.info("Auto-loaded patterns for %s from %s",
-                                device_id, pattern_file.name)
+                    logger.info("Auto-loaded patterns for %s from %s", device_id, pattern_file.name)
                 except Exception as e:
                     logger.warning("Failed to load %s: %s", pattern_file.name, e)
         if loaded:
@@ -1054,9 +1121,17 @@ class LearningOrchestrator:
             self.buffer[device_id] = ContextBuffer(self.db_manager, buffer_size)
         return self.buffer[device_id]
 
-    async def handle_request(self, device_id: str, vendor: str, protocol: str,
-                               method: str, path: str, headers: dict,
-                               body: Any, query_params: dict) -> dict:
+    async def handle_request(  # noqa: PLR0913
+        self,
+        device_id: str,
+        vendor: str,  # noqa: ARG002
+        protocol: str,  # noqa: ARG002
+        method: str,
+        path: str,
+        headers: dict,
+        body: Any,  # noqa: ANN401
+        query_params: dict,
+    ) -> dict:
         """Main entry point: handle an incoming request. Returns response info."""
         # Get device mode
         async with self.db_manager.core_session() as session:
@@ -1073,65 +1148,83 @@ class LearningOrchestrator:
             return await self._handle_hybrid(device, method, path, headers, body, query_params)
         return await self._handle_learning(device, method, path, headers, body, query_params)
 
-    async def _handle_production(self, device: DeviceRegistry, method: str, path: str,
-                                    headers: dict, body: Any, query_params: dict) -> dict:
-            """Production mode: try local match, fall back to cloud forwarding + learning.
+    async def _handle_production(  # noqa: PLR0913
+        self,
+        device: DeviceRegistry,
+        method: str,
+        path: str,
+        headers: dict,
+        body: Any,  # noqa: ANN401
+        query_params: dict,
+    ) -> dict:
+        """Production mode: try local match, fall back to cloud forwarding + learning.
 
-            When ``production_no_fallback`` is enabled on the device, unmatched
-            requests return a conclusive ``no_fallback`` action instead of
-            forwarding to the cloud.
-            """
-            pattern, template, score = await self.engine.find_best_match(
-                device.device_id, method, path, headers, body, query_params
-            )
-
-            if pattern and template and score >= device.match_threshold:
-                # Local hit -- build with state-aware engine
-                response = await self.engine.build_local_response(
-                    device.device_id, template,
-                    {"body": body, "headers": headers, "query_params": query_params}
-                )
-                await self.tracker.record_result(device.device_id, MatchResult.LOCAL_HIT)
-                return {
-                    "action": "local_response",
-                    "response": response,
-                    "match_score": score,
-                    "pattern_id": getattr(pattern, "pattern_id", None),
-                    "intent": getattr(pattern, "intent", None),
-                }
-            # Miss
-            await self.tracker.record_result(device.device_id, MatchResult.CLOUD_MISS)
-
-            # Check production_no_fallback flag from device config
-            if device.config.get("production_no_fallback", False):
-                return {
-                    "action": "no_fallback",
-                    "reason": "below_threshold" if pattern else "no_pattern",
-                    "match_score": score,
-                }
-
-            # Forward to cloud + capture for learning
-            corr_key = await self._register_for_learning(
-                device, method, path, headers, body, query_params
-            )
-            return {
-                "action": "forward",
-                "correlation_key": corr_key,
-                "match_score": score,
-                "reason": "below_threshold" if pattern else "no_pattern",
-            }
-    async def _handle_hybrid(self, device: DeviceRegistry, method: str, path: str,
-                                  headers: dict, body: Any, query_params: dict) -> dict:
-        """Hybrid mode: try local match first; if confident serve locally, otherwise forward to cloud + learn."""
+        When ``production_no_fallback`` is enabled on the device, unmatched
+        requests return a conclusive ``no_fallback`` action instead of
+        forwarding to the cloud.
+        """
         pattern, template, score = await self.engine.find_best_match(
-                    device.device_id, method, path, headers, body, query_params
+            device.device_id, method, path, headers, body, query_params
+        )
+
+        if pattern and template and score >= device.match_threshold:
+            # Local hit -- build with state-aware engine
+            response = await self.engine.build_local_response(
+                device.device_id,
+                template,
+                {"body": body, "headers": headers, "query_params": query_params},
+            )
+            await self.tracker.record_result(device.device_id, MatchResult.LOCAL_HIT)
+            return {
+                "action": "local_response",
+                "response": response,
+                "match_score": score,
+                "pattern_id": getattr(pattern, "pattern_id", None),
+                "intent": getattr(pattern, "intent", None),
+            }
+        # Miss
+        await self.tracker.record_result(device.device_id, MatchResult.CLOUD_MISS)
+
+        # Check production_no_fallback flag from device config
+        if device.config.get("production_no_fallback", False):
+            return {
+                "action": "no_fallback",
+                "reason": "below_threshold" if pattern else "no_pattern",
+                "match_score": score,
+            }
+
+        # Forward to cloud + capture for learning
+        corr_key = await self._register_for_learning(
+            device, method, path, headers, body, query_params
+        )
+        return {
+            "action": "forward",
+            "correlation_key": corr_key,
+            "match_score": score,
+            "reason": "below_threshold" if pattern else "no_pattern",
+        }
+
+    async def _handle_hybrid(  # noqa: PLR0913
+        self,
+        device: DeviceRegistry,
+        method: str,
+        path: str,
+        headers: dict,
+        body: Any,  # noqa: ANN401
+        query_params: dict,
+    ) -> dict:
+        """Hybrid mode: try local match first; if confident serve locally, otherwise
+        forward to cloud + learn."""
+        pattern, template, score = await self.engine.find_best_match(
+            device.device_id, method, path, headers, body, query_params
         )
 
         if pattern and template and score >= device.match_threshold:
             # Confident local hit -- build with state-aware engine
             response = await self.engine.build_local_response(
-                device.device_id, template,
-                {"body": body, "headers": headers, "query_params": query_params}
+                device.device_id,
+                template,
+                {"body": body, "headers": headers, "query_params": query_params},
             )
             await self.tracker.record_result(device.device_id, MatchResult.LOCAL_HIT)
             return {
@@ -1154,34 +1247,66 @@ class LearningOrchestrator:
             "reason": "below_threshold" if pattern else "no_pattern",
             "mode": "hybrid",
         }
-    async def _handle_learning(self, device: DeviceRegistry, method: str, path: str,
-                                  headers: dict, body: Any, query_params: dict) -> dict:
+
+    async def _handle_learning(  # noqa: PLR0913
+        self,
+        device: DeviceRegistry,
+        method: str,
+        path: str,
+        headers: dict,
+        body: Any,  # noqa: ANN401
+        query_params: dict,
+    ) -> dict:
         """Learning mode: forward all to cloud, correlate, and build patterns."""
         corr_key = await self._register_for_learning(
-                    device, method, path, headers, body, query_params
+            device, method, path, headers, body, query_params
         )
         return {
-                    "action": "forward",
-                    "correlation_key": corr_key,
-                    "mode": "learning",
+            "action": "forward",
+            "correlation_key": corr_key,
+            "mode": "learning",
         }
 
-    async def _register_for_learning(self, device: DeviceRegistry, method: str, path: str,
-                                       headers: dict, body: Any, query_params: dict) -> str:
+    async def _register_for_learning(  # noqa: PLR0913
+        self,
+        device: DeviceRegistry,
+        method: str,
+        path: str,
+        headers: dict,
+        body: Any,  # noqa: ANN401
+        query_params: dict,
+    ) -> str:
         """Register a request for learning capture."""
         if not self.pipeline:
             buffer = await self.ensure_buffer(device.device_id, device.context_buffer_size)
             self.pipeline = LearningPipeline(
-                self.db_manager, self.llm_decipher, buffer,
-                    self.matcher, self.tracker, self.engine,
+                self.db_manager,
+                self.llm_decipher,
+                buffer,
+                self.matcher,
+                self.tracker,
+                self.engine,
             )
         return await self.pipeline.register_request(
-            device.device_id, device.vendor, "http",
-            method, path, headers, body, query_params,
+            device.device_id,
+            device.vendor,
+            "http",
+            method,
+            path,
+            headers,
+            body,
+            query_params,
         )
 
-    async def handle_response(self, device_id: str, vendor: str, protocol: str,
-                                status_code: int, headers: dict, body: Any) -> dict:
+    async def handle_response(  # noqa: PLR0913
+        self,
+        device_id: str,
+        vendor: str,
+        protocol: str,
+        status_code: int,
+        headers: dict,
+        body: Any,  # noqa: ANN401
+    ) -> dict:
         """Process a response from the cloud (for learning mode)."""
         if not self.pipeline:
             return {"action": "ignored", "reason": "no_pipeline"}
@@ -1246,7 +1371,7 @@ _orchestrator: LearningOrchestrator | None = None
 
 def get_orchestrator() -> LearningOrchestrator:
     """Get or create global orchestrator instance."""
-    global _orchestrator
+    global _orchestrator  # noqa: PLW0603
     if _orchestrator is None:
         _orchestrator = LearningOrchestrator(get_db_manager())
     return _orchestrator

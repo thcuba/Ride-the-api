@@ -5,8 +5,9 @@ Intercepts device traffic, learns protocol via LLM, serves responses locally.
 
 from __future__ import annotations
 
-import asyncio
+import asyncio  # noqa: TC003
 import base64
+import ipaddress
 import json
 import logging
 import uuid
@@ -14,17 +15,12 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-# Path to webui directory (relative to project root)
-WEBUI_DIR = Path(__file__).resolve().parent.parent / "webui"
-DASHBOARD_HTML = WEBUI_DIR / "dashboard.html"
-PATTERNS_HTML = WEBUI_DIR / "patterns.html"
-
 import uvicorn
 from fastapi import FastAPI, File, Form, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from adapters import get_registered_registry
 from adapters.base import (
@@ -34,12 +30,36 @@ from adapters.base import (
 )
 from core.cert_manager import CertManager, get_cert_manager
 from core.config import get_config_manager
-from core.database import DatabaseManager, DeviceRegistry, LLMContextBuffer, init_db_manager
+from core.database import (
+    DatabaseManager,
+    DeviceRegistry,
+    FieldMapping,
+    RequestPattern,
+    ResponseTemplate,
+    init_db_manager,
+)
 from core.llm_decipher import LLMDecipherService, get_llm_decipher
+from core.pattern_db import buffer_manager, decipher_ingest
+from core.pattern_db.schemas import CaptureDB, PatternDB
+from core.pattern_db.validator import (
+    ValidationError,
+    validate_capture,
+    validate_pattern,
+)
 from core.pipeline import (
     LearningOrchestrator,
     get_orchestrator,
 )
+from core.protocol_servers import get_protocol_server_manager
+from core.protocol_servers.coap_server import CoAPServerPlugin
+from core.protocol_servers.http2_server import HTTP2ServerPlugin
+from core.protocol_servers.matter_bridge import MatterBridgePlugin
+from core.protocol_servers.modbus_server import ModbusServerPlugin
+from core.protocol_servers.mqtt_server import MQTTServerPlugin
+from core.protocol_servers.raw_tcp_server import RawTCPServerPlugin
+from core.protocol_servers.websocket_server import WebSocketServerPlugin
+from core.protocol_servers.zigbee_bridge import ZigbeeBridgePlugin
+from core.protocol_servers.zwave_bridge import ZWaveBridgePlugin
 from core.resilience import (
     AutoSwitchScheduler,
     register_resilience_routes,
@@ -50,6 +70,11 @@ from core.tls_mitm import (
     get_tls_mitm_server,
 )
 from core.traffic_selector import TrafficRequestInfo, get_traffic_selector
+
+# Path to webui directory (relative to project root)
+WEBUI_DIR = Path(__file__).resolve().parent.parent / "webui"
+DASHBOARD_HTML = WEBUI_DIR / "dashboard.html"
+PATTERNS_HTML = WEBUI_DIR / "patterns.html"
 
 # Configure logging
 logging.basicConfig(
@@ -84,7 +109,7 @@ async def handle_tls_decrypted_request(req: DecryptedRequest) -> dict | None:
     If the source IP is unknown, a new device record + SQLite DB is auto-created
     with passthrough=ON (traffic forwarded to cloud while user configures it).
     """
-    global db_manager, orchestrator, adapter_registry
+    global db_manager, orchestrator, adapter_registry  # noqa: PLW0602
 
     if not db_manager or not orchestrator:
         logger.warning("TLS handler: service not ready, dropping request from %s", req.client_ip)
@@ -106,15 +131,21 @@ async def handle_tls_decrypted_request(req: DecryptedRequest) -> dict | None:
         if not device_db_path.exists():
             try:
                 device_db_path.touch()
-                logger.info("TLS handler: created device DB for %s at %s", device_id, device_db_path)
+                logger.info(
+                    "TLS handler: created device DB for %s at %s", device_id, device_db_path
+                )
             except Exception as e:
                 logger.warning("TLS handler: could not create device DB for %s: %s", device_id, e)
 
         # Log the intercepted request
         logger.info(
             "TLS: %s %s %s (device=%s, sni=%s, port=%d)",
-            req.method, req.path, req.http_version,
-            device_id, req.sni, req.dst_port,
+            req.method,
+            req.path,
+            req.http_version,
+            device_id,
+            req.sni,
+            req.dst_port,
         )
 
         # Determine vendor/adapter for this device
@@ -126,10 +157,8 @@ async def handle_tls_decrypted_request(req: DecryptedRequest) -> dict | None:
             handler_adapter = adapter_registry._adapters[device_vendor]
 
         # Build intercepted request for pipeline
-        from adapters.base import InterceptedRequest as AdapterInterceptedRequest
-        from adapters.base import ProtocolType
 
-        intercepted = AdapterInterceptedRequest(
+        intercepted = InterceptedRequest(
             device_id=device_id,
             timestamp=datetime.now(UTC),
             protocol=ProtocolType.HTTPS,
@@ -160,7 +189,7 @@ async def handle_tls_decrypted_request(req: DecryptedRequest) -> dict | None:
         else:
             logger.debug("TLS: passthrough for %s %s", req.method, req.path)
 
-        return result
+        return result  # noqa: TRY300
 
     except Exception as e:
         logger.error("TLS handler: error processing %s: %s", req.client_ip, e, exc_info=True)
@@ -171,9 +200,12 @@ async def handle_tls_decrypted_request(req: DecryptedRequest) -> dict | None:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI):  # noqa: C901, PLR0912, PLR0915
     """Application lifespan handler."""
-    global db_manager, adapter_registry, orchestrator, llm_decipher_service, tls_mitm_server, cert_manager, auto_switch_scheduler
+    global db_manager, adapter_registry  # noqa: PLW0603
+    global orchestrator, llm_decipher_service  # noqa: PLW0603
+    global tls_mitm_server, cert_manager  # noqa: PLW0603
+    global auto_switch_scheduler  # noqa: PLW0603
 
     logger.info("Starting Local Cloud Replacement Proxy...")
 
@@ -210,7 +242,7 @@ async def lifespan(app: FastAPI):
             cert_path = cert_manager.ensure_ca()
             logger.info("TLS CA certificate ready at %s", cert_path)
         except Exception as e:
-            logger.error("Failed to initialize TLS cert manager: %s", e)
+            logger.error("Failed to initialize TLS cert manager: %s", e)  # noqa: TRY400
 
     # Start TLS MITM server if enabled
     if config.tls_decrypt.enabled and cert_manager:
@@ -223,7 +255,7 @@ async def lifespan(app: FastAPI):
             )
             logger.info("TLS MITM server listening on ports %s", config.tls_decrypt.listen_ports)
         except Exception as e:
-            logger.error("Failed to start TLS MITM server: %s, TLS interception disabled", e)
+            logger.error("Failed to start TLS MITM server: %s, TLS interception disabled", e)  # noqa: TRY400
     else:
         logger.info("TLS decryption is disabled (enable in config.yaml)")
 
@@ -235,14 +267,7 @@ async def lifespan(app: FastAPI):
     protocol_servers_cfg = getattr(config, "protocol_servers", None)
     if protocol_servers_cfg:
         try:
-            from core.protocol_servers import get_protocol_server_manager
             proto_mgr = get_protocol_server_manager(protocol_servers_cfg)
-            from core.protocol_servers.coap_server import CoAPServerPlugin
-            from core.protocol_servers.http2_server import HTTP2ServerPlugin
-            from core.protocol_servers.modbus_server import ModbusServerPlugin
-            from core.protocol_servers.mqtt_server import MQTTServerPlugin
-            from core.protocol_servers.raw_tcp_server import RawTCPServerPlugin
-            from core.protocol_servers.websocket_server import WebSocketServerPlugin
 
             # Register plugins based on config
             if getattr(protocol_servers_cfg.mqtt, "enabled", False):
@@ -265,21 +290,18 @@ async def lifespan(app: FastAPI):
 
             # Register bridges if enabled
             if getattr(protocol_servers_cfg.zigbee_bridge, "enabled", False):
-                from core.protocol_servers.zigbee_bridge import ZigbeeBridgePlugin
                 proto_mgr.register_plugin(ZigbeeBridgePlugin(protocol_servers_cfg.zigbee_bridge))
                 await proto_mgr.start_plugin("zigbee_bridge")
 
             if getattr(protocol_servers_cfg.zwave_bridge, "enabled", False):
-                from core.protocol_servers.zwave_bridge import ZWaveBridgePlugin
                 proto_mgr.register_plugin(ZWaveBridgePlugin(protocol_servers_cfg.zwave_bridge))
                 await proto_mgr.start_plugin("zwave_bridge")
 
             if getattr(protocol_servers_cfg.matter_bridge, "enabled", False):
-                from core.protocol_servers.matter_bridge import MatterBridgePlugin
                 proto_mgr.register_plugin(MatterBridgePlugin(protocol_servers_cfg.matter_bridge))
                 await proto_mgr.start_plugin("matter_bridge")
         except Exception as e:
-            logger.error("Failed to initialize protocol servers: %s", e)
+            logger.error("Failed to initialize protocol servers: %s", e)  # noqa: TRY400
 
     # Mount static files for Web UI
     try:
@@ -309,16 +331,15 @@ async def lifespan(app: FastAPI):
             await auto_switch_scheduler.stop()
             logger.info("Auto-switch scheduler stopped")
         except Exception as e:
-            logger.error("Error stopping auto-switch scheduler: %s", e)
+            logger.error("Error stopping auto-switch scheduler: %s", e)  # noqa: TRY400
 
         # Stop protocol servers
     try:
-        from core.protocol_servers import get_protocol_server_manager
         proto_mgr = get_protocol_server_manager()
         await proto_mgr.stop_all()
         logger.info("Protocol servers stopped")
     except Exception as e:
-        logger.error("Error stopping protocol servers: %s", e)
+        logger.error("Error stopping protocol servers: %s", e)  # noqa: TRY400
 
     # Stop TLS MITM server
     if tls_mitm_server:
@@ -326,7 +347,7 @@ async def lifespan(app: FastAPI):
             await tls_mitm_server.stop()
             logger.info("TLS MITM server stopped")
         except Exception as e:
-            logger.error("Error stopping TLS MITM server: %s", e)
+            logger.error("Error stopping TLS MITM server: %s", e)  # noqa: TRY400
     if llm_decipher_service:
         await llm_decipher_service.close()
     if db_manager:
@@ -397,13 +418,15 @@ async def tls_device_ports():
         return {"devices": []}
     devices = []
     for ip, info in tls_mitm_server.device_ports.items():
-        devices.append({
-            "ip": info.ip,
-            "port": info.port,
-            "device_id": info.device_id,
-            "first_seen": info.first_seen.isoformat(),
-            "last_seen": info.last_seen.isoformat(),
-        })
+        devices.append(
+            {
+                "ip": info.ip,
+                "port": info.port,
+                "device_id": info.device_id,
+                "first_seen": info.first_seen.isoformat(),
+                "last_seen": info.last_seen.isoformat(),
+            }
+        )
     return {"devices": devices}
 
 
@@ -425,7 +448,7 @@ async def tls_add_port(request: Request):
     try:
         body = await request.json()
         port = int(body.get("port", 0))
-        if port < 1 or port > 65535:
+        if port < 1 or port > 65535:  # noqa: PLR2004
             return JSONResponse(status_code=400, content={"error": "Invalid port number"})
         success = await tls_mitm_server.add_port(port)
         if success:
@@ -433,7 +456,11 @@ async def tls_add_port(request: Request):
             config = config_manager.config
             if port not in config.tls_decrypt.listen_ports:
                 config.tls_decrypt.listen_ports.append(port)
-            return {"status": "ok", "port": port, "listen_ports": tls_mitm_server.listen_ports.copy()}
+            return {
+                "status": "ok",
+                "port": port,
+                "listen_ports": tls_mitm_server.listen_ports.copy(),
+            }
         return JSONResponse(status_code=500, content={"error": "Failed to add port"})
     except Exception as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
@@ -557,7 +584,7 @@ async def tls_list_certs():
         return JSONResponse(status_code=503, content={"error": "Cert manager not ready"})
     try:
         imported = cert_manager.list_imported_certs()
-        return {"certs": imported}
+        return {"certs": imported}  # noqa: TRY300
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
@@ -570,8 +597,10 @@ async def tls_get_cert_info(hostname: str):
     try:
         info = cert_manager.get_cert_info(hostname)
         if not info:
-            return JSONResponse(status_code=404, content={"error": f"No certificate found for '{hostname}'"})
-        return {"cert": info}
+            return JSONResponse(
+                status_code=404, content={"error": f"No certificate found for '{hostname}'"}
+            )
+        return {"cert": info}  # noqa: TRY300
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
@@ -589,7 +618,11 @@ async def tls_upload_cert(
         cert_pem = await cert.read()
         key_pem = await key.read()
         cert_manager.import_cert(hostname, cert_pem.decode("utf-8"), key_pem.decode("utf-8"))
-        return {"status": "ok", "hostname": hostname, "message": f"Certificate imported for '{hostname}'"}
+        return {  # noqa: TRY300
+            "status": "ok",
+            "hostname": hostname,
+            "message": f"Certificate imported for '{hostname}'",
+        }
     except Exception as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
 
@@ -612,7 +645,7 @@ async def tls_upload_cert_json(request: Request):
         cert_pem = base64.b64decode(cert_b64).decode("utf-8")
         key_pem = base64.b64decode(key_b64).decode("utf-8")
         cert_manager.import_cert(hostname, cert_pem, key_pem)
-        return {"status": "ok", "hostname": hostname}
+        return {"status": "ok", "hostname": hostname}  # noqa: TRY300
     except Exception as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
 
@@ -624,7 +657,11 @@ async def tls_delete_cert(hostname: str):
         return JSONResponse(status_code=503, content={"error": "Cert manager not ready"})
     try:
         cert_manager.delete_cert(hostname)
-        return {"status": "ok", "hostname": hostname, "message": f"Certificate deleted for '{hostname}'"}
+        return {  # noqa: TRY300
+            "status": "ok",
+            "hostname": hostname,
+            "message": f"Certificate deleted for '{hostname}'",
+        }
     except Exception as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
 
@@ -639,11 +676,17 @@ async def tls_rotate_cert(hostname: str, request: Request):
         cert_b64 = body.get("cert_base64")
         key_b64 = body.get("key_base64")
         if not all([cert_b64, key_b64]):
-            return JSONResponse(status_code=400, content={"error": "Missing 'cert_base64' or 'key_base64'"})
+            return JSONResponse(
+                status_code=400, content={"error": "Missing 'cert_base64' or 'key_base64'"}
+            )
         cert_pem = base64.b64decode(cert_b64).decode("utf-8")
         key_pem = base64.b64decode(key_b64).decode("utf-8")
         cert_manager.import_cert(hostname, cert_pem, key_pem)
-        return {"status": "ok", "hostname": hostname, "message": f"Certificate rotated for '{hostname}'"}
+        return {  # noqa: TRY300
+            "status": "ok",
+            "hostname": hostname,
+            "message": f"Certificate rotated for '{hostname}'",
+        }
     except Exception as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
 
@@ -672,7 +715,7 @@ async def tls_download_root_ca():
 @app.get("/api/protocol-servers")
 async def protocol_servers_status():
     """List all protocol servers and their status."""
-    from core.protocol_servers import get_protocol_server_manager
+
     manager = get_protocol_server_manager()
     status_list = await manager.get_all_status()
     return {"servers": status_list}
@@ -681,7 +724,7 @@ async def protocol_servers_status():
 @app.post("/api/protocol-servers/{name}/start")
 async def protocol_server_start(name: str):
     """Start a specific protocol server."""
-    from core.protocol_servers import get_protocol_server_manager
+
     manager = get_protocol_server_manager()
     success = await manager.start_plugin(name)
     if not success:
@@ -695,7 +738,7 @@ async def protocol_server_start(name: str):
 @app.post("/api/protocol-servers/{name}/stop")
 async def protocol_server_stop(name: str):
     """Stop a specific protocol server."""
-    from core.protocol_servers import get_protocol_server_manager
+
     manager = get_protocol_server_manager()
     success = await manager.stop_plugin(name)
     if not success:
@@ -709,7 +752,7 @@ async def protocol_server_stop(name: str):
 @app.get("/api/protocol-servers/{name}/config")
 async def protocol_server_config(name: str):
     """Get configuration for a specific protocol server."""
-    from core.protocol_servers import get_protocol_server_manager
+
     manager = get_protocol_server_manager()
     plugin = manager.get_plugin(name)
     if not plugin:
@@ -718,10 +761,10 @@ async def protocol_server_config(name: str):
     config_dict = cfg.model_dump() if hasattr(cfg, "model_dump") else vars(cfg)
     return {"name": name, "config": config_dict}
 
-
     # ═══════════════════════════════════════════════════════════════════════════════
     # HEALTH & METRICS
     # ═══════════════════════════════════════════════════════════════════════════════
+
 
 @app.get("/health")
 async def health_check():
@@ -737,6 +780,7 @@ async def health_check():
 # ═══════════════════════════════════════════════════════════════════════════════
 # DEVICE MANAGEMENT API
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 @app.get("/api/devices")
 async def list_devices():
@@ -796,7 +840,10 @@ async def set_device_mode(device_id: str, request: Request):
     body = await request.json()
     mode = body.get("mode", "learning")
     if mode not in ("learning", "production", "hybrid"):
-        return JSONResponse(status_code=400, content={"error": "Invalid mode. Use 'learning', 'production', or 'hybrid'"})
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Invalid mode. Use 'learning', 'production', or 'hybrid'"},
+        )
     success = await db_manager.update_device_mode(device_id, mode)
     if not success:
         return JSONResponse(status_code=404, content={"error": "Device not found"})
@@ -811,7 +858,10 @@ async def get_device_auto_switch(device_id: str):
     devices = await db_manager.list_devices()
     for d in devices:
         if d["device_id"] == device_id:
-            return {"device_id": device_id, "auto_switch_enabled": d.get("auto_switch_enabled", False)}
+            return {
+                "device_id": device_id,
+                "auto_switch_enabled": d.get("auto_switch_enabled", False),
+            }
     return JSONResponse(status_code=404, content={"error": "Device not found"})
 
 
@@ -851,6 +901,7 @@ async def configure_device_llm(device_id: str, request: Request):
 # DATABASE ASSIGNMENT API
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 @app.post("/api/devices/{device_id}/database")
 async def assign_device_database(device_id: str, request: Request):
     """Assign a database (URL or name) to a device. Creates a new DB if only name given."""
@@ -871,7 +922,9 @@ async def assign_device_database(device_id: str, request: Request):
         )
 
     success = await db_manager.assign_device_database(
-        device_id, database_url=database_url, database_name=database_name,
+        device_id,
+        database_url=database_url,
+        database_name=database_name,
     )
     if not success:
         return JSONResponse(status_code=404, content={"error": "Device not found"})
@@ -897,9 +950,6 @@ async def get_device_database(device_id: str):
     if not db_manager:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
     async with db_manager.core_session() as session:
-        from sqlalchemy import select
-
-        from core.database import DeviceRegistry
         result = await session.execute(
             select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
         )
@@ -935,9 +985,6 @@ async def register_device_ip(device_id: str, request: Request):
     if not ip_address:
         return JSONResponse(status_code=400, content={"error": "Provide 'ip_address'"})
     async with db_manager.core_session() as session:
-        from sqlalchemy import select
-
-        from core.database import DeviceRegistry
         result = await session.execute(
             select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
         )
@@ -957,9 +1004,7 @@ async def get_device_patterns(device_id: str):
     """Get learned patterns for a device."""
     if not db_manager:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    from sqlalchemy import select
 
-    from core.database import RequestPattern, ResponseTemplate
     async with db_manager.device_session(device_id) as session:
         patterns = await session.execute(
             select(RequestPattern).order_by(RequestPattern.confidence.desc())
@@ -970,25 +1015,29 @@ async def get_device_patterns(device_id: str):
                 select(ResponseTemplate).where(ResponseTemplate.pattern_id == p.pattern_id)
             )
             tpl = templates.scalar_one_or_none()
-            patterns_list.append({
-                "pattern_id": p.pattern_id,
-                "method": p.method,
-                "path": p.path_pattern,
-                "path_pattern": p.path_pattern,
-                "protocol": p.protocol,
-                "intent": p.intent,
-                "confidence": p.confidence,
-                "hit_count": p.hit_count,
-                "required_headers": p.required_headers,
-                "body_schema": p.body_schema,
-                "query_param_keys": p.query_param_keys,
-                "response_template": {
-                    "status_code": tpl.status_code,
-                    "body_template": tpl.body_template,
-                    "headers_template": tpl.headers_template,
-                    "field_mappings": tpl.field_mappings,
-                } if tpl else None,
-            })
+            patterns_list.append(
+                {
+                    "pattern_id": p.pattern_id,
+                    "method": p.method,
+                    "path": p.path_pattern,
+                    "path_pattern": p.path_pattern,
+                    "protocol": p.protocol,
+                    "intent": p.intent,
+                    "confidence": p.confidence,
+                    "hit_count": p.hit_count,
+                    "required_headers": p.required_headers,
+                    "body_schema": p.body_schema,
+                    "query_param_keys": p.query_param_keys,
+                    "response_template": {
+                        "status_code": tpl.status_code,
+                        "body_template": tpl.body_template,
+                        "headers_template": tpl.headers_template,
+                        "field_mappings": tpl.field_mappings,
+                    }
+                    if tpl
+                    else None,
+                }
+            )
         return {"device_id": device_id, "patterns": patterns_list}
 
 
@@ -997,14 +1046,13 @@ async def export_patterns(device_id: str):
     """Export deciphered patterns to portable .ride-pattern.json format."""
     if not db_manager:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    from core.pattern_db import decipher_ingest
+
     ingester = decipher_ingest.DecipherIngest(db_manager)
     try:
         async with db_manager.device_session(device_id) as session:
-            from sqlalchemy import select as sel
-
-            from core.database import DeviceRegistry
-            result = await session.execute(sel(DeviceRegistry).where(DeviceRegistry.device_id == device_id))
+            result = await session.execute(
+                select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
+            )
             device = result.scalar_one_or_none()
             vendor = device.vendor if device else "unknown"
             device_type = device.device_type if device else "unknown"
@@ -1013,14 +1061,13 @@ async def export_patterns(device_id: str):
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
+
 @app.get("/api/devices/{device_id}/patterns/{pattern_id}")
 async def get_pattern_detail(device_id: str, pattern_id: str):
     """Get detailed pattern info including field mappings."""
     if not db_manager:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    from sqlalchemy import select
 
-    from core.database import FieldMapping, RequestPattern, ResponseTemplate
     async with db_manager.device_session(device_id) as session:
         result = await session.execute(
             select(RequestPattern).where(RequestPattern.pattern_id == pattern_id)
@@ -1037,9 +1084,15 @@ async def get_pattern_detail(device_id: str, pattern_id: str):
         mappings_result = await session.execute(
             select(FieldMapping).where(FieldMapping.intent == pattern.intent)
         )
-        mappings = [{"request_field": m.request_field, "response_field": m.response_field,
-                      "transform": m.transform, "confidence": m.confidence}
-                    for m in mappings_result.scalars().all()]
+        mappings = [
+            {
+                "request_field": m.request_field,
+                "response_field": m.response_field,
+                "transform": m.transform,
+                "confidence": m.confidence,
+            }
+            for m in mappings_result.scalars().all()
+        ]
 
         return {
             "pattern": {
@@ -1059,25 +1112,28 @@ async def get_pattern_detail(device_id: str, pattern_id: str):
                 "body_template": template.body_template,
                 "field_mappings": template.field_mappings,
                 "expected_variables": template.expected_variables,
-            } if template else None,
+            }
+            if template
+            else None,
             "field_mappings": mappings,
         }
 
 
 # ── Pattern CRUD: Update, Patch, Delete ───────────────────────────────────────
 
+
 @app.put("/api/devices/{device_id}/patterns/{pattern_id}")
 async def put_pattern(device_id: str, pattern_id: str, request: Request):
     """Full update of a request pattern, its response template, and field mappings."""
     if not db_manager:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    from sqlalchemy import delete, select
 
-    from core.database import FieldMapping, RequestPattern, ResponseTemplate
     try:
         body = await request.json()
         async with db_manager.device_session(device_id) as session:
-            result = await session.execute(select(RequestPattern).where(RequestPattern.pattern_id == pattern_id))
+            result = await session.execute(
+                select(RequestPattern).where(RequestPattern.pattern_id == pattern_id)
+            )
             pattern = result.scalar_one_or_none()
             if not pattern:
                 # Upsert: create the pattern if it doesn't exist
@@ -1094,7 +1150,16 @@ async def put_pattern(device_id: str, pattern_id: str, request: Request):
                 )
 
             # Replace pattern fields
-            for f in ("method","path_pattern","protocol","required_headers","body_schema","query_param_keys","intent","confidence"):
+            for f in (
+                "method",
+                "path_pattern",
+                "protocol",
+                "required_headers",
+                "body_schema",
+                "query_param_keys",
+                "intent",
+                "confidence",
+            ):
                 if f in body:
                     setattr(pattern, f, body[f])
             # Accept "path" as alias for "path_pattern"
@@ -1104,7 +1169,9 @@ async def put_pattern(device_id: str, pattern_id: str, request: Request):
 
             # Response template
             tpl_data = body.get("response_template") or {}
-            tpl_result = await session.execute(select(ResponseTemplate).where(ResponseTemplate.pattern_id == pattern_id))
+            tpl_result = await session.execute(
+                select(ResponseTemplate).where(ResponseTemplate.pattern_id == pattern_id)
+            )
             tpl = tpl_result.scalar_one_or_none()
             if not tpl:
                 tpl = ResponseTemplate(
@@ -1127,7 +1194,9 @@ async def put_pattern(device_id: str, pattern_id: str, request: Request):
             # Field mappings: replace all mappings for this intent
             fm_list = body.get("field_mappings")
             if fm_list is not None:
-                await session.execute(delete(FieldMapping).where(FieldMapping.intent == pattern.intent))
+                await session.execute(
+                    delete(FieldMapping).where(FieldMapping.intent == pattern.intent)
+                )
                 for m in fm_list:
                     mapping_id = m.get("mapping_id") or str(uuid.uuid4())[:16]
                     fm = FieldMapping(
@@ -1150,30 +1219,41 @@ async def put_pattern(device_id: str, pattern_id: str, request: Request):
 
 
 @app.patch("/api/devices/{device_id}/patterns/{pattern_id}")
-async def patch_pattern(device_id: str, pattern_id: str, request: Request):
+async def patch_pattern(device_id: str, pattern_id: str, request: Request):  # noqa: C901, PLR0912
     """Partial update for a pattern."""
     if not db_manager:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    from sqlalchemy import delete, select
 
-    from core.database import FieldMapping, RequestPattern, ResponseTemplate
     try:
         body = await request.json()
         async with db_manager.device_session(device_id) as session:
-            result = await session.execute(select(RequestPattern).where(RequestPattern.pattern_id == pattern_id))
+            result = await session.execute(
+                select(RequestPattern).where(RequestPattern.pattern_id == pattern_id)
+            )
             pattern = result.scalar_one_or_none()
             if not pattern:
                 return JSONResponse(status_code=404, content={"error": "Pattern not found"})
 
             # Update only provided fields
-            for f in ("method","path_pattern","protocol","required_headers","body_schema","query_param_keys","intent","confidence"):
+            for f in (
+                "method",
+                "path_pattern",
+                "protocol",
+                "required_headers",
+                "body_schema",
+                "query_param_keys",
+                "intent",
+                "confidence",
+            ):
                 if f in body:
                     setattr(pattern, f, body[f])
             session.add(pattern)
 
             tpl_data = body.get("response_template")
             if tpl_data is not None:
-                tpl_result = await session.execute(select(ResponseTemplate).where(ResponseTemplate.pattern_id == pattern_id))
+                tpl_result = await session.execute(
+                    select(ResponseTemplate).where(ResponseTemplate.pattern_id == pattern_id)
+                )
                 tpl = tpl_result.scalar_one_or_none()
                 if not tpl:
                     tpl = ResponseTemplate(
@@ -1186,17 +1266,24 @@ async def patch_pattern(device_id: str, pattern_id: str, request: Request):
                         expected_variables=tpl_data.get("expected_variables", []),
                     )
                 else:
-                    if "status_code" in tpl_data: tpl.status_code = tpl_data["status_code"]
-                    if "headers_template" in tpl_data: tpl.headers_template = tpl_data["headers_template"]
-                    if "body_template" in tpl_data: tpl.body_template = tpl_data["body_template"]
-                    if "field_mappings" in tpl_data: tpl.field_mappings = tpl_data["field_mappings"]
-                    if "expected_variables" in tpl_data: tpl.expected_variables = tpl_data["expected_variables"]
+                    if "status_code" in tpl_data:
+                        tpl.status_code = tpl_data["status_code"]
+                    if "headers_template" in tpl_data:
+                        tpl.headers_template = tpl_data["headers_template"]
+                    if "body_template" in tpl_data:
+                        tpl.body_template = tpl_data["body_template"]
+                    if "field_mappings" in tpl_data:
+                        tpl.field_mappings = tpl_data["field_mappings"]
+                    if "expected_variables" in tpl_data:
+                        tpl.expected_variables = tpl_data["expected_variables"]
                 session.add(tpl)
 
             fm_list = body.get("field_mappings")
             if fm_list is not None:
                 # Replace per-intent mappings
-                await session.execute(delete(FieldMapping).where(FieldMapping.intent == pattern.intent))
+                await session.execute(
+                    delete(FieldMapping).where(FieldMapping.intent == pattern.intent)
+                )
                 for m in fm_list:
                     mapping_id = m.get("mapping_id") or str(uuid.uuid4())[:16]
                     fm = FieldMapping(
@@ -1223,20 +1310,24 @@ async def delete_pattern(device_id: str, pattern_id: str):
     """Delete a pattern and its associated response template and field mappings."""
     if not db_manager:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    from sqlalchemy import delete, select
 
-    from core.database import FieldMapping, RequestPattern, ResponseTemplate
     try:
         async with db_manager.device_session(device_id) as session:
-            result = await session.execute(select(RequestPattern).where(RequestPattern.pattern_id == pattern_id))
+            result = await session.execute(
+                select(RequestPattern).where(RequestPattern.pattern_id == pattern_id)
+            )
             pattern = result.scalar_one_or_none()
             if not pattern:
                 return JSONResponse(status_code=404, content={"error": "Pattern not found"})
 
             # Delete response template
-            await session.execute(delete(ResponseTemplate).where(ResponseTemplate.pattern_id == pattern_id))
+            await session.execute(
+                delete(ResponseTemplate).where(ResponseTemplate.pattern_id == pattern_id)
+            )
             # Delete request pattern
-            await session.execute(delete(RequestPattern).where(RequestPattern.pattern_id == pattern_id))
+            await session.execute(
+                delete(RequestPattern).where(RequestPattern.pattern_id == pattern_id)
+            )
             # Delete field mappings for this intent
             await session.execute(delete(FieldMapping).where(FieldMapping.intent == pattern.intent))
             await session.commit()
@@ -1292,7 +1383,7 @@ async def delete_buffer_entry(device_id: str, entry_id: int):
         success = await buf.delete_entry(device_id, entry_id)
         if not success:
             return JSONResponse(status_code=404, content={"error": "Entry not found"})
-        return {"device_id": device_id, "entry_id": entry_id, "status": "deleted"}
+        return {"device_id": device_id, "entry_id": entry_id, "status": "deleted"}  # noqa: TRY300
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
@@ -1435,9 +1526,7 @@ async def import_patterns(device_id: str, request: Request):
     """Import patterns from portable .ride-pattern.json format."""
     if not db_manager:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    from core.pattern_db import decipher_ingest
-    from core.pattern_db.schemas import PatternDB
-    from core.pattern_db.validator import ValidationError, validate_pattern
+
     try:
         body = await request.json()
         # Validate against the portable JSON Schema
@@ -1450,7 +1539,7 @@ async def import_patterns(device_id: str, request: Request):
         pattern_db = PatternDB.model_validate(body)
         ingester = decipher_ingest.DecipherIngest(db_manager)
         count = await ingester.import_patterns(device_id, pattern_db)
-        return {"imported": count, "device_id": device_id, "warnings": result.warnings}
+        return {"imported": count, "device_id": device_id, "warnings": result.warnings}  # noqa: TRY300
     except ValidationError as e:
         return JSONResponse(
             status_code=422,
@@ -1465,14 +1554,13 @@ async def export_buffer(device_id: str):
     """Export raw buffer to portable .ride-capture.json format."""
     if not db_manager:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    from core.pattern_db import buffer_manager
+
     manager = buffer_manager.BufferManager(db_manager)
     try:
         async with db_manager.device_session(device_id) as session:
-            from sqlalchemy import select as sel
-
-            from core.database import DeviceRegistry
-            result = await session.execute(sel(DeviceRegistry).where(DeviceRegistry.device_id == device_id))
+            result = await session.execute(
+                select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
+            )
             device = result.scalar_one_or_none()
             vendor = device.vendor if device else "unknown"
             device_type = device.device_type if device else "unknown"
@@ -1487,9 +1575,7 @@ async def import_buffer(device_id: str, request: Request):
     """Import raw pairs from portable .ride-capture.json into buffer."""
     if not db_manager:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    from core.pattern_db import buffer_manager
-    from core.pattern_db.schemas import CaptureDB
-    from core.pattern_db.validator import ValidationError, validate_capture
+
     manager = buffer_manager.BufferManager(db_manager)
     try:
         body = await request.json()
@@ -1502,7 +1588,7 @@ async def import_buffer(device_id: str, request: Request):
             )
         capture = CaptureDB.model_validate(body)
         count = await manager.import_capture(capture)
-        return {"imported": count, "device_id": device_id, "warnings": result.warnings}
+        return {"imported": count, "device_id": device_id, "warnings": result.warnings}  # noqa: TRY300
     except ValidationError as e:
         return JSONResponse(
             status_code=422,
@@ -1516,6 +1602,7 @@ async def import_buffer(device_id: str, request: Request):
 # WEB UI (basic dashboard)
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 @app.get("/", response_class=HTMLResponse)
 async def dashboard():
     """Simple web dashboard."""
@@ -1523,18 +1610,24 @@ async def dashboard():
         html = DASHBOARD_HTML.read_text(encoding="utf-8")
     except FileNotFoundError:
         logger.warning("Dashboard HTML not found at %s", DASHBOARD_HTML)
-        html = "<!DOCTYPE html><html><body><h1>Dashboard not found</h1><p>Expected at webui/dashboard.html</p></body></html>"
+        html = (
+            "<!DOCTYPE html><html><body><h1>Dashboard not found</h1>"
+            "<p>Expected at webui/dashboard.html</p></body></html>"
+        )
     return HTMLResponse(content=html, status_code=200)
 
 
 @app.get("/patterns/{device_id}", response_class=HTMLResponse)
-async def patterns_page(device_id: str):
+async def patterns_page(device_id: str):  # noqa: ARG001
     """Serve the Patterns web UI for a device."""
     try:
         html = PATTERNS_HTML.read_text(encoding="utf-8")
     except FileNotFoundError:
         logger.warning("Patterns HTML not found at %s", PATTERNS_HTML)
-        html = "<!DOCTYPE html><html><body><h1>Patterns page not found</h1><p>Expected at webui/patterns.html</p></body></html>"
+        html = (
+            "<!DOCTYPE html><html><body><h1>Patterns page not found</h1>"
+            "<p>Expected at webui/patterns.html</p></body></html>"
+        )
     return HTMLResponse(content=html, status_code=200)
 
 
@@ -1548,8 +1641,11 @@ register_resilience_routes(app, lambda: db_manager, lambda: orchestrator)
 # MAIN PROXY ENDPOINT - Catches all device traffic
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@app.api_route("/{vendor}/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"])
-async def proxy_vendor_request(vendor: str, path: str, request: Request):
+
+@app.api_route(
+    "/{vendor}/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
+)
+async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noqa: C901, PLR0911
     """Main proxy endpoint for device API requests.
 
     Routes:
@@ -1569,7 +1665,12 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):
     if not adapter:
         return JSONResponse(
             status_code=404,
-            content={"error": f"Protocol '{vendor}' not supported. Supported: {adapter_registry.list_vendors()}"},
+            content={
+                "error": (
+                    f"Protocol '{vendor}' not supported. "
+                    f"Supported: {adapter_registry.list_vendors()}"
+                )
+            },
         )
 
     # Parse request body
@@ -1601,7 +1702,7 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):
     # Build intercepted request
     intercepted = InterceptedRequest(
         device_id="",
-            timestamp=datetime.now(UTC),
+        timestamp=datetime.now(UTC),
         protocol=ProtocolType.HTTPS if request.url.scheme == "https" else ProtocolType.HTTP,
         method=request.method,
         path=f"/{path}",
@@ -1661,7 +1762,7 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):
             cloud_response = await adapter.forward_to_cloud(intercepted)
             if cloud_response and cloud_response.success:
                 # Process cloud response for learning
-                resp_body = cloud_response.data if hasattr(cloud_response, 'data') else {}
+                resp_body = cloud_response.data if hasattr(cloud_response, "data") else {}
                 await orchestrator.handle_response(
                     device_id=device_id,
                     vendor=vendor,
@@ -1673,7 +1774,10 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):
                 return JSONResponse(content=resp_body)
             return JSONResponse(
                 status_code=502,
-                content={"error": "Cloud passthrough failed", "detail": str(cloud_response.error) if cloud_response else "No response"},
+                content={
+                    "error": "Cloud passthrough failed",
+                    "detail": str(cloud_response.error) if cloud_response else "No response",
+                },
             )
         if result["action"] == "no_fallback":
             # Production mode with no_cloud_fallback enabled — conclusive
@@ -1705,6 +1809,7 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):
 # HELPERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 async def _get_request_body(request: Request) -> dict | None:
     """Extract JSON body from request."""
     try:
@@ -1719,9 +1824,8 @@ async def _get_request_body(request: Request) -> dict | None:
 def _is_local_ip(ip: str) -> bool:
     """Check if IP is in a private/local range."""
     try:
-        import ipaddress
         ip_obj = ipaddress.ip_address(ip)
-        return ip_obj.is_private or ip_obj.is_loopback
+        return ip_obj.is_private or ip_obj.is_loopback  # noqa: TRY300
     except ValueError:
         return False
 
@@ -1735,7 +1839,7 @@ def _extract_device_id(headers: dict, path: str) -> str:
     # Check path for common patterns
     parts = path.strip("/").split("/")
     for part in parts:
-        if len(part) >= 8 and part.isalnum():
+        if len(part) >= 8 and part.isalnum():  # noqa: PLR2004
             return part
     return "unknown"
 
@@ -1747,6 +1851,7 @@ def _extract_device_id(headers: dict, path: str) -> str:
 # ═══════════════════════════════════════════════════════════════════════════════
 # MAIN ENTRY POINT
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 def main():
     """Run the server."""

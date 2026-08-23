@@ -8,21 +8,27 @@ Messages are converted to InterceptedRequest and passed to the pipeline.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
-from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any
-
-try:
-    from gmqtt import Client as MQTTClient
-    from gmqtt.mqtt.constants import MQTTv5, MQTTv311
-    HAS_GMQTT = True
-except ImportError:
-    HAS_GMQTT = False
+from typing import TYPE_CHECKING
 
 from adapters.base import InterceptedRequest, ProtocolType
 from core.protocol_servers import ProtocolServerPlugin
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from core.config import MQTTServerConfig
+
+try:
+    from gmqtt import Client as MQTTClient  # noqa: TC002
+    from gmqtt.mqtt.constants import MQTTv5, MQTTv311  # noqa: F401
+
+    HAS_GMQTT = True
+except ImportError:
+    HAS_GMQTT = False
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +38,7 @@ class MQTTServerPlugin(ProtocolServerPlugin):
 
     name = "mqtt"
 
-    def __init__(self, config: Any, handler: Callable | None = None):
+    def __init__(self, config: MQTTServerConfig, handler: Callable | None = None) -> None:
         super().__init__(config)
         self.handler = handler
         self._server: asyncio.AbstractServer | None = None
@@ -52,17 +58,16 @@ class MQTTServerPlugin(ProtocolServerPlugin):
     async def stop(self) -> None:
         """Stop the MQTT server and disconnect all clients."""
         for cid, client in self._clients.items():
-            try:
+            with contextlib.suppress(Exception):
                 await client.disconnect()
-            except Exception:
-                pass
         self._clients.clear()
         self._client_subscriptions.clear()
         await super().stop()
         logger.info("MQTT server stopped")
 
-    async def handle_message(self, client_id: str, topic: str, payload: bytes,
-                              qos: int, retain: bool) -> dict | None:
+    async def handle_message(
+        self, client_id: str, topic: str, payload: bytes, qos: int, retain: bool
+    ) -> dict | None:
         """Convert an intercepted MQTT message to a local response via the pipeline."""
         if not self.handler:
             return None
@@ -88,10 +93,11 @@ class MQTTServerPlugin(ProtocolServerPlugin):
                 result = await self.handler(request)
             else:
                 result = self.handler(request)
-            return result
-        except Exception as e:
-            logger.error("MQTT handler error: %s", e)
+        except Exception:
+            logger.exception("MQTT handler error: %s")
             return None
+        else:
+            return result
 
     async def get_status(self) -> dict:
         return {
@@ -110,7 +116,7 @@ class MQTTBridgeClient(ProtocolServerPlugin):
 
     name = "mqtt_bridge"
 
-    def __init__(self, config: Any, handler: Callable | None = None):
+    def __init__(self, config: MQTTServerConfig, handler: Callable | None = None) -> None:
         super().__init__(config)
         self.handler = handler
         self._client: MQTTClient | None = None
@@ -126,20 +132,21 @@ class MQTTBridgeClient(ProtocolServerPlugin):
 
     async def stop(self) -> None:
         if self._client:
-            try:
+            with contextlib.suppress(Exception):
                 await self._client.disconnect()
-            except Exception:
-                pass
             self._client = None
         await super().stop()
 
-    async def publish(self, topic: str, payload: Any, qos: int = 0) -> bool:
+    async def publish(self, topic: str, payload: dict | str | bytes, qos: int = 0) -> bool:
         """Publish a message to the external broker."""
         if not self._client:
             return False
         try:
-            self._client.publish(topic, json.dumps(payload) if isinstance(payload, dict) else payload, qos)
-            return True
-        except Exception as e:
-            logger.error("MQTT bridge publish error: %s", e)
+            self._client.publish(
+                topic, json.dumps(payload) if isinstance(payload, dict) else payload, qos
+            )
+        except Exception:
+            logger.exception("MQTT bridge publish error: %s")
             return False
+        else:
+            return True

@@ -13,7 +13,13 @@ from uuid import uuid4
 
 from sqlalchemy import select
 
-from core.database import DatabaseManager, FieldMapping, RequestPattern, ResponseTemplate
+from core.database import (
+    DatabaseManager,
+    FieldMapping,
+    MatchStats,
+    RequestPattern,
+    ResponseTemplate,
+)
 from core.pattern_db.schemas import (
     ClientConfig,
     ClientEndpoint,
@@ -36,7 +42,7 @@ class DecipherIngest:
     in the device-specific database.
     """
 
-    def __init__(self, db_manager: DatabaseManager):
+    def __init__(self, db_manager: DatabaseManager) -> None:
         self.db_manager = db_manager
 
     async def ingest(self, device_id: str, llm_output: dict) -> int:
@@ -84,12 +90,10 @@ class DecipherIngest:
                     status_code=response.get("status_code", 200),
                     headers_template=response.get("headers", {}),
                     body_template=response.get("body", {}),
-                    field_mappings={
-                        m.get("source", ""): m.get("target", "")
-                        for m in mappings
-                    },
+                    field_mappings={m.get("source", ""): m.get("target", "") for m in mappings},
                     expected_variables=[
-                        m.get("target", "") for m in mappings
+                        m.get("target", "")
+                        for m in mappings
                         if m.get("target", "").startswith("result.")
                     ],
                     confidence=float(pat.get("confidence", 0.5)),
@@ -114,7 +118,6 @@ class DecipherIngest:
                 count += 1
 
             # Update stats
-            from core.database import MatchStats
             result = await session.execute(
                 select(MatchStats).where(MatchStats.device_id == device_id)
             )
@@ -128,8 +131,9 @@ class DecipherIngest:
 
     # ── PatternDB export / import ──────────────────────────────────────────────
 
-    async def export_patterns(self, device_id: str, vendor: str = "",
-                               device_type: str = "") -> PatternDB:
+    async def export_patterns(
+        self, device_id: str, vendor: str = "", device_type: str = ""
+    ) -> PatternDB:
         """Export deciphered patterns from the device DB to portable format."""
         client_endpoints = []
         server_responses = []
@@ -156,16 +160,12 @@ class DecipherIngest:
 
                 # Build server response
                 tmpl_result = await session.execute(
-                    select(ResponseTemplate).where(
-                        ResponseTemplate.pattern_id == pat.pattern_id
-                    )
+                    select(ResponseTemplate).where(ResponseTemplate.pattern_id == pat.pattern_id)
                 )
                 tmpl = tmpl_result.scalar_one_or_none()
                 if tmpl:
                     mappings_result = await session.execute(
-                        select(FieldMapping).where(
-                            FieldMapping.intent == pat.intent
-                        )
+                        select(FieldMapping).where(FieldMapping.intent == pat.intent)
                     )
                     mappings = mappings_result.scalars().all()
                     srv_resp = ServerResponse(
@@ -215,7 +215,9 @@ class DecipherIngest:
                     pattern_id=pattern_id,
                     method=ep.method,
                     path_pattern=ep.path_pattern or ep.path,
-                    protocol=pattern_db.client.protocols[0] if pattern_db.client.protocols else "http",
+                    protocol=pattern_db.client.protocols[0]
+                    if pattern_db.client.protocols
+                    else "http",
                     required_headers=ep.headers.get("required", []),
                     body_schema=ep.body_schema or {},
                     query_param_keys=ep.query_params,
@@ -234,11 +236,10 @@ class DecipherIngest:
                             status_code=resp.status_code,
                             headers_template=resp.headers_template,
                             body_template=resp.body_template,
-                            field_mappings={
-                                m.source: m.target for m in resp.field_mappings
-                            },
+                            field_mappings={m.source: m.target for m in resp.field_mappings},
                             expected_variables=[
-                                m.target for m in resp.field_mappings
+                                m.target
+                                for m in resp.field_mappings
                                 if m.target.startswith("result.")
                             ],
                             confidence=0.9,

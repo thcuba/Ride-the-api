@@ -14,6 +14,7 @@ import logging
 import re
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from sqlalchemy import select
 
@@ -25,12 +26,17 @@ logger = logging.getLogger(__name__)
 
 # Allowed names exposed inside formulas (safe math helpers only).
 _FORMULA_SAFE_NAMES = {
-    "abs": abs, "min": min, "max": max, "round": round,
-    "int": int, "float": float, "str": str,
+    "abs": abs,
+    "min": min,
+    "max": max,
+    "round": round,
+    "int": int,
+    "float": float,
+    "str": str,
 }
 
 
-def _eval_formula_safe(formula: str) -> Any:
+def _eval_formula_safe(formula: str) -> Any:  # noqa: ANN401
     """Evaluate a restricted arithmetic formula without eval().
 
     Formulas may contain literals, the math helpers in ``_FORMULA_SAFE_NAMES``
@@ -45,7 +51,7 @@ def _eval_formula_safe(formula: str) -> Any:
     return _interp(tree)
 
 
-def _interp(node) -> Any:
+def _interp(node) -> Any:  # noqa: C901, PLR0911, PLR0912, PLR0915, ANN401
     """Direct interpreter over the whitelisted AST subset (no eval)."""
     if isinstance(node, ast.Constant):
         return node.value
@@ -80,7 +86,7 @@ def _interp(node) -> Any:
         if isinstance(op, ast.Mod):
             return lhs % rhs
         if isinstance(op, ast.Pow):
-            return lhs ** rhs
+            return lhs**rhs
         raise ValueError(f"Unsupported binop: {type(op).__name__}")
     if isinstance(node, ast.BoolOp):
         values = [_interp(v) for v in node.values]
@@ -107,7 +113,7 @@ def _interp(node) -> Any:
             elif isinstance(op, ast.GtE):
                 result = result and left >= right
             else:
-                raise ValueError(f"Unsupported compare op: {type(op).__name__}")
+                raise ValueError(f"Unsupported compare op: {type(op).__name__}")  # noqa: TRY004
             left = right
         return result
     if isinstance(node, ast.Call):
@@ -128,7 +134,7 @@ class PatternEngine:
     - Template variable resolution (state, request fields, constants)
     """
 
-    def __init__(self, db_manager: DatabaseManager):
+    def __init__(self, db_manager: DatabaseManager) -> None:
         self.db_manager = db_manager
         self._state_stores: dict[str, DeviceStateStore] = {}
         self._cached_patterns: dict[str, PatternDB] = {}
@@ -150,9 +156,14 @@ class PatternEngine:
 
     # ── Pattern Matching ──────────────────────────────────────────────────────
 
-    async def find_best_match(
-        self, device_id: str, method: str, path: str,
-        headers: dict, body: Any, query_params: dict,
+    async def find_best_match(  # noqa: PLR0913, PLR0912
+        self,
+        device_id: str,
+        method: str,
+        path: str,
+        headers: dict,
+        body: Any,  # noqa: ANN401
+        query_params: dict,
     ) -> tuple:
         """Find best matching pattern. Returns (pattern, response_template, score)."""
         best_score = 0.0
@@ -164,11 +175,16 @@ class PatternEngine:
         if cached:
             for ep in cached.client.endpoints:
                 score = self._calculate_similarity(
-                    method, ep.method,
-                    ep.path_pattern or ep.path, path,
-                    ep.headers.get("required", []), headers,
-                    ep.body_schema or {}, body,
-                    ep.query_params, query_params,
+                    method,
+                    ep.method,
+                    ep.path_pattern or ep.path,
+                    path,
+                    ep.headers.get("required", []),
+                    headers,
+                    ep.body_schema or {},
+                    body,
+                    ep.query_params,
+                    query_params,
                 )
                 if score > best_score:
                     best_score = score
@@ -186,11 +202,16 @@ class PatternEngine:
 
             for pat in db_patterns:
                 score = self._calculate_similarity(
-                    method, pat.method,
-                    pat.path_pattern, path,
-                    pat.required_headers or [], headers,
-                    pat.body_schema or {}, body,
-                    pat.query_param_keys or [], query_params,
+                    method,
+                    pat.method,
+                    pat.path_pattern,
+                    path,
+                    pat.required_headers or [],
+                    headers,
+                    pat.body_schema or {},
+                    body,
+                    pat.query_param_keys or [],
+                    query_params,
                 )
                 if score > best_score:
                     best_score = score
@@ -204,13 +225,18 @@ class PatternEngine:
 
         return best_pattern, best_template, best_score
 
-    def _calculate_similarity(
+    def _calculate_similarity(  # noqa: PLR0913
         self,
-        method_a: str, method_b: str,
-        path_pattern: str, actual_path: str,
-        required_headers: list, actual_headers: dict,
-        body_schema: dict, actual_body: Any,
-        query_param_keys: list, actual_query: dict,
+        method_a: str,
+        method_b: str,
+        path_pattern: str,
+        actual_path: str,
+        required_headers: list,
+        actual_headers: dict,
+        body_schema: dict,
+        actual_body: Any,  # noqa: ANN401
+        query_param_keys: list,
+        actual_query: dict,
     ) -> float:
         """Calculate similarity score (0.0 to 1.0)."""
         score = 0.0
@@ -271,7 +297,10 @@ class PatternEngine:
     # ── Response Building ─────────────────────────────────────────────────────
 
     async def build_local_response(
-        self, device_id: str, template, original_request: dict,
+        self,
+        device_id: str,
+        template,
+        original_request: dict,
     ) -> dict:
         """Build a local response from a template, resolving variables."""
         store = self.get_state_store(device_id)
@@ -293,7 +322,9 @@ class PatternEngine:
             for fm in field_mappings:
                 source = fm.source if hasattr(fm, "source") else fm.get("source", "")
                 target = fm.target if hasattr(fm, "target") else fm.get("target", "")
-                transform = fm.transform if hasattr(fm, "transform") else fm.get("transform", "direct")
+                transform = (
+                    fm.transform if hasattr(fm, "transform") else fm.get("transform", "direct")
+                )
                 mapping = fm.mapping if hasattr(fm, "mapping") else fm.get("mapping")
 
                 val = self._resolve_source(source, original_request, store)
@@ -304,7 +335,8 @@ class PatternEngine:
                     elif transform == "formula":
                         val = self._eval_formula(
                             fm.formula if hasattr(fm, "formula") else fm.get("formula", ""),
-                            original_request, store,
+                            original_request,
+                            store,
                         )
                     self._set_nested(body, target, val)
 
@@ -317,21 +349,21 @@ class PatternEngine:
             "body": body,
         }
 
-    def _resolve_source(self, source: str, request: dict, store: DeviceStateStore) -> Any:
+    def _resolve_source(self, source: str, request: dict, store: DeviceStateStore) -> Any:  # noqa: ANN401
         """Resolve a source reference like 'request.body.x.y' or 'state.varname'."""
         if source.startswith("request."):
             # e.g. request.body.commands[0].value -> resolve "body.commands[0].value" in request
             path = source[8:]  # strip "request." prefix
             return self._resolve_json_path(request, path)
-        elif source.startswith("state."):
+        if source.startswith("state."):
             return store.get(source[6:])
-        elif source.startswith("constant."):
+        if source.startswith("constant."):
             return source.split(".", 1)[1] if "." in source else None
         return None
 
-    def _resolve_json_path(self, obj: Any, path: str) -> Any:
+    def _resolve_json_path(self, obj: Any, path: str) -> Any:  # noqa: ANN401
         """Resolve a path like 'commands[0].value' in a JSON object."""
-        parts = re.split(r'[\.\[\]]+', path)
+        parts = re.split(r"[\.\[\]]+", path)
         parts = [p for p in parts if p]
         current = obj
         for p in parts:
@@ -347,7 +379,7 @@ class PatternEngine:
                 return None
         return current
 
-    def _set_nested(self, d: dict, path: str, value: Any):
+    def _set_nested(self, d: dict, path: str, value: Any):  # noqa: ANN401
         parts = path.split(".")
         for p in parts[:-1]:
             if p not in d or d[p] is None:
@@ -355,20 +387,20 @@ class PatternEngine:
             d = d[p]
         d[parts[-1]] = value
 
-    def _resolve_template_vars(self, obj: Any, store: DeviceStateStore,
-                                request: dict) -> Any:
+    def _resolve_template_vars(self, obj: Any, store: DeviceStateStore, request: dict) -> Any:  # noqa: ANN401
         """Recursively resolve {state.x} and {request.x} placeholders in a template."""
         if isinstance(obj, str):
             if "{state." in obj or "{request." in obj or "{uuid}" in obj:
+
                 def _replacer(m: re.Match) -> str:
                     if m.group(1):  # state.<name>
                         return str(store.get(m.group(1), ""))
                     if m.group(2):  # request.<path>
                         val = self._resolve_source(f"request.{m.group(2)}", request, store)
                         return str(val or "")
-                    # {uuid}
-                    from uuid import uuid4
+                    # {uuid}  # noqa: ERA001
                     return str(uuid4())
+
                 obj = re.sub(
                     r"\{state\.(\w+)\}|\{request\.(\w+(?:\.\w+)*)\}|\{uuid\}",
                     _replacer,
@@ -381,7 +413,7 @@ class PatternEngine:
             return [self._resolve_template_vars(item, store, request) for item in obj]
         return obj
 
-    def _eval_formula(self, formula: str, request: dict, store: DeviceStateStore) -> Any:
+    def _eval_formula(self, formula: str, request: dict, store: DeviceStateStore) -> Any:  # noqa: ANN401
         """Evaluate a simple formula expression (restricted, safe AST interpreter)."""
         try:
             # Replace variable references with re.sub (single pass, no intermediate strings)
@@ -392,15 +424,18 @@ class PatternEngine:
                     val = self._resolve_source(f"request.{m.group(2)}", request, store)
                     return str(val or 0)
                 return m.group(0)
+
             resolved = re.sub(
                 r"\{state\.(\w+)\}|\{request\.(\w+(?:\.\w+)*)\}",
                 _var_replacer,
                 formula,
             )
             # Replace function calls
-            resolved = re.sub(r"random\(([^,]+),\s*([^)]+)\)",
-                              lambda m: str(__import__("random").uniform(float(m.group(1)), float(m.group(2)))),
-                              resolved)
+            resolved = re.sub(
+                r"random\(([^,]+),\s*([^)]+)\)",
+                lambda m: str(__import__("random").uniform(float(m.group(1)), float(m.group(2)))),
+                resolved,
+            )
             return _eval_formula_safe(resolved)
         except Exception as e:
             logger.warning("Formula eval failed: %s (%s)", formula, e)

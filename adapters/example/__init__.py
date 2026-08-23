@@ -8,9 +8,8 @@ This is a reference example — users/community choose their own database names.
 
 from __future__ import annotations
 
-import json
 import re
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from adapters.base import (
@@ -46,19 +45,19 @@ class ExampleProtocolAdapter(ProtocolAdapter):
     # These can vary by device model — should be discovered per device.
     # Users/community define their own DP code mappings for their database.
     DP_CODES = {
-        "power": "1",           # Boolean: true=on, false=off
-        "mode": "2",            # Enum: "cold", "hot", "wet", "wind", "auto"
-        "temp_set": "3",        # Integer: target temp * 10 (e.g., 240 = 24.0°C)
-        "temp_current": "4",    # Integer: current temp * 10
-        "fan_speed": "5",       # Enum: "low", "medium", "high", "auto"
-        "swing": "6",           # Boolean: true=on, false=off
-        "humidity": "7",        # Integer: humidity %
-        "outdoor_temp": "8",    # Integer: outdoor temp * 10
+        "power": "1",  # Boolean: true=on, false=off
+        "mode": "2",  # Enum: "cold", "hot", "wet", "wind", "auto"
+        "temp_set": "3",  # Integer: target temp * 10 (e.g., 240 = 24.0°C)
+        "temp_current": "4",  # Integer: current temp * 10
+        "fan_speed": "5",  # Enum: "low", "medium", "high", "auto"
+        "swing": "6",  # Boolean: true=on, false=off
+        "humidity": "7",  # Integer: humidity %
+        "outdoor_temp": "8",  # Integer: outdoor temp * 10
         "power_consumption": "9",  # Integer: watts
-        "eco_mode": "10",       # Boolean
-        "sleep_mode": "11",     # Boolean
-        "filter_life": "12",    # Integer: percentage
-        "error_code": "13",     # String: error code
+        "eco_mode": "10",  # Boolean
+        "sleep_mode": "11",  # Boolean
+        "filter_life": "12",  # Integer: percentage
+        "error_code": "13",  # String: error code
     }
 
     # Reverse mapping
@@ -85,7 +84,7 @@ class ExampleProtocolAdapter(ProtocolAdapter):
 
     FAN_STD_TO_VENDOR = {v: k for k, v in FAN_VENDOR_TO_STD.items()}
 
-    def __init__(self, vendor: str, config: dict[str, Any]):
+    def __init__(self, vendor: str, config: dict[str, Any]) -> None:
         super().__init__(vendor, config)
         self.region = config.get("region", "eu")
         self.api_version = config.get("api_version", "v1.0")
@@ -126,7 +125,7 @@ class ExampleProtocolAdapter(ProtocolAdapter):
         # - thing/property/device_id (property updates)
 
         topic_parts = request.topic.split("/")
-        if len(topic_parts) < 3:
+        if len(topic_parts) < 3:  # noqa: PLR2004
             request.parsed_intent = CommandType.UNKNOWN
             return request
 
@@ -254,13 +253,12 @@ class ExampleProtocolAdapter(ProtocolAdapter):
                 source="edge_auto",
             )
             # In real implementation, this would go through policy engine
-            result = await self.send_command(request.device_id, command)
-            return result
+            return await self.send_command(request.device_id, command)
 
         # Default: forward to cloud
         return await self.forward_to_cloud(request)
 
-    async def forward_to_cloud(self, request: InterceptedRequest) -> CommandResult:
+    async def forward_to_cloud(self, _request: InterceptedRequest) -> CommandResult:
         """Forward request to real cloud."""
         # Implementation would use the vendor's Cloud API
         # For now, return placeholder
@@ -274,13 +272,17 @@ class ExampleProtocolAdapter(ProtocolAdapter):
     # RESPONSE BUILDING
     # ══════════════════════════════════════════════════════════════════════════════
 
-    async def build_response(self, request: InterceptedRequest, result: CommandResult) -> dict[str, Any]:
+    async def build_response(
+        self, request: InterceptedRequest, result: CommandResult
+    ) -> dict[str, Any]:
         """Build vendor-compatible response."""
         if request.protocol in (ProtocolType.MQTT, ProtocolType.MQTTS):
             return await self._build_mqtt_response(request, result)
         return await self._build_http_response(request, result)
 
-    async def _build_mqtt_response(self, request: InterceptedRequest, result: CommandResult) -> dict[str, Any]:
+    async def _build_mqtt_response(
+        self, request: InterceptedRequest, result: CommandResult
+    ) -> dict[str, Any]:
         """Build MQTT response."""
         if not result.success:
             return {"success": False, "error": result.error}
@@ -314,7 +316,9 @@ class ExampleProtocolAdapter(ProtocolAdapter):
             "time": t,
         }
 
-    async def _build_http_response(self, request: InterceptedRequest, result: CommandResult) -> dict[str, Any]:
+    async def _build_http_response(
+        self, request: InterceptedRequest, result: CommandResult
+    ) -> dict[str, Any]:
         """Build HTTP API response."""
         if not result.success:
             return {
@@ -366,7 +370,7 @@ class ExampleProtocolAdapter(ProtocolAdapter):
             ],
         )
 
-    async def get_device_state(self, device_id: str) -> DeviceState | None:
+    async def get_device_state(self, _device_id: str) -> DeviceState | None:
         """Get device state (would query vendor DB)."""
         # Placeholder - would query vendor DB for latest reading
         return None
@@ -375,46 +379,47 @@ class ExampleProtocolAdapter(ProtocolAdapter):
     # COMMAND EXECUTION
     # ══════════════════════════════════════════════════════════════════════════════
 
-    async def send_command(self, device_id: str, command: Command) -> CommandResult:
+    async def send_command(self, _device_id: str, command: Command) -> CommandResult:
         """Send command to device via cloud API."""
         # Convert standard command to DP format
         vendor_commands = self._command_to_dps(command)
 
         # In real implementation, call the cloud API:
-        # POST /v1.0/devices/{device_id}/commands
-        # Body: {"commands": [{"code": dp_code, "value": value}, ...]}
+        #   POST /v1.0/devices/{device_id}/commands with the DP commands payload.
 
         return CommandResult(
-                    success=True,
-                    response={"commands": vendor_commands},
-                    forwarded=False,
-                )
+            success=True,
+            response={"commands": vendor_commands},
+            forwarded=False,
+        )
 
-    def _command_to_dps(self, command: Command) -> list[dict[str, Any]]:
+    def _command_to_dps(self, command: Command) -> list[dict[str, Any]]:  # noqa: C901
         """Convert standard command to DP commands."""
         cmds = []
         params = command.params
 
         if command.command_type == CommandType.TURN_ON:
-                cmds.append({"code": self.DP_CODES["power"], "value": True})
+            cmds.append({"code": self.DP_CODES["power"], "value": True})
         elif command.command_type == CommandType.TURN_OFF:
-                cmds.append({"code": self.DP_CODES["power"], "value": False})
+            cmds.append({"code": self.DP_CODES["power"], "value": False})
         elif command.command_type == CommandType.SET_TEMPERATURE:
-                temp = params.get("temperature") or params.get("temp_set")
-                if temp is not None:
-                    cmds.append({"code": self.DP_CODES["temp_set"], "value": int(float(temp) * 10)})
+            temp = params.get("temperature") or params.get("temp_set")
+            if temp is not None:
+                cmds.append({"code": self.DP_CODES["temp_set"], "value": int(float(temp) * 10)})
         elif command.command_type == CommandType.SET_MODE:
-                mode = params.get("mode")
-                if mode and mode in self.MODE_STD_TO_VENDOR:
-                    cmds.append({"code": self.DP_CODES["mode"], "value": self.MODE_STD_TO_VENDOR[mode]})
+            mode = params.get("mode")
+            if mode and mode in self.MODE_STD_TO_VENDOR:
+                cmds.append({"code": self.DP_CODES["mode"], "value": self.MODE_STD_TO_VENDOR[mode]})
         elif command.command_type == CommandType.SET_FAN_SPEED:
-                fan = params.get("fan_speed")
-                if fan and fan in self.FAN_STD_TO_VENDOR:
-                    cmds.append({"code": self.DP_CODES["fan_speed"], "value": self.FAN_STD_TO_VENDOR[fan]})
+            fan = params.get("fan_speed")
+            if fan and fan in self.FAN_STD_TO_VENDOR:
+                cmds.append(
+                    {"code": self.DP_CODES["fan_speed"], "value": self.FAN_STD_TO_VENDOR[fan]}
+                )
         elif command.command_type == CommandType.SET_SWING:
-                swing = params.get("swing")
-                if swing is not None:
-                    cmds.append({"code": self.DP_CODES["swing"], "value": bool(swing)})
+            swing = params.get("swing")
+            if swing is not None:
+                cmds.append({"code": self.DP_CODES["swing"], "value": bool(swing)})
 
         return cmds
 
@@ -454,11 +459,17 @@ class ExampleProtocolAdapter(ProtocolAdapter):
             timestamp=datetime.now(UTC),
             on_off=dps.get(self.DP_CODES["power"]),
             mode=self.MODE_VENDOR_TO_STD.get(dps.get(self.DP_CODES["mode"])),
-            temp_target=dps.get(self.DP_CODES["temp_set"], 0) / 10 if self.DP_CODES["temp_set"] in dps else None,
-            temp_actual=dps.get(self.DP_CODES["temp_current"], 0) / 10 if self.DP_CODES["temp_current"] in dps else None,
+            temp_target=dps.get(self.DP_CODES["temp_set"], 0) / 10
+            if self.DP_CODES["temp_set"] in dps
+            else None,
+            temp_actual=dps.get(self.DP_CODES["temp_current"], 0) / 10
+            if self.DP_CODES["temp_current"] in dps
+            else None,
             fan_speed=self.FAN_VENDOR_TO_STD.get(dps.get(self.DP_CODES["fan_speed"])),
             humidity=dps.get(self.DP_CODES["humidity"]),
-            temp_outdoor=dps.get(self.DP_CODES["outdoor_temp"], 0) / 10 if self.DP_CODES["outdoor_temp"] in dps else None,
+            temp_outdoor=dps.get(self.DP_CODES["outdoor_temp"], 0) / 10
+            if self.DP_CODES["outdoor_temp"] in dps
+            else None,
             power_watts=dps.get(self.DP_CODES["power_consumption"]),
             vendor_data=data,
         )

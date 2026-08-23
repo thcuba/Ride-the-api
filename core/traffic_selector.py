@@ -16,29 +16,33 @@ from core.config import get_config_manager
 logger = logging.getLogger(__name__)
 
 
-class TrafficScope(str, Enum):
+class TrafficScope(str, Enum):  # noqa: UP042
     """Scope of the traffic rule."""
-    LOCAL = "local"           # Device on local network
-    EXTERNAL = "external"     # Cloud/Internet traffic
+
+    LOCAL = "local"  # Device on local network
+    EXTERNAL = "external"  # Cloud/Internet traffic
 
 
-class TrafficAction(str, Enum):
+class TrafficAction(str, Enum):  # noqa: UP042
     """Action to take on matching traffic."""
-    INTERCEPT = "intercept"    # Process through edge AI
+
+    INTERCEPT = "intercept"  # Process through edge AI
     PASSTHROUGH = "passthrough"  # Forward directly to destination
 
 
-class MatchType(str, Enum):
+class MatchType(str, Enum):  # noqa: UP042
     """Type of matching for traffic rules."""
-    CIDR = "cidr"              # IP CIDR range (local only)
-    HOSTNAME = "hostname"      # Hostname pattern with wildcards (external only)
-    VENDOR = "vendor"          # Vendor code (ty, tl, zh, hr)
-    DEVICE_ID = "device_id"    # Specific device ID
+
+    CIDR = "cidr"  # IP CIDR range (local only)
+    HOSTNAME = "hostname"  # Hostname pattern with wildcards (external only)
+    VENDOR = "vendor"  # Vendor code (ty, tl, zh, hr)
+    DEVICE_ID = "device_id"  # Specific device ID
 
 
 @dataclass
 class TrafficRule:
     """A single traffic selection rule."""
+
     name: str
     scope: TrafficScope
     match_type: MatchType
@@ -49,9 +53,11 @@ class TrafficRule:
 
     # Compiled patterns for performance
     _compiled_pattern: re.Pattern | None = field(default=None, init=False, repr=False)
-    _cidr_network: ipaddress.IPv4Network | ipaddress.IPv6Network | None = field(default=None, init=False, repr=False)
+    _cidr_network: ipaddress.IPv4Network | ipaddress.IPv6Network | None = field(
+        default=None, init=False, repr=False
+    )
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Compile patterns after initialization."""
         if self.match_type == MatchType.HOSTNAME:
             # Convert wildcard pattern to regex
@@ -60,7 +66,7 @@ class TrafficRule:
         elif self.match_type == MatchType.CIDR:
             self._cidr_network = ipaddress.ip_network(self.match_value, strict=False)
 
-    def matches(self, request_info: TrafficRequestInfo) -> bool:
+    def matches(self, request_info: TrafficRequestInfo) -> bool:  # noqa: C901, PLR0911
         """Check if this rule matches the given request."""
         if not self.enabled:
             return False
@@ -97,6 +103,7 @@ class TrafficRule:
 @dataclass
 class TrafficRequestInfo:
     """Information extracted from request for rule matching."""
+
     client_ip: str
     hostname: str | None = None
     vendor: str | None = None
@@ -112,7 +119,7 @@ class TrafficSelector:
     Rules are evaluated in priority order (highest first).
     """
 
-    def __init__(self, config_manager=None):
+    def __init__(self, config_manager=None) -> None:
         self.config_manager = config_manager or get_config_manager()
         self.rules: list[TrafficRule] = []
         self._default_action = TrafficAction.INTERCEPT
@@ -124,7 +131,7 @@ class TrafficSelector:
     def _load_rules(self):
         """Load rules from configuration."""
         config = self.config_manager.config
-        ts_config = getattr(config, 'traffic_selection', None)
+        ts_config = getattr(config, "traffic_selection", None)
 
         if not ts_config:
             logger.warning("No traffic_selection config found, using defaults")
@@ -133,11 +140,11 @@ class TrafficSelector:
             return
 
         # Default action
-        default = getattr(ts_config, 'default_action', 'intercept')
+        default = getattr(ts_config, "default_action", "intercept")
         self._default_action = TrafficAction(default)
 
         # Parse rules
-        rules = getattr(ts_config, 'rules', [])
+        rules = getattr(ts_config, "rules", [])
         self.rules = []
 
         for rule_data in rules:
@@ -145,34 +152,37 @@ class TrafficSelector:
                 # Handle both Pydantic models and dicts
                 if isinstance(rule_data, dict):
                     rule = TrafficRule(
-                        name=rule_data.get('name', 'unnamed'),
-                        scope=TrafficScope(rule_data.get('scope', 'local')),
-                        match_type=MatchType(rule_data.get('match_type', 'cidr')),
-                        match_value=rule_data.get('match_value', ''),
-                        action=TrafficAction(rule_data.get('action', 'intercept')),
-                        priority=rule_data.get('priority', 10),
-                        enabled=rule_data.get('enabled', True),
+                        name=rule_data.get("name", "unnamed"),
+                        scope=TrafficScope(rule_data.get("scope", "local")),
+                        match_type=MatchType(rule_data.get("match_type", "cidr")),
+                        match_value=rule_data.get("match_value", ""),
+                        action=TrafficAction(rule_data.get("action", "intercept")),
+                        priority=rule_data.get("priority", 10),
+                        enabled=rule_data.get("enabled", True),
                     )
                 else:
                     rule = TrafficRule(
-                        name=getattr(rule_data, 'name', 'unnamed'),
-                        scope=TrafficScope(getattr(rule_data, 'scope', 'local')),
-                        match_type=MatchType(getattr(rule_data, 'match_type', 'cidr')),
-                        match_value=getattr(rule_data, 'match_value', ''),
-                        action=TrafficAction(getattr(rule_data, 'action', 'intercept')),
-                        priority=getattr(rule_data, 'priority', 10),
-                        enabled=getattr(rule_data, 'enabled', True),
+                        name=getattr(rule_data, "name", "unnamed"),
+                        scope=TrafficScope(getattr(rule_data, "scope", "local")),
+                        match_type=MatchType(getattr(rule_data, "match_type", "cidr")),
+                        match_value=getattr(rule_data, "match_value", ""),
+                        action=TrafficAction(getattr(rule_data, "action", "intercept")),
+                        priority=getattr(rule_data, "priority", 10),
+                        enabled=getattr(rule_data, "enabled", True),
                     )
                 self.rules.append(rule)
             except Exception as e:
-                logger.error(f"Failed to parse traffic rule {rule_data}: {e}")
+                logger.error(f"Failed to parse traffic rule {rule_data}: {e}")  # noqa: TRY400
 
         # Sort by priority (highest first)
         self.rules.sort(key=lambda r: r.priority, reverse=True)
 
-        logger.info(f"Loaded {len(self.rules)} traffic selection rules, default: {self._default_action.value}")
+        logger.info(
+            f"Loaded {len(self.rules)} traffic selection rules, "
+            f"default: {self._default_action.value}"
+        )
 
-    def _on_config_change(self, new_config):
+    def _on_config_change(self, _new_config):
         """Reload rules when config changes."""
         logger.info("Traffic selection config changed, reloading rules")
         self._load_rules()
@@ -221,7 +231,7 @@ class TrafficSelector:
                     if hasattr(rule, key):
                         setattr(rule, key, value)
                 # Re-sort if priority changed
-                if 'priority' in kwargs:
+                if "priority" in kwargs:
                     self.rules.sort(key=lambda r: r.priority, reverse=True)
                 return True
         return False
@@ -233,13 +243,13 @@ _traffic_selector: TrafficSelector | None = None
 
 def get_traffic_selector() -> TrafficSelector:
     """Get or create global traffic selector instance."""
-    global _traffic_selector
+    global _traffic_selector  # noqa: PLW0603
     if _traffic_selector is None:
         _traffic_selector = TrafficSelector()
     return _traffic_selector
 
 
-def create_request_info(
+def create_request_info(  # noqa: PLR0913
     client_ip: str,
     hostname: str | None = None,
     vendor: str | None = None,

@@ -15,7 +15,13 @@ from uuid import uuid4
 
 from sqlalchemy import and_, delete, select
 
-from core.database import DatabaseManager, LLMContextBuffer, MatchStats, SessionCache
+from core.database import (
+    DatabaseManager,
+    DeviceRegistry,
+    LLMContextBuffer,
+    MatchStats,
+    SessionCache,
+)
 from core.pattern_db.schemas import (
     CaptureDB,
     CaptureMeta,
@@ -23,7 +29,7 @@ from core.pattern_db.schemas import (
     RawPairWithResponse,
     RawResponse,
 )
-from core.pattern_db.validator import validate_capture
+from core.pattern_db.validator import ValidationError, validate_capture
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +44,7 @@ class BufferManager:
     - Exports/imports .ride-capture.json for sharing
     """
 
-    def __init__(self, db_manager: DatabaseManager):
+    def __init__(self, db_manager: DatabaseManager) -> None:
         self.db_manager = db_manager
         self._current_sequence: dict[str, int] = {}
 
@@ -62,9 +68,9 @@ class BufferManager:
             stats = await self._get_or_create_stats(session, device_id)
             stats.current_buffer_size_bytes += estimated_size
 
-            if stats.current_buffer_size_bytes >= await self._get_max_buffer_size(device_id, session):
-                return True
-            return False
+            return stats.current_buffer_size_bytes >= await self._get_max_buffer_size(
+                device_id, session
+            )
 
     async def get_buffer_pairs(self, device_id: str) -> list[dict]:
         """Get all unflushed buffer entries for a device."""
@@ -74,7 +80,7 @@ class BufferManager:
                 .where(
                     and_(
                         LLMContextBuffer.device_id == device_id,
-                        LLMContextBuffer.flushed == False,
+                        LLMContextBuffer.flushed == False,  # noqa: E712
                     )
                 )
                 .order_by(LLMContextBuffer.sequence)
@@ -88,11 +94,10 @@ class BufferManager:
         """Mark all buffer entries as flushed and reset buffer size."""
         async with self.db_manager.device_session(device_id) as session:
             result = await session.execute(
-                select(LLMContextBuffer)
-                .where(
+                select(LLMContextBuffer).where(
                     and_(
                         LLMContextBuffer.device_id == device_id,
-                        LLMContextBuffer.flushed == False,
+                        LLMContextBuffer.flushed == False,  # noqa: E712
                     )
                 )
             )
@@ -122,15 +127,14 @@ class BufferManager:
     async def clear_cache(self, device_id: str):
         """Clear session cache after flush."""
         async with self.db_manager.device_session(device_id) as session:
-            await session.execute(
-                delete(SessionCache).where(SessionCache.device_id == device_id)
-            )
+            await session.execute(delete(SessionCache).where(SessionCache.device_id == device_id))
             logger.info("Cleared session cache for device %s", device_id)
 
     # ── Export / Import ────────────────────────────────────────────────────────
 
-    async def export_capture(self, device_id: str, vendor: str = "",
-                              device_type: str = "") -> CaptureDB:
+    async def export_capture(
+        self, device_id: str, vendor: str = "", device_type: str = ""
+    ) -> CaptureDB:
         """Export buffer contents to a portable CaptureDB."""
         pairs = await self.get_buffer_pairs(device_id)
         session_pairs = []
@@ -150,7 +154,9 @@ class BufferManager:
                     headers=pair_data.get("response_headers", {}),
                     body=pair_data.get("response_body"),
                     latency_ms=pair_data.get("latency_ms", 0.0),
-                ) if pair_data.get("response_status") else None,
+                )
+                if pair_data.get("response_status")
+                else None,
             )
             session_pairs.append(rp)
 
@@ -175,7 +181,6 @@ class BufferManager:
         # Validate against the portable JSON Schema before importing
         result = validate_capture(capture.model_dump(by_alias=True, exclude_none=True))
         if not result.valid:
-            from core.pattern_db.validator import ValidationError
             raise ValidationError(result=result)
 
         count = 0
@@ -206,12 +211,10 @@ class BufferManager:
     async def _get_max_buffer_size(self, device_id: str, session) -> int:
         """Get configured max buffer size for this device (default 512KB)."""
         try:
-            import sqlalchemy as sa
-
-            from core.database import DeviceRegistry
             result = await session.execute(
-                sa.select(DeviceRegistry.context_buffer_size)
-                .where(DeviceRegistry.device_id == device_id)
+                select(DeviceRegistry.context_buffer_size).where(
+                    DeviceRegistry.device_id == device_id
+                )
             )
             row = result.one_or_none()
             return row[0] if row else 524288
@@ -219,17 +222,20 @@ class BufferManager:
             return 524288
 
     async def _get_or_create_stats(self, session, device_id: str):
-        from core.database import MatchStats
-        result = await session.execute(
-            select(MatchStats).where(MatchStats.device_id == device_id)
-        )
+        result = await session.execute(select(MatchStats).where(MatchStats.device_id == device_id))
         stats = result.scalar_one_or_none()
         if not stats:
             stats = MatchStats(
                 device_id=device_id,
-                total_requests=0, local_hits=0, cloud_misses=0, errors=0,
-                match_rate_pct=0.0, patterns_learned=0, templates_created=0,
-                buffer_flushes=0, current_buffer_size_bytes=0,
+                total_requests=0,
+                local_hits=0,
+                cloud_misses=0,
+                errors=0,
+                match_rate_pct=0.0,
+                patterns_learned=0,
+                templates_created=0,
+                buffer_flushes=0,
+                current_buffer_size_bytes=0,
             )
             session.add(stats)
             await session.flush()

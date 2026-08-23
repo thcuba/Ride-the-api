@@ -8,11 +8,14 @@ them, exposes their status via API, and routes intercepted requests to the pipel
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
-from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING
 
 from core.config import ProtocolServersConfig
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +25,7 @@ class ProtocolServerPlugin:
 
     name: str = ""
 
-    def __init__(self, config: Any):
+    def __init__(self, config: ProtocolServersConfig) -> None:
         self.config = config
         self._task: asyncio.Task | None = None
         self._running = False
@@ -40,10 +43,8 @@ class ProtocolServerPlugin:
         self._running = False
         if self._task and not self._task.done():
             self._task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._task
-            except asyncio.CancelledError:
-                pass
             self._task = None
 
     async def get_status(self) -> dict:
@@ -61,12 +62,14 @@ class ProtocolServerPlugin:
 class ProtocolServerManager:
     """Manages all protocol server plugins — start, stop, status, config."""
 
-    def __init__(self, config: ProtocolServersConfig | None = None):
+    def __init__(self, config: ProtocolServersConfig | None = None) -> None:
         self._plugins: dict[str, ProtocolServerPlugin] = {}
         self._config = config or ProtocolServersConfig()
         self._callbacks: dict[str, Callable] = {}  # protocol -> request handler
 
-    def register_plugin(self, plugin: ProtocolServerPlugin, handler: Callable | None = None) -> None:
+    def register_plugin(
+        self, plugin: ProtocolServerPlugin, handler: Callable | None = None
+    ) -> None:
         """Register a protocol plugin."""
         self._plugins[plugin.name] = plugin
         if handler:
@@ -98,7 +101,7 @@ class ProtocolServerManager:
                     logger.info("Protocol server %s started", name)
                 except Exception as e:
                     results[name] = f"error: {e}"
-                    logger.error("Failed to start %s: %s", name, e)
+                    logger.exception("Failed to start %s", name)
             else:
                 results[name] = "disabled"
         return results
@@ -110,8 +113,8 @@ class ProtocolServerManager:
                 try:
                     await plugin.stop()
                     logger.info("Protocol server %s stopped", name)
-                except Exception as e:
-                    logger.error("Error stopping %s: %s", name, e)
+                except Exception:
+                    logger.exception("Error stopping %s", name)
 
     async def start_plugin(self, name: str) -> bool:
         """Start a specific plugin by name."""
@@ -120,10 +123,11 @@ class ProtocolServerManager:
             return False
         try:
             await plugin.start()
-            return True
-        except Exception as e:
-            logger.error("Failed to start %s: %s", name, e)
+        except Exception:
+            logger.exception("Failed to start %s", name)
             return False
+        else:
+            return True
 
     async def stop_plugin(self, name: str) -> bool:
         """Stop a specific plugin by name."""
@@ -132,10 +136,11 @@ class ProtocolServerManager:
             return False
         try:
             await plugin.stop()
-            return True
-        except Exception as e:
-            logger.error("Failed to stop %s: %s", name, e)
+        except Exception:
+            logger.exception("Failed to stop %s", name)
             return False
+        else:
+            return True
 
     async def get_all_status(self) -> list[dict]:
         """Get status of all plugins — for API / Web UI."""
@@ -160,9 +165,11 @@ class ProtocolServerManager:
 _manager: ProtocolServerManager | None = None
 
 
-def get_protocol_server_manager(config: ProtocolServersConfig | None = None) -> ProtocolServerManager:
+def get_protocol_server_manager(
+    config: ProtocolServersConfig | None = None,
+) -> ProtocolServerManager:
     """Get global protocol server manager instance."""
-    global _manager
+    global _manager  # noqa: PLW0603
     if _manager is None:
         _manager = ProtocolServerManager(config)
     return _manager

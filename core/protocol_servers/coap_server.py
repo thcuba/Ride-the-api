@@ -16,15 +16,17 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 try:
     import aiocoap
     from aiocoap import DELETE, GET, POST, PUT, Context, Message
-    from aiocoap.error import ConstructionError
     from aiocoap.numbers.contentformat import ContentFormat
+
     HAS_AIOCOAP = True
 except ImportError:
     HAS_AIOCOAP = False
@@ -40,7 +42,7 @@ class CoAPServerPlugin(ProtocolServerPlugin):
 
     name = "coap"
 
-    def __init__(self, config: Any, handler: Callable | None = None):
+    def __init__(self, config: Any, handler: Callable | None = None) -> None:  # noqa: ANN401
         super().__init__(config)
         self.handler = handler
         self._context: Context | None = None
@@ -54,8 +56,13 @@ class CoAPServerPlugin(ProtocolServerPlugin):
 
         cfg = self.config
         self._running = True
-        logger.info("CoAP server enabled on %s:%d (DTLS: %s:%d)",
-                     cfg.host, cfg.port, cfg.host, cfg.dtls_port if cfg.dtls_enabled else 0)
+        logger.info(
+            "CoAP server enabled on %s:%d (DTLS: %s:%d)",
+            cfg.host,
+            cfg.port,
+            cfg.host,
+            cfg.dtls_port if cfg.dtls_enabled else 0,
+        )
 
     async def stop(self) -> None:
         if self._context:
@@ -80,7 +87,9 @@ class CoAPServerPlugin(ProtocolServerPlugin):
                 body = {"raw": request.payload.hex()}
 
         intercepted = InterceptedRequest(
-            device_id=f"coap-{request.remote.sockname[0] if hasattr(request, 'remote') else 'unknown'}",
+            device_id=(
+                f"coap-{request.remote.sockname[0] if hasattr(request, 'remote') else 'unknown'}"
+            ),
             timestamp=datetime.now(UTC).timestamp(),
             protocol=ProtocolType.COAP,
             method=coap_method,
@@ -101,8 +110,8 @@ class CoAPServerPlugin(ProtocolServerPlugin):
                 response.payload = json.dumps(result.get("response", result)).encode("utf-8")
                 response.content_format = ContentFormat.JSON
                 return response
-        except Exception as e:
-            logger.error("CoAP handler error: %s", e)
+        except Exception:
+            logger.exception("CoAP handler error: %s")
 
         return Message(code=aiocoap.NOT_FOUND)
 

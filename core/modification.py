@@ -5,8 +5,10 @@ of device requests and cloud responses based on configurable rules.
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -22,6 +24,7 @@ from core.config import get_config_manager
 @dataclass
 class ResponseRecord:
     """Record of an adapter response for modification processing."""
+
     source: str
     status_code: int
     headers: dict[str, str]
@@ -30,32 +33,36 @@ class ResponseRecord:
     timestamp: datetime
     metadata: dict[str, Any]
 
+
 logger = logging.getLogger(__name__)
 
 
-class ModificationAction(str, Enum):
+class ModificationAction(str, Enum):  # noqa: UP042
     """Types of modifications that can be applied."""
-    MODIFY = "modify"        # Change field value
-    BLOCK = "block"          # Block the request/response entirely
-    INJECT = "inject"        # Add new field/header
-    REPLACE = "replace"      # Replace entire body
-    REDIRECT = "redirect"    # Redirect to different endpoint
-    DELAY = "delay"          # Add artificial delay
+
+    MODIFY = "modify"  # Change field value
+    BLOCK = "block"  # Block the request/response entirely
+    INJECT = "inject"  # Add new field/header
+    REPLACE = "replace"  # Replace entire body
+    REDIRECT = "redirect"  # Redirect to different endpoint
+    DELAY = "delay"  # Add artificial delay
 
 
-class ModificationOperation(str, Enum):
+class ModificationOperation(str, Enum):  # noqa: UP042
     """Operations for field modification."""
-    SET = "set"              # Set to specific value
-    ADD = "add"              # Add numeric value
-    MULTIPLY = "multiply"    # Multiply numeric value
-    CLAMP = "clamp"          # Clamp to min/max range
-    REPLACE = "replace"      # String replace
-    REMOVE = "remove"        # Remove field
+
+    SET = "set"  # Set to specific value
+    ADD = "add"  # Add numeric value
+    MULTIPLY = "multiply"  # Multiply numeric value
+    CLAMP = "clamp"  # Clamp to min/max range
+    REPLACE = "replace"  # String replace
+    REMOVE = "remove"  # Remove field
 
 
 @dataclass
 class ModificationRule:
     """A single modification rule."""
+
     name: str
     match_vendor: str | None = None
     match_device_type: str | None = None
@@ -76,17 +83,17 @@ class ModificationRule:
     # Compiled patterns
     _path_regex: re.Pattern | None = field(default=None, init=False, repr=False)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.match_path_pattern:
             self._path_regex = re.compile(self.match_path_pattern)
 
-    def matches(self, intercepted: InterceptedMessage, direction: str) -> bool:
+    def matches(self, intercepted: InterceptedMessage, direction: str) -> bool:  # noqa: C901, PLR0911, PLR0912
         """Check if this rule matches the intercepted message."""
         if not self.enabled:
             return False
 
         # Check direction
-        if self.direction != "both" and self.direction != direction:
+        if self.direction not in ("both", direction):
             return False
 
         # Vendor match
@@ -106,7 +113,7 @@ class ModificationRule:
             return False
 
         # Path pattern match
-        if self._path_regex and not self._path_regex.search(intercepted.path or ''):
+        if self._path_regex and not self._path_regex.search(intercepted.path or ""):
             return False
 
         # Headers match
@@ -125,25 +132,25 @@ class ModificationRule:
 
         return True
 
-    def _get_json_path(self, obj: Any, path: str) -> Any:
+    def _get_json_path(self, obj: Any, path: str) -> Any:  # noqa: ANN401
         """Simple JSONPath-like getter (supports $.field.subfield[0])."""
         if not obj:
             return None
 
         # Remove leading $.
-        if path.startswith('$'):
+        if path.startswith("$"):
             path = path[1:]
-        if path.startswith('.'):
+        if path.startswith("."):
             path = path[1:]
 
-        parts = path.split('.')
+        parts = path.split(".")
         current = obj
 
         for part in parts:
-            if '[' in part and ']' in part:
+            if "[" in part and "]" in part:
                 # Array access
-                key = part[:part.index('[')]
-                idx = int(part[part.index('[')+1:part.index(']')])
+                key = part[: part.index("[")]
+                idx = int(part[part.index("[") + 1 : part.index("]")])
                 if isinstance(current, dict) and key in current:
                     current = current[key]
                 else:
@@ -159,23 +166,23 @@ class ModificationRule:
 
         return current
 
-    def _set_json_path(self, obj: Any, path: str, value: Any) -> bool:
+    def _set_json_path(self, obj: Any, path: str, value: Any) -> bool:  # noqa: ANN401, C901, PLR0911, PLR0912
         """Simple JSONPath-like setter."""
         if not obj:
             return False
 
-        if path.startswith('$'):
+        if path.startswith("$"):
             path = path[1:]
-        if path.startswith('.'):
+        if path.startswith("."):
             path = path[1:]
 
-        parts = path.split('.')
+        parts = path.split(".")
         current = obj
 
         for i, part in enumerate(parts[:-1]):
-            if '[' in part and ']' in part:
-                key = part[:part.index('[')]
-                idx = int(part[part.index('[')+1:part.index(']')])
+            if "[" in part and "]" in part:
+                key = part[: part.index("[")]
+                idx = int(part[part.index("[") + 1 : part.index("]")])
                 if isinstance(current, dict) and key in current:
                     current = current[key]
                 else:
@@ -191,23 +198,27 @@ class ModificationRule:
 
         # Set final part
         last = parts[-1]
-        if '[' in last and ']' in last:
-            key = last[:last.index('[')]
-            idx = int(last[last.index('[')+1:last.index(']')])
-            if isinstance(current, dict) and key in current and isinstance(current[key], list):
-                if 0 <= idx < len(current[key]):
-                    current[key][idx] = value
-                    return True
+        if "[" in last and "]" in last:
+            key = last[: last.index("[")]
+            idx = int(last[last.index("[") + 1 : last.index("]")])
+            if (
+                isinstance(current, dict)
+                and key in current
+                and isinstance(current[key], list)
+                and 0 <= idx < len(current[key])
+            ):
+                current[key][idx] = value
+                return True
         elif isinstance(current, dict):
             current[last] = value
             return True
 
         return False
 
-    def apply(self, intercepted: InterceptedMessage) -> InterceptedMessage:
+    def apply(self, intercepted: InterceptedMessage) -> InterceptedMessage:  # noqa: C901, PLR0912, PLR0915
         """Apply this modification rule to the intercepted message."""
         # Create a copy to avoid mutating original
-        import copy
+
         modified = copy.deepcopy(intercepted)
 
         if self.action == ModificationAction.BLOCK:
@@ -218,29 +229,29 @@ class ModificationRule:
 
         if self.action == ModificationAction.MODIFY:
             if self.match_field_path:
-                op = self.action_params.get('operation', 'set')
+                op = self.action_params.get("operation", "set")
 
                 if op == ModificationOperation.SET:
-                    new_value = self.action_params.get('value')
+                    new_value = self.action_params.get("value")
                     self._set_json_path(modified.body, self.match_field_path, new_value)
 
                 elif op == ModificationOperation.ADD:
                     current = self._get_json_path(modified.body, self.match_field_path)
                     if isinstance(current, (int, float)):
-                        amount = self.action_params.get('amount', 0)
+                        amount = self.action_params.get("amount", 0)
                         self._set_json_path(modified.body, self.match_field_path, current + amount)
 
                 elif op == ModificationOperation.MULTIPLY:
                     current = self._get_json_path(modified.body, self.match_field_path)
                     if isinstance(current, (int, float)):
-                        factor = self.action_params.get('factor', 1)
+                        factor = self.action_params.get("factor", 1)
                         self._set_json_path(modified.body, self.match_field_path, current * factor)
 
                 elif op == ModificationOperation.CLAMP:
                     current = self._get_json_path(modified.body, self.match_field_path)
                     if isinstance(current, (int, float)):
-                        min_val = self.action_params.get('min')
-                        max_val = self.action_params.get('max')
+                        min_val = self.action_params.get("min")
+                        max_val = self.action_params.get("max")
                         if min_val is not None:
                             current = max(current, min_val)
                         if max_val is not None:
@@ -250,44 +261,48 @@ class ModificationRule:
                 elif op == ModificationOperation.REPLACE:
                     current = self._get_json_path(modified.body, self.match_field_path)
                     if isinstance(current, str):
-                        old = self.action_params.get('old', '')
-                        new = self.action_params.get('new', '')
-                        self._set_json_path(modified.body, self.match_field_path, current.replace(old, new))
+                        old = self.action_params.get("old", "")
+                        new = self.action_params.get("new", "")
+                        self._set_json_path(
+                            modified.body, self.match_field_path, current.replace(old, new)
+                        )
 
                 elif op == ModificationOperation.REMOVE:
                     # Set to None to indicate removal
                     self._set_json_path(modified.body, self.match_field_path, None)
 
         elif self.action == ModificationAction.INJECT:
-            field_path = self.action_params.get('field_path')
-            value = self.action_params.get('value')
+            field_path = self.action_params.get("field_path")
+            value = self.action_params.get("value")
             if field_path and value is not None:
                 self._set_json_path(modified.body, field_path, value)
 
         elif self.action == ModificationAction.REPLACE:
-            new_body = self.action_params.get('body')
+            new_body = self.action_params.get("body")
             if new_body is not None:
                 modified.body = new_body
 
         elif self.action == ModificationAction.REDIRECT:
-            new_path = self.action_params.get('path')
-            new_host = self.action_params.get('host')
+            new_path = self.action_params.get("path")
+            new_host = self.action_params.get("host")
             if new_path:
                 modified.path = new_path
             if new_host:
-                modified.headers['host'] = new_host
+                modified.headers["host"] = new_host
 
         elif self.action == ModificationAction.DELAY:
             # Add delay metadata (handled by proxy)
-            delay_ms = self.action_params.get('delay_ms', 0)
-            modified.metadata['artificial_delay_ms'] = delay_ms
+            delay_ms = self.action_params.get("delay_ms", 0)
+            modified.metadata["artificial_delay_ms"] = delay_ms
 
         # Track modification
-        modified.modifications.append({
-            'rule': self.name,
-            'action': self.action.value,
-            'timestamp': datetime.now(UTC).isoformat(),
-        })
+        modified.modifications.append(
+            {
+                "rule": self.name,
+                "action": self.action.value,
+                "timestamp": datetime.now(UTC).isoformat(),
+            }
+        )
 
         return modified
 
@@ -295,6 +310,7 @@ class ModificationRule:
 @dataclass
 class InterceptedMessage:
     """Represents an intercepted request or response."""
+
     direction: str  # "request" | "response"
     device_id: str
     vendor: str
@@ -319,8 +335,8 @@ class InterceptedMessage:
             direction="request",
             device_id=intercepted.device_id,
             vendor=intercepted.vendor,
-            device_type=intercepted.metadata.get('device_type', 'unknown'),
-            intent=intercepted.parsed_intent.value if intercepted.parsed_intent else 'unknown',
+            device_type=intercepted.metadata.get("device_type", "unknown"),
+            intent=intercepted.parsed_intent.value if intercepted.parsed_intent else "unknown",
             method=intercepted.method,
             path=intercepted.path,
             headers={k.lower(): v for k, v in intercepted.headers.items()},
@@ -334,12 +350,12 @@ class InterceptedMessage:
         """Create from ResponseRecord."""
         return cls(
             direction="response",
-            device_id=response.metadata.get('device_id', ''),
-            vendor=response.metadata.get('vendor', ''),
-            device_type=response.metadata.get('device_type', 'unknown'),
-            intent=response.metadata.get('intent', 'unknown'),
-            method=response.metadata.get('method', ''),
-            path=response.metadata.get('path', ''),
+            device_id=response.metadata.get("device_id", ""),
+            vendor=response.metadata.get("vendor", ""),
+            device_type=response.metadata.get("device_type", "unknown"),
+            intent=response.metadata.get("intent", "unknown"),
+            method=response.metadata.get("method", ""),
+            path=response.metadata.get("path", ""),
             headers={k.lower(): v for k, v in response.headers.items()},
             body=response.body,
             metadata=response.metadata,
@@ -352,7 +368,7 @@ class ModificationEngine:
     Rules are evaluated in priority order (highest first).
     """
 
-    def __init__(self, config_manager=None):
+    def __init__(self, config_manager=None) -> None:
         self.config_manager = config_manager or get_config_manager()
         self._rules: list[ModificationRule] = []
         self._audit_log: list[dict] = []
@@ -365,44 +381,44 @@ class ModificationEngine:
     def _load_rules(self):
         """Load modification rules from configuration."""
         config = self.config_manager.config
-        mod_config = getattr(config, 'modification', None)
+        mod_config = getattr(config, "modification", None)
 
-        if not mod_config or not getattr(mod_config, 'enabled', True):
+        if not mod_config or not getattr(mod_config, "enabled", True):
             self._rules = []
             logger.info("Modification engine disabled")
             return
 
-        rules_config = getattr(mod_config, 'rules', [])
+        rules_config = getattr(mod_config, "rules", [])
         self._rules = []
 
         for rule_data in rules_config:
             try:
                 rule = ModificationRule(
-                    name=rule_data.get('name', 'unnamed'),
-                    match_vendor=rule_data.get('match_vendor'),
-                    match_device_type=rule_data.get('match_device_type'),
-                    match_intent=rule_data.get('match_intent'),
-                    match_field_path=rule_data.get('match_field_path'),
-                    match_value=rule_data.get('match_value'),
-                    match_headers=rule_data.get('match_headers'),
-                    match_method=rule_data.get('match_method'),
-                    match_path_pattern=rule_data.get('match_path_pattern'),
-                    action=ModificationAction(rule_data.get('action', 'modify')),
-                    action_params=rule_data.get('action_params', {}),
-                    priority=rule_data.get('priority', 10),
-                    enabled=rule_data.get('enabled', True),
-                    direction=rule_data.get('direction', 'request'),
+                    name=rule_data.get("name", "unnamed"),
+                    match_vendor=rule_data.get("match_vendor"),
+                    match_device_type=rule_data.get("match_device_type"),
+                    match_intent=rule_data.get("match_intent"),
+                    match_field_path=rule_data.get("match_field_path"),
+                    match_value=rule_data.get("match_value"),
+                    match_headers=rule_data.get("match_headers"),
+                    match_method=rule_data.get("match_method"),
+                    match_path_pattern=rule_data.get("match_path_pattern"),
+                    action=ModificationAction(rule_data.get("action", "modify")),
+                    action_params=rule_data.get("action_params", {}),
+                    priority=rule_data.get("priority", 10),
+                    enabled=rule_data.get("enabled", True),
+                    direction=rule_data.get("direction", "request"),
                 )
                 self._rules.append(rule)
             except Exception as e:
-                logger.error(f"Failed to load modification rule {rule_data.get('name')}: {e}")
+                logger.error(f"Failed to load modification rule {rule_data.get('name')}: {e}")  # noqa: TRY400
 
         # Sort by priority (highest first)
         self._rules.sort(key=lambda r: -r.priority)
 
         logger.info(f"Loaded {len(self._rules)} modification rules")
 
-    def _on_config_change(self, new_config):
+    def _on_config_change(self, new_config):  # noqa: ARG002
         """Reload rules on config change."""
         logger.info("Modification config changed, reloading rules")
         self._load_rules()
@@ -449,7 +465,9 @@ class ModificationEngine:
 
         return modified_intercepted, was_modified
 
-    def process_response(self, intercepted: InterceptedRequest, response: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    def process_response(
+        self, intercepted: InterceptedRequest, response: dict[str, Any]
+    ) -> tuple[dict[str, Any], bool]:
         """
         Process an adapter response through modification rules.
         Returns (modified_response, was_modified).
@@ -463,13 +481,15 @@ class ModificationEngine:
             latency_ms=0,
             timestamp=datetime.now(UTC),
             metadata={
-                'device_id': intercepted.device_id,
-                'vendor': intercepted.vendor,
-                'device_type': intercepted.metadata.get('device_type', 'unknown'),
-                'intent': intercepted.parsed_intent.value if intercepted.parsed_intent else 'unknown',
-                'method': intercepted.method,
-                'path': intercepted.path,
-            }
+                "device_id": intercepted.device_id,
+                "vendor": intercepted.vendor,
+                "device_type": intercepted.metadata.get("device_type", "unknown"),
+                "intent": intercepted.parsed_intent.value
+                if intercepted.parsed_intent
+                else "unknown",
+                "method": intercepted.method,
+                "path": intercepted.path,
+            },
         )
 
         msg = InterceptedMessage.from_response(response_record)
@@ -492,7 +512,9 @@ class ModificationEngine:
 
         return modified_response, was_modified
 
-    def _apply_to_request(self, original: InterceptedRequest, msg: InterceptedMessage) -> InterceptedRequest:
+    def _apply_to_request(
+        self, original: InterceptedRequest, msg: InterceptedMessage
+    ) -> InterceptedRequest:
         """Apply message modifications back to InterceptedRequest."""
         if msg.body is not original.body:
             original.body = msg.body
@@ -507,48 +529,54 @@ class ModificationEngine:
             original.block_reason = msg.block_reason
         return original
 
-    def _apply_to_response(self, original: dict[str, Any], msg: InterceptedMessage) -> dict[str, Any]:
+    def _apply_to_response(
+        self, original: dict[str, Any], msg: InterceptedMessage
+    ) -> dict[str, Any]:
         """Apply message modifications back to response dict."""
         if msg.body is not None:
             original = msg.body
         if msg.modifications:
             original = dict(original)
-            original['modifications'] = msg.modifications
+            original["modifications"] = msg.modifications
         if msg.blocked:
             original = {"success": False, "error": msg.block_reason}
         return original
 
-    def _log_modification(self, rule: ModificationRule, msg: InterceptedMessage,
-                         original_body: str | None, original_headers: dict | None):
+    def _log_modification(
+        self,
+        rule: ModificationRule,
+        msg: InterceptedMessage,
+        original_body: str | None,
+        _original_headers: dict | None,
+    ):
         """Log modification to audit trail."""
         entry = {
-            'timestamp': datetime.now(UTC).isoformat(),
-            'rule': rule.name,
-            'action': rule.action.value,
-            'device_id': msg.device_id,
-            'vendor': msg.vendor,
-            'direction': msg.direction,
-            'original_body': original_body,
-            'modified_body': json.dumps(msg.body) if msg.body else None,
-            'modifications': msg.modifications[-1] if msg.modifications else None,
+            "timestamp": datetime.now(UTC).isoformat(),
+            "rule": rule.name,
+            "action": rule.action.value,
+            "device_id": msg.device_id,
+            "vendor": msg.vendor,
+            "direction": msg.direction,
+            "original_body": original_body,
+            "modified_body": json.dumps(msg.body) if msg.body else None,
+            "modifications": msg.modifications[-1] if msg.modifications else None,
         }
 
         self._audit_log.append(entry)
         if len(self._audit_log) > self._max_audit:
-            self._audit_log = self._audit_log[-self._max_audit:]
+            self._audit_log = self._audit_log[-self._max_audit :]
 
         # Also write to file if configured
         config = self.config_manager.config
-        mod_config = getattr(config, 'modification', None)
-        if mod_config and getattr(mod_config, 'audit_log_enabled', True):
-            audit_path = getattr(mod_config, 'audit_log_path', './logs/modifications.jsonl')
+        mod_config = getattr(config, "modification", None)
+        if mod_config and getattr(mod_config, "audit_log_enabled", True):
+            audit_path = getattr(mod_config, "audit_log_path", "./logs/modifications.jsonl")
             try:
-                import os
-                os.makedirs(os.path.dirname(audit_path), exist_ok=True)
-                with open(audit_path, 'a') as f:
-                    f.write(json.dumps(entry) + '\n')
+                os.makedirs(os.path.dirname(audit_path), exist_ok=True)  # noqa: PTH103, PTH120
+                with open(audit_path, "a") as f:  # noqa: PTH123
+                    f.write(json.dumps(entry) + "\n")
             except Exception as e:
-                logger.error(f"Failed to write audit log: {e}")
+                logger.error(f"Failed to write audit log: {e}")  # noqa: TRY400
 
     def get_audit_log(self, limit: int = 100) -> list[dict]:
         """Get recent modification audit log."""
@@ -561,7 +589,7 @@ _modification_engine: ModificationEngine | None = None
 
 def get_modification_engine() -> ModificationEngine:
     """Get or create global modification engine instance."""
-    global _modification_engine
+    global _modification_engine  # noqa: PLW0603
     if _modification_engine is None:
         _modification_engine = ModificationEngine()
     return _modification_engine

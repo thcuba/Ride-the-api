@@ -8,14 +8,15 @@ from __future__ import annotations
 import abc
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field  # noqa: F401  (re-exported for adapter authors)
 
 
-class ProtocolType(str, Enum):
+class ProtocolType(StrEnum):
     """Supported protocol types."""
+
     HTTP = "http"
     HTTPS = "https"
     MQTT = "mqtt"
@@ -30,8 +31,9 @@ class ProtocolType(str, Enum):
     TCPIP = "tcpip"  # Raw TCP
 
 
-class CommandType(str, Enum):
+class CommandType(StrEnum):
     """Standardized command types across vendors."""
+
     GET_STATE = "get_state"
     SET_TEMPERATURE = "set_temperature"
     SET_MODE = "set_mode"
@@ -48,8 +50,9 @@ class CommandType(str, Enum):
     UNKNOWN = "unknown"
 
 
-class DeviceCapability(str, Enum):
+class DeviceCapability(StrEnum):
     """Standardized device capabilities."""
+
     TEMPERATURE_CONTROL = "temperature_control"
     HUMIDITY_CONTROL = "humidity_control"
     MODE_CONTROL = "mode_control"
@@ -70,6 +73,7 @@ class DeviceCapability(str, Enum):
 @dataclass
 class DeviceInfo:
     """Standardized device information."""
+
     device_id: str
     vendor: str
     device_type: str  # ac, heat_pump, ventilator, etc.
@@ -85,6 +89,7 @@ class DeviceInfo:
 @dataclass
 class DeviceState:
     """Standardized device state."""
+
     device_id: str
     timestamp: datetime
     # HVAC Standard Fields
@@ -107,6 +112,7 @@ class DeviceState:
 @dataclass
 class Command:
     """Standardized command to send to device."""
+
     device_id: str
     command_type: CommandType
     params: dict[str, Any] = field(default_factory=dict)
@@ -122,6 +128,7 @@ class Command:
 @dataclass
 class CommandResult:
     """Result of command execution."""
+
     success: bool
     response: dict[str, Any] | None = None
     error: str | None = None
@@ -134,6 +141,7 @@ class CommandResult:
 @dataclass
 class InterceptedRequest:
     """Raw intercepted request from device to cloud."""
+
     device_id: str
     timestamp: datetime | float
     protocol: ProtocolType
@@ -160,7 +168,7 @@ class InterceptedRequest:
 class ProtocolAdapter(abc.ABC):
     """Abstract base class for vendor protocol adapters."""
 
-    def __init__(self, vendor: str, config: dict[str, Any]):
+    def __init__(self, vendor: str, config: dict[str, Any]) -> None:
         self.vendor = vendor
         self.config = config
         self._device_sessions: dict[str, dict[str, Any]] = {}  # Per-device state
@@ -202,7 +210,9 @@ class ProtocolAdapter(abc.ABC):
         pass
 
     @abc.abstractmethod
-    async def build_response(self, request: InterceptedRequest, result: CommandResult) -> dict[str, Any]:
+    async def build_response(
+        self, request: InterceptedRequest, result: CommandResult
+    ) -> dict[str, Any]:
         """
         Build vendor-compatible response from CommandResult.
         Must match vendor's expected response format exactly.
@@ -258,7 +268,7 @@ class ProtocolAdapter(abc.ABC):
 class ProtocolAdapterRegistry:
     """Registry for protocol adapters."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._adapters: dict[str, ProtocolAdapter] = {}
         self._hostname_map: dict[str, str] = {}  # hostname -> vendor
 
@@ -294,7 +304,7 @@ _adapter_registry: ProtocolAdapterRegistry | None = None
 
 def get_adapter_registry() -> ProtocolAdapterRegistry:
     """Get global adapter registry."""
-    global _adapter_registry
+    global _adapter_registry  # noqa: PLW0603
     if _adapter_registry is None:
         _adapter_registry = ProtocolAdapterRegistry()
     return _adapter_registry

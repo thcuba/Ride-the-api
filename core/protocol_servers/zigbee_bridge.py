@@ -10,18 +10,24 @@ This plugin connects to the Zigbee2MQTT MQTT broker and:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
-from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING
+
+from core.protocol_servers import ProtocolServerPlugin
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from core.config import ZigbeeBridgeConfig
 
 try:
-    from gmqtt import Client as MQTTClient
+    from gmqtt import Client as MQTTClient  # noqa: F401, TC002
+
     HAS_GMQTT = True
 except ImportError:
     HAS_GMQTT = False
-
-from core.protocol_servers import ProtocolServerPlugin
 
 logger = logging.getLogger(__name__)
 
@@ -31,10 +37,10 @@ class ZigbeeBridgePlugin(ProtocolServerPlugin):
 
     name = "zigbee_bridge"
 
-    def __init__(self, config: Any, handler: Callable | None = None):
+    def __init__(self, config: ZigbeeBridgeConfig, handler: Callable | None = None) -> None:
         super().__init__(config)
         self.handler = handler
-        self._client: Any = None
+        self._client: MQTTClient | None = None
         self._connected = False
 
     async def start(self) -> None:
@@ -43,16 +49,17 @@ class ZigbeeBridgePlugin(ProtocolServerPlugin):
             self._running = False
             return
         self._running = True
-        logger.info("Zigbee bridge connecting to Zigbee2MQTT at %s:%d",
-                     self.config.mqtt_host, self.config.mqtt_port)
+        logger.info(
+            "Zigbee bridge connecting to Zigbee2MQTT at %s:%d",
+            self.config.mqtt_host,
+            self.config.mqtt_port,
+        )
 
     async def stop(self) -> None:
         self._connected = False
         if self._client:
-            try:
+            with contextlib.suppress(Exception):
                 await self._client.disconnect()
-            except Exception:
-                pass
             self._client = None
         await super().stop()
         logger.info("Zigbee bridge stopped")
@@ -67,8 +74,12 @@ class ZigbeeBridgePlugin(ProtocolServerPlugin):
             "topic_prefix": self.config.topic_prefix,
         }
 
-    async def send_command(self, device_friendly_name: str, command: str,
-                            value: Any) -> bool:
+    async def send_command(
+        self,
+        device_friendly_name: str,
+        command: str,
+        value: str | int | float | bool | dict | None,
+    ) -> bool:
         """Send a command to a Zigbee device via Zigbee2MQTT."""
         if not self._client:
             return False
@@ -76,7 +87,8 @@ class ZigbeeBridgePlugin(ProtocolServerPlugin):
         try:
             payload = json.dumps({command: value})
             self._client.publish(topic, payload, qos=0)
-            return True
-        except Exception as e:
-            logger.error("Zigbee bridge send error: %s", e)
+        except Exception:
+            logger.exception("Zigbee bridge send error: %s")
             return False
+        else:
+            return True

@@ -22,8 +22,12 @@ logger = logging.getLogger(__name__)
 class ValidationError(Exception):
     """Raised when a capture/pattern file fails JSON Schema validation."""
 
-    def __init__(self, result: ValidationResult | None = None, message: str = "",
-                 errors: list[str] | None = None):
+    def __init__(
+        self,
+        result: ValidationResult | None = None,
+        message: str = "",
+        errors: list[str] | None = None,
+    ) -> None:
         self.result = result
         if errors is not None:
             self.errors = errors
@@ -39,6 +43,7 @@ class ValidationError(Exception):
             "errors": self.errors,
             "warnings": self.result.warnings if self.result is not None else [],
         }
+
 
 # Load schemas from bundled files
 _SCHEMA_DIR = Path(__file__).parent / "schemas"
@@ -57,7 +62,7 @@ def _load_schema(name: str) -> dict[str, Any]:
 
 def get_capture_schema() -> dict[str, Any]:
     """Get the capture schema, loading it on first access."""
-    global _CAPTURE_SCHEMA
+    global _CAPTURE_SCHEMA  # noqa: PLW0603
     if _CAPTURE_SCHEMA is None:
         _CAPTURE_SCHEMA = _load_schema("capture-schema-v1.json")
     return _CAPTURE_SCHEMA
@@ -65,7 +70,7 @@ def get_capture_schema() -> dict[str, Any]:
 
 def get_pattern_schema() -> dict[str, Any]:
     """Get the pattern schema, loading it on first access."""
-    global _PATTERN_SCHEMA
+    global _PATTERN_SCHEMA  # noqa: PLW0603
     if _PATTERN_SCHEMA is None:
         _PATTERN_SCHEMA = _load_schema("pattern-schema-v1.json")
     return _PATTERN_SCHEMA
@@ -75,7 +80,13 @@ def get_pattern_schema() -> dict[str, Any]:
 
 # Valid HTTP methods
 HTTP_METHODS = {
-    "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS",
+    "GET",
+    "POST",
+    "PUT",
+    "PATCH",
+    "DELETE",
+    "HEAD",
+    "OPTIONS",
 }
 
 # Valid MQTT verbs
@@ -115,7 +126,7 @@ PROTOCOL_METHODS: dict[str, set[str]] = {
 ALL_PROTOCOLS = set(PROTOCOL_METHODS.keys())
 
 
-def _validate_method_for_protocol(protocol: str, method: str, path: str) -> list[str]:
+def _validate_method_for_protocol(protocol: str, method: str, _path: str) -> list[str]:
     """Check that the method is valid for the given protocol."""
     errors: list[str] = []
     valid = PROTOCOL_METHODS.get(protocol)
@@ -148,8 +159,9 @@ def _validate_path_for_protocol(protocol: str, path: str) -> list[str]:
 class ValidationResult:
     """Result of a JSON Schema validation."""
 
-    def __init__(self, valid: bool = True, errors: list[str] | None = None,
-                 warnings: list[str] | None = None):
+    def __init__(
+        self, valid: bool = True, errors: list[str] | None = None, warnings: list[str] | None = None
+    ) -> None:
         self.valid = valid
         self.errors = errors or []
         self.warnings = warnings or []
@@ -158,7 +170,9 @@ class ValidationResult:
         return self.valid
 
     def __repr__(self) -> str:
-        return f"ValidationResult(valid={self.valid}, errors={self.errors}, warnings={self.warnings})"
+        return (
+            f"ValidationResult(valid={self.valid}, errors={self.errors}, warnings={self.warnings})"
+        )
 
     def merge(self, other: ValidationResult) -> ValidationResult:
         """Merge another result into this one."""
@@ -222,7 +236,7 @@ def validate_capture(data: dict[str, Any]) -> ValidationResult:
     return result
 
 
-def validate_pattern(data: dict[str, Any]) -> ValidationResult:
+def validate_pattern(data: dict[str, Any]) -> ValidationResult:  # noqa: C901, PLR0912
     """
     Validate a .ride-pattern.json dictionary against the pattern schema.
 
@@ -253,9 +267,7 @@ def validate_pattern(data: dict[str, Any]) -> ValidationResult:
 
     # MQTT topic prefix check
     if "mqtt" in protocols and not client.get("mqtt_topic_prefix"):
-        result.warnings.append(
-            "Protocol 'mqtt' is declared but no 'mqtt_topic_prefix' is set"
-        )
+        result.warnings.append("Protocol 'mqtt' is declared but no 'mqtt_topic_prefix' is set")
 
     # Endpoint cross-checks
     endpoint_intents = {ep.get("id"): ep.get("intent") for ep in client.get("endpoints", [])}
@@ -283,7 +295,6 @@ def validate_pattern(data: dict[str, Any]) -> ValidationResult:
 
     # Virtual sensor baseline references
     state_var_names = {sv.get("name") for sv in server.get("state_variables", [])}
-    sensor_names = {vs.get("name") for vs in server.get("virtual_sensors", [])}
     for vs in server.get("virtual_sensors", []):
         baseline = vs.get("baseline", "")
         if baseline.startswith("{state."):

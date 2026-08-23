@@ -15,7 +15,7 @@ Typical CoAP resources:
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from adapters.base import (
@@ -32,9 +32,10 @@ from adapters.base import (
 
 logger = logging.getLogger(__name__)
 
-# Standard CoAP resource-to-command mapping
+# Standard CoAP resource-to-command mapping (read-only sensors, actuators,
+# and dimmable devices below).
 COAP_RESOURCE_MAP: dict[str, CommandType] = {
-    # Sensors (read-only)
+    # Sensors (read-only)  # noqa: ERA001
     "temp": CommandType.GET_STATE,
     "temperature": CommandType.GET_STATE,
     "humidity": CommandType.GET_STATE,
@@ -59,7 +60,7 @@ class CoAPProtocolAdapter(ProtocolAdapter):
     VENDOR_CODE = "coap_example"
     VENDOR_HOSTNAMES: list[str] = []
 
-    def __init__(self, vendor: str, config: dict[str, Any]):
+    def __init__(self, vendor: str, config: dict[str, Any]) -> None:
         super().__init__(vendor, config)
         self._devices: dict[str, dict] = {}
 
@@ -84,14 +85,17 @@ class CoAPProtocolAdapter(ProtocolAdapter):
             if part in COAP_RESOURCE_MAP:
                 intent = COAP_RESOURCE_MAP[part]
                 # For write operations (PUT/POST) on actuator resources
-                if method in ("PUT", "POST") and intent == CommandType.GET_STATE:
-                    if part in ("relay", "switch", "led"):
-                        body = request.body or {}
-                        val = body.get("value", body.get("state", ""))
-                        if val in ("on", 1, True, "1"):
-                            intent = CommandType.TURN_ON
-                        elif val in ("off", 0, False, "0"):
-                            intent = CommandType.TURN_OFF
+                if (
+                    method in ("PUT", "POST")
+                    and intent == CommandType.GET_STATE
+                    and part in ("relay", "switch", "led")
+                ):
+                    body = request.body or {}
+                    val = body.get("value", body.get("state", ""))
+                    if val in ("on", 1, True, "1"):
+                        intent = CommandType.TURN_ON
+                    elif val in ("off", 0, False, "0"):
+                        intent = CommandType.TURN_OFF
                 request.parsed_intent = intent
                 request.parsed_params = {
                     "resource": part,
@@ -107,17 +111,20 @@ class CoAPProtocolAdapter(ProtocolAdapter):
         if request.parsed_intent == CommandType.GET_STATE:
             state = await self.get_device_state(request.device_id)
             if state:
-                return CommandResult(success=True, response={
-                    "temperature": state.temp_actual,
-                    "humidity": state.humidity,
-                    "power": state.power_watts,
-                })
+                return CommandResult(
+                    success=True,
+                    response={
+                        "temperature": state.temp_actual,
+                        "humidity": state.humidity,
+                        "power": state.power_watts,
+                    },
+                )
         return await self.forward_to_cloud(request)
 
-    async def forward_to_cloud(self, request: InterceptedRequest) -> CommandResult:
+    async def forward_to_cloud(self, _request: InterceptedRequest) -> CommandResult:
         return CommandResult(success=False, error="Cloud forward not implemented", forwarded=True)
 
-    async def build_response(self, request: InterceptedRequest, result: CommandResult) -> dict:
+    async def build_response(self, _request: InterceptedRequest, result: CommandResult) -> dict:
         if result.success and result.response:
             return result.response
         return {"error": result.error or "unknown"}
@@ -150,7 +157,7 @@ class CoAPProtocolAdapter(ProtocolAdapter):
             quality="good",
         )
 
-    async def send_command(self, device_id: str, command: Command) -> CommandResult:
+    async def send_command(self, _device_id: str, _command: Command) -> CommandResult:
         return CommandResult(success=False, error="Send not implemented")
 
     async def on_device_connect(self, device_id: str, initial_data: dict) -> None:

@@ -11,9 +11,10 @@ import logging
 import math
 import random
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from core.pattern_db.schemas import StateVariable, VirtualSensor
+if TYPE_CHECKING:
+    from core.pattern_db.schemas import StateVariable, VirtualSensor
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,7 @@ logger = logging.getLogger(__name__)
 class DeviceStateStore:
     """In-memory state store for a single device, populated from pattern DB."""
 
-    def __init__(self, device_id: str):
+    def __init__(self, device_id: str) -> None:
         self.device_id = device_id
         self._variables: dict[str, Any] = {}
         self._sensors: dict[str, _SensorInstance] = {}
@@ -38,7 +39,7 @@ class DeviceStateStore:
         for s in sensors:
             self._sensors[s.name] = _SensorInstance(s)
 
-    def get(self, name: str, default: Any = None) -> Any:
+    def get(self, name: str, default: Any = None) -> Any:  # noqa: ANN401
         """Get a state variable or sensor value by name."""
         if name in self._variables:
             return self._variables[name]
@@ -47,12 +48,11 @@ class DeviceStateStore:
             return sensor.read(self._variables)
         return default
 
-    def set(self, name: str, value: Any) -> bool:
+    def set(self, name: str, value: Any) -> bool:  # noqa: ANN401
         """Set a state variable. Returns True if changed."""
-        if name in self._variables:
-            if self._variables[name] != value:
-                self._variables[name] = value
-                return True
+        if name in self._variables and self._variables[name] != value:
+            self._variables[name] = value
+            return True
         self._variables[name] = value
         return True
 
@@ -78,14 +78,17 @@ class DeviceStateStore:
 class _SensorInstance:
     """Runtime instance of a virtual sensor."""
 
-    def __init__(self, config: VirtualSensor):
+    def __init__(self, config: VirtualSensor) -> None:
         self.config = config
         self._last_read: float = 0
         self._current_value: Any = None
 
-    def read(self, state: dict[str, Any]) -> Any:
+    def read(self, state: dict[str, Any]) -> Any:  # noqa: ANN401
         now = time.time()
-        if now - self._last_read < self.config.update_interval_s and self._current_value is not None:
+        if (
+            now - self._last_read < self.config.update_interval_s
+            and self._current_value is not None
+        ):
             return self._current_value
 
         self._last_read = now

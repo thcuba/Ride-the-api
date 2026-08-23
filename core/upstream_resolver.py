@@ -23,13 +23,13 @@ logger = logging.getLogger(__name__)
 # ── Public upstream DNS servers (primary → fallback), dual-stack ──────────────
 
 UPSTREAM_DNS_SERVERS: list[str] = [
-    "8.8.8.8",      # Google IPv4 (primary)
-    "1.1.1.1",      # Cloudflare IPv4 (fallback)
+    "8.8.8.8",  # Google IPv4 (primary)
+    "1.1.1.1",  # Cloudflare IPv4 (fallback)
 ]
 
 UPSTREAM_DNS_SERVERS_V6: list[str] = [
-    "2001:4860:4860::8888",   # Google IPv6
-    "2606:4700:4700::1111",   # Cloudflare IPv6
+    "2001:4860:4860::8888",  # Google IPv6
+    "2606:4700:4700::1111",  # Cloudflare IPv6
 ]
 
 # Cache TTL
@@ -49,7 +49,7 @@ def _build_resolver() -> dns.asyncresolver.AsyncResolver:
     return resolver
 
 
-async def resolve_upstream(
+async def resolve_upstream(  # noqa: C901
     hostname: str,
     *,
     prefer_ipv6: bool = False,
@@ -82,23 +82,23 @@ async def resolve_upstream(
     resolver = _build_resolver()
     addresses: list[str] = []
 
-    logger.debug("Resolving %s via upstream DNS (%s / %s) ...",
-                 hostname, resolver.nameservers, resolver.nameservers_v6)
+    logger.debug(
+        "Resolving %s via upstream DNS (%s / %s) ...",
+        hostname,
+        resolver.nameservers,
+        resolver.nameservers_v6,
+    )
 
     try:
         # Resolve A records (IPv4)
-        answers = await asyncio.wait_for(
-            resolver.resolve(hostname, "A"), timeout=10.0
-        )
+        answers = await asyncio.wait_for(resolver.resolve(hostname, "A"), timeout=10.0)
         addresses.extend(str(r) for r in answers)
     except dns.exception.DNSException as exc:
         logger.warning("Upstream A-record resolution failed for %s: %s", hostname, exc)
 
     try:
         # Resolve AAAA records (IPv6)
-        answers6 = await asyncio.wait_for(
-            resolver.resolve(hostname, "AAAA"), timeout=5.0
-        )
+        answers6 = await asyncio.wait_for(resolver.resolve(hostname, "AAAA"), timeout=5.0)
         v6_list = [str(r) for r in answers6]
         if prefer_ipv6:
             # Insert IPv6 at the front
@@ -119,9 +119,7 @@ async def resolve_upstream(
         )
         try:
             loop = asyncio.get_running_loop()
-            addrinfo = await asyncio.wait_for(
-                loop.getaddrinfo(hostname, None, type=0), timeout=5.0
-            )
+            addrinfo = await asyncio.wait_for(loop.getaddrinfo(hostname, None, type=0), timeout=5.0)
             seen: set[str] = set()
             for family, _, _, _, sockaddr in addrinfo:
                 ip = sockaddr[0]
@@ -129,7 +127,7 @@ async def resolve_upstream(
                     addresses.append(ip)
                     seen.add(ip)
         except Exception as exc:
-            logger.error("System resolver fallback also failed for %s: %s", hostname, exc)
+            logger.error("System resolver fallback also failed for %s: %s", hostname, exc)  # noqa: TRY400
 
     # Update cache
     if addresses:

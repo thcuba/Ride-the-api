@@ -7,7 +7,7 @@ patterns between users and across different hardware.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime  # noqa: TC003
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -16,8 +16,10 @@ from pydantic import BaseModel, Field
 # BUFFER DB — .ride-capture.json  (da decifrare)
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class CaptureMeta(BaseModel):
     """Metadata for a raw capture file."""
+
     version: int = 1
     capture_id: str
     vendor: str
@@ -30,6 +32,7 @@ class CaptureMeta(BaseModel):
 
 class CaptureDeviceInfo(BaseModel):
     """Obfuscated device info for sharing."""
+
     device_id: str = "obfuscated"
     mac: str = "obfuscated"
     serial: str = "obfuscated"
@@ -37,6 +40,7 @@ class CaptureDeviceInfo(BaseModel):
 
 class RawPair(BaseModel):
     """A single raw intercepted request/response pair."""
+
     pair_id: str
     timestamp: datetime
     protocol: str = "http"
@@ -49,6 +53,7 @@ class RawPair(BaseModel):
 
 class RawResponse(BaseModel):
     """Response half of a raw pair."""
+
     status_code: int = 0
     headers: dict[str, str] = Field(default_factory=dict)
     body: Any = None
@@ -57,6 +62,7 @@ class RawResponse(BaseModel):
 
 class RawPairWithResponse(BaseModel):
     """A raw pair bundled with its response."""
+
     pair_id: str
     timestamp: datetime
     protocol: str = "http"
@@ -70,6 +76,7 @@ class RawPairWithResponse(BaseModel):
 
 class CaptureSession(BaseModel):
     """A logical session grouping related pairs (boot, command, polling...)."""
+
     session_id: str
     type: str = "capture"
     timestamp_start: datetime
@@ -78,6 +85,7 @@ class CaptureSession(BaseModel):
 
 class CaptureDB(BaseModel):
     """Root model for .ride-capture.json — raw buffer export."""
+
     schema: str = Field(
         "https://ride-the-api.dev/capture-schema/v1",
         alias="$schema",
@@ -93,8 +101,10 @@ class CaptureDB(BaseModel):
 # DECIPHERED DB — .ride-pattern.json  (decifrato)
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class PatternMeta(BaseModel):
     """Metadata for a deciphered pattern file."""
+
     version: int = 1
     pattern_id: str
     vendor: str
@@ -106,6 +116,7 @@ class PatternMeta(BaseModel):
 
 class AuthConfig(BaseModel):
     """Authentication info for the device."""
+
     type: str = "bearer"
     token_endpoint: str = ""
     credentials: str = "stored_externally"
@@ -113,6 +124,7 @@ class AuthConfig(BaseModel):
 
 class EndpointVariant(BaseModel):
     """A variant of an endpoint for different firmware/hardware versions."""
+
     firmware: str = "*"
     path: str | None = None
     body_schema: dict[str, Any] | None = None
@@ -120,6 +132,7 @@ class EndpointVariant(BaseModel):
 
 class BodySchemaProperty(BaseModel):
     """A single property in a JSON Schema body."""
+
     type: str = "string"
     description: str = ""
     enum: list[str] | None = None
@@ -134,6 +147,7 @@ class BodySchemaProperty(BaseModel):
 
 class ClientEndpoint(BaseModel):
     """A single endpoint the device calls."""
+
     id: str
     intent: str
     method: str = "GET"
@@ -148,6 +162,7 @@ class ClientEndpoint(BaseModel):
 
 class ClientConfig(BaseModel):
     """Client section — describes what the device sends to the cloud."""
+
     protocols: list[str] = Field(default_factory=lambda: ["http"])
     base_url: str = ""
     mqtt_topic_prefix: str = ""
@@ -157,6 +172,7 @@ class ClientConfig(BaseModel):
 
 class StateVariable(BaseModel):
     """A persistent state variable for the simulated device."""
+
     name: str
     type: str = "string"
     default: Any = None
@@ -170,6 +186,7 @@ class StateVariable(BaseModel):
 
 class FieldMapping(BaseModel):
     """Maps a request field to a response field or state variable."""
+
     source: str = ""
     target: str = ""
     transform: str = "direct"
@@ -180,6 +197,7 @@ class FieldMapping(BaseModel):
 
 class ServerResponse(BaseModel):
     """A response template triggered by a client endpoint."""
+
     id: str
     triggers: list[str] = Field(default_factory=list)
     status_code: int = 200
@@ -190,6 +208,7 @@ class ServerResponse(BaseModel):
 
 class VirtualSensor(BaseModel):
     """A simulated sensor that generates realistic data."""
+
     name: str
     type: str = "integer"
     behavior: str = "static"
@@ -203,6 +222,7 @@ class VirtualSensor(BaseModel):
 
 class ServerConfig(BaseModel):
     """Server section — describes what the proxy should respond."""
+
     state_variables: list[StateVariable] = Field(default_factory=list)
     responses: list[ServerResponse] = Field(default_factory=list)
     virtual_sensors: list[VirtualSensor] = Field(default_factory=list)
@@ -210,6 +230,7 @@ class ServerConfig(BaseModel):
 
 class PatternDB(BaseModel):
     """Root model for .ride-pattern.json — deciphered protocol patterns."""
+
     schema: str = Field(
         "https://ride-the-api.dev/pattern-schema/v1",
         alias="$schema",

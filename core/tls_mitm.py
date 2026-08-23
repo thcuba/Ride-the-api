@@ -12,18 +12,22 @@ Unknown IPs are auto-registered with a dedicated device DB + passthrough=ON.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
 import ssl
 import struct
 import tempfile
-from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from core.cert_manager import CertManager
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Coroutine
 
 logger = logging.getLogger(__name__)
 
@@ -35,13 +39,26 @@ TLS_CLIENT_HELLO = 0x01
 TLS_EXTENSION_SNI = 0x0000
 
 _HTTP_STATUS = {
-    200: "OK", 201: "Created", 202: "Accepted", 204: "No Content",
-    301: "Moved Permanently", 302: "Found", 304: "Not Modified",
-    400: "Bad Request", 401: "Unauthorized", 403: "Forbidden",
-    404: "Not Found", 405: "Method Not Allowed", 408: "Request Timeout",
-    409: "Conflict", 414: "URI Too Long",
-    500: "Internal Server Error", 501: "Not Implemented",
-    502: "Bad Gateway", 503: "Service Unavailable", 504: "Gateway Timeout",
+    200: "OK",
+    201: "Created",
+    202: "Accepted",
+    204: "No Content",
+    301: "Moved Permanently",
+    302: "Found",
+    304: "Not Modified",
+    400: "Bad Request",
+    401: "Unauthorized",
+    403: "Forbidden",
+    404: "Not Found",
+    405: "Method Not Allowed",
+    408: "Request Timeout",
+    409: "Conflict",
+    414: "URI Too Long",
+    500: "Internal Server Error",
+    501: "Not Implemented",
+    502: "Bad Gateway",
+    503: "Service Unavailable",
+    504: "Gateway Timeout",
 }
 
 # HTTP pattern for parsing decrypted request
@@ -55,6 +72,7 @@ HTTP_REQUEST_RE = re.compile(
 @dataclass
 class DecryptedRequest:
     """A fully decrypted HTTP request from a device."""
+
     client_ip: str
     client_port: int
     dst_port: int
@@ -69,6 +87,7 @@ class DecryptedRequest:
 @dataclass
 class DevicePortInfo:
     """Metadata about a device's connection."""
+
     device_id: str
     ip: str
     port: int
@@ -79,13 +98,13 @@ class DevicePortInfo:
 # ── SNI Extraction from TLS ClientHello ────────────────────────────────────
 
 
-def extract_sni_from_client_hello(data: bytes) -> str | None:
+def extract_sni_from_client_hello(data: bytes) -> str | None:  # noqa: C901, PLR0911, PLR0912
     """Extract the SNI (Server Name Indication) from a TLS ClientHello record.
 
     Parses the raw TLS record format without needing a full SSL handshake.
     Returns the first host_name found, or None.
     """
-    if len(data) < 5:
+    if len(data) < 5:  # noqa: PLR2004
         return None
     if data[0] != TLS_HANDSHAKE:
         return None
@@ -100,7 +119,7 @@ def extract_sni_from_client_hello(data: bytes) -> str | None:
         return None
 
     # Skip handshake header (1 byte type + 3 bytes length)
-    if len(handshake_data) < 4:
+    if len(handshake_data) < 4:  # noqa: PLR2004
         return None
     hello_len = (handshake_data[1] << 16) | (handshake_data[2] << 8) | handshake_data[3]
     if len(handshake_data) < 4 + hello_len:
@@ -120,7 +139,7 @@ def extract_sni_from_client_hello(data: bytes) -> str | None:
     # Skip cipher suites (2 bytes length + data)
     if pos >= len(handshake_data) - 1:
         return None
-    cipher_len = struct.unpack("!H", handshake_data[pos:pos + 2])[0]
+    cipher_len = struct.unpack("!H", handshake_data[pos : pos + 2])[0]
     pos += 2 + cipher_len
 
     # Skip compression methods (1 byte length + data)
@@ -132,21 +151,21 @@ def extract_sni_from_client_hello(data: bytes) -> str | None:
     # Extensions (2 bytes length + data)
     if pos >= len(handshake_data) - 1:
         return None
-    extensions_len = struct.unpack("!H", handshake_data[pos:pos + 2])[0]
+    extensions_len = struct.unpack("!H", handshake_data[pos : pos + 2])[0]
     pos += 2
 
     end = pos + extensions_len
 
     while pos + 4 <= end and pos + 4 <= len(handshake_data):
-        ext_type = struct.unpack("!H", handshake_data[pos:pos + 2])[0]
-        ext_len = struct.unpack("!H", handshake_data[pos + 2:pos + 4])[0]
+        ext_type = struct.unpack("!H", handshake_data[pos : pos + 2])[0]
+        ext_len = struct.unpack("!H", handshake_data[pos + 2 : pos + 4])[0]
         pos += 4
 
         if ext_type == TLS_EXTENSION_SNI and ext_len > 0:
             # SNI extension: skip list length (2 bytes) + name type (1 byte)
             if pos + 3 >= len(handshake_data):
                 return None
-            sni_list_len = struct.unpack("!H", handshake_data[pos:pos + 2])[0]
+            sni_list_len = struct.unpack("!H", handshake_data[pos : pos + 2])[0]  # noqa: F841
             if pos + 3 >= len(handshake_data):
                 return None
             name_type = handshake_data[pos + 2]
@@ -154,10 +173,12 @@ def extract_sni_from_client_hello(data: bytes) -> str | None:
                 return None
             if pos + 3 + 2 >= len(handshake_data):
                 return None
-            name_len = struct.unpack("!H", handshake_data[pos + 3:pos + 5])[0]
+            name_len = struct.unpack("!H", handshake_data[pos + 3 : pos + 5])[0]
             name_start = pos + 5
             if name_start + name_len <= len(handshake_data):
-                return handshake_data[name_start:name_start + name_len].decode("utf-8", errors="replace")
+                return handshake_data[name_start : name_start + name_len].decode(
+                    "utf-8", errors="replace"
+                )
 
         pos += ext_len
 
@@ -186,7 +207,7 @@ class TLSMITMServer:
         cert_manager: CertManager | None = None,
         device_certs_dir: str = "./data/device_certs",
         request_handler: Callable[[DecryptedRequest], Coroutine] | None = None,
-    ):
+    ) -> None:
         self.host = host
         self.listen_ports = listen_ports or [443, 8883, 5684, 8443]
         self.cert_manager = cert_manager or CertManager()
@@ -269,7 +290,7 @@ class TLSMITMServer:
             self._servers.append(server)
             self.listen_ports.append(port)
             logger.info("TLS MITM: added port %d", port)
-            return True
+            return True  # noqa: TRY300
         except OSError as e:
             logger.warning("TLS MITM: cannot add port %d — %s", port, e)
             return False
@@ -282,7 +303,7 @@ class TLSMITMServer:
         for i, server in enumerate(self._servers):
             sock = server.sockets[0] if server.sockets else None
             if sock:
-                sock_port = sock.getsockname()[1] if hasattr(sock, 'getsockname') else None
+                sock_port = sock.getsockname()[1] if hasattr(sock, "getsockname") else None
                 if sock_port == port:
                     server.close()
                     await server.wait_closed()
@@ -296,7 +317,7 @@ class TLSMITMServer:
 
     # ── Connection handler ────────────────────────────────────────────────────
 
-    async def _handle_connection(
+    async def _handle_connection(  # noqa: C901, PLR0912, PLR0915
         self,
         reader: asyncio.StreamReader,
         writer: asyncio.StreamWriter,
@@ -332,8 +353,8 @@ class TLSMITMServer:
         hostname = sni or f"{client_ip}.local"
         try:
             cert_pem, key_pem = self.cert_manager.get_cert_for_hostname(hostname)
-        except Exception as e:
-            logger.error("TLS MITM: failed to get cert for %s: %s", hostname, e)
+        except Exception:
+            logger.exception("TLS MITM: failed to get cert for %s", hostname)
             writer.close()
             return
 
@@ -352,22 +373,35 @@ class TLSMITMServer:
 
             # Pump the TLS handshake
             handshake_ok = await self._pump_tls_handshake(
-                ssl_obj, incoming, outgoing, reader, writer,
+                ssl_obj,
+                incoming,
+                outgoing,
+                reader,
+                writer,
             )
             if not handshake_ok:
                 return
 
             # TLS handshake complete — read decrypted HTTP request
             decrypted_req = await self._read_http_over_tls(
-                ssl_obj, incoming, outgoing, reader, writer,
-                client_ip, client_port, dst_port, hostname,
+                ssl_obj,
+                incoming,
+                outgoing,
+                reader,
+                writer,
+                client_ip,
+                client_port,
+                dst_port,
+                hostname,
             )
             if decrypted_req is None:
                 return
 
             # Route by IP: find or create device
             await self._register_device_connection(
-                client_ip, client_port, dst_port,
+                client_ip,
+                client_port,
+                dst_port,
             )
 
             # Pass to external handler (if set)
@@ -376,29 +410,39 @@ class TLSMITMServer:
                 # If the handler produced a local response, send it back to the
                 # device encrypted over TLS (previously it was silently dropped,
                 # leaving the device waiting forever).
-                response = handler_result.get("response") if isinstance(handler_result, dict) else None
+                response = (
+                    handler_result.get("response") if isinstance(handler_result, dict) else None
+                )
                 if response is not None:
                     await self._write_http_response(
-                        ssl_obj, outgoing, writer, response, client_ip,
+                        ssl_obj,
+                        outgoing,
+                        writer,
+                        response,
+                        client_ip,
                     )
             else:
                 logger.warning(
-                    "TLS MITM: no request_handler set — dropping decrypted request"
-                    " from %s %s %s",
-                    client_ip, decrypted_req.method, decrypted_req.path,
+                    "TLS MITM: no request_handler set — dropping decrypted request from %s %s %s",
+                    client_ip,
+                    decrypted_req.method,
+                    decrypted_req.path,
                 )
 
         except Exception as e:
             logger.error(
-                "TLS MITM: error processing %s: %s", client_ip, e, exc_info=True,
+                "TLS MITM: error processing %s: %s",
+                client_ip,
+                e,
+                exc_info=True,
             )
         finally:
             if temp_path:
-                try:
-                    os.unlink(temp_path)
+                try:  # noqa: SIM105
+                    os.unlink(temp_path)  # noqa: PTH108
                 except OSError:
                     pass
-            try:
+            try:  # noqa: SIM105
                 writer.close()
             except Exception:
                 pass
@@ -406,7 +450,9 @@ class TLSMITMServer:
     # ── SSL helpers ───────────────────────────────────────────────────────────
 
     def _make_ssl_context(
-        self, cert_pem: str, key_pem: str,
+        self,
+        cert_pem: str,
+        key_pem: str,
     ) -> tuple[ssl.SSLContext | None, str | None]:
         """Create an SSL context with the given cert and key.
 
@@ -416,7 +462,9 @@ class TLSMITMServer:
         try:
             # Write cert+key to a temp file (load_cert_chain only takes file paths)
             with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".pem", delete=False,
+                mode="w",
+                suffix=".pem",
+                delete=False,
             ) as f:
                 f.write(cert_pem)
                 f.write("\n")
@@ -432,9 +480,9 @@ class TLSMITMServer:
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_NONE
 
-            return ctx, temp_path
-        except Exception as e:
-            logger.error("TLS MITM: failed to create SSL context: %s", e)
+            return ctx, temp_path  # noqa: TRY300
+        except Exception:
+            logger.exception("TLS MITM: failed to create SSL context")
             return None, None
 
     async def _pump_tls_handshake(
@@ -457,7 +505,7 @@ class TLSMITMServer:
                 if outgoing.pending:
                     writer.write(outgoing.read(4096))
                     await writer.drain()
-                return True  # Handshake complete
+                return True  # Handshake complete  # noqa: TRY300
             except ssl.SSLWantReadError:
                 # Send any pending handshake output to the client
                 if outgoing.pending:
@@ -483,7 +531,7 @@ class TLSMITMServer:
         logger.warning("TLS MITM: handshake exceeded max attempts")
         return False
 
-    async def _read_http_over_tls(
+    async def _read_http_over_tls(  # noqa: C901, PLR0913
         self,
         ssl_obj: ssl.SSLObject,
         incoming: ssl.MemoryBIO,
@@ -540,7 +588,11 @@ class TLSMITMServer:
 
         # Parse HTTP request
         return self._parse_http_request(
-            bytes(app_buffer), client_ip, client_port, dst_port, hostname,
+            bytes(app_buffer),
+            client_ip,
+            client_port,
+            dst_port,
+            hostname,
         )
 
     async def _write_http_response(
@@ -552,7 +604,6 @@ class TLSMITMServer:
         client_ip: str,
     ) -> None:
         """Encrypt and send an HTTP/1.1 response back to the device."""
-        import json
 
         try:
             status_code = int(response.get("status_code", 200))
@@ -573,7 +624,7 @@ class TLSMITMServer:
             lines.append("")
             raw = ("\r\n".join(lines) + "\r\n").encode("utf-8") + body
 
-            try:
+            try:  # noqa: SIM105
                 ssl_obj.write(raw)
             except (ssl.SSLWantReadError, ssl.SSLWantWriteError):
                 pass
@@ -611,9 +662,9 @@ class TLSMITMServer:
         for line in headers_raw.split(b"\r\n"):
             if b":" in line:
                 key, _, value = line.partition(b":")
-                headers[key.decode("utf-8", errors="replace").strip().lower()] = (
-                    value.decode("utf-8", errors="replace").strip()
-                )
+                headers[key.decode("utf-8", errors="replace").strip().lower()] = value.decode(
+                    "utf-8", errors="replace"
+                ).strip()
 
         return DecryptedRequest(
             client_ip=client_ip,
@@ -632,7 +683,7 @@ class TLSMITMServer:
     async def _register_device_connection(
         self,
         client_ip: str,
-        client_port: int,
+        _client_port: int,
         dst_port: int,
     ) -> None:
         """Register a device connection for port/IP tracking."""
@@ -693,7 +744,7 @@ def get_tls_mitm_server(
     cert_manager: CertManager | None = None,
 ) -> TLSMITMServer:
     """Get or create the global TLSMITMServer instance."""
-    global _tls_mitm_server
+    global _tls_mitm_server  # noqa: PLW0603
     if _tls_mitm_server is None:
         _tls_mitm_server = TLSMITMServer(
             host=host,

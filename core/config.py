@@ -4,8 +4,9 @@ Configuration management with hot-reload support.
 
 from __future__ import annotations
 
+import logging
 import threading
-from enum import Enum
+from enum import Enum, StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -72,10 +73,12 @@ class VendorConfig(BaseModel):
 
 
 class ModelDefaults(BaseModel):
-    example: dict[str, str] = Field(default_factory=lambda: {
-        "ac": "example_ac_v1.onnx",
-        "heat_pump": "example_hp_v1.onnx",
-    })
+    example: dict[str, str] = Field(
+        default_factory=lambda: {
+            "ac": "example_ac_v1.onnx",
+            "heat_pump": "example_hp_v1.onnx",
+        }
+    )
 
 
 class InferenceConfig(BaseModel):
@@ -179,7 +182,7 @@ class LLMDecipherConfig(BaseModel):
     profiles: dict[str, LLMDecipherProfile] = Field(default_factory=dict)
 
 
-class ModificationAction(str, Enum):
+class ModificationAction(StrEnum):
     modify = "modify"
     block = "block"
     inject = "inject"
@@ -252,11 +255,13 @@ class LearningConfig(BaseModel):
 
 class PinningBypassConfig(BaseModel):
     """Per-vendor certificate pinning bypass strategy."""
+
     strategy: str = "mitm_proxy"  # mitm_proxy | frida | disable_pin_check
 
 
 class TLSDecryptConfig(BaseModel):
     """TLS Decryption / MITM engine configuration."""
+
     enabled: bool = False  # disabled by default
     listen_ports: list[int] = Field(default_factory=lambda: [443, 8883, 5684, 8443])
     ca_cert_path: str = "./certs/ca.pem"
@@ -273,6 +278,7 @@ class TLSDecryptConfig(BaseModel):
 
 class MQTTServerConfig(BaseModel):
     """MQTT broker server configuration."""
+
     enabled: bool = False
     host: str = "0.0.0.0"
     port: int = 1883
@@ -284,6 +290,7 @@ class MQTTServerConfig(BaseModel):
 
 class CoAPServerConfig(BaseModel):
     """CoAP server configuration."""
+
     enabled: bool = False
     host: str = "0.0.0.0"
     port: int = 5683
@@ -294,6 +301,7 @@ class CoAPServerConfig(BaseModel):
 
 class ModbusServerConfig(BaseModel):
     """Modbus TCP server configuration."""
+
     enabled: bool = False
     host: str = "0.0.0.0"
     port: int = 502
@@ -306,6 +314,7 @@ class ModbusServerConfig(BaseModel):
 
 class WebSocketServerConfig(BaseModel):
     """WebSocket server configuration."""
+
     enabled: bool = False
     host: str = "0.0.0.0"
     port: int = 9000
@@ -315,6 +324,7 @@ class WebSocketServerConfig(BaseModel):
 
 class RawTCPServerConfig(BaseModel):
     """Raw TCP server configuration."""
+
     enabled: bool = False
     host: str = "0.0.0.0"
     port: int = 9100
@@ -325,6 +335,7 @@ class RawTCPServerConfig(BaseModel):
 
 class HTTP2ServerConfig(BaseModel):
     """HTTP/2 server configuration."""
+
     enabled: bool = False
     host: str = "0.0.0.0"
     port: int = 443
@@ -334,6 +345,7 @@ class HTTP2ServerConfig(BaseModel):
 
 class ZigbeeBridgeConfig(BaseModel):
     """Zigbee bridge (Zigbee2MQTT) configuration."""
+
     enabled: bool = False
     mqtt_host: str = "localhost"
     mqtt_port: int = 1883
@@ -345,6 +357,7 @@ class ZigbeeBridgeConfig(BaseModel):
 
 class ZWaveBridgeConfig(BaseModel):
     """Z-Wave bridge (Z-Wave JS UI) configuration."""
+
     enabled: bool = False
     connection_type: str = "mqtt"  # mqtt | ws
     host: str = "localhost"
@@ -356,6 +369,7 @@ class ZWaveBridgeConfig(BaseModel):
 
 class MatterBridgeConfig(BaseModel):
     """Matter bridge (Matter.js) configuration."""
+
     enabled: bool = False
     controller_port: int = 5540
     fabric_id: int = 1
@@ -364,6 +378,7 @@ class MatterBridgeConfig(BaseModel):
 
 class ProtocolServersConfig(BaseModel):
     """All protocol server configurations."""
+
     mqtt: MQTTServerConfig = Field(default_factory=MQTTServerConfig)
     coap: CoAPServerConfig = Field(default_factory=CoAPServerConfig)
     modbus: ModbusServerConfig = Field(default_factory=ModbusServerConfig)
@@ -395,7 +410,7 @@ class Config(BaseModel):
 class ConfigManager:
     """Manages configuration with hot-reload support."""
 
-    def __init__(self, config_path: str | Path = "config/config.yaml"):
+    def __init__(self, config_path: str | Path = "config/config.yaml") -> None:
         self.config_path = Path(config_path)
         self._config: Config | None = None
         self._lock = threading.RLock()
@@ -408,7 +423,7 @@ class ConfigManager:
         if not self.config_path.exists():
             raise FileNotFoundError(f"Config file not found: {self.config_path}")
 
-        with open(self.config_path, encoding="utf-8") as f:
+        with self.config_path.open(encoding="utf-8") as f:
             data = yaml.safe_load(f)
 
         config = Config(**data)
@@ -448,10 +463,9 @@ class ConfigManager:
             for callback in self._callbacks:
                 try:
                     callback(self._config)
-                except Exception as e:
+                except Exception:
                     # Log but don't crash
-                    import logging
-                    logging.getLogger(__name__).error(f"Config callback error: {e}")
+                    logging.getLogger(__name__).exception("Config callback error")
 
     def start_watching(self) -> None:
         """Start watching config file for changes."""
@@ -474,16 +488,14 @@ class ConfigManager:
             for changes in watch(str(self.config_path), stop_event=self._stop_watch):
                 for change_type, path in changes:
                     if change_type in (Change.modified, Change.added):
-                        import logging
-                        logging.getLogger(__name__).info(f"Config file changed: {path}")
+                        logging.getLogger(__name__).info("Config file changed: %s", path)
                         try:
                             self.load()
                             self._notify_callbacks()
-                        except Exception as e:
-                            logging.getLogger(__name__).error(f"Failed to reload config: {e}")
-        except Exception as e:
-            import logging
-            logging.getLogger(__name__).error(f"Config watch error: {e}")
+                        except Exception:
+                            logging.getLogger(__name__).exception("Failed to reload config")
+        except Exception:
+            logging.getLogger(__name__).exception("Config watch error")
 
 
 # Global config manager instance
@@ -492,7 +504,7 @@ _config_manager: ConfigManager | None = None
 
 def get_config_manager(config_path: str | Path | None = None) -> ConfigManager:
     """Get global config manager instance."""
-    global _config_manager
+    global _config_manager  # noqa: PLW0603
     if _config_manager is None:
         path = config_path or "config/config.yaml"
         _config_manager = ConfigManager(path)

@@ -1,5 +1,6 @@
 """
-Modbus Protocol Adapter Example — for Modbus TCP industrial devices (PLCs, energy meters, inverters).
+Modbus Protocol Adapter Example — for Modbus TCP industrial devices (PLCs,
+energy meters, inverters).
 
 Modbus is a widely used industrial protocol. This adapter translates Modbus register
 read/write operations to standardized CommandTypes.
@@ -17,7 +18,7 @@ Register mapping is device-specific and should be configured per vendor.
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from adapters.base import (
@@ -39,9 +40,9 @@ logger = logging.getLogger(__name__)
 EXAMPLE_REGISTER_MAP: dict[int, tuple[str, CommandType]] = {
     0x0000: ("temperature_setpoint", CommandType.SET_TEMPERATURE),
     0x0001: ("temperature_actual", CommandType.GET_STATE),
-    0x0002: ("mode", CommandType.SET_MODE),         # 0=cool, 1=heat, 2=fan, 3=auto, 4=dry
+    0x0002: ("mode", CommandType.SET_MODE),  # 0=cool, 1=heat, 2=fan, 3=auto, 4=dry
     0x0003: ("fan_speed", CommandType.SET_FAN_SPEED),  # 0=low, 1=medium, 2=high, 3=auto
-    0x0004: ("on_off", CommandType.TURN_ON),         # 0=off, 1=on
+    0x0004: ("on_off", CommandType.TURN_ON),  # 0=off, 1=on
     0x0005: ("swing", CommandType.SET_SWING),
     0x0006: ("humidity", CommandType.GET_STATE),
     0x0010: ("power_consumption", CommandType.GET_STATE),
@@ -54,7 +55,7 @@ class ModbusProtocolAdapter(ProtocolAdapter):
     VENDOR_CODE = "modbus_example"
     VENDOR_HOSTNAMES: list[str] = []
 
-    def __init__(self, vendor: str, config: dict[str, Any]):
+    def __init__(self, vendor: str, config: dict[str, Any]) -> None:
         super().__init__(vendor, config)
         self._devices: dict[str, dict] = {}
         self._register_map: dict[int, tuple[str, CommandType]] = EXAMPLE_REGISTER_MAP
@@ -99,10 +100,18 @@ class ModbusProtocolAdapter(ProtocolAdapter):
                 if register in self._register_map:
                     field_name, intent = self._register_map[register]
                     # Decode on_off from value
-                    if intent == CommandType.TURN_ON:
-                        if values is not None:
-                            if values in (0, False, "0", "off"):
-                                intent = CommandType.TURN_OFF
+                    if (
+                        intent == CommandType.TURN_ON
+                        and values is not None
+                        and values
+                        in (
+                            0,
+                            False,
+                            "0",
+                            "off",
+                        )
+                    ):
+                        intent = CommandType.TURN_OFF
                     request.parsed_intent = intent
                     request.parsed_params = {
                         "function_code": function_code,
@@ -122,20 +131,23 @@ class ModbusProtocolAdapter(ProtocolAdapter):
         if request.parsed_intent == CommandType.GET_STATE:
             state = await self.get_device_state(request.device_id)
             if state:
-                return CommandResult(success=True, response={
-                    "temperature_actual": state.temp_actual,
-                    "temperature_setpoint": state.temp_target,
-                    "mode": state.mode,
-                    "fan_speed": state.fan_speed,
-                    "on_off": state.on_off,
-                    "power_consumption": state.power_watts,
-                })
+                return CommandResult(
+                    success=True,
+                    response={
+                        "temperature_actual": state.temp_actual,
+                        "temperature_setpoint": state.temp_target,
+                        "mode": state.mode,
+                        "fan_speed": state.fan_speed,
+                        "on_off": state.on_off,
+                        "power_consumption": state.power_watts,
+                    },
+                )
         return await self.forward_to_cloud(request)
 
-    async def forward_to_cloud(self, request: InterceptedRequest) -> CommandResult:
+    async def forward_to_cloud(self, _request: InterceptedRequest) -> CommandResult:
         return CommandResult(success=False, error="Cloud forward not implemented", forwarded=True)
 
-    async def build_response(self, request: InterceptedRequest, result: CommandResult) -> dict:
+    async def build_response(self, _request: InterceptedRequest, result: CommandResult) -> dict:
         if result.success and result.response:
             return result.response
         return {"error": result.error or "unknown"}
@@ -175,7 +187,7 @@ class ModbusProtocolAdapter(ProtocolAdapter):
             quality="good",
         )
 
-    async def send_command(self, device_id: str, command: Command) -> CommandResult:
+    async def send_command(self, _device_id: str, _command: Command) -> CommandResult:
         return CommandResult(success=False, error="Send not implemented")
 
     async def on_device_connect(self, device_id: str, initial_data: dict) -> None:

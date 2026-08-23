@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 from adapters.base import InterceptedRequest, ProtocolType
 from core.protocol_servers import ProtocolServerPlugin
@@ -36,7 +38,7 @@ class RawTCPServerPlugin(ProtocolServerPlugin):
 
     name = "raw_tcp"
 
-    def __init__(self, config: Any, handler: Callable | None = None):
+    def __init__(self, config: Any, handler: Callable | None = None) -> None:  # noqa: ANN401
         super().__init__(config)
         self.handler = handler
         self._server: asyncio.AbstractServer | None = None
@@ -59,13 +61,15 @@ class RawTCPServerPlugin(ProtocolServerPlugin):
         for sig, proto, name in PROTOCOL_SIGNATURES:
             if data.startswith(sig):
                 return proto, name
-        if port == 502:
+        if port == 502:  # noqa: PLR2004
             return ProtocolType.MODBUS, "modbus"
-        if port == 1883:
+        if port == 1883:  # noqa: PLR2004
             return ProtocolType.MQTT, "mqtt"
         return ProtocolType.TCPIP, "raw"
 
-    async def _handle_connection(self, reader: asyncio.StreamReader, writer: asyncio.Writer) -> None:
+    async def _handle_connection(
+        self, reader: asyncio.StreamReader, writer: asyncio.Writer
+    ) -> None:
         """Handle an incoming raw TCP connection."""
         peername = writer.get_extra_info("peername", ("unknown", 0))
         remote_ip = peername[0]
@@ -94,8 +98,8 @@ class RawTCPServerPlugin(ProtocolServerPlugin):
 
         except TimeoutError:
             logger.debug("Raw TCP timeout from %s", remote_ip)
-        except Exception as e:
-            logger.error("Raw TCP handler error from %s: %s", remote_ip, e)
+        except Exception:
+            logger.exception("Raw TCP handler error from %s", remote_ip)
         finally:
             try:
                 writer.close()

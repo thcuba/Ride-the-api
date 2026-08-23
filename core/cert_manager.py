@@ -14,6 +14,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import logging
+import shutil
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -28,7 +29,7 @@ logger = logging.getLogger(__name__)
 class CertManager:
     """Manages CA and per-hostname leaf certificates for TLS interception."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         ca_cert_path: str = "./certs/ca.pem",
         ca_key_path: str = "./certs/ca.key",
@@ -37,7 +38,7 @@ class CertManager:
         ca_key_size: int = 4096,
         leaf_key_size: int = 2048,
         cert_validity_days: int = 730,  # 2 years
-    ):
+    ) -> None:
         self.ca_cert_path = Path(ca_cert_path)
         self.ca_key_path = Path(ca_key_path)
         self.device_certs_dir = Path(device_certs_dir)
@@ -72,11 +73,9 @@ class CertManager:
     def _load_ca(self) -> None:
         """Load existing CA from disk."""
         try:
-            with open(self.ca_key_path, "rb") as f:
-                self._ca_key = serialization.load_pem_private_key(
-                    f.read(), password=None
-                )
-            with open(self.ca_cert_path, "rb") as f:
+            with self.ca_key_path.open("rb") as f:
+                self._ca_key = serialization.load_pem_private_key(f.read(), password=None)
+            with self.ca_cert_path.open("rb") as f:
                 self._ca_cert = x509.load_pem_x509_certificate(f.read())
             logger.info("Loaded existing CA from %s", self.ca_cert_path)
         except Exception as e:
@@ -89,11 +88,13 @@ class CertManager:
             public_exponent=65537,
             key_size=self.ca_key_size,
         )
-        subject = issuer = x509.Name([
-            x509.NameAttribute(NameOID.COMMON_NAME, "Ride the API Local CA"),
-            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Ride the API"),
-            x509.NameAttribute(NameOID.COUNTRY_NAME, "XX"),
-        ])
+        subject = issuer = x509.Name(
+            [
+                x509.NameAttribute(NameOID.COMMON_NAME, "Ride the API Local CA"),
+                x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Ride the API"),
+                x509.NameAttribute(NameOID.COUNTRY_NAME, "XX"),
+            ]
+        )
 
         now = datetime.now(UTC)
         cert = (
@@ -105,14 +106,20 @@ class CertManager:
             .not_valid_before(now)
             .not_valid_after(now + timedelta(days=self.cert_validity_days * 5))  # CA is long-lived
             .add_extension(
-                x509.BasicConstraints(ca=True, path_length=None), critical=True,
+                x509.BasicConstraints(ca=True, path_length=None),
+                critical=True,
             )
             .add_extension(
                 x509.KeyUsage(
-                    key_cert_sign=True, crl_sign=True,
-                    digital_signature=False, content_commitment=False,
-                    key_encipherment=False, data_encipherment=False,
-                    key_agreement=False, encipher_only=False, decipher_only=False,
+                    key_cert_sign=True,
+                    crl_sign=True,
+                    digital_signature=False,
+                    content_commitment=False,
+                    key_encipherment=False,
+                    data_encipherment=False,
+                    key_agreement=False,
+                    encipher_only=False,
+                    decipher_only=False,
                 ),
                 critical=True,
             )
@@ -123,13 +130,15 @@ class CertManager:
         self._ca_cert = cert
 
         self.ca_cert_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.ca_key_path, "wb") as f:
-            f.write(key.private_bytes(
-                encoding=serialization.Encoding.PEM,
-                format=serialization.PrivateFormat.TraditionalOpenSSL,
-                encryption_algorithm=serialization.NoEncryption(),
-            ))
-        with open(self.ca_cert_path, "wb") as f:
+        with self.ca_key_path.open("wb") as f:
+            f.write(
+                key.private_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PrivateFormat.TraditionalOpenSSL,
+                    encryption_algorithm=serialization.NoEncryption(),
+                )
+            )
+        with self.ca_cert_path.open("wb") as f:
             f.write(cert.public_bytes(serialization.Encoding.PEM))
 
         logger.info("Generated new root CA at %s", self.ca_cert_path)
@@ -196,19 +205,23 @@ class CertManager:
 
         if is_ip:
             san = [x509.IPAddress(ipaddress.ip_address(hostname))]
-            subject_name = x509.Name([
-                x509.NameAttribute(NameOID.COMMON_NAME, hostname),
-            ])
+            subject_name = x509.Name(
+                [
+                    x509.NameAttribute(NameOID.COMMON_NAME, hostname),
+                ]
+            )
         else:
             san = [x509.DNSName(hostname)]
             # Try to add a wildcard for the domain
             if "." in hostname:
                 parts = hostname.split(".")
-                if len(parts) >= 2:
+                if len(parts) >= 2:  # noqa: PLR2004
                     san.append(x509.DNSName(f"*.{'.'.join(parts[1:])}"))
-            subject_name = x509.Name([
-                x509.NameAttribute(NameOID.COMMON_NAME, hostname),
-            ])
+            subject_name = x509.Name(
+                [
+                    x509.NameAttribute(NameOID.COMMON_NAME, hostname),
+                ]
+            )
 
         cert = (
             x509.CertificateBuilder()
@@ -219,17 +232,24 @@ class CertManager:
             .not_valid_before(now)
             .not_valid_after(now + timedelta(days=self.cert_validity_days))
             .add_extension(
-                x509.SubjectAlternativeName(san), critical=False,
+                x509.SubjectAlternativeName(san),
+                critical=False,
             )
             .add_extension(
-                x509.BasicConstraints(ca=False, path_length=None), critical=True,
+                x509.BasicConstraints(ca=False, path_length=None),
+                critical=True,
             )
             .add_extension(
                 x509.KeyUsage(
-                    digital_signature=True, key_encipherment=True,
-                    content_commitment=False, data_encipherment=False,
-                    key_cert_sign=False, crl_sign=False,
-                    key_agreement=False, encipher_only=False, decipher_only=False,
+                    digital_signature=True,
+                    key_encipherment=True,
+                    content_commitment=False,
+                    data_encipherment=False,
+                    key_cert_sign=False,
+                    crl_sign=False,
+                    key_agreement=False,
+                    encipher_only=False,
+                    decipher_only=False,
                 ),
                 critical=True,
             )
@@ -271,15 +291,12 @@ class CertManager:
 
     # ── External Certificate Import ───────────────────────────────────────────
 
-    def import_cert(self, hostname: str, cert_pem: str, key_pem: str,
-                     label: str = "") -> dict:
+    def import_cert(self, hostname: str, cert_pem: str, key_pem: str, label: str = "") -> dict:
         """Import an external certificate for a hostname.
 
         Stores in data/external_certs/{hostname}/ and adds metadata.
         Once imported, get_cert_for_hostname() will return the external cert.
         """
-        from datetime import datetime as dt
-
         ext_dir = self._ext_dir(hostname)
         ext_dir.mkdir(parents=True, exist_ok=True)
 
@@ -296,7 +313,7 @@ class CertManager:
         meta = {
             "hostname": hostname,
             "label": label,
-            "imported_at": dt.now(UTC).isoformat(),
+            "imported_at": datetime.now(UTC).isoformat(),
             "type": "imported",
             "issuer": cert_info.get("issuer", ""),
             "subject": cert_info.get("subject", ""),
@@ -305,14 +322,15 @@ class CertManager:
             "sans": cert_info.get("sans", []),
         }
 
-        with open(meta_path, "w") as f:
+        with meta_path.open("w") as f:
             json.dump(meta, f, indent=2)
 
         # Update in-memory cache so TLS MITM picks it up immediately
         self._cache[hostname] = (cert_pem, key_pem)
 
-        logger.info("Imported external certificate for %s (expires: %s)",
-                     hostname, meta["not_after"])
+        logger.info(
+            "Imported external certificate for %s (expires: %s)", hostname, meta["not_after"]
+        )
         return meta
 
     def delete_cert(self, hostname: str) -> bool:
@@ -321,7 +339,6 @@ class CertManager:
         if not ext_dir.exists():
             return False
 
-        import shutil
         shutil.rmtree(str(ext_dir))
 
         # Clear cache so next call regenerates
@@ -339,7 +356,7 @@ class CertManager:
         meta_path = self._ext_dir(hostname) / "meta.json"
         if meta_path.exists():
             try:
-                with open(meta_path) as f:
+                with meta_path.open() as f:
                     return json.load(f)
             except Exception as e:
                 logger.warning("Failed to read cert meta for %s: %s", hostname, e)
@@ -378,7 +395,7 @@ class CertManager:
         certs = []
         for meta_file in base.glob("*/meta.json"):
             try:
-                with open(meta_file) as f:
+                with meta_file.open() as f:
                     certs.append(json.load(f))
             except Exception as e:
                 logger.warning("Failed to read %s: %s", meta_file, e)
@@ -392,8 +409,12 @@ class CertManager:
             info = {
                 "issuer": cert.issuer.rfc4514_string() if cert.issuer else "",
                 "subject": cert.subject.rfc4514_string() if cert.subject else "",
-                "not_before": cert.not_valid_before_utc.isoformat() if hasattr(cert, 'not_valid_before_utc') else "",
-                "not_after": cert.not_valid_after_utc.isoformat() if hasattr(cert, 'not_valid_after_utc') else "",
+                "not_before": cert.not_valid_before_utc.isoformat()
+                if hasattr(cert, "not_valid_before_utc")
+                else "",
+                "not_after": cert.not_valid_after_utc.isoformat()
+                if hasattr(cert, "not_valid_after_utc")
+                else "",
                 "sans": [],
             }
             try:
@@ -401,15 +422,18 @@ class CertManager:
                 info["sans"] = [str(s) for s in ext.value]
             except x509.ExtensionNotFound:
                 pass
-            return info
         except Exception as e:
             logger.warning("Failed to parse cert: %s", e)
             return {}
+        else:
+            return info
 
     @staticmethod
     def _safe_filename(hostname: str) -> str:
         """Convert a hostname to a safe filename."""
         return hostname.replace("*", "wildcard_").replace(".", "_").replace(":", "_")
+
+
 # ── Global instance ─────────────────────────────────────────────────────────
 
 _cert_manager: CertManager | None = None
@@ -422,7 +446,7 @@ def get_cert_manager(
     external_certs_dir: str | None = None,
 ) -> CertManager:
     """Get or create the global CertManager instance."""
-    global _cert_manager
+    global _cert_manager  # noqa: PLW0603
     if _cert_manager is None:
         _cert_manager = CertManager(
             ca_cert_path=ca_cert_path or "./certs/ca.pem",

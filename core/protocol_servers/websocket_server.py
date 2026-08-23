@@ -11,13 +11,16 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 try:
-    import websockets
-    from websockets.server import serve as ws_serve
+    import websockets  # noqa: F401
+    from websockets.server import serve as ws_serve  # noqa: F401
+
     HAS_WEBSOCKETS = True
 except ImportError:
     HAS_WEBSOCKETS = False
@@ -33,7 +36,7 @@ class WebSocketServerPlugin(ProtocolServerPlugin):
 
     name = "websocket"
 
-    def __init__(self, config: Any, handler: Callable | None = None):
+    def __init__(self, config: Any, handler: Callable | None = None) -> None:  # noqa: ANN401
         super().__init__(config)
         self.handler = handler
         self._server: asyncio.AbstractServer | None = None
@@ -58,7 +61,9 @@ class WebSocketServerPlugin(ProtocolServerPlugin):
 
     async def _handle_ws(self, websocket, path: str) -> None:
         """Handle an individual WebSocket connection."""
-        remote_ip = websocket.remote_address[0] if hasattr(websocket, 'remote_address') else "unknown"
+        remote_ip = (
+            websocket.remote_address[0] if hasattr(websocket, "remote_address") else "unknown"
+        )
         device_id = f"ws-{remote_ip.replace('.', '-')}"
 
         async for message in websocket:
@@ -85,8 +90,8 @@ class WebSocketServerPlugin(ProtocolServerPlugin):
                         result = self.handler(request)
                     if result and isinstance(result, dict):
                         await websocket.send(json.dumps(result))
-                except Exception as e:
-                    logger.error("WebSocket handler error: %s", e)
+                except Exception:
+                    logger.exception("WebSocket handler error: %s")
 
     async def get_status(self) -> dict:
         return {
