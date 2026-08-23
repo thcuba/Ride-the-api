@@ -1364,8 +1364,11 @@ class LearningOrchestrator:
                 "pair_id": pair.pair_id,
                 "buffer_flushed": needs_flush,
             }
-        # Production mode: record miss and learn
-        await self.tracker.record_result(device_id, MatchResult.CLOUD_MISS)
+        # Production/hybrid mode: learn from the miss. The CLOUD_MISS is NOT
+        # recorded again here — it was already counted once when the request
+        # was forwarded (_handle_production/_handle_hybrid record it at
+        # request time). Recording it again on the response would double-count
+        # total_requests/cloud_misses and understate the real match rate.
         needs_flush = await self.pipeline.process_learning_pair(
             device_id, pair, device.context_buffer_size
         )
