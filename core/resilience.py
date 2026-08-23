@@ -237,6 +237,7 @@ class CloudIndependenceVerifier:
                     "path_pattern": p.path_pattern,
                     "protocol": p.protocol,
                     "required_headers": p.required_headers,
+                    "query_param_keys": p.query_param_keys,
                     "body_schema": p.body_schema,
                     "intent": p.intent,
                     "confidence": p.confidence,
@@ -260,7 +261,9 @@ class CloudIndependenceVerifier:
                 {
                     "mapping_id": m.mapping_id,
                     "request_field": m.request_field,
+                    "request_type": m.request_type,
                     "response_field": m.response_field,
+                    "response_type": m.response_type,
                     "transform": m.transform,
                     "intent": m.intent,
                     "confidence": m.confidence,
