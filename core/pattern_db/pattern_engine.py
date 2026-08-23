@@ -36,6 +36,24 @@ _FORMULA_SAFE_NAMES = {
 }
 
 
+def _as_formula_literal(value: Any) -> str:  # noqa: ANN401
+    """Render a runtime value as a safe literal inside a formula string.
+
+    Numbers are emitted as-is so arithmetic still works. Any other value
+    (notably strings sourced from request/state data) is emitted as an escaped
+    JSON string literal, so ``_interp`` treats it as an ``ast.Constant``
+    (data) instead of re-parsing it as formula code. This is the F1 fix: a
+    stored value like ``"1+1"`` used to be spliced raw into the formula and
+    evaluated as ``1+1 = 2`` instead of being treated as the string ``"1+1"``,
+    letting attacker-controlled device data fabricate results.
+    """
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    if isinstance(value, (int, float)):
+        return str(value)
+    return json.dumps(value)
+
+
 def _eval_formula_safe(formula: str) -> Any:  # noqa: ANN401
     """Evaluate a restricted arithmetic formula without eval().
 
@@ -419,10 +437,10 @@ class PatternEngine:
             # Replace variable references with re.sub (single pass, no intermediate strings)
             def _var_replacer(m: re.Match) -> str:
                 if m.group(1):  # state.<name>
-                    return str(store.get(m.group(1), 0))
+                    return _as_formula_literal(store.get(m.group(1), 0))
                 if m.group(2):  # request.<path>
                     val = self._resolve_source(f"request.{m.group(2)}", request, store)
-                    return str(val or 0)
+                    return _as_formula_literal(val or 0)
                 return m.group(0)
 
             resolved = re.sub(

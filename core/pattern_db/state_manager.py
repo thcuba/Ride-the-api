@@ -49,10 +49,9 @@ class DeviceStateStore:
         return default
 
     def set(self, name: str, value: Any) -> bool:  # noqa: ANN401
-        """Set a state variable. Returns True if changed."""
-        if name in self._variables and self._variables[name] != value:
-            self._variables[name] = value
-            return True
+        """Set a state variable. Returns True if changed, False if unchanged."""
+        if name in self._variables and self._variables[name] == value:
+            return False
         self._variables[name] = value
         return True
 
@@ -111,13 +110,20 @@ class _SensorInstance:
         raw = self.config.baseline
         if raw.startswith("{") and raw.endswith("}"):
             key = raw[1:-1]
-            if key.startswith("state."):
-                return float(state.get(key[6:], 0) or 0)
-            return float(state.get(raw, 0) or 0)
+            val = state.get(key[6:], 0) if key.startswith("state.") else state.get(raw, 0)
+            try:
+                value = float(val or 0)
+            except (ValueError, TypeError):
+                return 0.0
+            # Reject NaN/Inf: they poison every downstream reading (drift,
+            # random.uniform, amplitude arithmetic) and flow into local
+            # responses as corrupt data.
+            return value if math.isfinite(value) else 0.0
         try:
-            return float(raw)
+            value = float(raw)
         except (ValueError, TypeError):
             return 0.0
+        return value if math.isfinite(value) else 0.0
 
     def _random_value(self, baseline: float) -> float:
         dr = self.config.drift_range or [-5, 5]
