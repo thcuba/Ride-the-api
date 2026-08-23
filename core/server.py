@@ -247,12 +247,17 @@ async def lifespan(app: FastAPI):  # noqa: C901, PLR0912, PLR0915
     # Start TLS MITM server if enabled
     if config.tls_decrypt.enabled and cert_manager:
         try:
-            tls_mitm_server = get_tls_mitm_server()
-            await tls_mitm_server.start(
+            # get_tls_mitm_server() configures the singleton (ports + cert
+            # manager); start() itself takes no arguments. The old code passed
+            # cert_manager/ports/request_handler to start(), which accepts no
+            # kwargs, so the call raised TypeError that the except swallowed —
+            # TLS interception silently never started.
+            tls_mitm_server = get_tls_mitm_server(
                 cert_manager=cert_manager,
-                ports=config.tls_decrypt.listen_ports,
-                request_handler=handle_tls_decrypted_request,
+                listen_ports=config.tls_decrypt.listen_ports,
             )
+            tls_mitm_server.request_handler = handle_tls_decrypted_request
+            await tls_mitm_server.start()
             logger.info("TLS MITM server listening on ports %s", config.tls_decrypt.listen_ports)
         except Exception as e:
             logger.error("Failed to start TLS MITM server: %s, TLS interception disabled", e)  # noqa: TRY400

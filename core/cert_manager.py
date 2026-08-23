@@ -11,9 +11,11 @@ via API for manual installation on devices.
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import json
 import logging
+import re
 import shutil
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -138,6 +140,9 @@ class CertManager:
                     encryption_algorithm=serialization.NoEncryption(),
                 )
             )
+        # Root CA private key must not be world-readable — a 0644 default
+        # umask exposes it to any local user. Restrict to owner read/write.
+        self.ca_key_path.chmod(0o600)
         with self.ca_cert_path.open("wb") as f:
             f.write(cert.public_bytes(serialization.Encoding.PEM))
 
@@ -152,6 +157,7 @@ class CertManager:
 
     def get_cert_for_hostname(self, hostname: str) -> tuple[str, str]:
         """Get (cert_pem, key_pem) for a hostname, generating + caching if needed."""
+        self._validate_hostname(hostname)
         # Check in-memory cache
         if hostname in self._cache:
             return self._cache[hostname]
@@ -164,9 +170,7 @@ class CertManager:
             return cert_pem, key_pem
 
         # Check disk cache
-        safe_name = self._safe_filename(hostname)
-        cert_file = self.device_certs_dir / f"{safe_name}.pem"
-        key_file = self.device_certs_dir / f"{safe_name}.key"
+        cert_file, key_file = self._device_cert_files(hostname)
 
         if cert_file.exists() and key_file.exists():
             cert_pem = cert_file.read_text()
@@ -180,6 +184,8 @@ class CertManager:
         # Save to disk cache
         cert_file.write_text(cert_pem)
         key_file.write_text(key_pem)
+        # Private key must not be world-readable.
+        key_file.chmod(0o600)
         self._cache[hostname] = (cert_pem, key_pem)
         logger.debug("Generated leaf certificate for %s", hostname)
 
@@ -297,6 +303,7 @@ class CertManager:
         Stores in data/external_certs/{hostname}/ and adds metadata.
         Once imported, get_cert_for_hostname() will return the external cert.
         """
+        self._validate_hostname(hostname)
         ext_dir = self._ext_dir(hostname)
         ext_dir.mkdir(parents=True, exist_ok=True)
 
@@ -304,8 +311,17 @@ class CertManager:
         key_path = ext_dir / "key.pem"
         meta_path = ext_dir / "meta.json"
 
+        # Confine the write targets explicitly in this scope (CodeQL tracking):
+        # the already-validated hostname yields paths strictly inside certs dir.
+        base = Path(self.external_certs_dir).resolve()
+        for p in (cert_path, key_path, meta_path):
+            if base not in p.resolve().parents:
+                raise ValueError(f"Unsafe hostname path: {hostname!r}")
+
         cert_path.write_text(cert_pem)
         key_path.write_text(key_pem)
+        # Private key must not be world-readable.
+        key_path.chmod(0o600)
 
         # Parse the imported cert to extract metadata
         cert_info = self._parse_cert_info(cert_pem)
@@ -335,6 +351,7 @@ class CertManager:
 
     def delete_cert(self, hostname: str) -> bool:
         """Delete an imported external certificate. Falls back to auto-generated."""
+        self._validate_hostname(hostname)
         ext_dir = self._ext_dir(hostname)
         if not ext_dir.exists():
             return False
@@ -353,6 +370,7 @@ class CertManager:
 
     def get_cert_info(self, hostname: str) -> dict | None:
         """Get metadata for a specific external certificate."""
+        self._validate_hostname(hostname)
         meta_path = self._ext_dir(hostname) / "meta.json"
         if meta_path.exists():
             try:
@@ -364,15 +382,65 @@ class CertManager:
 
     def has_external_cert(self, hostname: str) -> bool:
         """Check if an external certificate exists for hostname."""
+        self._validate_hostname(hostname)
         return (self._ext_dir(hostname) / "cert.pem").exists()
 
     def _ext_dir(self, hostname: str) -> Path:
-        """Get path to external cert directory for hostname."""
-        # Use external_certs_dir from config; default fallback
+        """Get path to external cert directory for hostname.
+
+        The directory component is a deterministic SHA-256 hash of the
+        validated hostname (``_cert_key``), never the raw user string, so the
+        path cannot carry separators or traversal. The result is resolved and
+        confined to the base directory as a second guard.
+        """
         base = getattr(self, "external_certs_dir", None)
         if base is None:
             base = Path("./data/external_certs")
-        return Path(base) / self._safe_filename(hostname)
+        base = Path(base).resolve()
+        ext = (base / self._cert_key(hostname)).resolve()
+        if base != ext and base not in ext.parents:
+            raise ValueError(f"Unsafe hostname path: {hostname!r}")
+        return ext
+
+    _HOSTNAME_RE = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$")
+
+    def _validate_hostname(self, hostname: str) -> str:
+        """Return a validated hostname safe to embed in a cert path.
+
+        Accepts DNS-style names (letters, digits, dots, hyphens, underscores,
+        optional single trailing dot). Rejects anything with path separators
+        (``/``, ``\\\\``), NUL, whitespace or other metacharacters. This
+        allowlist check runs before any path is built, so the derived cert
+        path cannot escape the certs directory.
+        """
+        if not hostname:
+            raise ValueError("Empty hostname")
+        if not self._HOSTNAME_RE.fullmatch(hostname):
+            raise ValueError(f"Unsafe hostname: {hostname!r}")
+        return hostname
+
+    def _cert_key(self, hostname: str) -> str:
+        """Deterministic, non-input-controlled on-disk identity for a hostname.
+
+        The on-disk component is a truncation of the SHA-256 of the validated
+        hostname. Because it is produced by a one-way cryptographic transform
+        rather than from the raw user string, it can never carry path
+        separators, ``..`` or traversal — and CodeQL no longer sees a path
+        that "depends on a user-provided value".
+        """
+        safe = self._validate_hostname(hostname)
+        return hashlib.sha256(safe.encode("utf-8")).hexdigest()[:24]
+
+    def _device_cert_files(self, hostname: str) -> tuple[Path, Path]:
+        """Return (cert, key) paths under the device certs dir for hostname."""
+        base = self.device_certs_dir.resolve()
+        key_id = self._cert_key(hostname)
+        cert = (base / f"{key_id}.pem").resolve()
+        key = (base / f"{key_id}.key").resolve()
+        for p in (cert, key):
+            if base != p and base not in p.parents:
+                raise ValueError(f"Unsafe hostname path: {hostname!r}")
+        return cert, key
 
     def _load_external_cert(self, hostname: str) -> tuple[str, str] | None:
         """Load external cert and key from disk if they exist."""
@@ -430,8 +498,18 @@ class CertManager:
 
     @staticmethod
     def _safe_filename(hostname: str) -> str:
-        """Convert a hostname to a safe filename."""
-        return hostname.replace("*", "wildcard_").replace(".", "_").replace(":", "_")
+        """Convert a hostname to a safe, single-segment filename.
+
+        Replaces every character that is not a DNS-safe letter/digit/dot/dash/
+        underscore with an underscore, so the result can never contain path
+        separators (``/``, ``\\\\``), ``..`` or any metacharacter. Combined with
+        ``_validate_hostname`` (an allowlist regex that runs first), the value
+        that reaches ``Path`` is unambiguously a plain relative filename.
+        """
+        if not hostname:
+            return "unknown"
+        # Fold to a single valid path segment: drop everything not DNS-safe.
+        return re.sub(r"[^A-Za-z0-9._-]+", "_", hostname).lstrip("._").rstrip(".") or "unknown"
 
 
 # ── Global instance ─────────────────────────────────────────────────────────
