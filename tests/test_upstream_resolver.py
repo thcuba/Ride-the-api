@@ -290,6 +290,39 @@ def test_clear_cache():
     assert len(_resolver_cache) == 0
 
 
+@pytest.mark.asyncio
+async def test_cache_hit_returns_copy_not_shared_mutable_list():
+    """A cache hit must not hand the shared mutable list to callers."""
+    _resolver_cache["shared.example.com"] = (
+        time.time(),
+        ["1.2.3.4", "2001:db8::1"],
+    )
+
+    first = await resolve_upstream("shared.example.com")
+    second = await resolve_upstream("shared.example.com")
+
+    # Distinct list objects: mutating one must not corrupt the other.
+    assert first is not second
+    first.reverse()
+    # The cached entry is untouched by the caller's mutation.
+    assert _resolver_cache["shared.example.com"][1] == ["1.2.3.4", "2001:db8::1"]
+
+
+@pytest.mark.asyncio
+async def test_cache_hit_respects_prefer_ipv6_ordering():
+    """prefer_ipv6 must re-order addresses on a cache hit (not ignored)."""
+    _resolver_cache["dual.example.com"] = (
+        time.time(),
+        ["1.2.3.4", "2001:db8::1", "9.9.9.9"],
+    )
+
+    ordered = await resolve_upstream("dual.example.com", prefer_ipv6=True)
+
+    # IPv6 first, then IPv4, without dropping any address.
+    assert ordered[0] == "2001:db8::1"
+    assert set(ordered[1:]) == {"1.2.3.4", "9.9.9.9"}
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONFIGURATION TESTS
 # ═══════════════════════════════════════════════════════════════════════════════

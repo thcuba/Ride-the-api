@@ -11,6 +11,7 @@ local DNS server returns the proxy's own IP for a cloud hostname.
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
 import time
 
@@ -35,8 +36,19 @@ UPSTREAM_DNS_SERVERS_V6: list[str] = [
 # Cache TTL
 CACHE_TTL = 300  # 5 minutes
 
+# IP version constant for the prefer_ipv6 re-ordering.
+_IPV6_VERSION = 6
+
 # In-memory cache: hostname -> (timestamp, [ip_addresses])
 _resolver_cache: dict[str, tuple[float, list[str]]] = {}
+
+
+def _addr_family(address: str) -> int:
+    """Return IP version (4 or 6); non-IP strings default to 4."""
+    try:
+        return ipaddress.ip_address(address.split("%", maxsplit=1)[0]).version
+    except ValueError:
+        return 4
 
 
 def _build_resolver() -> dns.asyncresolver.AsyncResolver:
@@ -49,7 +61,7 @@ def _build_resolver() -> dns.asyncresolver.AsyncResolver:
     return resolver
 
 
-async def resolve_upstream(  # noqa: C901
+async def resolve_upstream(  # noqa: C901, PLR0912
     hostname: str,
     *,
     prefer_ipv6: bool = False,
@@ -77,7 +89,14 @@ async def resolve_upstream(  # noqa: C901
         cached = _resolver_cache.get(hostname)
         if cached and (now - cached[0]) < CACHE_TTL:
             logger.debug("Resolver cache hit for %s", hostname)
-            return cached[1]
+            # Return a copy so callers can't mutate the shared cache entry,
+            # and re-order for prefer_ipv6 (which is not part of the cache key).
+            result = list(cached[1])
+            if prefer_ipv6:
+                v6 = [ip for ip in result if _addr_family(ip) == _IPV6_VERSION]
+                v4 = [ip for ip in result if _addr_family(ip) != _IPV6_VERSION]
+                result = v6 + v4
+            return result
 
     resolver = _build_resolver()
     addresses: list[str] = []
