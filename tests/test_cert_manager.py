@@ -46,8 +46,15 @@ class TestSafeFilename:
             )
 
     def test_wildcards_still_supported(self):
-        """Normal hostname characters are preserved as before."""
-        assert CertManager._safe_filename("api.example.com") == "api_example_com"
+        """DNS-safe hostname characters are preserved."""
+        assert CertManager._safe_filename("api.example.com") == "api.example.com"
+
+    def test_path_separators_are_stripped_to_single_segment(self):
+        """A hostile hostname must fold to one safe filename segment."""
+        assert "/" not in CertManager._safe_filename("/tmp/evil")
+        assert "\\" not in CertManager._safe_filename("a\\..\\b")
+        assert ".." not in CertManager._safe_filename("../")
+        assert CertManager._safe_filename("").startswith("unknown")
 
 
 class TestExtDirContainment:

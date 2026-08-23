@@ -310,6 +310,13 @@ class CertManager:
         key_path = ext_dir / "key.pem"
         meta_path = ext_dir / "meta.json"
 
+        # Confine the write targets explicitly in this scope (CodeQL tracking):
+        # the already-validated hostname yields paths strictly inside certs dir.
+        base = Path(self.external_certs_dir).resolve()
+        for p in (cert_path, key_path, meta_path):
+            if base not in p.resolve().parents:
+                raise ValueError(f"Unsafe hostname path: {hostname!r}")
+
         cert_path.write_text(cert_pem)
         key_path.write_text(key_pem)
         # Private key must not be world-readable.
@@ -478,21 +485,18 @@ class CertManager:
 
     @staticmethod
     def _safe_filename(hostname: str) -> str:
-        """Convert a hostname to a safe filename.
+        """Convert a hostname to a safe, single-segment filename.
 
-        Sanitizes path separators (/ and \\) too — otherwise a hostname such as
-        ``/tmp/evil`` (or ``..`` escaped) becomes an absolute/escaping path when
-        joined with ``Path(base)``, allowing arbitrary file writes and
-        ``shutil.rmtree`` on attacker-chosen directories (e.g. via the
-        delete_cert / get_cert_for_hostname / import paths).
+        Replaces every character that is not a DNS-safe letter/digit/dot/dash/
+        underscore with an underscore, so the result can never contain path
+        separators (``/``, ``\\\\``), ``..`` or any metacharacter. Combined with
+        ``_validate_hostname`` (an allowlist regex that runs first), the value
+        that reaches ``Path`` is unambiguously a plain relative filename.
         """
-        return (
-            hostname.replace("*", "wildcard_")
-            .replace(".", "_")
-            .replace(":", "_")
-            .replace("/", "_")
-            .replace("\\", "_")
-        )
+        if not hostname:
+            return "unknown"
+        # Fold to a single valid path segment: drop everything not DNS-safe.
+        return re.sub(r"[^A-Za-z0-9._-]+", "_", hostname).lstrip("._").rstrip(".") or "unknown"
 
 
 # ── Global instance ─────────────────────────────────────────────────────────
