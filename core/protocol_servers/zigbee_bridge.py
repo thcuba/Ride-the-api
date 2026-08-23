@@ -88,7 +88,7 @@ class ZigbeeBridgePlugin(ProtocolServerPlugin):
             payload = json.dumps({command: value})
             self._client.publish(topic, payload, qos=0)
         except Exception:
-            logger.exception("Zigbee bridge send error: %s")
+            logger.exception("Zigbee bridge send error:")
             return False
         else:
             return True

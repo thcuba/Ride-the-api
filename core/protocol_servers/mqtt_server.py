@@ -94,7 +94,7 @@ class MQTTServerPlugin(ProtocolServerPlugin):
             else:
                 result = self.handler(request)
         except Exception:
-            logger.exception("MQTT handler error: %s")
+            logger.exception("MQTT handler error:")
             return None
         else:
             return result
@@ -146,7 +146,7 @@ class MQTTBridgeClient(ProtocolServerPlugin):
                 topic, json.dumps(payload) if isinstance(payload, dict) else payload, qos
             )
         except Exception:
-            logger.exception("MQTT bridge publish error: %s")
+            logger.exception("MQTT bridge publish error:")
             return False
         else:
             return True

@@ -120,7 +120,7 @@ class ModbusServerPlugin(ProtocolServerPlugin):
                 return await self.handler(request)
             return self.handler(request)
         except Exception:
-            logger.exception("Modbus handler error: %s")
+            logger.exception("Modbus handler error:")
             return None
 
     async def get_status(self) -> dict:
