@@ -421,6 +421,41 @@ class TLSMITMServer:
                         response,
                         client_ip,
                     )
+                else:
+                    # The pipeline returned a non-local action (forward,
+                    # no_fallback, buffered_for_learning, …) with no local
+                    # response body. This MITM server has no cloud-upstream
+                    # forwarding path, so there is nothing real to send back
+                    # yet — reply with a conclusive 502/501 instead of closing
+                    # the connection with no response, which would hang the
+                    # device waiting forever.
+                    action = (
+                        handler_result.get("action")
+                        if isinstance(handler_result, dict)
+                        else ""
+                    )
+                    fallback_status = 501 if action == "no_fallback" else 502
+                    await self._write_http_response(
+                        ssl_obj,
+                        outgoing,
+                        writer,
+                        {
+                            "status_code": fallback_status,
+                            "headers": {"content-type": "application/json"},
+                            "body": json.dumps(
+                                {
+                                    "error": "local_response_unavailable",
+                                    "action": action,
+                                    "reason": (
+                                        handler_result.get("reason", "not_served")
+                                        if isinstance(handler_result, dict)
+                                        else "not_served"
+                                    ),
+                                }
+                            ),
+                        },
+                        client_ip,
+                    )
             else:
                 logger.warning(
                     "TLS MITM: no request_handler set — dropping decrypted request from %s %s %s",

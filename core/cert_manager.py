@@ -138,6 +138,9 @@ class CertManager:
                     encryption_algorithm=serialization.NoEncryption(),
                 )
             )
+        # Root CA private key must not be world-readable — a 0644 default
+        # umask exposes it to any local user. Restrict to owner read/write.
+        self.ca_key_path.chmod(0o600)
         with self.ca_cert_path.open("wb") as f:
             f.write(cert.public_bytes(serialization.Encoding.PEM))
 
@@ -180,6 +183,8 @@ class CertManager:
         # Save to disk cache
         cert_file.write_text(cert_pem)
         key_file.write_text(key_pem)
+        # Private key must not be world-readable.
+        key_file.chmod(0o600)
         self._cache[hostname] = (cert_pem, key_pem)
         logger.debug("Generated leaf certificate for %s", hostname)
 
@@ -306,6 +311,8 @@ class CertManager:
 
         cert_path.write_text(cert_pem)
         key_path.write_text(key_pem)
+        # Private key must not be world-readable.
+        key_path.chmod(0o600)
 
         # Parse the imported cert to extract metadata
         cert_info = self._parse_cert_info(cert_pem)
@@ -430,8 +437,21 @@ class CertManager:
 
     @staticmethod
     def _safe_filename(hostname: str) -> str:
-        """Convert a hostname to a safe filename."""
-        return hostname.replace("*", "wildcard_").replace(".", "_").replace(":", "_")
+        """Convert a hostname to a safe filename.
+
+        Sanitizes path separators (/ and \\) too — otherwise a hostname such as
+        ``/tmp/evil`` (or ``..`` escaped) becomes an absolute/escaping path when
+        joined with ``Path(base)``, allowing arbitrary file writes and
+        ``shutil.rmtree`` on attacker-chosen directories (e.g. via the
+        delete_cert / get_cert_for_hostname / import paths).
+        """
+        return (
+            hostname.replace("*", "wildcard_")
+            .replace(".", "_")
+            .replace(":", "_")
+            .replace("/", "_")
+            .replace("\\", "_")
+        )
 
 
 # ── Global instance ─────────────────────────────────────────────────────────
