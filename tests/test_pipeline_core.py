@@ -7,8 +7,9 @@ from unittest.mock import MagicMock
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import select
 
-from core.database import DatabaseManager, RequestPattern
+from core.database import DatabaseManager, RequestPattern, SessionCache
 from core.pipeline import (
     ContextBuffer,
     CorrelatedPair,
@@ -261,3 +262,53 @@ class TestLearningPipeline:
             {},
         )
         assert result is None
+
+    @pytest.mark.asyncio
+    async def test_match_response_db_fallback_after_restart(self, db_manager):
+        """After the in-memory cache is empty (restart), match_response falls
+        back to the persisted SessionCache rows.
+
+        Regression for B1: the DB-fallback loop previously read
+        ``cache_entry.protocol`` which did not exist on SessionCache, raising
+        ``AttributeError`` on any post-restart correlation. Also verifies the
+        row is marked correlated (B3), so stale rows don't phantom-match later.
+        """
+        llm = MagicMock()
+        buffer = ContextBuffer(db_manager)
+        matcher = PatternMatcher(db_manager)
+        tracker = MatchRateTracker(db_manager)
+        pipeline = LearningPipeline(db_manager, llm, buffer, matcher, tracker)
+
+        await pipeline.register_request(
+            "device-001",
+            "shelly",
+            "http",
+            "POST",
+            "/rpc/x",
+            {},
+            {},
+            {},
+        )
+        # Simulate a process restart: clear the in-memory correlation cache.
+        pipeline._correlation_cache.clear()
+
+        # This previously crashed with AttributeError (SessionCache.protocol).
+        result = await pipeline.match_response(
+            "device-001",
+            "shelly",
+            "http",
+            200,
+            {"content-type": "application/json"},
+            {"status": "ok"},
+        )
+        assert result is not None
+        assert result.protocol == "http"
+        assert result.request_body == {}
+        assert result.response_body == {"status": "ok"}
+
+        # B3: the consumed row must now be marked correlated so it can't be
+        # re-selected after another restart (which would phantom-match).
+        async with db_manager.device_session("device-001") as session:
+            rows = (await session.execute(select(SessionCache))).scalars().all()
+        # At least the request row is now correlated (B3 fix).
+        assert any(r.correlated for r in rows)

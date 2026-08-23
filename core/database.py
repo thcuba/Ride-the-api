@@ -305,6 +305,7 @@ class SessionCache(Base):
     headers: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     body: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     query_params: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    protocol: Mapped[str] = mapped_column(String(32), default="", nullable=False)
 
     # Response data (filled when correlated)
     response_status: Mapped[int | None] = mapped_column(Integer, nullable=True)

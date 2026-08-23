@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import and_, delete, select
+from sqlalchemy import and_, delete, select, update
 
 from core.database import (
     DatabaseManager,
@@ -590,6 +590,7 @@ class LearningPipeline:
                 headers=headers,
                 body=body,
                 query_params=query_params,
+                protocol=protocol,
             )
             session.add(cache_entry)
 
@@ -609,11 +610,33 @@ class LearningPipeline:
         pending = self._correlation_cache.get(device_id, deque())
         matched = None
 
+        matched_key = None
         for entry in pending:
             if entry["protocol"] == protocol:
                 matched = entry
+                matched_key = entry.get("correlation_key")
                 pending.remove(entry)
                 break
+
+        # When a request is matched from the in-memory cache, mark its
+        # persisted SessionCache row as correlated too. Otherwise the original
+        # row stays `correlated=False` permanently, and after a restart the DB
+        # fallback re-selects these stale rows and re-correlates an already
+        # consumed request with an unrelated later response (phantom match).
+        if matched_key:
+            async with self.db_manager.device_session(device_id) as session:
+                await session.execute(
+                    update(SessionCache)
+                    .where(SessionCache.correlation_key == matched_key)
+                    .values(
+                        correlated=True,
+                        correlated_at=datetime.now(UTC),
+                        response_status=status_code,
+                        response_headers=headers,
+                        response_body=body,
+                        response_latency_ms=0.0,
+                    )
+                )
 
         if not matched:
             # Try DB cache
@@ -630,7 +653,12 @@ class LearningPipeline:
                     .limit(10)
                 )
                 for cache_entry in result.scalars().all():
-                    if cache_entry.protocol == protocol:
+                    # `protocol` may be absent on SQLite databases created
+                    # before this column existed (no migrations here —
+                    # create_all never alters existing tables). Default to ""
+                    # so legacy rows still flow through the fallback instead
+                    # of crashing with AttributeError.
+                    if getattr(cache_entry, "protocol", None) == protocol:
                         matched = {
                             "correlation_key": cache_entry.correlation_key,
                             "device_id": device_id,
