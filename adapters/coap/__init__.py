@@ -43,15 +43,21 @@ COAP_RESOURCE_MAP: dict[str, CommandType] = {
     "pressure": CommandType.GET_STATE,
     "co2": CommandType.GET_STATE,
     "pir": CommandType.GET_STATE,  # motion sensor
-    # Actuators
-    "relay": CommandType.TURN_ON,
-    "switch": CommandType.TURN_ON,
-    "led": CommandType.TURN_ON,
+    # Actuators — intent is derived from method + value in parse_request
+    # (a PUT {"value":"off"} is TURN_OFF, a GET is GET_STATE), so the map
+    # keeps them neutral instead of hard-wiring TURN_ON.
+    "relay": CommandType.UNKNOWN,
+    "switch": CommandType.UNKNOWN,
+    "led": CommandType.UNKNOWN,
     "valve": CommandType.UNKNOWN,
     # System
     "firmware": CommandType.FIRMWARE_CHECK,
     "config": CommandType.UNKNOWN,
 }
+
+
+# Resources acted on via a body value (on/off) in write operations.
+ACTUATOR_RESOURCES: set[str] = {"relay", "switch", "led", "valve"}
 
 
 class CoAPProtocolAdapter(ProtocolAdapter):
@@ -84,18 +90,18 @@ class CoAPProtocolAdapter(ProtocolAdapter):
         for part in parts:
             if part in COAP_RESOURCE_MAP:
                 intent = COAP_RESOURCE_MAP[part]
-                # For write operations (PUT/POST) on actuator resources
-                if (
-                    method in ("PUT", "POST")
-                    and intent == CommandType.GET_STATE
-                    and part in ("relay", "switch", "led")
-                ):
-                    body = request.body or {}
-                    val = body.get("value", body.get("state", ""))
-                    if val in ("on", 1, True, "1"):
-                        intent = CommandType.TURN_ON
-                    elif val in ("off", 0, False, "0"):
-                        intent = CommandType.TURN_OFF
+                if part in ACTUATOR_RESOURCES:
+                    # Actuator: a read reports state, a write turns on/off.
+                    if method in ("PUT", "POST"):
+                        body = request.body or {}
+                        val = body.get("value", body.get("state", ""))
+                        intent = (
+                            CommandType.TURN_ON
+                            if val in ("on", 1, True, "1")
+                            else CommandType.TURN_OFF
+                        )
+                    else:
+                        intent = CommandType.GET_STATE
                 request.parsed_intent = intent
                 request.parsed_params = {
                     "resource": part,
