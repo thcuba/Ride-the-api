@@ -57,14 +57,25 @@ class TrafficRule:
         default=None, init=False, repr=False
     )
 
-    def __post_init__(self) -> None:
-        """Compile patterns after initialization."""
-        if self.match_type == MatchType.HOSTNAME:
+    def _recompile(self) -> None:
+        """(Re)compile the cached regex/CIDR from the current match_value.
+
+        Called at init and again by ``update_rule`` whenever ``match_value``
+        or ``match_type`` changes, so an edited rule does not keep matching
+        against its stale compiled pattern.
+        """
+        self._compiled_pattern = None
+        self._cidr_network = None
+        if self.match_type == MatchType.CIDR:
+            self._cidr_network = ipaddress.ip_network(self.match_value, strict=False)
+        elif self.match_type == MatchType.HOSTNAME:
             # Convert wildcard pattern to regex
             pattern = self.match_value.replace(".", r"\.").replace("*", ".*")
             self._compiled_pattern = re.compile(f"^{pattern}$", re.IGNORECASE)
-        elif self.match_type == MatchType.CIDR:
-            self._cidr_network = ipaddress.ip_network(self.match_value, strict=False)
+
+    def __post_init__(self) -> None:
+        """Compile patterns after initialization."""
+        self._recompile()
 
     def matches(self, request_info: TrafficRequestInfo) -> bool:  # noqa: C901, PLR0911
         """Check if this rule matches the given request."""
@@ -230,6 +241,9 @@ class TrafficSelector:
                 for key, value in kwargs.items():
                     if hasattr(rule, key):
                         setattr(rule, key, value)
+                # Recompile cached regex/CIDR if the match definition changed.
+                if any(k in kwargs for k in ("match_value", "match_type")):
+                    rule._recompile()
                 # Re-sort if priority changed
                 if "priority" in kwargs:
                     self.rules.sort(key=lambda r: r.priority, reverse=True)
