@@ -1,10 +1,12 @@
 """
 Tests for the Resilience module (cloud independence, auto-switch).
 """
+
 import pytest
 import pytest_asyncio
 from sqlalchemy import select
 
+from core.database import DatabaseManager, DeviceRegistry, RequestPattern
 from core.resilience import (
     AUTO_SWITCH_MATCH_RATE,
     CHECK_INTERVAL_SECONDS,
@@ -14,7 +16,6 @@ from core.resilience import (
     AutoSwitchScheduler,
     CloudIndependenceVerifier,
 )
-from core.database import DatabaseManager, DeviceRegistry, RequestPattern
 
 
 @pytest_asyncio.fixture
@@ -32,27 +33,29 @@ async def db_manager(tmp_path):
 @pytest_asyncio.fixture
 async def registered_device(db_manager):
     await db_manager.get_or_create_device(
-        device_id="device-001", vendor="shelly",
-        device_type="plug", name="Test Plug",
+        device_id="device-001",
+        vendor="shelly",
+        device_type="plug",
+        name="Test Plug",
     )
     return "device-001"
 
 
 class TestConstants:
     def test_auto_switch_match_rate(self):
-        assert AUTO_SWITCH_MATCH_RATE == 99.0
+        assert AUTO_SWITCH_MATCH_RATE == 99.0  # noqa: PLR2004
 
     def test_rollback_match_rate(self):
-        assert ROLLBACK_MATCH_RATE == 90.0
+        assert ROLLBACK_MATCH_RATE == 90.0  # noqa: PLR2004
 
     def test_min_patterns_for_switch(self):
-        assert MIN_PATTERNS_FOR_SWITCH == 10
+        assert MIN_PATTERNS_FOR_SWITCH == 10  # noqa: PLR2004
 
     def test_min_total_requests(self):
-        assert MIN_TOTAL_REQUESTS == 50
+        assert MIN_TOTAL_REQUESTS == 50  # noqa: PLR2004
 
     def test_check_interval_seconds(self):
-        assert CHECK_INTERVAL_SECONDS == 60
+        assert CHECK_INTERVAL_SECONDS == 60  # noqa: PLR2004
 
 
 class TestCloudIndependenceVerifier:
@@ -79,27 +82,29 @@ class TestCloudIndependenceVerifier:
     async def test_production_with_pattern(self, db_manager):
         device_id = "prod-device"
         await db_manager.get_or_create_device(
-            device_id=device_id, vendor="generic",
-            device_type="sensor", name="Prod Sensor",
+            device_id=device_id,
+            vendor="generic",
+            device_type="sensor",
+            name="Prod Sensor",
         )
         async with db_manager.core_session() as session:
             result = await session.execute(
-                select(DeviceRegistry).where(
-                    DeviceRegistry.device_id == device_id
-                )
+                select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
             )
             dev = result.scalar_one()
             dev.mode = "production"
             await session.flush()
 
         async with db_manager.device_session(device_id) as session:
-            session.add(RequestPattern(
-                pattern_id="rp1",
-                method="GET",
-                path_pattern="/status",
-                protocol="http",
-                        intent="get_status",
-                    ))
+            session.add(
+                RequestPattern(
+                    pattern_id="rp1",
+                    method="GET",
+                    path_pattern="/status",
+                    protocol="http",
+                    intent="get_status",
+                )
+            )
 
         verifier = CloudIndependenceVerifier(db_manager)
         result = await verifier.check_cloud_independence(device_id)

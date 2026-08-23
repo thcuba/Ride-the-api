@@ -12,6 +12,7 @@ Standard topic patterns recognized:
   - {device_id}/telemetry        →  GET_STATE
   - {device_id}/will             →  UNKNOWN (last-will)
 """
+
 from __future__ import annotations
 
 import logging
@@ -38,9 +39,9 @@ TOPIC_INTENT_MAP: dict[str, CommandType] = {
     "state": CommandType.GET_STATE,
     "telemetry": CommandType.GET_STATE,
     "health": CommandType.GET_STATE,
-    "set": CommandType.UNKNOWN,          # resolved via payload
-    "cmd": CommandType.UNKNOWN,          # resolved via payload
-    "command": CommandType.UNKNOWN,      # resolved via payload
+    "set": CommandType.UNKNOWN,  # resolved via payload
+    "cmd": CommandType.UNKNOWN,  # resolved via payload
+    "command": CommandType.UNKNOWN,  # resolved via payload
     "turn_on": CommandType.TURN_ON,
     "turn_off": CommandType.TURN_OFF,
     "on": CommandType.TURN_ON,
@@ -79,7 +80,7 @@ class MQTTProtocolAdapter(ProtocolAdapter):
     VENDOR_CODE = "mqtt"
     VENDOR_HOSTNAMES: list[str] = []
 
-    def __init__(self, vendor: str, config: dict[str, Any]):
+    def __init__(self, vendor: str, config: dict[str, Any]) -> None:
         super().__init__(vendor, config)
         self._devices: dict[str, dict] = {}
 
@@ -164,20 +165,23 @@ class MQTTProtocolAdapter(ProtocolAdapter):
         if request.parsed_intent in (CommandType.GET_STATE, CommandType.GET_SCHEDULE):
             state = await self.get_device_state(request.device_id)
             if state:
-                return CommandResult(success=True, response={
-                    "temperature_actual": state.temp_actual,
-                    "temperature_setpoint": state.temp_target,
-                    "mode": state.mode,
-                    "power_watts": state.power_watts,
-                    "humidity": state.humidity,
-                    "on_off": state.on_off,
-                })
+                return CommandResult(
+                    success=True,
+                    response={
+                        "temperature_actual": state.temp_actual,
+                        "temperature_setpoint": state.temp_target,
+                        "mode": state.mode,
+                        "power_watts": state.power_watts,
+                        "humidity": state.humidity,
+                        "on_off": state.on_off,
+                    },
+                )
         return await self.forward_to_cloud(request)
 
-    async def forward_to_cloud(self, request: InterceptedRequest) -> CommandResult:
+    async def forward_to_cloud(self, request: InterceptedRequest) -> CommandResult:  # noqa: ARG002
         return CommandResult(success=False, error="Cloud forward not implemented", forwarded=True)
 
-    async def build_response(self, request: InterceptedRequest, result: CommandResult) -> dict:
+    async def build_response(self, request: InterceptedRequest, result: CommandResult) -> dict:  # noqa: ARG002
         if result.success and result.response:
             return result.response
         return {"error": result.error or "unknown"}
@@ -214,7 +218,7 @@ class MQTTProtocolAdapter(ProtocolAdapter):
             quality="good",
         )
 
-    async def send_command(self, device_id: str, command: Command) -> CommandResult:
+    async def send_command(self, device_id: str, command: Command) -> CommandResult:  # noqa: ARG002
         return CommandResult(success=False, error="Send not implemented")
 
     async def on_device_connect(self, device_id: str, initial_data: dict) -> None:

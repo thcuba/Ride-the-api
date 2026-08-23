@@ -1,7 +1,7 @@
 """
 Tests for the Configuration module (Pydantic models, ConfigManager, hot-reload).
 """
-from pathlib import Path
+
 from unittest.mock import MagicMock
 
 import pytest
@@ -24,10 +24,23 @@ from core.config import (
     get_config_manager,
 )
 
+_EXPECTED_DEFAULT_CONTEXT_BUFFER_SIZE = 524288
+_CUSTOM_CONTEXT_BUFFER_SIZE = 1048576
+_EXPECTED_PROXY_PORT = 8911
+_EXPECTED_FALLBACK_TIMEOUT = 10
+_EXPECTED_FALLBACK_CONFIDENCE = 0.7
+_EXPECTED_REQUEST_TIMEOUT = 60
+_EXPECTED_MAX_REQUEST_SIZE = 2097152
+_EXPECTED_MATCH_THRESHOLD = 0.85
+_CUSTOM_MATCH_THRESHOLD = 0.9
+_CUSTOM_MIN_PATTERNS = 25
+_CUSTOM_PROXY_PORT = 8080
+_EXPECTED_TLS_DECRYPT_PORT = 8883
 
 # ---------------------------------------------------------------------------
 #  Individual model defaults
 # ---------------------------------------------------------------------------
+
 
 class TestCoreConfig:
     def test_defaults(self):
@@ -35,7 +48,7 @@ class TestCoreConfig:
         assert c.database_url == "sqlite+aiosqlite:///./data/core.db"
         assert c.device_db_dir == "./data/devices"
         assert c.device_databases == {}
-        assert c.default_context_buffer_size == 524288
+        assert c.default_context_buffer_size == _EXPECTED_DEFAULT_CONTEXT_BUFFER_SIZE
 
     def test_custom(self):
         c = CoreConfig(
@@ -45,7 +58,7 @@ class TestCoreConfig:
         )
         assert c.database_url == "postgresql:///custom"
         assert c.device_db_dir == "/tmp/devices"
-        assert c.default_context_buffer_size == 1048576
+        assert c.default_context_buffer_size == _CUSTOM_CONTEXT_BUFFER_SIZE
 
 
 class TestTLSConfig:
@@ -65,7 +78,7 @@ class TestProxyConfig:
     def test_defaults(self):
         p = ProxyConfig()
         assert p.host == "0.0.0.0"
-        assert p.port == 8911
+        assert p.port == _EXPECTED_PROXY_PORT
 
     def test_nested_tls(self):
         p = ProxyConfig(port=9090)
@@ -75,13 +88,13 @@ class TestProxyConfig:
     def test_fallback_defaults(self):
         p = ProxyConfig()
         assert p.fallback.enabled is True
-        assert p.fallback.timeout == 10
-        assert p.fallback.confidence_threshold == 0.7
+        assert p.fallback.timeout == _EXPECTED_FALLBACK_TIMEOUT
+        assert p.fallback.confidence_threshold == _EXPECTED_FALLBACK_CONFIDENCE
 
     def test_request_timeout(self):
         p = ProxyConfig(request_timeout=60, max_request_size=2097152)
-        assert p.request_timeout == 60
-        assert p.max_request_size == 2097152
+        assert p.request_timeout == _EXPECTED_REQUEST_TIMEOUT
+        assert p.max_request_size == _EXPECTED_MAX_REQUEST_SIZE
 
 
 class TestDNSConfig:
@@ -100,7 +113,7 @@ class TestLearningConfig:
         lc = LearningConfig()
         assert lc.enabled is True
         assert lc.default_mode == "learning"
-        assert lc.default_match_threshold == 0.85
+        assert lc.default_match_threshold == _EXPECTED_MATCH_THRESHOLD
         assert lc.production_no_fallback is False
         assert lc.signal_forward_to_cloud is False
 
@@ -113,8 +126,8 @@ class TestLearningConfig:
         )
         assert lc.enabled is False
         assert lc.default_mode == "production"
-        assert lc.default_match_threshold == 0.9
-        assert lc.min_patterns_for_production == 25
+        assert lc.default_match_threshold == _CUSTOM_MATCH_THRESHOLD
+        assert lc.min_patterns_for_production == _CUSTOM_MIN_PATTERNS
 
 
 class TestLLMDecipherProfile:
@@ -210,6 +223,7 @@ class TestTrafficSelectionConfig:
 #  Enum values
 # ---------------------------------------------------------------------------
 
+
 class TestModificationAction:
     def test_members(self):
         assert ModificationAction.modify.value == "modify"
@@ -224,22 +238,25 @@ class TestModificationAction:
 #  Root Config
 # ---------------------------------------------------------------------------
 
+
 class TestRootConfig:
     def test_defaults(self):
         c = Config()
         assert c.core.database_url == "sqlite+aiosqlite:///./data/core.db"
-        assert c.proxy.port == 8911
+        assert c.proxy.port == _EXPECTED_PROXY_PORT
         assert c.learning.enabled is True
         assert c.llm_decipher.enabled is True
         assert c.observability.logging.level == "INFO"
         assert c.traffic_selection.default_action == "intercept"
 
     def test_custom_vendor(self):
-        c = Config(vendors={"shelly": {"enabled": True, "cloud": {"api_endpoint": "https://shelly.cloud"}}})
+        c = Config(
+            vendors={"shelly": {"enabled": True, "cloud": {"api_endpoint": "https://shelly.cloud"}}}
+        )
         assert "shelly" in c.vendors
         assert c.vendors["shelly"].cloud.api_endpoint == "https://shelly.cloud"
 
-    def test_yaml_round_trip(self, tmp_path):
+    def test_yaml_round_trip(self, tmp_path):  # noqa: ARG002
         data = {
             "core": {"database_url": "sqlite:///data/core.db", "device_db_dir": "/data/devices"},
             "proxy": {"port": 8080},
@@ -248,25 +265,27 @@ class TestRootConfig:
         }
         c = Config(**data)
         assert c.core.database_url == "sqlite:///data/core.db"
-        assert c.proxy.port == 8080
+        assert c.proxy.port == _CUSTOM_PROXY_PORT
         assert c.learning.default_mode == "production"
         assert c.learning.enabled is False
         assert c.vendors["shelly"].enabled is True
 
     def test_llm_profile_from_dict(self):
-        c = Config(**{
-            "llm_decipher": {
-                "default_profile": "openai",
-                "profiles": {
-                    "openai": {
-                        "base_url": "https://api.openai.com/v1",
-                        "api_key": "${OPENAI_API_KEY}",
-                        "model_id": "gpt-4",
-                        "prompt_template": "Analyze: {pairs}",
-                    }
-                },
+        c = Config(
+            **{
+                "llm_decipher": {
+                    "default_profile": "openai",
+                    "profiles": {
+                        "openai": {
+                            "base_url": "https://api.openai.com/v1",
+                            "api_key": "${OPENAI_API_KEY}",
+                            "model_id": "gpt-4",
+                            "prompt_template": "Analyze: {pairs}",
+                        }
+                    },
+                }
             }
-        })
+        )
         assert c.llm_decipher.default_profile == "openai"
         assert c.llm_decipher.profiles["openai"].model_id == "gpt-4"
 
@@ -283,7 +302,7 @@ class TestRootConfig:
     def test_tls_decrypt_defaults(self):
         c = Config()
         assert c.tls_decrypt.enabled is False
-        assert 8883 in c.tls_decrypt.listen_ports
+        assert _EXPECTED_TLS_DECRYPT_PORT in c.tls_decrypt.listen_ports
         assert c.tls_decrypt.ca_cert_path == "./certs/ca.pem"
         assert c.tls_decrypt.pinning_bypass == {}
 
@@ -291,6 +310,7 @@ class TestRootConfig:
 # ---------------------------------------------------------------------------
 #  ConfigManager
 # ---------------------------------------------------------------------------
+
 
 class TestConfigManager:
     def test_init_with_default_path(self):
@@ -316,7 +336,7 @@ class TestConfigManager:
             "core": {"database_url": "sqlite:///data/core.db"},
             "learning": {"enabled": False, "default_mode": "production"},
         }
-        with open(path, "w") as f:
+        with path.open("w") as f:
             yaml.dump(data, f)
 
         cm = ConfigManager(config_path=path)
@@ -342,7 +362,7 @@ class TestConfigManager:
                 },
             },
         }
-        with open(path, "w") as f:
+        with path.open("w") as f:
             yaml.dump(data, f)
 
         cm = ConfigManager(config_path=path)
@@ -352,7 +372,7 @@ class TestConfigManager:
     def test_config_property_loads_on_first_access(self, tmp_path):
         path = tmp_path / "config.yaml"
         data = {"core": {"database_url": "sqlite:///access.db"}}
-        with open(path, "w") as f:
+        with path.open("w") as f:
             yaml.dump(data, f)
 
         cm = ConfigManager(config_path=path)
@@ -362,7 +382,7 @@ class TestConfigManager:
     def test_config_property_caches(self, tmp_path):
         path = tmp_path / "config.yaml"
         data = {"core": {"database_url": "sqlite:///cache.db"}}
-        with open(path, "w") as f:
+        with path.open("w") as f:
             yaml.dump(data, f)
 
         cm = ConfigManager(config_path=path)
@@ -372,8 +392,12 @@ class TestConfigManager:
 
     def test_get_vendor_config(self, tmp_path):
         path = tmp_path / "config.yaml"
-        data = {"vendors": {"shelly": {"enabled": True, "cloud": {"api_endpoint": "https://shelly.cloud"}}}}
-        with open(path, "w") as f:
+        data = {
+            "vendors": {
+                "shelly": {"enabled": True, "cloud": {"api_endpoint": "https://shelly.cloud"}}
+            }
+        }
+        with path.open("w") as f:
             yaml.dump(data, f)
 
         cm = ConfigManager(config_path=path)
@@ -385,7 +409,7 @@ class TestConfigManager:
 
     def test_register_callback(self, tmp_path):
         path = tmp_path / "config.yaml"
-        with open(path, "w") as f:
+        with path.open("w") as f:
             yaml.dump({"core": {}}, f)
 
         cm = ConfigManager(config_path=path)
@@ -395,7 +419,7 @@ class TestConfigManager:
 
     def test_start_and_stop_watching(self, tmp_path):
         path = tmp_path / "config.yaml"
-        with open(path, "w") as f:
+        with path.open("w") as f:
             yaml.dump({"core": {}}, f)
 
         cm = ConfigManager(config_path=path)
@@ -409,7 +433,7 @@ class TestConfigManager:
 
     def test_start_watching_twice_is_idempotent(self, tmp_path):
         path = tmp_path / "config.yaml"
-        with open(path, "w") as f:
+        with path.open("w") as f:
             yaml.dump({"core": {}}, f)
 
         cm = ConfigManager(config_path=path)
@@ -425,6 +449,7 @@ class TestConfigManager:
 #  Global helpers
 # ---------------------------------------------------------------------------
 
+
 class TestGlobalHelpers:
     def test_get_config_manager_singleton(self):
         cm1 = get_config_manager()
@@ -432,9 +457,9 @@ class TestGlobalHelpers:
         assert cm1 is cm2
 
     def test_get_config_manager_with_path_ignored_when_already_created(self):
-            """The singleton ignores a new path once the global instance exists."""
-            cm = get_config_manager()
-            original_path = cm.config_path
-            cm2 = get_config_manager(config_path="/some/other/path.yaml")
-            assert cm2 is cm
-            assert cm2.config_path == original_path
+        """The singleton ignores a new path once the global instance exists."""
+        cm = get_config_manager()
+        original_path = cm.config_path
+        cm2 = get_config_manager(config_path="/some/other/path.yaml")
+        assert cm2 is cm
+        assert cm2.config_path == original_path

@@ -19,6 +19,7 @@ Matter clusters handled:
   - PowerSource (0x002F): battery/power info
   - ElectricalMeasurement (0x0905): power monitoring
 """
+
 from __future__ import annotations
 
 import logging
@@ -65,6 +66,9 @@ MATTER_CMD_ON = 0x01
 MATTER_CMD_OFF = 0x00
 MATTER_CMD_TOGGLE = 0x02
 
+# Thermostat mode attribute (write interaction)
+MATTER_ATTR_THERMOSTAT_MODE = 0x001C
+
 
 class MatterProtocolAdapter(ProtocolAdapter):
     """Generic Thread/Matter protocol adapter — no vendor-specific logic."""
@@ -72,7 +76,7 @@ class MatterProtocolAdapter(ProtocolAdapter):
     VENDOR_CODE = "matter"
     VENDOR_HOSTNAMES: list[str] = []
 
-    def __init__(self, vendor: str, config: dict[str, Any]):
+    def __init__(self, vendor: str, config: dict[str, Any]) -> None:
         super().__init__(vendor, config)
         self._devices: dict[str, dict] = {}
 
@@ -123,7 +127,9 @@ class MatterProtocolAdapter(ProtocolAdapter):
 
         return CommandType.UNKNOWN
 
-    def _resolve_write_intent(self, cluster: int | None, attrs: dict) -> CommandType:
+    def _resolve_write_intent(  # noqa: PLR0911
+        self, cluster: int | None, attrs: dict
+    ) -> CommandType:
         """Resolve a write-attribute interaction to a command."""
         if cluster == MATTER_CLUSTER_ON_OFF:
             val = attrs.get(0x0000)  # OnOff attribute
@@ -140,7 +146,7 @@ class MatterProtocolAdapter(ProtocolAdapter):
             # Check if setting temperature or mode
             if any(k in attrs for k in (0x0012, 0x0013, 0x0014, 0x0015)):  # setpoints
                 return CommandType.SET_TEMPERATURE
-            if 0x001C in attrs:  # ThermostatMode
+            if MATTER_ATTR_THERMOSTAT_MODE in attrs:  # ThermostatMode
                 return CommandType.SET_MODE
             if 0x0000 in attrs:  # FanMode (FanControl)
                 return CommandType.SET_FAN_SPEED
@@ -174,18 +180,21 @@ class MatterProtocolAdapter(ProtocolAdapter):
         if request.parsed_intent in (CommandType.GET_STATE,):
             state = await self.get_device_state(request.device_id)
             if state:
-                return CommandResult(success=True, response={
-                    "on_off": state.on_off,
-                    "mode": state.mode,
-                    "temperature_actual": state.temp_actual,
-                    "temperature_setpoint": state.temp_target,
-                    "fan_speed": state.fan_speed,
-                    "humidity": state.humidity,
-                    "power_watts": state.power_watts,
-                })
+                return CommandResult(
+                    success=True,
+                    response={
+                        "on_off": state.on_off,
+                        "mode": state.mode,
+                        "temperature_actual": state.temp_actual,
+                        "temperature_setpoint": state.temp_target,
+                        "fan_speed": state.fan_speed,
+                        "humidity": state.humidity,
+                        "power_watts": state.power_watts,
+                    },
+                )
         return await self.forward_to_cloud(request)
 
-    async def forward_to_cloud(self, request: InterceptedRequest) -> CommandResult:
+    async def forward_to_cloud(self, request: InterceptedRequest) -> CommandResult:  # noqa: ARG002
         return CommandResult(success=False, error="Cloud forward not implemented", forwarded=True)
 
     async def build_response(self, request: InterceptedRequest, result: CommandResult) -> dict:
@@ -232,13 +241,14 @@ class MatterProtocolAdapter(ProtocolAdapter):
             quality="good",
         )
 
-    async def send_command(self, device_id: str, command: Command) -> CommandResult:
+    async def send_command(self, device_id: str, command: Command) -> CommandResult:  # noqa: ARG002
         return CommandResult(success=False, error="Send not implemented")
 
     async def on_device_connect(self, device_id: str, initial_data: dict) -> None:
         self._devices[device_id] = initial_data
-        logger.info("Matter device connected: %s (fabric=%s)",
-                     device_id, initial_data.get("fabric_id"))
+        logger.info(
+            "Matter device connected: %s (fabric=%s)", device_id, initial_data.get("fabric_id")
+        )
 
     async def on_device_disconnect(self, device_id: str) -> None:
         self._devices.pop(device_id, None)

@@ -1,6 +1,7 @@
 """
 Tests for the MQTT Protocol Adapter (generic, vendor-neutral).
 """
+
 from datetime import UTC, datetime
 
 import pytest
@@ -15,10 +16,10 @@ from adapters.base import (
 )
 from adapters.mqtt import MQTTProtocolAdapter
 
-
 # ---------------------------------------------------------------------------
 #  Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def adapter():
@@ -28,6 +29,7 @@ def adapter():
 # ---------------------------------------------------------------------------
 #  Metadata
 # ---------------------------------------------------------------------------
+
 
 class TestMetadata:
     def test_vendor_code(self):
@@ -46,6 +48,7 @@ class TestMetadata:
 # ---------------------------------------------------------------------------
 #  Topic → intent (via _resolve_intent)
 # ---------------------------------------------------------------------------
+
 
 class TestTopicIntent:
     def test_status_topic(self, adapter):
@@ -113,6 +116,7 @@ class TestTopicIntent:
 #  set/cmd/command topic patterns
 # ---------------------------------------------------------------------------
 
+
 class TestSetCommandTopics:
     def test_set_on(self, adapter):
         intent = adapter._resolve_intent("device-1/set/on", {})
@@ -151,6 +155,7 @@ class TestSetCommandTopics:
 # ---------------------------------------------------------------------------
 #  Payload-based intent resolution
 # ---------------------------------------------------------------------------
+
 
 class TestPayloadIntent:
     def test_action_on(self, adapter):
@@ -215,13 +220,17 @@ class TestPayloadIntent:
 #  parse_request
 # ---------------------------------------------------------------------------
 
+
 class TestParseRequest:
     @pytest.mark.asyncio
     async def test_parse_request_sets_intent_and_params(self, adapter):
         req = InterceptedRequest(
-            device_id="test-device", timestamp=datetime.now(UTC),
-            protocol=ProtocolType.MQTT, topic="device-1/status",
-            qos=1, retain=False,
+            device_id="test-device",
+            timestamp=datetime.now(UTC),
+            protocol=ProtocolType.MQTT,
+            topic="device-1/status",
+            qos=1,
+            retain=False,
         )
         result = await adapter.parse_request(req)
         assert result.parsed_intent == CommandType.GET_STATE
@@ -232,8 +241,10 @@ class TestParseRequest:
     @pytest.mark.asyncio
     async def test_parse_request_uses_path_when_no_topic(self, adapter):
         req = InterceptedRequest(
-            device_id="test-device", timestamp=datetime.now(UTC),
-            protocol=ProtocolType.MQTTS, path="/device-1/reboot",
+            device_id="test-device",
+            timestamp=datetime.now(UTC),
+            protocol=ProtocolType.MQTTS,
+            path="/device-1/reboot",
         )
         result = await adapter.parse_request(req)
         assert result.parsed_intent == CommandType.REBOOT
@@ -241,8 +252,10 @@ class TestParseRequest:
     @pytest.mark.asyncio
     async def test_parse_request_unknown_topic(self, adapter):
         req = InterceptedRequest(
-            device_id="test-device", timestamp=datetime.now(UTC),
-            protocol=ProtocolType.MQTT, topic="device-1/custom/x/y",
+            device_id="test-device",
+            timestamp=datetime.now(UTC),
+            protocol=ProtocolType.MQTT,
+            topic="device-1/custom/x/y",
         )
         result = await adapter.parse_request(req)
         assert result.parsed_intent == CommandType.UNKNOWN
@@ -252,29 +265,39 @@ class TestParseRequest:
 #  handle_request / forward / response
 # ---------------------------------------------------------------------------
 
+
 class TestHandleRequest:
     @pytest.mark.asyncio
     async def test_get_state_returns_sensor_data(self, adapter):
         device_id = "sensor-1"
-        await adapter.on_device_connect(device_id, {
-            "model": "temp-sensor", "temperature_actual": 23.0,
-            "humidity": 65.0, "power_consumption": 0.5,
-        })
+        await adapter.on_device_connect(
+            device_id,
+            {
+                "model": "temp-sensor",
+                "temperature_actual": 23.0,
+                "humidity": 65.0,
+                "power_consumption": 0.5,
+            },
+        )
         req = InterceptedRequest(
-            device_id=device_id, timestamp=datetime.now(UTC),
-            protocol=ProtocolType.MQTT, topic="sensor-1/status",
+            device_id=device_id,
+            timestamp=datetime.now(UTC),
+            protocol=ProtocolType.MQTT,
+            topic="sensor-1/status",
         )
         await adapter.parse_request(req)
         result = await adapter.handle_request(req)
         assert result.success is True
-        assert result.response["temperature_actual"] == 23.0
-        assert result.response["humidity"] == 65.0
+        assert result.response["temperature_actual"] == 23.0  # noqa: PLR2004
+        assert result.response["humidity"] == 65.0  # noqa: PLR2004
 
     @pytest.mark.asyncio
     async def test_get_state_no_device_forwards(self, adapter):
         req = InterceptedRequest(
-            device_id="unknown", timestamp=datetime.now(UTC),
-            protocol=ProtocolType.MQTT, topic="unknown/status",
+            device_id="unknown",
+            timestamp=datetime.now(UTC),
+            protocol=ProtocolType.MQTT,
+            topic="unknown/status",
         )
         await adapter.parse_request(req)
         result = await adapter.handle_request(req)
@@ -286,8 +309,10 @@ class TestHandleRequest:
         device_id = "device-1"
         await adapter.on_device_connect(device_id, {"model": "test"})
         req = InterceptedRequest(
-            device_id=device_id, timestamp=datetime.now(UTC),
-            protocol=ProtocolType.MQTT, topic="device-1/turn_on",
+            device_id=device_id,
+            timestamp=datetime.now(UTC),
+            protocol=ProtocolType.MQTT,
+            topic="device-1/turn_on",
         )
         await adapter.parse_request(req)
         result = await adapter.handle_request(req)
@@ -297,7 +322,8 @@ class TestHandleRequest:
     @pytest.mark.asyncio
     async def test_forward_to_cloud(self, adapter):
         req = InterceptedRequest(
-            device_id="test", timestamp=datetime.now(UTC),
+            device_id="test",
+            timestamp=datetime.now(UTC),
             protocol=ProtocolType.MQTT,
         )
         result = await adapter.forward_to_cloud(req)
@@ -307,17 +333,19 @@ class TestHandleRequest:
     @pytest.mark.asyncio
     async def test_build_response_success(self, adapter):
         req = InterceptedRequest(
-            device_id="test", timestamp=datetime.now(UTC),
+            device_id="test",
+            timestamp=datetime.now(UTC),
             protocol=ProtocolType.MQTT,
         )
         result = CommandResult(success=True, response={"temp": 25})
         resp = await adapter.build_response(req, result)
-        assert resp["temp"] == 25
+        assert resp["temp"] == 25  # noqa: PLR2004
 
     @pytest.mark.asyncio
     async def test_build_response_error(self, adapter):
         req = InterceptedRequest(
-            device_id="test", timestamp=datetime.now(UTC),
+            device_id="test",
+            timestamp=datetime.now(UTC),
             protocol=ProtocolType.MQTT,
         )
         result = CommandResult(success=False, error="fail")
@@ -328,6 +356,7 @@ class TestHandleRequest:
 # ---------------------------------------------------------------------------
 #  Device lifecycle
 # ---------------------------------------------------------------------------
+
 
 class TestDeviceLifecycle:
     @pytest.mark.asyncio
@@ -348,14 +377,18 @@ class TestDeviceLifecycle:
 
     @pytest.mark.asyncio
     async def test_device_state(self, adapter):
-        await adapter.on_device_connect("sensor-1", {
-            "temperature_setpoint": 22.0, "temperature_actual": 22.5,
-            "on_off": True,
-        })
+        await adapter.on_device_connect(
+            "sensor-1",
+            {
+                "temperature_setpoint": 22.0,
+                "temperature_actual": 22.5,
+                "on_off": True,
+            },
+        )
         state = await adapter.get_device_state("sensor-1")
         assert state is not None
-        assert state.temp_target == 22.0
-        assert state.temp_actual == 22.5
+        assert state.temp_target == 22.0  # noqa: PLR2004
+        assert state.temp_actual == 22.5  # noqa: PLR2004
         assert state.on_off is True
 
     @pytest.mark.asyncio

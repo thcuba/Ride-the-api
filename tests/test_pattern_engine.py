@@ -1,4 +1,3 @@
-
 """
 Tests for the pattern engine -- matching, similarity, response building, file I/O.
 """
@@ -29,19 +28,23 @@ from core.pattern_db.state_manager import DeviceStateStore
 class MockDBManager:
     """Simulates DatabaseManager for testing pattern engine."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._session = MagicMock()
 
-    def device_session(self, device_id: str):
-        return AsyncMock(__aenter__=AsyncMock(
-            return_value=MagicMock(
-                execute=AsyncMock(return_value=MagicMock(
-                    scalars=MagicMock(
-                        return_value=MagicMock(all=MagicMock(return_value=[]))
+    def device_session(self, device_id: str):  # noqa: ARG002
+        return AsyncMock(
+            __aenter__=AsyncMock(
+                return_value=MagicMock(
+                    execute=AsyncMock(
+                        return_value=MagicMock(
+                            scalars=MagicMock(
+                                return_value=MagicMock(all=MagicMock(return_value=[]))
+                            )
+                        )
                     )
-                ))
+                )
             )
-        ))
+        )
 
 
 @pytest.fixture
@@ -81,44 +84,80 @@ def test_apply_pattern_db(engine):
 # Test: similarity scoring
 def test_calculate_similarity_full_match(engine):
     score = engine._calculate_similarity(
-        "GET", "GET",
-        "/api/v1/status", "/api/v1/status",
-        ["Authorization"], {"Authorization": "Bearer xxx"},
-        {"type": "object", "properties": {"key": {"type": "string"}}}, {"key": "value"},
-        ["page"], {"page": "1"},
+        "GET",
+        "GET",
+        "/api/v1/status",
+        "/api/v1/status",
+        ["Authorization"],
+        {"Authorization": "Bearer xxx"},
+        {"type": "object", "properties": {"key": {"type": "string"}}},
+        {"key": "value"},
+        ["page"],
+        {"page": "1"},
     )
     assert score == pytest.approx(1.0)
 
 
 def test_calculate_similarity_path_with_params(engine):
     score = engine._calculate_similarity(
-        "POST", "POST",
-        "/api/v1/devices/{id}/command", "/api/v1/devices/abc123/command",
-        [], {}, None, None, [], {},
+        "POST",
+        "POST",
+        "/api/v1/devices/{id}/command",
+        "/api/v1/devices/abc123/command",
+        [],
+        {},
+        None,
+        None,
+        [],
+        {},
     )
     assert score == pytest.approx(0.75)
 
 
 def test_calculate_similarity_method_mismatch(engine):
     score = engine._calculate_similarity(
-        "GET", "POST", "/status", "/status",
-        [], {}, None, None, [], {},
+        "GET",
+        "POST",
+        "/status",
+        "/status",
+        [],
+        {},
+        None,
+        None,
+        [],
+        {},
     )
     assert score == pytest.approx(0.45)
 
 
 def test_calculate_similarity_path_length_mismatch(engine):
     score = engine._calculate_similarity(
-        "GET", "GET", "/a/b/c", "/a/b/c/d/e",
-        [], {}, None, None, [], {},
+        "GET",
+        "GET",
+        "/a/b/c",
+        "/a/b/c/d/e",
+        [],
+        {},
+        None,
+        None,
+        [],
+        {},
     )
     assert score == pytest.approx(0.45)
 
 
 def test_calculate_similarity_path_close_mismatch(engine):
     score = engine._calculate_similarity(
-        "GET", "GET", "/a/b/c", "/a/b/c/d",
-        [], {}, None, None, [], {},
+        "GET",
+        "GET",
+        "/a/b/c",
+        "/a/b/c/d",
+        [],
+        {},
+        None,
+        None,
+        [],
+        {},
     )
     # total=100, score=30(method)+9(path)+15(body)=54
     assert score == pytest.approx(0.54)
@@ -126,8 +165,16 @@ def test_calculate_similarity_path_close_mismatch(engine):
 
 def test_calculate_similarity_no_body_both_empty(engine):
     score = engine._calculate_similarity(
-        "GET", "GET", "/", "/",
-        [], {}, {}, {}, [], {},
+        "GET",
+        "GET",
+        "/",
+        "/",
+        [],
+        {},
+        {},
+        {},
+        [],
+        {},
     )
     # total=100, score=30+30+15=75
     assert score == pytest.approx(0.75)
@@ -135,10 +182,16 @@ def test_calculate_similarity_no_body_both_empty(engine):
 
 def test_calculate_similarity_body_partial_match(engine):
     score = engine._calculate_similarity(
-        "POST", "POST", "/", "/",
-        [], {},
-        {"properties": {"a": {}, "b": {}, "c": {}}}, {"a": 1, "b": 2},
-        [], {},
+        "POST",
+        "POST",
+        "/",
+        "/",
+        [],
+        {},
+        {"properties": {"a": {}, "b": {}, "c": {}}},
+        {"a": 1, "b": 2},
+        [],
+        {},
     )
     # total=100, score=30+30+15*(2/3)=70
     assert score == pytest.approx(0.7)
@@ -148,15 +201,15 @@ def test_body_similarity_schema_keys(engine):
     r = engine._body_similarity({"properties": {"a": {}, "b": {}}}, {"a": 1, "b": 2})
     assert r == pytest.approx(1.0)
     r = engine._body_similarity({"properties": {"a": {}, "b": {}, "c": {}}}, {"a": 1})
-    assert r == pytest.approx(1/3)
+    assert r == pytest.approx(1 / 3)
 
 
 def test_body_similarity_no_schema_no_body(engine):
-    assert engine._body_similarity({}, {}) == 0.5
+    assert engine._body_similarity({}, {}) == 0.5  # noqa: PLR2004
 
 
 def test_body_similarity_no_body(engine):
-    assert engine._body_similarity({"properties": {"a": {}}}, None) == 0.5
+    assert engine._body_similarity({"properties": {"a": {}}}, None) == 0.5  # noqa: PLR2004
 
 
 def test_path_similarity_exact(engine):
@@ -183,7 +236,9 @@ async def test_find_best_match_cached(engine):
         client=ClientConfig(
             endpoints=[
                 ClientEndpoint(
-                    id="ep1", intent="get_status", method="GET",
+                    id="ep1",
+                    intent="get_status",
+                    method="GET",
                     path="/api/v1/status",
                     headers={"required": ["Authorization"]},
                 ),
@@ -192,7 +247,8 @@ async def test_find_best_match_cached(engine):
         server=ServerConfig(
             responses=[
                 ServerResponse(
-                    id="resp1", triggers=["get_status"],
+                    id="resp1",
+                    triggers=["get_status"],
                     status_code=200,
                     body_template={"status": "ok"},
                 ),
@@ -201,8 +257,12 @@ async def test_find_best_match_cached(engine):
     )
     engine.apply_pattern_db("device-1", pattern_db)
     pattern, template, score = await engine.find_best_match(
-        "device-1", "GET", "/api/v1/status",
-        {"Authorization": "Bearer xxx"}, None, {},
+        "device-1",
+        "GET",
+        "/api/v1/status",
+        {"Authorization": "Bearer xxx"},
+        None,
+        {},
     )
     assert pattern is not None
     assert pattern.intent == "get_status"
@@ -215,7 +275,12 @@ async def test_find_best_match_cached(engine):
 @pytest.mark.asyncio
 async def test_find_best_match_no_patterns(engine):
     pattern, template, score = await engine.find_best_match(
-        "device-1", "GET", "/unknown", {}, None, {},
+        "device-1",
+        "GET",
+        "/unknown",
+        {},
+        None,
+        {},
     )
     assert pattern is None
     assert template is None
@@ -233,21 +298,25 @@ async def test_build_local_response(engine):
     )
     engine.apply_pattern_db("device-1", pattern_db)
     template = ServerResponse(
-        id="resp1", triggers=["get_status"],
+        id="resp1",
+        triggers=["get_status"],
         status_code=200,
         body_template={"status": "{state.power}"},
     )
     result = await engine.build_local_response(
-        "device-1", template, {"body": {"command": "on"}},
+        "device-1",
+        template,
+        {"body": {"command": "on"}},
     )
-    assert result["status_code"] == 200
+    assert result["status_code"] == 200  # noqa: PLR2004
     assert result["body"]["status"] == "True"
 
 
 @pytest.mark.asyncio
 async def test_build_local_response_with_field_mappings(engine):
     template = ServerResponse(
-        id="resp1", triggers=["set_temp"],
+        id="resp1",
+        triggers=["set_temp"],
         status_code=200,
         body_template={"result": None},
         field_mappings=[
@@ -259,16 +328,19 @@ async def test_build_local_response_with_field_mappings(engine):
         ],
     )
     result = await engine.build_local_response(
-        "device-1", template, {"body": {"target_temp": 22.5}},
+        "device-1",
+        template,
+        {"body": {"target_temp": 22.5}},
     )
-    assert result["status_code"] == 200
-    assert result["body"]["result"]["temperature"] == 22.5
+    assert result["status_code"] == 200  # noqa: PLR2004
+    assert result["body"]["result"]["temperature"] == 22.5  # noqa: PLR2004
 
 
 @pytest.mark.asyncio
 async def test_build_local_response_enum_transform(engine):
     template = ServerResponse(
-        id="resp1", triggers=["set_mode"],
+        id="resp1",
+        triggers=["set_mode"],
         status_code=200,
         body_template={"mode": None},
         field_mappings=[
@@ -281,7 +353,9 @@ async def test_build_local_response_enum_transform(engine):
         ],
     )
     result = await engine.build_local_response(
-        "device-1", template, {"body": {"mode": "2"}},
+        "device-1",
+        template,
+        {"body": {"mode": "2"}},
     )
     assert result["body"]["mode"] == "heat"
 
@@ -290,7 +364,9 @@ async def test_build_local_response_enum_transform(engine):
 def test_resolve_template_vars_state(engine):
     engine.get_state_store("device-1").set("power", True)
     result = engine._resolve_template_vars(
-        "{state.power}", engine.get_state_store("device-1"), {},
+        "{state.power}",
+        engine.get_state_store("device-1"),
+        {},
     )
     assert result == "True"
 
@@ -308,7 +384,7 @@ def test_resolve_template_vars_uuid(engine):
     r1 = engine._resolve_template_vars("{uuid}", engine.get_state_store("device-1"), {})
     r2 = engine._resolve_template_vars("{uuid}", engine.get_state_store("device-1"), {})
     assert r1 != r2
-    assert len(r1) == 36
+    assert len(r1) == 36  # noqa: PLR2004
 
 
 def test_resolve_template_vars_nested_dict(engine):
@@ -316,7 +392,7 @@ def test_resolve_template_vars_nested_dict(engine):
     template = {"device": {"name": "{state.name}", "value": 42}}
     result = engine._resolve_template_vars(template, engine.get_state_store("device-1"), {})
     assert result["device"]["name"] == "Sensor-1"
-    assert result["device"]["value"] == 42
+    assert result["device"]["value"] == 42  # noqa: PLR2004
 
 
 def test_resolve_template_vars_nested_list(engine):
@@ -334,7 +410,7 @@ def test_eval_formula_simple(engine):
 
 def test_eval_formula_with_random(engine):
     result = engine._eval_formula("random(10, 20)", {}, engine.get_state_store("device-1"))
-    assert 10 <= result <= 20
+    assert 10 <= result <= 20  # noqa: PLR2004
 
 
 def test_eval_formula_invalid(engine):
@@ -351,13 +427,21 @@ def test_load_pattern_file_not_found(engine):
 def test_save_and_load_pattern_file(engine):
     pattern_db = PatternDB(
         meta=PatternMeta(pattern_id="test-save", vendor="acme", device_type="thermostat"),
-        client=ClientConfig(endpoints=[
-            ClientEndpoint(id="ep1", intent="get_status", method="GET", path="/status"),
-        ]),
-        server=ServerConfig(responses=[
-            ServerResponse(id="resp1", triggers=["get_status"], status_code=200,
-                           body_template={"status": "ok"}),
-        ]),
+        client=ClientConfig(
+            endpoints=[
+                ClientEndpoint(id="ep1", intent="get_status", method="GET", path="/status"),
+            ]
+        ),
+        server=ServerConfig(
+            responses=[
+                ServerResponse(
+                    id="resp1",
+                    triggers=["get_status"],
+                    status_code=200,
+                    body_template={"status": "ok"},
+                ),
+            ]
+        ),
     )
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
         fpath = f.name
@@ -376,7 +460,7 @@ def test_save_and_load_pattern_file(engine):
 
 # Test: JSON path resolution
 def test_resolve_json_path_simple(engine):
-    assert engine._resolve_json_path({"value": 42}, "value") == 42
+    assert engine._resolve_json_path({"value": 42}, "value") == 42  # noqa: PLR2004
 
 
 def test_resolve_json_path_nested(engine):
@@ -384,7 +468,7 @@ def test_resolve_json_path_nested(engine):
 
 
 def test_resolve_json_path_array_index(engine):
-    assert engine._resolve_json_path({"items": [10, 20, 30]}, "items[1]") == 20
+    assert engine._resolve_json_path({"items": [10, 20, 30]}, "items[1]") == 20  # noqa: PLR2004
 
 
 def test_resolve_json_path_dot_in_array(engine):
@@ -397,27 +481,33 @@ def test_resolve_source_request(engine):
         {"body": {"temperature": 25.5}},
         engine.get_state_store("device-1"),
     )
-    assert result == 25.5
+    assert result == 25.5  # noqa: PLR2004
 
 
 def test_resolve_source_state(engine):
     engine.get_state_store("device-1").set("power", True)
     result = engine._resolve_source(
-        "state.power", {}, engine.get_state_store("device-1"),
+        "state.power",
+        {},
+        engine.get_state_store("device-1"),
     )
     assert result is True
 
 
 def test_resolve_source_constant(engine):
     result = engine._resolve_source(
-        "constant.some_value", {}, engine.get_state_store("device-1"),
+        "constant.some_value",
+        {},
+        engine.get_state_store("device-1"),
     )
     assert result == "some_value"
 
 
 def test_resolve_source_unknown(engine):
     result = engine._resolve_source(
-        "unknown.foo", {}, engine.get_state_store("device-1"),
+        "unknown.foo",
+        {},
+        engine.get_state_store("device-1"),
     )
     assert result is None
 
@@ -425,10 +515,10 @@ def test_resolve_source_unknown(engine):
 def test_set_nested(engine):
     d = {}
     engine._set_nested(d, "a.b.c", 42)
-    assert d["a"]["b"]["c"] == 42
+    assert d["a"]["b"]["c"] == 42  # noqa: PLR2004
 
 
 def test_set_nested_overwrite(engine):
     d = {"x": 1}
     engine._set_nested(d, "x", 2)
-    assert d["x"] == 2
+    assert d["x"] == 2  # noqa: PLR2004

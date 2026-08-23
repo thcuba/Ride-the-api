@@ -12,6 +12,7 @@ Standard topic/attribute patterns:
   - ZCL groups (0x0004): group commands → group add/remove
   - ZCL basic cluster (0x0000): device info queries
 """
+
 from __future__ import annotations
 
 import logging
@@ -66,7 +67,7 @@ class ZigbeeProtocolAdapter(ProtocolAdapter):
     VENDOR_CODE = "zigbee"
     VENDOR_HOSTNAMES: list[str] = []
 
-    def __init__(self, vendor: str, config: dict[str, Any]):
+    def __init__(self, vendor: str, config: dict[str, Any]) -> None:
         super().__init__(vendor, config)
         self._devices: dict[str, dict] = {}
 
@@ -96,7 +97,9 @@ class ZigbeeProtocolAdapter(ProtocolAdapter):
         }
         return request
 
-    def _resolve_zcl_intent(self, cluster: int | None, cmd: int | None, attrs: dict) -> CommandType:
+    def _resolve_zcl_intent(  # noqa: C901, PLR0911
+        self, cluster: int | None, cmd: int | None, attrs: dict
+    ) -> CommandType:
         """Resolve ZCL cluster/command/attributes to a standard CommandType."""
         if cluster == ZCL_CLUSTER_ON_OFF:
             if cmd == CMD_ON:
@@ -122,8 +125,12 @@ class ZigbeeProtocolAdapter(ProtocolAdapter):
                 return CommandType.SET_TEMPERATURE
             return CommandType.GET_STATE
 
-        if cluster in (ZCL_CLUSTER_POWER_CONFIG, ZCL_CLUSTER_IAS_ZONE,
-                       ZCL_CLUSTER_METERING, ZCL_CLUSTER_BASIC):
+        if cluster in (
+            ZCL_CLUSTER_POWER_CONFIG,
+            ZCL_CLUSTER_IAS_ZONE,
+            ZCL_CLUSTER_METERING,
+            ZCL_CLUSTER_BASIC,
+        ):
             return CommandType.GET_STATE
 
         return CommandType.UNKNOWN
@@ -133,22 +140,28 @@ class ZigbeeProtocolAdapter(ProtocolAdapter):
         if request.parsed_intent in (CommandType.GET_STATE,):
             state = await self.get_device_state(request.device_id)
             if state:
-                return CommandResult(success=True, response={
-                    "on_off": state.on_off,
-                    "temperature_actual": state.temp_actual,
-                    "humidity": state.humidity,
-                    "power_watts": state.power_watts,
-                    "battery": state.vendor_data.get("battery_percent"),
-                })
+                return CommandResult(
+                    success=True,
+                    response={
+                        "on_off": state.on_off,
+                        "temperature_actual": state.temp_actual,
+                        "humidity": state.humidity,
+                        "power_watts": state.power_watts,
+                        "battery": state.vendor_data.get("battery_percent"),
+                    },
+                )
         return await self.forward_to_cloud(request)
 
-    async def forward_to_cloud(self, request: InterceptedRequest) -> CommandResult:
+    async def forward_to_cloud(self, request: InterceptedRequest) -> CommandResult:  # noqa: ARG002
         return CommandResult(success=False, error="Cloud forward not implemented", forwarded=True)
 
     async def build_response(self, request: InterceptedRequest, result: CommandResult) -> dict:
         if result.success and result.response:
             return result.response
-        return {"error": result.error or "unknown", "cluster_id": request.parsed_params.get("cluster_id")}
+        return {
+            "error": result.error or "unknown",
+            "cluster_id": request.parsed_params.get("cluster_id"),
+        }
 
     async def get_device_info(self, device_id: str) -> DeviceInfo | None:
         info = self._devices.get(device_id)
@@ -184,13 +197,14 @@ class ZigbeeProtocolAdapter(ProtocolAdapter):
             quality="good",
         )
 
-    async def send_command(self, device_id: str, command: Command) -> CommandResult:
+    async def send_command(self, device_id: str, command: Command) -> CommandResult:  # noqa: ARG002
         return CommandResult(success=False, error="Send not implemented")
 
     async def on_device_connect(self, device_id: str, initial_data: dict) -> None:
         self._devices[device_id] = initial_data
-        logger.info("Zigbee device connected: %s (ieee=%s)",
-                     device_id, initial_data.get("ieee_address"))
+        logger.info(
+            "Zigbee device connected: %s (ieee=%s)", device_id, initial_data.get("ieee_address")
+        )
 
     async def on_device_disconnect(self, device_id: str) -> None:
         self._devices.pop(device_id, None)

@@ -1,9 +1,8 @@
 """
 Tests for Traffic Selection Engine.
 """
-import ipaddress
 
-import pytest
+import ipaddress
 
 from core.traffic_selector import (
     MatchType,
@@ -33,7 +32,7 @@ class TestTrafficRule:
         assert rule.match_type == MatchType.CIDR
         assert rule.match_value == "192.168.1.0/24"
         assert rule.action == TrafficAction.INTERCEPT
-        assert rule.priority == 20
+        assert rule.priority == 20  # noqa: PLR2004
         assert rule.enabled is True
         assert rule._cidr_network == ipaddress.ip_network("192.168.1.0/24")
 
@@ -59,12 +58,12 @@ class TestTrafficRule:
             match_value="shelly",
             action=TrafficAction.INTERCEPT,
         )
-        assert rule.matches(TrafficRequestInfo(
-            client_ip="1.2.3.4", vendor="shelly", is_local=False
-        ))
-        assert not rule.matches(TrafficRequestInfo(
-            client_ip="1.2.3.4", vendor="tasmota", is_local=False
-        ))
+        assert rule.matches(
+            TrafficRequestInfo(client_ip="1.2.3.4", vendor="shelly", is_local=False)
+        )
+        assert not rule.matches(
+            TrafficRequestInfo(client_ip="1.2.3.4", vendor="tasmota", is_local=False)
+        )
 
     def test_device_id_rule(self):
         rule = TrafficRule(
@@ -90,9 +89,7 @@ class TestTrafficRule:
             action=TrafficAction.INTERCEPT,
             enabled=False,
         )
-        info = TrafficRequestInfo(
-            client_ip="1.2.3.4", hostname="api.cloud.com", is_local=False
-        )
+        info = TrafficRequestInfo(client_ip="1.2.3.4", hostname="api.cloud.com", is_local=False)
         assert not rule.matches(info)
 
     def test_scope_must_match_local(self):
@@ -103,12 +100,8 @@ class TestTrafficRule:
             match_value="10.0.0.0/8",
             action=TrafficAction.INTERCEPT,
         )
-        local_info = TrafficRequestInfo(
-            client_ip="10.0.0.5", is_local=True
-        )
-        external_info = TrafficRequestInfo(
-            client_ip="8.8.8.8", is_local=False
-        )
+        local_info = TrafficRequestInfo(client_ip="10.0.0.5", is_local=True)
+        external_info = TrafficRequestInfo(client_ip="8.8.8.8", is_local=False)
         assert rule.matches(local_info)
         assert not rule.matches(external_info)
 
@@ -142,7 +135,9 @@ class TestTrafficSelector:
     def test_empty_selector_defaults_to_intercept(self):
         selector = TrafficSelector()
         assert selector.default_action == TrafficAction.INTERCEPT
-        info = TrafficRequestInfo(client_ip="8.8.8.8", is_local=False, hostname="unknown.device.com")
+        info = TrafficRequestInfo(
+            client_ip="8.8.8.8", is_local=False, hostname="unknown.device.com"
+        )
         assert selector.evaluate(info) == TrafficAction.INTERCEPT
 
     def test_add_and_remove_rule(self):
@@ -177,13 +172,27 @@ class TestTrafficSelector:
         rules = selector.get_rules()
         updated = [r for r in rules if r.name == "updatable"][0]
         assert updated.action == TrafficAction.PASSTHROUGH
-        assert updated.priority == 5
+        assert updated.priority == 5  # noqa: PLR2004
         assert selector.update_rule("nonexistent", priority=1) is False
 
     def test_priority_ordering(self):
         selector = TrafficSelector()
-        low = TrafficRule("low", TrafficScope.LOCAL, MatchType.CIDR, "192.168.0.0/16", TrafficAction.PASSTHROUGH, priority=5)
-        high = TrafficRule("high", TrafficScope.LOCAL, MatchType.CIDR, "192.168.1.0/24", TrafficAction.INTERCEPT, priority=25)
+        low = TrafficRule(
+            "low",
+            TrafficScope.LOCAL,
+            MatchType.CIDR,
+            "192.168.0.0/16",
+            TrafficAction.PASSTHROUGH,
+            priority=5,
+        )
+        high = TrafficRule(
+            "high",
+            TrafficScope.LOCAL,
+            MatchType.CIDR,
+            "192.168.1.0/24",
+            TrafficAction.INTERCEPT,
+            priority=25,
+        )
         selector.add_rule(low)
         selector.add_rule(high)
         rules = selector.get_rules()
@@ -191,8 +200,22 @@ class TestTrafficSelector:
 
     def test_first_match_wins(self):
         selector = TrafficSelector()
-        block = TrafficRule("block-all", TrafficScope.LOCAL, MatchType.CIDR, "0.0.0.0/0", TrafficAction.PASSTHROUGH, priority=1)
-        intercept = TrafficRule("intercept-some", TrafficScope.LOCAL, MatchType.CIDR, "192.168.0.0/16", TrafficAction.INTERCEPT, priority=10)
+        block = TrafficRule(
+            "block-all",
+            TrafficScope.LOCAL,
+            MatchType.CIDR,
+            "0.0.0.0/0",
+            TrafficAction.PASSTHROUGH,
+            priority=1,
+        )
+        intercept = TrafficRule(
+            "intercept-some",
+            TrafficScope.LOCAL,
+            MatchType.CIDR,
+            "192.168.0.0/16",
+            TrafficAction.INTERCEPT,
+            priority=10,
+        )
         selector.add_rule(block)
         selector.add_rule(intercept)
         info = TrafficRequestInfo(client_ip="192.168.1.10", is_local=True)
@@ -201,18 +224,25 @@ class TestTrafficSelector:
     def test_get_rules_returns_copy(self):
         selector = TrafficSelector()
         initial_count = len(selector.get_rules())
-        selector.add_rule(TrafficRule("r1", TrafficScope.LOCAL, MatchType.CIDR, "10.0.0.0/8", TrafficAction.INTERCEPT))
+        selector.add_rule(
+            TrafficRule(
+                "r1", TrafficScope.LOCAL, MatchType.CIDR, "10.0.0.0/8", TrafficAction.INTERCEPT
+            )
+        )
         rules_copy = selector.get_rules()
         rules_copy.clear()
         assert len(selector.get_rules()) == initial_count + 1
 
     def test_clear_rules(self):
         selector = TrafficSelector()
-        selector.add_rule(TrafficRule("extra", TrafficScope.LOCAL, MatchType.CIDR, "10.0.0.0/8", TrafficAction.INTERCEPT))
+        selector.add_rule(
+            TrafficRule(
+                "extra", TrafficScope.LOCAL, MatchType.CIDR, "10.0.0.0/8", TrafficAction.INTERCEPT
+            )
+        )
         count_after_add = len(selector.get_rules())
         selector.remove_rule("extra")
         assert len(selector.get_rules()) == count_after_add - 1
-
 
     class TestCreateRequestInfo:
         """create_request_info helper."""

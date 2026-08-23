@@ -1,34 +1,32 @@
 """
 Tests for the On-the-Fly Modification Engine.
 """
+
 from datetime import UTC, datetime
-from unittest.mock import MagicMock
 
-import pytest
-
+from adapters.base import InterceptedRequest, ProtocolType
 from core.modification import (
     InterceptedMessage,
     ModificationAction,
     ModificationEngine,
-    ModificationOperation,
     ModificationRule,
 )
-from adapters.base import InterceptedRequest, ProtocolType
-
 
 # ---------------------------------------------------------------------------
 #  Mock config helpers
 # ---------------------------------------------------------------------------
 
+
 class MockConfig:
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs) -> None:
         for k, v in kwargs.items():
             setattr(self, k, v)
 
 
 class MockConfigManager:
     """Mock config manager that avoids YAML loading and hot-reload."""
-    def __init__(self):
+
+    def __init__(self) -> None:
         self.config = MockConfig()
         self.callbacks = []
 
@@ -90,6 +88,7 @@ def make_msg(**overrides) -> InterceptedMessage:
 #  ModificationRule — matching
 # ---------------------------------------------------------------------------
 
+
 class TestModificationRule:
     """ModificationRule matching and apply()."""
 
@@ -103,7 +102,7 @@ class TestModificationRule:
         assert rule.name == "test-rule"
         assert rule.match_vendor == "shelly"
         assert rule.action == ModificationAction.MODIFY
-        assert rule.priority == 10
+        assert rule.priority == 10  # noqa: PLR2004
         assert rule.enabled is True
 
     def test_vendor_match(self):
@@ -119,7 +118,9 @@ class TestModificationRule:
         assert not rule.matches(make_msg(device_type="heat_pump"), "request")
 
     def test_intent_match(self):
-        rule = ModificationRule(name="r1", match_intent="set_temperature", action=ModificationAction.MODIFY)
+        rule = ModificationRule(
+            name="r1", match_intent="set_temperature", action=ModificationAction.MODIFY
+        )
         assert rule.matches(make_msg(intent="set_temperature"), "request")
         assert not rule.matches(make_msg(intent="turn_off"), "request")
 
@@ -129,13 +130,16 @@ class TestModificationRule:
         assert not rule.matches(make_msg(method="GET"), "request")
 
     def test_path_pattern_regex(self):
-        rule = ModificationRule(name="r1", match_path_pattern=r"/v1/command", action=ModificationAction.MODIFY)
+        rule = ModificationRule(
+            name="r1", match_path_pattern=r"/v1/command", action=ModificationAction.MODIFY
+        )
         assert rule.matches(make_msg(path="/v1/command"), "request")
         assert not rule.matches(make_msg(path="/v2/other"), "request")
 
     def test_headers_match(self):
         rule = ModificationRule(
-            name="r1", match_headers={"content-type": "application/json"},
+            name="r1",
+            match_headers={"content-type": "application/json"},
             action=ModificationAction.MODIFY,
         )
         assert rule.matches(make_msg(headers={"content-type": "application/json"}), "request")
@@ -171,6 +175,7 @@ class TestModificationRule:
 #  ModificationRule — applying actions
 # ---------------------------------------------------------------------------
 
+
 class TestModificationApply:
     """ModificationRule.apply() for each action."""
 
@@ -184,7 +189,7 @@ class TestModificationApply:
         )
         msg = make_msg(body=body)
         result = rule.apply(msg)
-        assert result.body["temp"] == 30
+        assert result.body["temp"] == 30  # noqa: PLR2004
         assert result.body["mode"] == "cool"  # unchanged
 
     def test_modify_add_action(self):
@@ -197,7 +202,7 @@ class TestModificationApply:
         )
         msg = make_msg(body=body)
         result = rule.apply(msg)
-        assert result.body["count"] == 15
+        assert result.body["count"] == 15  # noqa: PLR2004
 
     def test_modify_multiply_action(self):
         body = {"power": 100}
@@ -209,7 +214,7 @@ class TestModificationApply:
         )
         msg = make_msg(body=body)
         result = rule.apply(msg)
-        assert result.body["power"] == 50.0
+        assert result.body["power"] == 50.0  # noqa: PLR2004
 
     def test_modify_clamp_action(self):
         body = {"value": 150}
@@ -221,7 +226,7 @@ class TestModificationApply:
         )
         msg = make_msg(body=body)
         result = rule.apply(msg)
-        assert result.body["value"] == 100
+        assert result.body["value"] == 100  # noqa: PLR2004
 
         body2 = {"value": -10}
         msg2 = make_msg(body=body2)
@@ -268,7 +273,7 @@ class TestModificationApply:
         msg = make_msg(body={"temp": 25})
         result = rule.apply(msg)
         assert result.body["source"] == "edge_ai"
-        assert result.body["temp"] == 25
+        assert result.body["temp"] == 25  # noqa: PLR2004
 
     def test_replace_action(self):
         new_body = {"replaced": True}
@@ -300,7 +305,7 @@ class TestModificationApply:
         )
         msg = make_msg()
         result = rule.apply(msg)
-        assert result.metadata.get("artificial_delay_ms") == 500
+        assert result.metadata.get("artificial_delay_ms") == 500  # noqa: PLR2004
 
     def test_modifications_tracking(self):
         rule = ModificationRule(
@@ -320,10 +325,12 @@ class TestModificationApply:
     # ------------------------------------------------------------------
 
     def test_get_json_path_nested(self):
-        rule = ModificationRule(name="g1", match_field_path="a.b.c", action=ModificationAction.MODIFY)
+        rule = ModificationRule(
+            name="g1", match_field_path="a.b.c", action=ModificationAction.MODIFY
+        )
         body = {"a": {"b": {"c": 42}}}
         val = rule._get_json_path(body, "a.b.c")
-        assert val == 42
+        assert val == 42  # noqa: PLR2004
 
     def test_get_json_path_array(self):
         rule = ModificationRule(name="g2", action=ModificationAction.MODIFY)
@@ -335,7 +342,7 @@ class TestModificationApply:
         rule = ModificationRule(name="g3", action=ModificationAction.MODIFY)
         body = {"x": 10}
         val = rule._get_json_path(body, "$.x")
-        assert val == 10
+        assert val == 10  # noqa: PLR2004
 
     def test_get_json_path_missing(self):
         rule = ModificationRule(name="g4", action=ModificationAction.MODIFY)
@@ -353,12 +360,13 @@ class TestModificationApply:
             action_params={"operation": "set", "value": 99},
         )
         result = rule.apply(msg)
-        assert result.body["a"]["b"] == 99
+        assert result.body["a"]["b"] == 99  # noqa: PLR2004
 
 
 # ---------------------------------------------------------------------------
 #  ModificationEngine
 # ---------------------------------------------------------------------------
+
 
 class TestModificationEngine:
     def _default_mod_config(self):
@@ -380,7 +388,8 @@ class TestModificationEngine:
     def test_single_match(self):
         engine = make_engine()
         rule = ModificationRule(
-            name="r1", match_vendor="shelly",
+            name="r1",
+            match_vendor="shelly",
             action=ModificationAction.INJECT,
             action_params={"field_path": "source", "value": "edge"},
         )
@@ -393,25 +402,28 @@ class TestModificationEngine:
     def test_no_match(self):
         engine = make_engine()
         rule = ModificationRule(
-            name="r1", match_vendor="shelly",
+            name="r1",
+            match_vendor="shelly",
             action=ModificationAction.BLOCK,
         )
         engine.add_rule(rule)
         req = make_intercepted_request(vendor="tasmota")
         modified, was_modified = engine.process_request(req)
         assert not was_modified
-            # No block attribute set on InterceptedRequest when no matches occur
+        # No block attribute set on InterceptedRequest when no matches occur
 
     def test_priority_ordering(self):
         engine = make_engine()
         low = ModificationRule(
-            "low", match_vendor="shelly",
+            "low",
+            match_vendor="shelly",
             action=ModificationAction.INJECT,
             action_params={"field_path": "source", "value": "low"},
             priority=5,
         )
         high = ModificationRule(
-            "high", match_vendor="shelly",
+            "high",
+            match_vendor="shelly",
             action=ModificationAction.INJECT,
             action_params={"field_path": "source", "value": "high"},
             priority=20,

@@ -16,6 +16,7 @@ Standard command classes handled:
   - ASSOCIATION (0x85): group management
   - NOTIFICATION (0x71): sensor alerts (smoke, motion, etc.)
 """
+
 from __future__ import annotations
 
 import logging
@@ -70,6 +71,9 @@ CMD_SWITCH_MULTILEVEL_SET = 0x01
 CMD_SWITCH_MULTILEVEL_START = 0x07
 CMD_SWITCH_MULTILEVEL_STOP = 0x08
 
+# Z-Wave on/off level values (0xFF = full on, 0x00 = off)
+ZWAVE_LEVEL_FULL = 0xFF
+
 
 class ZWaveProtocolAdapter(ProtocolAdapter):
     """Generic Z-Wave protocol adapter — no vendor-specific logic."""
@@ -77,7 +81,7 @@ class ZWaveProtocolAdapter(ProtocolAdapter):
     VENDOR_CODE = "zwave"
     VENDOR_HOSTNAMES: list[str] = []
 
-    def __init__(self, vendor: str, config: dict[str, Any]):
+    def __init__(self, vendor: str, config: dict[str, Any]) -> None:
         super().__init__(vendor, config)
         self._devices: dict[str, dict] = {}
 
@@ -107,12 +111,14 @@ class ZWaveProtocolAdapter(ProtocolAdapter):
         }
         return request
 
-    def _resolve_zwave_intent(self, cc: int | None, cmd: int | None, params: dict) -> CommandType:
+    def _resolve_zwave_intent(  # noqa: C901, PLR0911, PLR0912
+        self, cc: int | None, cmd: int | None, params: dict
+    ) -> CommandType:
         """Resolve a Z-Wave command class to a standard CommandType."""
         if cc == CC_SWITCH_BINARY:
             if cmd in (CMD_SET, None):
                 val = params.get("target_value", params.get("value"))
-                if val is True or val == 0xFF:
+                if val is True or val == ZWAVE_LEVEL_FULL:
                     return CommandType.TURN_ON
                 if val is False or val == 0x00:
                     return CommandType.TURN_OFF
@@ -126,7 +132,7 @@ class ZWaveProtocolAdapter(ProtocolAdapter):
         if cc == CC_SWITCH_ALL:
             if cmd == CMD_SET:
                 val = params.get("target_value")
-                if val == 0xFF:
+                if val == ZWAVE_LEVEL_FULL:
                     return CommandType.TURN_ON
                 if val == 0x00:
                     return CommandType.TURN_OFF
@@ -147,10 +153,19 @@ class ZWaveProtocolAdapter(ProtocolAdapter):
                 return CommandType.SET_FAN_SPEED
             return CommandType.GET_STATE
 
-        if cc in (CC_SENSOR_MULTILEVEL, CC_METER, CC_BATTERY,
-                  CC_VERSION, CC_MANUFACTURER_SPECIFIC,
-                  CC_INDICATOR, CC_POWERLEVEL, CC_PROTECTION,
-                  CC_WAKE_UP, CC_CONFIGURATION, CC_NOTIFICATION):
+        if cc in (
+            CC_SENSOR_MULTILEVEL,
+            CC_METER,
+            CC_BATTERY,
+            CC_VERSION,
+            CC_MANUFACTURER_SPECIFIC,
+            CC_INDICATOR,
+            CC_POWERLEVEL,
+            CC_PROTECTION,
+            CC_WAKE_UP,
+            CC_CONFIGURATION,
+            CC_NOTIFICATION,
+        ):
             return CommandType.GET_STATE
 
         return CommandType.UNKNOWN
@@ -160,17 +175,20 @@ class ZWaveProtocolAdapter(ProtocolAdapter):
         if request.parsed_intent in (CommandType.GET_STATE,):
             state = await self.get_device_state(request.device_id)
             if state:
-                return CommandResult(success=True, response={
-                    "on_off": state.on_off,
-                    "mode": state.mode,
-                    "temperature_actual": state.temp_actual,
-                    "temperature_setpoint": state.temp_target,
-                    "humidity": state.humidity,
-                    "power_watts": state.power_watts,
-                })
+                return CommandResult(
+                    success=True,
+                    response={
+                        "on_off": state.on_off,
+                        "mode": state.mode,
+                        "temperature_actual": state.temp_actual,
+                        "temperature_setpoint": state.temp_target,
+                        "humidity": state.humidity,
+                        "power_watts": state.power_watts,
+                    },
+                )
         return await self.forward_to_cloud(request)
 
-    async def forward_to_cloud(self, request: InterceptedRequest) -> CommandResult:
+    async def forward_to_cloud(self, request: InterceptedRequest) -> CommandResult:  # noqa: ARG002
         return CommandResult(success=False, error="Cloud forward not implemented", forwarded=True)
 
     async def build_response(self, request: InterceptedRequest, result: CommandResult) -> dict:
@@ -215,13 +233,12 @@ class ZWaveProtocolAdapter(ProtocolAdapter):
             quality="good",
         )
 
-    async def send_command(self, device_id: str, command: Command) -> CommandResult:
+    async def send_command(self, device_id: str, command: Command) -> CommandResult:  # noqa: ARG002
         return CommandResult(success=False, error="Send not implemented")
 
     async def on_device_connect(self, device_id: str, initial_data: dict) -> None:
         self._devices[device_id] = initial_data
-        logger.info("Z-Wave device connected: %s (node=%s)",
-                     device_id, initial_data.get("node_id"))
+        logger.info("Z-Wave device connected: %s (node=%s)", device_id, initial_data.get("node_id"))
 
     async def on_device_disconnect(self, device_id: str) -> None:
         self._devices.pop(device_id, None)

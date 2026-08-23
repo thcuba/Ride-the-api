@@ -1,10 +1,12 @@
 """
 Tests for the LLM Deciphering Service.
 """
-from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
+
+import json
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from httpx import TimeoutException
 
 from core.llm_decipher import (
     DecipherResult,
@@ -15,14 +17,16 @@ from core.llm_decipher import (
 
 class MockConfig:
     """Mock for config objects with attribute access."""
-    def __init__(self, **kwargs):
+
+    def __init__(self, **kwargs) -> None:
         for k, v in kwargs.items():
             setattr(self, k, v)
 
 
 class MockConfigManager:
     """Mock config manager that doesn't load from YAML."""
-    def __init__(self):
+
+    def __init__(self) -> None:
         self.config = MockConfig()
         self.callbacks = []
 
@@ -52,8 +56,8 @@ class TestLLMProfile:
         assert profile.base_url == "https://api.openai.com/v1"
         assert profile.model_id == "gpt-4o-mini"
         assert profile.enabled is True
-        assert profile.timeout == 30
-        assert profile.max_retries == 2
+        assert profile.timeout == 30  # noqa: PLR2004
+        assert profile.max_retries == 2  # noqa: PLR2004
 
 
 class TestLLMDecipherService:
@@ -76,8 +80,11 @@ class TestLLMDecipherService:
     def test_get_profile_default_fallback(self):
         service = make_service()
         service._profiles["default"] = LLMProfile(
-            name="default", base_url="http://localhost:11434/v1",
-            api_key="", model_id="llama3", prompt_template="{pairs}"
+            name="default",
+            base_url="http://localhost:11434/v1",
+            api_key="",
+            model_id="llama3",
+            prompt_template="{pairs}",
         )
         profile = service.get_profile()
         assert profile is not None
@@ -108,8 +115,11 @@ class TestLLMDecipherService:
 
         service = make_service()
         profile = LLMProfile(
-            name="test", base_url="https://api.openai.com/v1",
-            api_key="sk-test", model_id="gpt-4o", prompt_template="{pairs}",
+            name="test",
+            base_url="https://api.openai.com/v1",
+            api_key="sk-test",
+            model_id="gpt-4o",
+            prompt_template="{pairs}",
         )
         result = await service.call_llm(profile, "test prompt")
 
@@ -128,8 +138,11 @@ class TestLLMDecipherService:
 
         service = make_service()
         profile = LLMProfile(
-            name="test", base_url="https://api.openai.com/v1",
-            api_key="sk-test", model_id="gpt-4o", prompt_template="{pairs}",
+            name="test",
+            base_url="https://api.openai.com/v1",
+            api_key="sk-test",
+            model_id="gpt-4o",
+            prompt_template="{pairs}",
             max_retries=1,
         )
         result = await service.call_llm(profile, "test prompt")
@@ -142,14 +155,17 @@ class TestLLMDecipherService:
     async def test_call_llm_timeout(self, mock_client_class):
         mock_client = AsyncMock()
         mock_client_class.return_value = mock_client
-        from httpx import TimeoutException
         mock_client.post.side_effect = TimeoutException("timeout")
 
         service = make_service()
         profile = LLMProfile(
-            name="test", base_url="https://api.openai.com/v1",
-            api_key="sk-test", model_id="gpt-4o", prompt_template="{pairs}",
-            max_retries=1, timeout=5,
+            name="test",
+            base_url="https://api.openai.com/v1",
+            api_key="sk-test",
+            model_id="gpt-4o",
+            prompt_template="{pairs}",
+            max_retries=1,
+            timeout=5,
         )
         result = await service.call_llm(profile, "test prompt")
         assert result["success"] is False
@@ -165,10 +181,10 @@ End."""
         extracted = content
         if "```json" in extracted:
             extracted = extracted.split("```json")[1].split("```")[0]
-        import json
+
         parsed = json.loads(extracted)
         assert parsed["intent"] == "turn_on"
-        assert parsed["confidence"] == 0.95
+        assert parsed["confidence"] == 0.95  # noqa: PLR2004
 
     def test_json_extraction_from_bare_code_block(self):
         content = """Response:
@@ -180,7 +196,7 @@ End."""
             extracted = extracted.split("```json")[1].split("```")[0]
         elif "```" in extracted:
             extracted = extracted.split("```")[1].split("```")[0]
-        import json
+
         parsed = json.loads(extracted)
         assert parsed["intent"] == "turn_off"
 
@@ -247,17 +263,33 @@ End."""
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
-            "choices": [{"message": {"content": '{"intent": "turn_on", "fields": {"state": "on"}, "confidence": 0.95}'}}]
+            "choices": [
+                {
+                    "message": {
+                        "content": (
+                            '{"intent": "turn_on", "fields": {"state": "on"}, "confidence": 0.95}'
+                        ),
+                    }
+                }
+            ]
         }
         mock_client.post.return_value = mock_response
 
         service = make_service()
         service._profiles["test"] = LLMProfile(
-            name="test", base_url="https://api.openai.com/v1",
-            api_key="sk-test", model_id="gpt-4o", prompt_template="Analyze {vendor} {device_type} {pairs} {device_id}",
+            name="test",
+            base_url="https://api.openai.com/v1",
+            api_key="sk-test",
+            model_id="gpt-4o",
+            prompt_template="Analyze {vendor} {device_type} {pairs} {device_id}",
         )
         result = await service.decipher_with_params(
-            {"pairs": [{"req": "test"}], "vendor": "shelly", "device_type": "ac", "device_id": "d1"},
+            {
+                "pairs": [{"req": "test"}],
+                "vendor": "shelly",
+                "device_type": "ac",
+                "device_id": "d1",
+            },
             profile_name="test",
         )
         assert result["success"] is True

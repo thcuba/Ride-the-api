@@ -1,6 +1,7 @@
 """
 Tests for Shelly Protocol Adapter — Gen1, Gen2, Gen3 intent parsing and lifecycle.
 """
+
 from datetime import datetime
 
 import pytest
@@ -10,21 +11,20 @@ from adapters.base import (
     CommandResult,
     CommandType,
     DeviceCapability,
-    DeviceInfo,
-    DeviceState,
     InterceptedRequest,
     ProtocolType,
 )
 from adapters.shelly import ShellyProtocolAdapter
 
-
 # ---------------------------------------------------------------------------
 #  Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def adapter():
     return ShellyProtocolAdapter(vendor="shelly", config={})
+
 
 @pytest.fixture
 def http_request():
@@ -41,6 +41,7 @@ def http_request():
 # ---------------------------------------------------------------------------
 #  Protocol metadata
 # ---------------------------------------------------------------------------
+
 
 class TestAdapterMetadata:
     def test_vendor_code(self):
@@ -66,6 +67,7 @@ class TestAdapterMetadata:
 #  Gen1 — HTTP intent parsing
 # ---------------------------------------------------------------------------
 
+
 class TestGen1HTTP:
     @pytest.mark.asyncio
     async def test_status_endpoint(self, adapter, http_request):
@@ -75,8 +77,11 @@ class TestGen1HTTP:
     @pytest.mark.asyncio
     async def test_turn_on(self, adapter):
         req = InterceptedRequest(
-            device_id="shelly-1", timestamp=datetime.utcnow(),
-            protocol=ProtocolType.HTTP, method="GET", path="/relay/0?turn=on",
+            device_id="shelly-1",
+            timestamp=datetime.utcnow(),
+            protocol=ProtocolType.HTTP,
+            method="GET",
+            path="/relay/0?turn=on",
         )
         result = await adapter._parse_http(req)
         assert result.parsed_intent == CommandType.TURN_ON
@@ -84,8 +89,11 @@ class TestGen1HTTP:
     @pytest.mark.asyncio
     async def test_turn_off(self, adapter):
         req = InterceptedRequest(
-            device_id="shelly-1", timestamp=datetime.utcnow(),
-            protocol=ProtocolType.HTTP, method="GET", path="/relay/0?turn=off",
+            device_id="shelly-1",
+            timestamp=datetime.utcnow(),
+            protocol=ProtocolType.HTTP,
+            method="GET",
+            path="/relay/0?turn=off",
         )
         result = await adapter._parse_http(req)
         assert result.parsed_intent == CommandType.TURN_OFF
@@ -93,8 +101,11 @@ class TestGen1HTTP:
     @pytest.mark.asyncio
     async def test_settings_endpoint(self, adapter):
         req = InterceptedRequest(
-            device_id="shelly-1", timestamp=datetime.utcnow(),
-            protocol=ProtocolType.HTTP, method="GET", path="/settings",
+            device_id="shelly-1",
+            timestamp=datetime.utcnow(),
+            protocol=ProtocolType.HTTP,
+            method="GET",
+            path="/settings",
         )
         result = await adapter._parse_http(req)
         assert result.parsed_intent == CommandType.GET_STATE
@@ -102,8 +113,11 @@ class TestGen1HTTP:
     @pytest.mark.asyncio
     async def test_unknown_path_unchanged(self, adapter):
         req = InterceptedRequest(
-            device_id="shelly-1", timestamp=datetime.utcnow(),
-            protocol=ProtocolType.HTTP, method="GET", path="/some/unknown",
+            device_id="shelly-1",
+            timestamp=datetime.utcnow(),
+            protocol=ProtocolType.HTTP,
+            method="GET",
+            path="/some/unknown",
             parsed_intent=CommandType.UNKNOWN,
         )
         result = await adapter._parse_http(req)
@@ -114,12 +128,16 @@ class TestGen1HTTP:
 #  Gen2 / Gen3 — HTTP RPC intent parsing
 # ---------------------------------------------------------------------------
 
+
 class TestGen2HTTP:
     @pytest.mark.asyncio
     async def test_rpc_get_status(self, adapter):
         req = InterceptedRequest(
-            device_id="shelly-plus-1", timestamp=datetime.utcnow(),
-            protocol=ProtocolType.HTTP, method="GET", path="/rpc/Shelly.GetStatus",
+            device_id="shelly-plus-1",
+            timestamp=datetime.utcnow(),
+            protocol=ProtocolType.HTTP,
+            method="GET",
+            path="/rpc/Shelly.GetStatus",
         )
         result = await adapter._parse_http(req)
         assert result.parsed_intent == CommandType.GET_STATE
@@ -127,8 +145,11 @@ class TestGen2HTTP:
     @pytest.mark.asyncio
     async def test_rpc_switch_set(self, adapter):
         req = InterceptedRequest(
-            device_id="shelly-plus-1", timestamp=datetime.utcnow(),
-            protocol=ProtocolType.HTTP, method="POST", path="/rpc/Switch.Set",
+            device_id="shelly-plus-1",
+            timestamp=datetime.utcnow(),
+            protocol=ProtocolType.HTTP,
+            method="POST",
+            path="/rpc/Switch.Set",
         )
         result = await adapter._parse_http(req)
         assert result.parsed_intent == CommandType.TURN_ON
@@ -136,8 +157,11 @@ class TestGen2HTTP:
     @pytest.mark.asyncio
     async def test_rpc_light_set(self, adapter):
         req = InterceptedRequest(
-            device_id="shelly-plus-1", timestamp=datetime.utcnow(),
-            protocol=ProtocolType.HTTP, method="POST", path="/rpc/Light.Set",
+            device_id="shelly-plus-1",
+            timestamp=datetime.utcnow(),
+            protocol=ProtocolType.HTTP,
+            method="POST",
+            path="/rpc/Light.Set",
         )
         result = await adapter._parse_http(req)
         assert result.parsed_intent == CommandType.TURN_ON
@@ -145,8 +169,11 @@ class TestGen2HTTP:
     @pytest.mark.asyncio
     async def test_rpc_get_config(self, adapter):
         req = InterceptedRequest(
-            device_id="shelly-plus-1", timestamp=datetime.utcnow(),
-            protocol=ProtocolType.HTTP, method="GET", path="/rpc/Shelly.GetConfig",
+            device_id="shelly-plus-1",
+            timestamp=datetime.utcnow(),
+            protocol=ProtocolType.HTTP,
+            method="GET",
+            path="/rpc/Shelly.GetConfig",
         )
         result = await adapter._parse_http(req)
         assert result.parsed_intent == CommandType.GET_STATE
@@ -154,8 +181,11 @@ class TestGen2HTTP:
     @pytest.mark.asyncio
     async def test_rpc_unknown_fallsback(self, adapter):
         req = InterceptedRequest(
-            device_id="shelly-plus-1", timestamp=datetime.utcnow(),
-            protocol=ProtocolType.HTTP, method="POST", path="/rpc/Unknown.Method",
+            device_id="shelly-plus-1",
+            timestamp=datetime.utcnow(),
+            protocol=ProtocolType.HTTP,
+            method="POST",
+            path="/rpc/Unknown.Method",
         )
         result = await adapter._parse_http(req)
         assert result.parsed_intent == CommandType.UNKNOWN
@@ -163,8 +193,11 @@ class TestGen2HTTP:
     @pytest.mark.asyncio
     async def test_rpc_toggle(self, adapter):
         req = InterceptedRequest(
-            device_id="shelly-plus-1", timestamp=datetime.utcnow(),
-            protocol=ProtocolType.HTTP, method="POST", path="/rpc/Switch.Toggle",
+            device_id="shelly-plus-1",
+            timestamp=datetime.utcnow(),
+            protocol=ProtocolType.HTTP,
+            method="POST",
+            path="/rpc/Switch.Toggle",
         )
         result = await adapter._parse_http(req)
         assert result.parsed_intent == CommandType.UNKNOWN  # explicitly mapped
@@ -174,12 +207,15 @@ class TestGen2HTTP:
 #  CoAP parsing
 # ---------------------------------------------------------------------------
 
+
 class TestCoAP:
     @pytest.mark.asyncio
     async def test_shelly_coap_path(self, adapter):
         req = InterceptedRequest(
-            device_id="shelly-1", timestamp=datetime.utcnow(),
-            protocol=ProtocolType.COAP, path="/shelly/status",
+            device_id="shelly-1",
+            timestamp=datetime.utcnow(),
+            protocol=ProtocolType.COAP,
+            path="/shelly/status",
         )
         result = await adapter._parse_coap(req)
         assert result.parsed_intent == CommandType.GET_STATE
@@ -187,8 +223,10 @@ class TestCoAP:
     @pytest.mark.asyncio
     async def test_non_shelly_coap_path(self, adapter):
         req = InterceptedRequest(
-            device_id="shelly-1", timestamp=datetime.utcnow(),
-            protocol=ProtocolType.COAP, path="/other/resource",
+            device_id="shelly-1",
+            timestamp=datetime.utcnow(),
+            protocol=ProtocolType.COAP,
+            path="/other/resource",
             parsed_intent=CommandType.UNKNOWN,
         )
         result = await adapter._parse_coap(req)
@@ -197,8 +235,10 @@ class TestCoAP:
     @pytest.mark.asyncio
     async def test_parse_request_delegates_coap(self, adapter):
         req = InterceptedRequest(
-            device_id="shelly-1", timestamp=datetime.utcnow(),
-            protocol=ProtocolType.COAP, path="/shelly/status",
+            device_id="shelly-1",
+            timestamp=datetime.utcnow(),
+            protocol=ProtocolType.COAP,
+            path="/shelly/status",
         )
         result = await adapter.parse_request(req)
         assert result.parsed_intent == CommandType.GET_STATE
@@ -208,12 +248,15 @@ class TestCoAP:
 #  MQTT / WebSocket parsing
 # ---------------------------------------------------------------------------
 
+
 class TestMQTT:
     @pytest.mark.asyncio
     async def test_status_topic(self, adapter):
         req = InterceptedRequest(
-            device_id="shelly-plus-1", timestamp=datetime.utcnow(),
-            protocol=ProtocolType.MQTT, topic="shelly/device-1/status",
+            device_id="shelly-plus-1",
+            timestamp=datetime.utcnow(),
+            protocol=ProtocolType.MQTT,
+            topic="shelly/device-1/status",
         )
         result = await adapter._parse_mqtt_ws(req)
         assert result.parsed_intent == CommandType.GET_STATE
@@ -221,8 +264,10 @@ class TestMQTT:
     @pytest.mark.asyncio
     async def test_status_subtopic(self, adapter):
         req = InterceptedRequest(
-            device_id="shelly-plus-1", timestamp=datetime.utcnow(),
-            protocol=ProtocolType.MQTT, topic="shelly/device-1/status/power",
+            device_id="shelly-plus-1",
+            timestamp=datetime.utcnow(),
+            protocol=ProtocolType.MQTT,
+            topic="shelly/device-1/status/power",
         )
         result = await adapter._parse_mqtt_ws(req)
         assert result.parsed_intent == CommandType.GET_STATE
@@ -230,7 +275,8 @@ class TestMQTT:
     @pytest.mark.asyncio
     async def test_rpc_response_with_src(self, adapter):
         req = InterceptedRequest(
-            device_id="shelly-plus-1", timestamp=datetime.utcnow(),
+            device_id="shelly-plus-1",
+            timestamp=datetime.utcnow(),
             protocol=ProtocolType.MQTT,
             topic="shelly/device-1/rpc",
             body={"src": "shelly", "method": "Switch.Set"},
@@ -241,7 +287,8 @@ class TestMQTT:
     @pytest.mark.asyncio
     async def test_rpc_response_no_src_unchanged(self, adapter):
         req = InterceptedRequest(
-            device_id="shelly-plus-1", timestamp=datetime.utcnow(),
+            device_id="shelly-plus-1",
+            timestamp=datetime.utcnow(),
             protocol=ProtocolType.MQTT,
             topic="shelly/device-1/cmd",
             body={"method": "Switch.Set"},
@@ -253,17 +300,21 @@ class TestMQTT:
     @pytest.mark.asyncio
     async def test_websocket_status(self, adapter):
         req = InterceptedRequest(
-            device_id="shelly-plus-1", timestamp=datetime.utcnow(),
-            protocol=ProtocolType.WEBSOCKET, path="/ws/device-1/status",
+            device_id="shelly-plus-1",
+            timestamp=datetime.utcnow(),
+            protocol=ProtocolType.WEBSOCKET,
+            path="/ws/device-1/status",
         )
         result = await adapter._parse_mqtt_ws(req)
         assert result.parsed_intent == CommandType.GET_STATE
 
     @pytest.mark.asyncio
-    async def test_parse_request_delegates_mqtt(self, adapter, http_request):
+    async def test_parse_request_delegates_mqtt(self, adapter, http_request):  # noqa: ARG002
         req = InterceptedRequest(
-            device_id="shelly-plus-1", timestamp=datetime.utcnow(),
-            protocol=ProtocolType.MQTT, topic="shelly/device-1/status",
+            device_id="shelly-plus-1",
+            timestamp=datetime.utcnow(),
+            protocol=ProtocolType.MQTT,
+            topic="shelly/device-1/status",
         )
         result = await adapter.parse_request(req)
         assert result.parsed_intent == CommandType.GET_STATE
@@ -271,8 +322,10 @@ class TestMQTT:
     @pytest.mark.asyncio
     async def test_parse_request_delegates_ws(self, adapter):
         req = InterceptedRequest(
-            device_id="shelly-plus-1", timestamp=datetime.utcnow(),
-            protocol=ProtocolType.WEBSOCKET, path="/ws/device-1/status",
+            device_id="shelly-plus-1",
+            timestamp=datetime.utcnow(),
+            protocol=ProtocolType.WEBSOCKET,
+            path="/ws/device-1/status",
         )
         result = await adapter.parse_request(req)
         assert result.parsed_intent == CommandType.GET_STATE
@@ -282,32 +335,45 @@ class TestMQTT:
 #  Handle request
 # ---------------------------------------------------------------------------
 
+
 class TestHandleRequest:
     @pytest.mark.asyncio
     async def test_get_state_returns_power(self, adapter):
         device_id = "shelly-1-abc123"
-        await adapter.on_device_connect(device_id, {
-            "model": "shelly1pm", "fw": "20230913-123456",
-            "power": 15.2, "temperature": 22.5, "humidity": 60.0,
-        })
+        await adapter.on_device_connect(
+            device_id,
+            {
+                "model": "shelly1pm",
+                "fw": "20230913-123456",
+                "power": 15.2,
+                "temperature": 22.5,
+                "humidity": 60.0,
+            },
+        )
 
         req = InterceptedRequest(
-            device_id=device_id, timestamp=datetime.utcnow(),
-            protocol=ProtocolType.HTTP, method="GET", path="/status",
+            device_id=device_id,
+            timestamp=datetime.utcnow(),
+            protocol=ProtocolType.HTTP,
+            method="GET",
+            path="/status",
         )
         await adapter.parse_request(req)
         result = await adapter.handle_request(req)
 
         assert result.success is True
-        assert result.response["power"] == 15.2
-        assert result.response["temperature"] == 22.5
-        assert result.response["humidity"] == 60.0
+        assert result.response["power"] == 15.2  # noqa: PLR2004
+        assert result.response["temperature"] == 22.5  # noqa: PLR2004
+        assert result.response["humidity"] == 60.0  # noqa: PLR2004
 
     @pytest.mark.asyncio
     async def test_get_state_no_device_forwards(self, adapter):
         req = InterceptedRequest(
-            device_id="unknown", timestamp=datetime.utcnow(),
-            protocol=ProtocolType.HTTP, method="GET", path="/status",
+            device_id="unknown",
+            timestamp=datetime.utcnow(),
+            protocol=ProtocolType.HTTP,
+            method="GET",
+            path="/status",
         )
         await adapter.parse_request(req)
         result = await adapter.handle_request(req)
@@ -319,8 +385,11 @@ class TestHandleRequest:
         device_id = "shelly-1-abc123"
         await adapter.on_device_connect(device_id, {"model": "shelly1pm"})
         req = InterceptedRequest(
-            device_id=device_id, timestamp=datetime.utcnow(),
-            protocol=ProtocolType.HTTP, method="GET", path="/relay/0?turn=on",
+            device_id=device_id,
+            timestamp=datetime.utcnow(),
+            protocol=ProtocolType.HTTP,
+            method="GET",
+            path="/relay/0?turn=on",
         )
         await adapter.parse_request(req)
         result = await adapter.handle_request(req)
@@ -332,11 +401,13 @@ class TestHandleRequest:
 #  Forward / Build response
 # ---------------------------------------------------------------------------
 
+
 class TestForwardAndBuild:
     @pytest.mark.asyncio
     async def test_forward_to_cloud(self, adapter):
         req = InterceptedRequest(
-            device_id="test", timestamp=datetime.utcnow(),
+            device_id="test",
+            timestamp=datetime.utcnow(),
             protocol=ProtocolType.HTTP,
         )
         result = await adapter.forward_to_cloud(req)
@@ -347,17 +418,19 @@ class TestForwardAndBuild:
     @pytest.mark.asyncio
     async def test_build_response_success(self, adapter):
         req = InterceptedRequest(
-            device_id="test", timestamp=datetime.utcnow(),
+            device_id="test",
+            timestamp=datetime.utcnow(),
             protocol=ProtocolType.HTTP,
         )
         result = CommandResult(success=True, response={"power": 100})
         response = await adapter.build_response(req, result)
-        assert response["power"] == 100
+        assert response["power"] == 100  # noqa: PLR2004
 
     @pytest.mark.asyncio
     async def test_build_response_failure(self, adapter):
         req = InterceptedRequest(
-            device_id="test", timestamp=datetime.utcnow(),
+            device_id="test",
+            timestamp=datetime.utcnow(),
             protocol=ProtocolType.HTTP,
         )
         result = CommandResult(success=False, error="fail")
@@ -368,6 +441,7 @@ class TestForwardAndBuild:
 # ---------------------------------------------------------------------------
 #  Device lifecycle
 # ---------------------------------------------------------------------------
+
 
 class TestDeviceLifecycle:
     @pytest.mark.asyncio
@@ -390,14 +464,19 @@ class TestDeviceLifecycle:
 
     @pytest.mark.asyncio
     async def test_get_device_state(self, adapter):
-        await adapter.on_device_connect("shelly-1", {
-            "power": 12.3, "temperature": 25.0, "humidity": 55.0,
-        })
+        await adapter.on_device_connect(
+            "shelly-1",
+            {
+                "power": 12.3,
+                "temperature": 25.0,
+                "humidity": 55.0,
+            },
+        )
         state = await adapter.get_device_state("shelly-1")
         assert state is not None
-        assert state.power_watts == 12.3
-        assert state.temp_actual == 25.0
-        assert state.humidity == 55.0
+        assert state.power_watts == 12.3  # noqa: PLR2004
+        assert state.temp_actual == 25.0  # noqa: PLR2004
+        assert state.humidity == 55.0  # noqa: PLR2004
         assert state.source == "device"
         assert state.quality == "good"
 
@@ -424,12 +503,16 @@ class TestDeviceLifecycle:
 #  Parse request routing
 # ---------------------------------------------------------------------------
 
+
 class TestParseRequestRouting:
     @pytest.mark.asyncio
     async def test_http_routed_to_parse_http(self, adapter):
         req = InterceptedRequest(
-            device_id="shelly-1", timestamp=datetime.utcnow(),
-            protocol=ProtocolType.HTTPS, method="GET", path="/status",
+            device_id="shelly-1",
+            timestamp=datetime.utcnow(),
+            protocol=ProtocolType.HTTPS,
+            method="GET",
+            path="/status",
         )
         result = await adapter.parse_request(req)
         assert result.parsed_intent == CommandType.GET_STATE
@@ -437,7 +520,8 @@ class TestParseRequestRouting:
     @pytest.mark.asyncio
     async def test_unhandled_protocol_passthrough(self, adapter):
         req = InterceptedRequest(
-            device_id="shelly-1", timestamp=datetime.utcnow(),
+            device_id="shelly-1",
+            timestamp=datetime.utcnow(),
             protocol=ProtocolType.MODBUS,  # not in Shelly's list
             parsed_intent=CommandType.UNKNOWN,
         )
