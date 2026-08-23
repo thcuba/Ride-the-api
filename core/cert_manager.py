@@ -167,9 +167,7 @@ class CertManager:
             return cert_pem, key_pem
 
         # Check disk cache
-        safe_name = self._safe_filename(hostname)
-        cert_file = self.device_certs_dir / f"{safe_name}.pem"
-        key_file = self.device_certs_dir / f"{safe_name}.key"
+        cert_file, key_file = self._device_cert_files(hostname)
 
         if cert_file.exists() and key_file.exists():
             cert_pem = cert_file.read_text()
@@ -374,12 +372,33 @@ class CertManager:
         return (self._ext_dir(hostname) / "cert.pem").exists()
 
     def _ext_dir(self, hostname: str) -> Path:
-        """Get path to external cert directory for hostname."""
-        # Use external_certs_dir from config; default fallback
+        """Get path to external cert directory for hostname.
+
+        Path is confined to the base external-certs directory. Even though
+        ``_safe_filename`` strips path separators, an explicit containment
+        guard is applied so a malformed hostname can never produce a path
+        outside the base (defence in depth against traversal, incl. abs-path
+        and ``..`` escape).
+        """
         base = getattr(self, "external_certs_dir", None)
         if base is None:
             base = Path("./data/external_certs")
-        return Path(base) / self._safe_filename(hostname)
+        base = Path(base).resolve()
+        ext = (base / self._safe_filename(hostname)).resolve()
+        if base != ext and base not in ext.parents:
+            raise ValueError(f"Unsafe hostname path: {hostname!r}")
+        return ext
+
+    def _device_cert_files(self, hostname: str) -> tuple[Path, Path]:
+        """Return (cert, key) paths under the device certs dir for hostname."""
+        base = self.device_certs_dir.resolve()
+        safe = self._safe_filename(hostname)
+        cert = (base / f"{safe}.pem").resolve()
+        key = (base / f"{safe}.key").resolve()
+        for p in (cert, key):
+            if base != p and base not in p.parents:
+                raise ValueError(f"Unsafe hostname path: {hostname!r}")
+        return cert, key
 
     def _load_external_cert(self, hostname: str) -> tuple[str, str] | None:
         """Load external cert and key from disk if they exist."""
