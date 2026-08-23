@@ -66,11 +66,15 @@ class TestExtDirContainment:
         ext = cm._ext_dir("api.example.com")
         assert ext.is_relative_to((tmp_path / "external").resolve())
 
-    def test_absolute_hostname_stays_confined(self, tmp_path):
+    def test_hostile_hostname_rejected(self, tmp_path):
+        """Hostnames with path separators are rejected before any path is built."""
         cm = self._manager(tmp_path)
-        base = (tmp_path / "external").resolve()
         for hostile in ("/tmp/evil", "../", "a\\..\\b", "/abs/path", "..%2f..%2fetc"):
-            ext = cm._ext_dir(hostile)
-            assert ext.is_relative_to(base), (
-                f"escaped base for {hostile!r}: {ext}"
-            )
+            try:
+                cm._ext_dir(hostile)
+                rejected = False
+            except ValueError:
+                rejected = True
+            except OSError:
+                rejected = True
+            assert rejected, f"hostile hostname was accepted: {hostile!r}"

@@ -384,14 +384,32 @@ class CertManager:
         if base is None:
             base = Path("./data/external_certs")
         base = Path(base).resolve()
+        self._validate_hostname(hostname)
         ext = (base / self._safe_filename(hostname)).resolve()
         if base != ext and base not in ext.parents:
             raise ValueError(f"Unsafe hostname path: {hostname!r}")
         return ext
 
+    def _validate_hostname(self, hostname: str) -> None:
+        """Reject hostnames that could be abused as path expressions.
+
+        A valid hostname for certificate lookup is a DNS-style name: letters,
+        digits, hyphens and dots (plus an optional trailing dot). Anything
+        containing path separators (``/``, ``\\\\``), NUL, whitespace or other
+        shell/path metacharacters is rejected outright, before any path is
+        built. This is the primary guard CodeQL can rely on for the
+        'Uncontrolled data in path expression' sink.
+        """
+        if not hostname:
+            raise ValueError("Empty hostname")
+        for ch in hostname:
+            if not (ch.isalnum() or ch in ".-_"):
+                raise ValueError(f"Unsafe hostname: {hostname!r}")
+
     def _device_cert_files(self, hostname: str) -> tuple[Path, Path]:
         """Return (cert, key) paths under the device certs dir for hostname."""
         base = self.device_certs_dir.resolve()
+        self._validate_hostname(hostname)
         safe = self._safe_filename(hostname)
         cert = (base / f"{safe}.pem").resolve()
         key = (base / f"{safe}.key").resolve()
