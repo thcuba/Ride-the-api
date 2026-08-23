@@ -128,7 +128,11 @@ class MQTTBridgeClient(ProtocolServerPlugin):
             return
         cfg = self.config
         self._running = True
-        logger.info("MQTT bridge connecting to %s:%d", cfg.mqtt_host, cfg.mqtt_port)
+        logger.info(
+            "MQTT bridge connecting to %s:%d",
+            getattr(cfg, "host", "localhost"),
+            getattr(cfg, "port", 1883),
+        )
 
     async def stop(self) -> None:
         if self._client:

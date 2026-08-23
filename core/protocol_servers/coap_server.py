@@ -79,34 +79,33 @@ class CoAPServerPlugin(ProtocolServerPlugin):
         method_map = {GET: "GET", POST: "POST", PUT: "PUT", DELETE: "DELETE"}
         coap_method = method_map.get(request.code, "GET")
 
-        body = None
+        query_params = {}
+        for item in request.opt.uri_query or []:
+            if "=" in item:
+                k, _, v = item.partition("=")
+                query_params[k] = v
+            else:
+                query_params[item] = ""
+        # Could be absent when the request lacks a remote address
+        remote_ip = request.remote.sockname[0] if hasattr(request, "remote") else "unknown"
+
+        body: dict | None = None
         if request.payload:
             try:
                 body = json.loads(request.payload.decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError):
                 body = {"raw": request.payload.hex()}
 
-            # aiocoap returns uri_query as a list of full "k=v" strings, so
-            # dict([...]) would raise ValueError (sequence element length).
-            query_params = {}
-            for item in request.opt.uri_query or []:
-                if "=" in item:
-                    k, _, v = item.partition("=")
-                    query_params[k] = v
-                else:
-                    query_params[item] = ""
-            # Could be absent when the request lacks a remote address
-            remote_ip = request.remote.sockname[0] if hasattr(request, "remote") else "unknown"
-            intercepted = InterceptedRequest(
-                device_id=f"coap-{remote_ip}",
-                timestamp=datetime.now(UTC).timestamp(),
-                protocol=ProtocolType.COAP,
-                method=coap_method,
-                path=f"/{path}",
-                headers={},
-                query_params=query_params,
-                body=body,
-            )
+        intercepted = InterceptedRequest(
+            device_id=f"coap-{remote_ip}",
+            timestamp=datetime.now(UTC).timestamp(),
+            protocol=ProtocolType.COAP,
+            method=coap_method,
+            path=f"/{path}",
+            headers={},
+            query_params=query_params,
+            body=body,
+        )
 
         try:
             if asyncio.iscoroutinefunction(self.handler):
