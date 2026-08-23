@@ -49,6 +49,20 @@ EXAMPLE_REGISTER_MAP: dict[int, tuple[str, CommandType]] = {
 }
 
 
+# Write intent types that must be coerced to GET_STATE when a register is
+# read (a read of a writable register reports state, not a write action).
+_WRITE_INTENTS: set[CommandType] = {
+    CommandType.SET_TEMPERATURE,
+    CommandType.SET_MODE,
+    CommandType.SET_FAN_SPEED,
+    CommandType.SET_SWING,
+    CommandType.SET_SCHEDULE,
+    CommandType.TURN_ON,
+    CommandType.TURN_OFF,
+    CommandType.FIRMWARE_UPDATE,
+}
+
+
 class ModbusProtocolAdapter(ProtocolAdapter):
     """Example adapter for Modbus TCP industrial devices."""
 
@@ -81,7 +95,10 @@ class ModbusProtocolAdapter(ProtocolAdapter):
             if function_code in (0x01, 0x02, 0x03, 0x04):
                 if register in self._register_map:
                     field_name, intent = self._register_map[register]
-                    if intent == CommandType.SET_TEMPERATURE:
+                    # A read of any writable register reports state, so a
+                    # write intent (SET_MODE, TURN_ON, …) must not leak through
+                    # on a read (it would mis-route the request to forward).
+                    if intent in _WRITE_INTENTS:
                         intent = CommandType.GET_STATE
                     request.parsed_intent = intent
                     request.parsed_params = {
