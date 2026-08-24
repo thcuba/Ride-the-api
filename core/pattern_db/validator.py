@@ -123,6 +123,11 @@ PROTOCOL_METHODS: dict[str, set[str]] = {
     **BRIDGE_METHODS,
 }
 
+# Pre-computed uppercase sets for fast O(1) membership checking per pair check
+PROTOCOL_METHODS_UPPER: dict[str, set[str]] = {
+    p: {m.upper() for m in methods} for p, methods in PROTOCOL_METHODS.items()
+}
+
 ALL_PROTOCOLS = set(PROTOCOL_METHODS.keys())
 
 
@@ -130,7 +135,8 @@ def _validate_method_for_protocol(protocol: str, method: str, _path: str) -> lis
     """Check that the method is valid for the given protocol."""
     errors: list[str] = []
     valid = PROTOCOL_METHODS.get(protocol)
-    if valid and method and method.upper() not in {m.upper() for m in valid}:
+    valid_upper = PROTOCOL_METHODS_UPPER.get(protocol)
+    if valid and valid_upper and method and method.upper() not in valid_upper:
         errors.append(
             f"Method '{method}' is not valid for protocol '{protocol}'. "
             f"Expected one of: {', '.join(sorted(valid))}"
