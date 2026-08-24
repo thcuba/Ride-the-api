@@ -1,20 +1,20 @@
-# Guida Rapida — Ride-the-API
+# Quick Start — Ride-the-API
 
-Proxy di sostituzione cloud locale che intercetta il traffico IoT, impara i protocolli tramite LLM e serve risposte localmente.
+Local cloud replacement proxy that intercepts IoT traffic, learns protocols via LLM, and serves responses locally.
 
 ---
 
-## 1. Prerequisiti
+## 1. Prerequisites
 
 - **Python ≥ 3.11**
 - **Git**
-- **DNS server** (dnsmasq, Pi-hole o AdGuard Home) per il routing dei dispositivi
-- **API LLM** (OpenAI, Ollama locale, vLLM, ecc.)
-- **Opzionale — Docker**: per lo stack completo (nginx + ride-the-api)
+- **DNS server** (dnsmasq, Pi-hole, or AdGuard Home) for device routing
+- **LLM API** (OpenAI, local Ollama, vLLM, etc.)
+- **Optional — Docker**: for the full stack (nginx + ride-the-api)
 
 ---
 
-## 2. Clona il repository
+## 2. Clone the repository
 
 ```bash
 git clone https://github.com/thcuba/Ride-the-api.git
@@ -23,21 +23,21 @@ cd Ride-the-api
 
 ---
 
-## 3. Installa le dipendenze
+## 3. Install dependencies
 
-### Con pip (consigliato)
+### With pip (recommended)
 
 ```bash
 pip install -e .
 ```
 
-### Con uv (alternativa più veloce)
+### With uv (faster alternative)
 
 ```bash
 uv pip install -e .
 ```
 
-### Dipendenze opzionali
+### Optional dependencies
 
 - **Dev tools** (ruff, mypy, pytest): `pip install -e ".[dev]"`
 - **GPU ONNX**: `pip install -e ".[gpu]"`
@@ -45,18 +45,18 @@ uv pip install -e .
 
 ---
 
-## 4. Configura config.yaml
+## 4. Configure config.yaml
 
-Copia e personalizza il file di configurazione:
+Copy and customize the configuration file:
 
 ```bash
 cp config/config.yaml config/config.local.yaml
-# oppure modifica direttamente config/config.yaml
+# or edit config/config.yaml directly
 ```
 
-### 4.1 — LLM (obbligatorio)
+### 4.1 — LLM (required)
 
-Imposta il profilo LLM nella sezione `llm_decipher`:
+Set the LLM profile in the `llm_decipher` section:
 
 ```yaml
 llm_decipher:
@@ -66,21 +66,21 @@ llm_decipher:
   profiles:
     default:
       base_url: "https://api.openai.com/v1"
-      api_key: "${OPENAI_API_KEY}"            # o metti la chiave in chiaro
+      api_key: "${OPENAI_API_KEY}"            # or put the key in plain text
       model_id: "gpt-4o-mini"
 ```
 
-> **Ollama locale:** cambia `base_url` in `http://localhost:11434/v1`, `api_key` in `"ollama"`, e `model_id` in `"llama3.1:8b"` (o il modello che preferisci).
+> **Local Ollama:** change `base_url` to `http://localhost:11434/v1`, `api_key` to `"ollama"`, and `model_id` to `"llama3.1:8b"` (or your preferred model).
 
-Esporta la variabile d'ambiente:
+Export the environment variable:
 
 ```bash
 export OPENAI_API_KEY="sk-..."
 ```
 
-### 4.2 — Database (facoltativo)
+### 4.2 — Database (optional)
 
-Per sviluppo con SQLite (default), non serve modificare nulla:
+For development with SQLite (default), no changes needed:
 
 ```yaml
 core:
@@ -88,35 +88,35 @@ core:
   device_db_dir: "./data/devices"
 ```
 
-Per produzione, imposta un URL PostgreSQL:
+For production, set a PostgreSQL URL:
 
 ```yaml
 core:
   database_url: "postgresql+asyncpg://user:pass@localhost/ride_api"
 ```
 
-### 4.3 — Modalità apprendimento/produzione
+### 4.3 — Learning/Production mode
 
 ```yaml
 learning:
   enabled: true
   default_mode: "learning"        # learning | production | hybrid
   default_match_threshold: 0.85
-  auto_switch_to_production: false  # true per switch automatico al 99% match rate
+  auto_switch_to_production: false  # true for automatic switch at 99% match rate
 ```
 
-### 4.4 — Routing DNS (esempio dnsmasq)
+### 4.4 — DNS routing (dnsmasq example)
 
-Crea `/etc/dnsmasq.d/ride-api.conf`:
+Create `/etc/dnsmasq.d/ride-api.conf`:
 
 ```
-# Sostituisci 192.168.1.100 con l'IP del server ride-the-api
+# Replace 192.168.1.100 with the IP of the ride-the-api server
 address=/mqtt.example.com/192.168.1.100
 address=/api.example.com/192.168.1.100
 address=/openapi.example.com/192.168.1.100
 ```
 
-Riavvia dnsmasq:
+Restart dnsmasq:
 
 ```bash
 sudo systemctl restart dnsmasq
@@ -124,27 +124,27 @@ sudo systemctl restart dnsmasq
 
 ---
 
-## 5. Avvia il server
+## 5. Start the server
 
-### Direttamente con Python
+### Directly with Python
 
 ```bash
 python -m core.server
 ```
 
-Il server si avvia su `http://0.0.0.0:8911` (di default).
+The server starts on `http://0.0.0.0:8911` (default).
 
-### Con Docker Compose (consigliato per produzione)
+### With Docker Compose (recommended for production)
 
 ```bash
 docker compose -f deploy/docker-compose.yml up -d
 ```
 
-Lo stack avvia:
-- **nginx** sulle porte 80/443 (TLS) e 8883 (MQTT over TLS)
-- **Ride-the-API** sulla porta interna 8911
+The stack starts:
+- **nginx** on ports 80/443 (TLS) and 8883 (MQTT over TLS)
+- **Ride-the-API** on internal port 8911
 
-### Come servizio systemd (Linux)
+### As a systemd service (Linux)
 
 ```bash
 sudo cp deploy/ride-the-api.service /etc/systemd/system/
@@ -155,22 +155,22 @@ sudo systemctl start ride-the-api
 
 ---
 
-## 6. Connetti un dispositivo IoT
+## 6. Connect an IoT device
 
-### 6.1 — Configura il DNS del dispositivo
+### 6.1 — Configure the device DNS
 
-- Sul tuo router/dhcp, imposta il DNS primario sull'IP del server ride-the-api
-- Oppure configura staticamente il DNS sul dispositivo IoT
-- Oppure, per un test rapido, aggiungi una riga in `/etc/hosts` del dispositivo:
+- On your router/DHCP, set the primary DNS to the ride-the-api server IP
+- Or statically configure DNS on the IoT device
+- Or, for a quick test, add a line in the device's `/etc/hosts`:
 
 ```
 192.168.1.100   mqtt.example.com
 192.168.1.100   api.example.com
 ```
 
-### 6.2 — (Opzionale) Intercetta TLS
+### 6.2 — (Optional) Intercept TLS
 
-Se il dispositivo usa HTTPS, il proxy MITM deve essere attivo:
+If the device uses HTTPS, the MITM proxy must be active:
 
 ```yaml
 tls_decrypt:
@@ -180,28 +180,28 @@ tls_decrypt:
     - 8883
 ```
 
-Scarica il certificato CA da `http://<ip-server>:8911/api/tls/ca.pem` e installalo sul dispositivo come autorità di fiducia.
+Download the CA certificate from `http://<server-ip>:8911/api/tls/ca.pem` and install it on the device as a trusted authority.
 
-### 6.3 — Verifica la connessione
+### 6.3 — Verify the connection
 
-Accendi il dispositivo IoT. Il dispositivo inizierà a parlare col cloud — ride-the-api intercetta il traffico e inizia l'apprendimento.
+Turn on the IoT device. The device will start talking to the cloud — ride-the-api intercepts the traffic and begins learning.
 
 ---
 
-## 7. Verifica
+## 7. Verification
 
-### Dashboard web
+### Web dashboard
 
-Apri nel browser:
+Open in your browser:
 
 ```
-http://<ip-server>:8911/
+http://<server-ip>:8911/
 ```
 
-Vedrai:
-- Elenco dei dispositivi rilevati
-- Match rate e numero di pattern appresi per ogni dispositivo
-- Pulsanti per switch tra modalità learning/production
+You will see:
+- List of detected devices
+- Match rate and number of learned patterns for each device
+- Buttons to switch between learning/production modes
 - Buffer fill level
 
 ### API health check
@@ -210,44 +210,44 @@ Vedrai:
 curl http://localhost:8911/health
 ```
 
-Risposta attesa: `{"status": "ok"}` (o simile).
+Expected response: `{"status": "ok"}` (or similar).
 
-### Stato TLS
+### TLS status
 
 ```bash
 curl http://localhost:8911/api/tls/ports
 ```
 
-Mostra le porte di ascolto TLS e i certificati attivi.
+Shows the TLS listening ports and active certificates.
 
-### Log in tempo reale
+### Real-time logs
 
 ```bash
-# Se avviato manualmente — i log vanno su stdout
+# If started manually — logs go to stdout
 tail -f data/core.log
 ```
 
 ---
 
-## 8. Prossimi passi
+## 8. Next steps
 
-| Cosa fare | Documentazione |
+| What to do | Documentation |
 |---|---|
-| Capire l'architettura completa | `docs/nginx-architecture.md` |
-| Formato database portatile | `docs/portable-pattern-database.md` |
-| Editor pattern via web UI | `http://localhost:8911/patterns/{device_id}` |
-| Esportare/importare pattern | API REST: `GET/POST /api/patterns/export` |
-| Configurare server protocolli diretti (MQTT, CoAP, Modbus…) | Sezione `protocol_servers` in `config.yaml` |
+| Understand the full architecture | `docs/nginx-architecture.md` |
+| Portable pattern database format | `docs/portable-pattern-database.md` |
+| Edit patterns via web UI | `http://localhost:8911/patterns/{device_id}` |
+| Export/import patterns | REST API: `GET/POST /api/patterns/export` |
+| Configure direct protocol servers (MQTT, CoAP, Modbus…) | `protocol_servers` section in `config.yaml` |
 
 ---
 
-## 9. Risoluzione problemi rapidi
+## 9. Quick Troubleshooting
 
-| Problema | Causa probabile | Soluzione |
+| Problem | Likely cause | Solution |
 |---|---|---|
-| Il dispositivo non viene rilevato | DNS non punta al proxy | Verifica `nslookup <hostname-cloud>` dal dispositivo |
-| `Connection refused` su :8911 | Server non avviato | Controlla `python -m core.server` e i log |
-| TLS handshake fallisce | Certificato CA non installato sul device | Scarica e installa CA da `/api/tls/ca.pem` |
-| Match rate al 0% | Nessun pattern ancora appreso | Aspetta qualche richiesta in learning mode |
-| Forwarding loop | DNS risolve al proxy stesso | Usa `signal_forward_to_cloud: true` con nginx |
-| `OPENAI_API_KEY` non trovata | Variabile d'ambiente non impostata | `export OPENAI_API_KEY="sk-..."` |
+| Device not detected | DNS does not point to proxy | Verify `nslookup <cloud-hostname>` from the device |
+| `Connection refused` on :8911 | Server not started | Check `python -m core.server` and the logs |
+| TLS handshake fails | CA certificate not installed on device | Download and install CA from `/api/tls/ca.pem` |
+| Match rate at 0% | No patterns learned yet | Wait for a few requests in learning mode |
+| Forwarding loop | DNS resolves to the proxy itself | Use `signal_forward_to_cloud: true` with nginx |
+| `OPENAI_API_KEY` not found | Environment variable not set | `export OPENAI_API_KEY="sk-..."` |
