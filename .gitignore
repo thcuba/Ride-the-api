@@ -65,4 +65,5 @@ htmlcov/
 .ruff_cache/
 
 # Docker
-docker-compose.override.ymlcore/database.py.bak
+docker-compose.override.yml
+core/database.py.bak

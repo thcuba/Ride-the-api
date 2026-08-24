@@ -4,6 +4,7 @@ Covers the path-traversal sanitization in ``CertManager._safe_filename``
 (regression for the case where a hostname containing ``/`` or ``\\`` could
 escape the external-certs directory and reach arbitrary paths).
 """
+
 from pathlib import Path
 
 from core.cert_manager import CertManager
@@ -41,9 +42,7 @@ class TestSafeFilename:
                 resolved = sub.resolve()
             except OSError:
                 continue  # resolved may fail on missing parents; fine.
-            assert resolved.is_relative_to(base.resolve()), (
-                f"escaped base for {hostile!r}: {sub}"
-            )
+            assert resolved.is_relative_to(base.resolve()), f"escaped base for {hostile!r}: {sub}"
 
     def test_wildcards_still_supported(self):
         """DNS-safe hostname characters are preserved."""

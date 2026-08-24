@@ -430,9 +430,7 @@ class TLSMITMServer:
                     # the connection with no response, which would hang the
                     # device waiting forever.
                     action = (
-                        handler_result.get("action")
-                        if isinstance(handler_result, dict)
-                        else ""
+                        handler_result.get("action") if isinstance(handler_result, dict) else ""
                     )
                     fallback_status = 501 if action == "no_fallback" else 502
                     await self._write_http_response(
