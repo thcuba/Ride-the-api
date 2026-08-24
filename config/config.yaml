@@ -7,10 +7,9 @@
 
 core:
   # Core database (SQLite for dev, PostgreSQL for prod)
-  database_url: "sqlite+aiosqlite:///./data/core.db"
-  
+  database_url: "sqlite+aiosqlite:///./ridebase/core.db"
   # Device-specific protocol databases directory
-  device_db_dir: "./data/devices"
+  device_db_dir: "./ridebase/devices"
   
   # Optional: override device DB URLs (e.g., for PostgreSQL)
   # device_databases:

@@ -26,8 +26,8 @@ class ContextBufferSizes(int, Enum):
 
 
 class CoreConfig(BaseModel):
-    database_url: str = "sqlite+aiosqlite:///./data/core.db"
-    device_db_dir: str = "./data/devices"
+    database_url: str = "sqlite+aiosqlite:///./ridebase/core.db"
+    device_db_dir: str = "./ridebase/devices"
     device_databases: dict[str, str] = Field(default_factory=dict)
     default_context_buffer_size: int = 524288  # 512KB default
 

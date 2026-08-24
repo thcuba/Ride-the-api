@@ -45,8 +45,8 @@ _EXPECTED_TLS_DECRYPT_PORT = 8883
 class TestCoreConfig:
     def test_defaults(self):
         c = CoreConfig()
-        assert c.database_url == "sqlite+aiosqlite:///./data/core.db"
-        assert c.device_db_dir == "./data/devices"
+        assert c.database_url == "sqlite+aiosqlite:///./ridebase/core.db"
+        assert c.device_db_dir == "./ridebase/devices"
         assert c.device_databases == {}
         assert c.default_context_buffer_size == _EXPECTED_DEFAULT_CONTEXT_BUFFER_SIZE
 
@@ -242,7 +242,7 @@ class TestModificationAction:
 class TestRootConfig:
     def test_defaults(self):
         c = Config()
-        assert c.core.database_url == "sqlite+aiosqlite:///./data/core.db"
+        assert c.core.database_url == "sqlite+aiosqlite:///./ridebase/core.db"
         assert c.proxy.port == _EXPECTED_PROXY_PORT
         assert c.learning.enabled is True
         assert c.llm_decipher.enabled is True
