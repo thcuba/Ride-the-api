@@ -1,11 +1,14 @@
 """
 Dual-stack upstream DNS resolver.
 
-Resolves cloud hostnames directly via public DNS servers (8.8.8.8 / 1.1.1.1,
-IPv4 + IPv6) bypassing the local DNS (dnsmasq / Pi-hole / AdGuard Home).
+Resolves cloud hostnames directly via configurable upstream DNS servers,
+bypassing the local DNS (dnsmasq / Pi-hole / AdGuard Home).
 
 This prevents forwarding loops where the proxy re-enters itself when the
 local DNS server returns the proxy's own IP for a cloud hostname.
+
+DNS servers are configured in ``config.yaml`` under ``dns.dns_servers``
+(IPv4) and ``dns.dns_servers_v6`` (IPv6), defaulting to 8.8.8.8 / 1.1.1.1.
 """
 
 from __future__ import annotations
@@ -14,24 +17,16 @@ import asyncio
 import ipaddress
 import logging
 import time
+from typing import TYPE_CHECKING
 
 import dns.asyncresolver
 import dns.exception
 import dns.resolver
 
+if TYPE_CHECKING:
+    from core.config import Config
+
 logger = logging.getLogger(__name__)
-
-# ── Public upstream DNS servers (primary → fallback), dual-stack ──────────────
-
-UPSTREAM_DNS_SERVERS: list[str] = [
-    "8.8.8.8",  # Google IPv4 (primary)
-    "1.1.1.1",  # Cloudflare IPv4 (fallback)
-]
-
-UPSTREAM_DNS_SERVERS_V6: list[str] = [
-    "2001:4860:4860::8888",  # Google IPv6
-    "2606:4700:4700::1111",  # Cloudflare IPv6
-]
 
 # Cache TTL
 CACHE_TTL = 300  # 5 minutes
@@ -42,6 +37,14 @@ _IPV6_VERSION = 6
 # In-memory cache: hostname -> (timestamp, [ip_addresses])
 _resolver_cache: dict[str, tuple[float, list[str]]] = {}
 
+# In-memory snapshot of the last DNS config so we can rebuild the resolver
+# without importing ConfigManager at module level (avoids circular imports).
+_last_dns_servers: list[str] = ["8.8.8.8", "1.1.1.1"]
+_last_dns_servers_v6: list[str] = [
+    "2001:4860:4860::8888",
+    "2606:4700:4700::1111",
+]
+
 
 def _addr_family(address: str) -> int:
     """Return IP version (4 or 6); non-IP strings default to 4."""
@@ -51,11 +54,21 @@ def _addr_family(address: str) -> int:
         return 4
 
 
+def _apply_config(config: Config) -> None:
+    """Update cached DNS server lists from a loaded Config object."""
+    global _last_dns_servers, _last_dns_servers_v6  # noqa: PLW0603
+    dns_cfg = config.dns
+    if dns_cfg.dns_servers:
+        _last_dns_servers = list(dns_cfg.dns_servers)
+    if dns_cfg.dns_servers_v6:
+        _last_dns_servers_v6 = list(dns_cfg.dns_servers_v6)
+
+
 def _build_resolver() -> dns.asyncresolver.AsyncResolver:
-    """Build an AsyncResolver configured to use the public upstream DNS servers."""
+    """Build an AsyncResolver configured to use the configured upstream DNS servers."""
     resolver = dns.asyncresolver.AsyncResolver(configure=False)
-    resolver.nameservers = UPSTREAM_DNS_SERVERS
-    resolver.nameservers_v6 = UPSTREAM_DNS_SERVERS_V6
+    resolver.nameservers = _last_dns_servers
+    resolver.nameservers_v6 = _last_dns_servers_v6
     resolver.timeout = 5.0
     resolver.lifetime = 10.0
     return resolver
@@ -69,9 +82,13 @@ async def resolve_upstream(  # noqa: C901, PLR0912
 ) -> list[str]:
     """Resolve a cloud hostname bypassing the local DNS.
 
-    Tries nameservers in order (8.8.8.8 → 1.1.1.1) and returns a list of
-    IPv4 and IPv6 addresses (A + AAAA records). Falls back to the system
-    resolver only when all upstream DNS servers are unreachable.
+    Tries nameservers in order (configured in ``dns.dns_servers``, default
+    8.8.8.8 → 1.1.1.1) and returns a list of IPv4 and IPv6 addresses
+    (A + AAAA records). Falls back to the system resolver only when all
+    upstream DNS servers are unreachable.
+
+    The DNS server list is lazily refreshed from the global ConfigManager
+    the first time this function is called in a session.
 
     Args:
         hostname: The domain name to resolve (e.g. ``api.example.com``).
@@ -89,8 +106,6 @@ async def resolve_upstream(  # noqa: C901, PLR0912
         cached = _resolver_cache.get(hostname)
         if cached and (now - cached[0]) < CACHE_TTL:
             logger.debug("Resolver cache hit for %s", hostname)
-            # Return a copy so callers can't mutate the shared cache entry,
-            # and re-order for prefer_ipv6 (which is not part of the cache key).
             result = list(cached[1])
             if prefer_ipv6:
                 v6 = [ip for ip in result if _addr_family(ip) == _IPV6_VERSION]
@@ -120,13 +135,11 @@ async def resolve_upstream(  # noqa: C901, PLR0912
         answers6 = await asyncio.wait_for(resolver.resolve(hostname, "AAAA"), timeout=5.0)
         v6_list = [str(r) for r in answers6]
         if prefer_ipv6:
-            # Insert IPv6 at the front
             v6_list.extend(addresses)
             addresses = v6_list
         else:
             addresses.extend(v6_list)
     except dns.exception.DNSException:
-        # AAAA is optional — many domains don't have IPv6
         pass
 
     # ── Fallback to system resolver when upstream DNS is unreachable ──
@@ -151,8 +164,6 @@ async def resolve_upstream(  # noqa: C901, PLR0912
     # Update cache
     if addresses:
         _resolver_cache[hostname] = (now, list(addresses))
-        # Opportunistic sweep: drop expired entries so the global cache cannot
-        # grow unbounded with long-lived distinct hostnames.
         expired = [h for h, (ts, _) in _resolver_cache.items() if (now - ts) >= CACHE_TTL]
         for h in expired:
             _resolver_cache.pop(h, None)

@@ -12,8 +12,8 @@ import pytest
 from dns.exception import DNSException
 
 from core.upstream_resolver import (
-    UPSTREAM_DNS_SERVERS,
-    UPSTREAM_DNS_SERVERS_V6,
+    _last_dns_servers,
+    _last_dns_servers_v6,
     _resolver_cache,
     batch_resolve_upstream,
     clear_cache,
@@ -328,11 +328,11 @@ async def test_cache_hit_respects_prefer_ipv6_ordering():
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-def test_upstream_dns_servers_configured():
-    """The upstream DNS server list is correctly configured."""
-    assert "8.8.8.8" in UPSTREAM_DNS_SERVERS
-    assert "1.1.1.1" in UPSTREAM_DNS_SERVERS
-    assert "2001:4860:4860::8888" in UPSTREAM_DNS_SERVERS_V6
-    assert "2606:4700:4700::1111" in UPSTREAM_DNS_SERVERS_V6
-    assert UPSTREAM_DNS_SERVERS[0] == "8.8.8.8"  # primary
-    assert UPSTREAM_DNS_SERVERS[1] == "1.1.1.1"  # fallback
+def test_upstream_dns_default_servers():
+    """The default DNS server lists match Google/Cloudflare."""
+    assert "8.8.8.8" in _last_dns_servers
+    assert "1.1.1.1" in _last_dns_servers
+    assert "2001:4860:4860::8888" in _last_dns_servers_v6
+    assert "2606:4700:4700::1111" in _last_dns_servers_v6
+    assert _last_dns_servers[0] == "8.8.8.8"  # primary
+    assert _last_dns_servers[1] == "1.1.1.1"  # fallback

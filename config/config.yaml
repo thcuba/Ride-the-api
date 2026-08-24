@@ -479,17 +479,15 @@ dns:
     api.example.com -> 192.168.1.100
     openapi.example.com -> 192.168.1.100
 
-  # Upstream DNS resolver for forwarding to the real cloud without loops.
+  # Upstream DNS servers for loop-free cloud forwarding.
   # When signal_forward_to_cloud is enabled, the proxy signals nginx to
-  # route unmatched requests via a dedicated resolver that bypasses the
+  # route unmatched requests via these dedicated resolvers, bypassing the
   # local DNS (dnsmasq / Pi-hole / AdGuard Home).
-  upstream:
-    # Primary IPv4 DNS server
-    primary: "8.8.8.8"
-    # Fallback IPv4 DNS server
-    fallback: "1.1.1.1"
-    # IPv6 DNS servers (dual-stack)
-    v6_primary: "2001:4860:4860::8888"
-    v6_fallback: "2606:4700:4700::1111"
-    # Cache TTL for resolved addresses (seconds)
-    cache_ttl: 300
+  # IPv4 DNS servers (tried in order)
+  dns_servers:
+    - "8.8.8.8"
+    - "1.1.1.1"
+  # IPv6 DNS servers (tried in order)
+  dns_servers_v6:
+    - "2001:4860:4860::8888"
+    - "2606:4700:4700::1111"
