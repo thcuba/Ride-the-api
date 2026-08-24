@@ -1,65 +1,65 @@
-# Riferimento API REST — Ride-the-API
+# REST API Reference — Ride-the-API
 
-> Tutti gli endpoint REST esposti dal proxy per la gestione dei dispositivi, pattern, buffer e osservabilità.
+> All REST endpoints exposed by the proxy for device management, patterns, buffer, and observability.
 
-- **Base URL predefinito**: `http://localhost:8911`
-- **Formato richiesta/risposta**: JSON
-- **Documentazione interattiva**: `http://localhost:8911/docs` (OpenAPI / Swagger UI)
+- **Default Base URL**: `http://localhost:8911`
+- **Request/Response Format**: JSON
+- **Interactive Documentation**: `http://localhost:8911/docs` (OpenAPI / Swagger UI)
 
 ---
 
-## Indice
+## Table of Contents
 
 - [Health Check](#health-check-get-health)
-- [Metriche](#metriche-get-metrics)
-- [Dispositivi](#dispositivi)
-  - [Lista dispositivi](#lista-dispositivi-get-apidevices)
-  - [Dettaglio dispositivo](#dettaglio-dispositivo-get-apidevicesdevice_id)
-  - [Statistiche match](#statistiche-match-get-apidevicesdevice_idstats)
-  - [Tasso di match](#tasso-di-match-get-apidevicesdevice_idmatch-rate)
-  - [Modalità dispositivo](#modalità-dispositivo-post-apidevicesdevice_idmode)
+- [Metrics](#metrics-get-metrics)
+- [Devices](#devices)
+  - [List Devices](#list-devices-get-apidevices)
+  - [Device Detail](#device-detail-get-apidevicesdevice_id)
+  - [Match Statistics](#match-statistics-get-apidevicesdevice_idstats)
+  - [Match Rate](#match-rate-get-apidevicesdevice_idmatch-rate)
+  - [Device Mode](#device-mode-post-apidevicesdevice_idmode)
   - [Auto-switch](#auto-switch-getput-apidevicesdevice_idauto-switch)
-  - [Configurazione LLM](#configurazione-llm-put-apidevicesdevice_idllm)
-  - [Configurazione TLS](#configurazione-tls-put-apidevicesdevice_idtls-config)
-  - [Context notes](#context-notes-getput-apidevicesdevice_idcontext)
-  - [Assegnazione database](#assegnazione-database-post-apidevicesdevice_iddatabase)
-  - [Risoluzione IP](#risoluzione-ip-get-apidevicesby-ipip_address)
-  - [Registrazione IP](#registrazione-ip-post-apidevicesdevice_idip)
+  - [LLM Configuration](#llm-configuration-put-apidevicesdevice_idllm)
+  - [TLS Configuration](#tls-configuration-put-apidevicesdevice_idtls-config)
+  - [Context Notes](#context-notes-getput-apidevicesdevice_idcontext)
+  - [Database Assignment](#database-assignment-post-apidevicesdevice_iddatabase)
+  - [IP Resolution](#ip-resolution-get-apidevicesby-ipip_address)
+  - [IP Registration](#ip-registration-post-apidevicesdevice_idip)
 - [Buffer](#buffer)
-  - [Lista buffer](#lista-buffer-get-apidevicesdevice_idbuffer)
-  - [Elimina entry buffer](#elimina-entry-buffer-delete-apidevicesdevice_idbufferentry_id)
-  - [Flush su LLM](#flush-su-llm-post-apidevicesdevice_idllmflush)
-  - [Preview LLM](#preview-llm-post-apidevicesdevice_idllmpreview)
-- [Pattern](#pattern)
-  - [Lista pattern](#lista-pattern-get-apidevicesdevice_idpatterns)
-  - [Dettaglio pattern](#dettaglio-pattern-get-apidevicesdevice_idpatternspattern_id)
-  - [Aggiorna pattern](#aggiorna-pattern-put-apidevicesdevice_idpatternspattern_id)
-  - [Modifica parziale pattern](#modifica-parziale-pattern-patch-apidevicesdevice_idpatternspattern_id)
-  - [Elimina pattern](#elimina-pattern-delete-apidevicesdevice_idpatternspattern_id)
-  - [Esporta pattern](#esporta-pattern-get-apidevicesdevice_idpatternsexport)
-  - [Importa pattern](#importa-pattern-post-apidevicesdevice_idpatternsimport)
+  - [List Buffer](#list-buffer-get-apidevicesdevice_idbuffer)
+  - [Delete Buffer Entry](#delete-buffer-entry-delete-apidevicesdevice_idbufferentry_id)
+  - [Flush to LLM](#flush-to-llm-post-apidevicesdevice_idllmflush)
+  - [LLM Preview](#llm-preview-post-apidevicesdevice_idllmpreview)
+- [Patterns](#patterns)
+  - [List Patterns](#list-patterns-get-apidevicesdevice_idpatterns)
+  - [Pattern Detail](#pattern-detail-get-apidevicesdevice_idpatternspattern_id)
+  - [Update Pattern](#update-pattern-put-apidevicesdevice_idpatternspattern_id)
+  - [Partial Update Pattern](#partial-update-pattern-patch-apidevicesdevice_idpatternspattern_id)
+  - [Delete Pattern](#delete-pattern-delete-apidevicesdevice_idpatternspattern_id)
+  - [Export Patterns](#export-patterns-get-apidevicesdevice_idpatternsexport)
+  - [Import Patterns](#import-patterns-post-apidevicesdevice_idpatternsimport)
 - [Capture](#capture)
-  - [Esporta capture](#esporta-capture-get-apidevicesdevice_idcaptureexport)
-  - [Importa capture](#importa-capture-post-apidevicesdevice_idcaptureimport)
+  - [Export Capture](#export-capture-get-apidevicesdevice_idcaptureexport)
+  - [Import Capture](#import-capture-post-apidevicesdevice_idcaptureimport)
 - [TLS / MITM](#tls--mitm)
-  - [Scarica CA](#scarica-ca-get-apitlsca-cert)
-  - [Statistiche TLS](#statistiche-tls-get-apitlsstats)
-  - [Dispositivi TLS](#dispositivi-tls-get-apitlsdevice-ports)
-  - [Non identificati](#non-identificati-get-apitlsunidentified)
-  - [Lista porte TLS](#lista-porte-tls-get-apitlsports)
-  - [Aggiungi porta TLS](#aggiungi-porta-tls-post-apitlsports)
-  - [Rimuovi porta TLS](#rimuovi-porta-tls-delete-apitlsportsport)
-  - [Lista certificati](#lista-certificati-get-apitlscerts)
-  - [Info certificato](#info-certificato-get-apitlscertshostname)
-  - [Carica certificato](#carica-certificato-post-apitlscertsupload)
-  - [Carica certificato JSON](#carica-certificato-json-post-apitlscertsupload-json)
-  - [Elimina certificato](#elimina-certificato-delete-apitlscertshostname)
-  - [Ruota certificato](#ruota-certificato-post-apitlscertshostnamerotate)
-  - [Scarica root CA](#scarica-root-ca-post-apitlsroot-cadownload)
-  - [Script Frida](#script-frida-get-apitlsfridascriptjs)
-- [Profili LLM](#profili-llm)
-- [Server di protocollo](#server-di-protocollo)
-- [Indipendenza dal Cloud](#indipendenza-dal-cloud)
+  - [Download CA](#download-ca-get-apitlsca-cert)
+  - [TLS Statistics](#tls-statistics-get-apitlsstats)
+  - [TLS Devices](#tls-devices-get-apitlsdevice-ports)
+  - [Unidentified](#unidentified-get-apitlsunidentified)
+  - [List TLS Ports](#list-tls-ports-get-apitlsports)
+  - [Add TLS Port](#add-tls-port-post-apitlsports)
+  - [Remove TLS Port](#remove-tls-port-delete-apitlsportsport)
+  - [List Certificates](#list-certificates-get-apitlscerts)
+  - [Certificate Info](#certificate-info-get-apitlscertshostname)
+  - [Upload Certificate](#upload-certificate-post-apitlscertsupload)
+  - [Upload Certificate JSON](#upload-certificate-json-post-apitlscertsupload-json)
+  - [Delete Certificate](#delete-certificate-delete-apitlscertshostname)
+  - [Rotate Certificate](#rotate-certificate-post-apitlscertshostnamerotate)
+  - [Download Root CA](#download-root-ca-post-apitlsroot-cadownload)
+  - [Frida Script](#frida-script-get-apitlsfridascriptjs)
+- [LLM Profiles](#llm-profiles)
+- [Protocol Servers](#protocol-servers)
+- [Cloud Independence](#cloud-independence)
 
 ---
 
@@ -67,7 +67,7 @@
 
 ### `GET /health`
 
-Verifica lo stato del servizio.
+Checks the service status.
 
 **Response `200 OK`**
 
@@ -80,22 +80,22 @@ Verifica lo stato del servizio.
 }
 ```
 
-| Campo | Tipo | Descrizione |
+| Field | Type | Description |
 |-------|------|-------------|
-| `status` | string | `"healthy"` se il servizio è operativo |
-| `service` | string | Nome del servizio |
-| `version` | string | Versione corrente |
-| `adapters` | array[string] | Lista dei vendor/adapter registrati |
+| `status` | string | `"healthy"` if the service is operational |
+| `service` | string | Service name |
+| `version` | string | Current version |
+| `adapters` | array[string] | List of registered vendors/adapters |
 
-**Codici di stato**: `200` OK, `503` Service Unavailable
+**Status codes**: `200` OK, `503` Service Unavailable
 
 ---
 
-## Metriche
+## Metrics
 
 ### `GET /metrics`
 
-Espone metriche in formato Prometheus. Configurabile in `config.yaml`:
+Exposes metrics in Prometheus format. Configurable in `config.yaml`:
 
 ```yaml
 observability:
@@ -105,31 +105,31 @@ observability:
     path: "/metrics"
 ```
 
-**Nota**: Le metriche sono servite sulla porta `9090` (non sulla 8911 del proxy)
-quando abilitate. Usa Prometheus o un qualsiasi scraper per raccoglierle.
+**Note**: Metrics are served on port `9090` (not on the proxy's 8911)
+when enabled. Use Prometheus or any scraper to collect them.
 
-**Response**: Testo in formato Prometheus exposition format (`text/plain; version=0.0.4`).
+**Response**: Text in Prometheus exposition format (`text/plain; version=0.0.4`).
 
-Metriche esposte (da `prometheus-client` e metriche custom):
+Exposed metrics (from `prometheus-client` and custom metrics):
 
-| Nome | Tipo | Descrizione |
+| Name | Type | Description |
 |------|------|-------------|
-| `ride_api_requests_total` | Counter | Richieste totali elaborate |
-| `ride_api_local_hits_total` | Counter | Risposte locali servite |
-| `ride_api_cloud_misses_total` | Counter | Richieste forwardate al cloud |
-| `ride_api_device_count` | Gauge | Dispositivi registrati |
-| `ride_api_buffer_size_bytes` | Gauge | Dimensione totale buffer |
-| `python_*` | — | Metriche runtime Python standard |
+| `ride_api_requests_total` | Counter | Total requests processed |
+| `ride_api_local_hits_total` | Counter | Local responses served |
+| `ride_api_cloud_misses_total` | Counter | Requests forwarded to the cloud |
+| `ride_api_device_count` | Gauge | Registered devices |
+| `ride_api_buffer_size_bytes` | Gauge | Total buffer size |
+| `python_*` | — | Standard Python runtime metrics |
 
-**Codici di stato**: `200` OK, `503` Se le metriche non sono abilitate
+**Status codes**: `200` OK, `503` If metrics are not enabled
 
 ---
 
-## Dispositivi
+## Devices
 
-### Lista dispositivi: `GET /api/devices`
+### List Devices: `GET /api/devices`
 
-Restituisce tutti i dispositivi registrati.
+Returns all registered devices.
 
 **Response `200 OK`**
 
@@ -139,7 +139,7 @@ Restituisce tutti i dispositivi registrati.
     {
       "device_id": "ip-192-168-1-42",
       "vendor": "example",
-      "name": "Condizionatore Soggiorno",
+      "name": "Living Room AC",
       "mode": "learning",
       "auto_switch_enabled": false,
       "database_url": "sqlite+aiosqlite:///./data/devices/ip-192-168-1-42.db",
@@ -150,19 +150,19 @@ Restituisce tutti i dispositivi registrati.
 }
 ```
 
-**Codici di stato**: `200` OK, `503` Service not ready
+**Status codes**: `200` OK, `503` Service not ready
 
 ---
 
-### Dettaglio dispositivo: `GET /api/devices/{device_id}`
+### Device Detail: `GET /api/devices/{device_id}`
 
-Restituisce dettagli e statistiche complete per un dispositivo.
+Returns complete details and statistics for a device.
 
-**Parametri path**
+**Path parameters**
 
-| Parametro | Tipo | Descrizione |
+| Parameter | Type | Description |
 |-----------|------|-------------|
-| `device_id` | string | ID del dispositivo (es. `ip-192-168-1-42`) |
+| `device_id` | string | Device ID (e.g. `ip-192-168-1-42`) |
 
 **Response `200 OK`**
 
@@ -183,21 +183,21 @@ Restituisce dettagli e statistiche complete per un dispositivo.
 }
 ```
 
-**Codici di stato**: `200` OK, `404` Device not found, `503` Service not ready
+**Status codes**: `200` OK, `404` Device not found, `503` Service not ready
 
 ---
 
-### Statistiche match: `GET /api/devices/{device_id}/stats`
+### Match Statistics: `GET /api/devices/{device_id}/stats`
 
-Statistiche in tempo reale per un dispositivo (alias di `/api/devices/{device_id}`).
+Real-time statistics for a device (alias of `/api/devices/{device_id}`).
 
-**Response** `{"stats": { ... }}` — stessi campi di `/api/devices/{device_id}`.
+**Response** `{"stats": { ... }}` — same fields as `/api/devices/{device_id}`.
 
 ---
 
-### Tasso di match: `GET /api/devices/{device_id}/match-rate`
+### Match Rate: `GET /api/devices/{device_id}/match-rate`
 
-Percentuale di match locale, utile per monitorare l'apprendimento.
+Local match percentage, useful for monitoring learning progress.
 
 **Response `200 OK`**
 
@@ -213,11 +213,11 @@ Percentuale di match locale, utile per monitorare l'apprendimento.
 
 ---
 
-### Modalità dispositivo: `POST /api/devices/{device_id}/mode`
+### Device Mode: `POST /api/devices/{device_id}/mode`
 
-Cambia la modalità operativa di un dispositivo.
+Changes the operating mode of a device.
 
-**Body JSON**
+**JSON Body**
 
 ```json
 {
@@ -225,19 +225,19 @@ Cambia la modalità operativa di un dispositivo.
 }
 ```
 
-| Campo | Tipo | Valori | Descrizione |
+| Field | Type | Values | Description |
 |-------|------|--------|-------------|
-| `mode` | string | `learning`, `production`, `hybrid` | Modalità operativa |
+| `mode` | string | `learning`, `production`, `hybrid` | Operating mode |
 
 **Response `200 OK`** `{"device_id": "...", "mode": "production"}`
 
-**Codici di stato**: `200` OK, `400` Invalid mode, `404` Device not found, `503` Service not ready
+**Status codes**: `200` OK, `400` Invalid mode, `404` Device not found, `503` Service not ready
 
 ---
 
 ### Auto-switch: `GET /api/devices/{device_id}/auto-switch`
 
-Legge lo stato dell'auto-switch per un dispositivo.
+Reads the auto-switch state for a device.
 
 **Response `200 OK`**
 
@@ -250,9 +250,9 @@ Legge lo stato dell'auto-switch per un dispositivo.
 
 ### Auto-switch: `PUT /api/devices/{device_id}/auto-switch`
 
-Abilita o disabilita il passaggio automatico da learning a production.
+Enables or disables automatic switching from learning to production.
 
-**Body JSON**
+**JSON Body**
 
 ```json
 {
@@ -262,18 +262,18 @@ Abilita o disabilita il passaggio automatico da learning a production.
 
 **Response `200 OK`** `{"device_id": "...", "auto_switch_enabled": true}`
 
-**Note**: Quando abilitato, il `AutoSwitchScheduler` passa automaticamente il
-dispositivo a `production` quando il tasso di match raggiunge il 99% con almeno
-10 pattern appresi e 50 richieste totali. Se il tasso scende sotto il 90%, torna
-a `learning`.
+**Notes**: When enabled, the `AutoSwitchScheduler` automatically switches the
+device to `production` when the match rate reaches 99% with at least
+10 learned patterns and 50 total requests. If the rate drops below 90%, it reverts
+to `learning`.
 
 ---
 
-### Configurazione LLM: `PUT /api/devices/{device_id}/llm`
+### LLM Configuration: `PUT /api/devices/{device_id}/llm`
 
-Configura il profilo LLM per un dispositivo specifico (sovrascrive il profilo di default).
+Configures the LLM profile for a specific device (overrides the default profile).
 
-**Body JSON**
+**JSON Body**
 
 ```json
 {
@@ -283,25 +283,25 @@ Configura il profilo LLM per un dispositivo specifico (sovrascrive il profilo di
 }
 ```
 
-| Campo | Tipo | Descrizione |
+| Field | Type | Description |
 |-------|------|-------------|
-| `base_url` | string | URL base API OpenAI-compatible |
-| `model_id` | string | Identificatore del modello |
-| `profile_name` | string | Nome del profilo (opzionale) |
+| `base_url` | string | OpenAI-compatible API base URL |
+| `model_id` | string | Model identifier |
+| `profile_name` | string | Profile name (optional) |
 
 **Response `200 OK`** `{"device_id": "...", "status": "updated"}`
 
 ---
 
-### Configurazione TLS: `PUT /api/devices/{device_id}/tls-config`
+### TLS Configuration: `PUT /api/devices/{device_id}/tls-config`
 
-Aggiorna nome, vendor, passthrough e bypass pinning per un dispositivo.
+Updates name, vendor, passthrough, and pinning bypass for a device.
 
-**Body JSON**
+**JSON Body**
 
 ```json
 {
-  "name": "Termostato Cucina",
+  "name": "Kitchen Thermostat",
   "vendor": "example",
   "passthrough": true,
   "pinning_bypass": "mitm_proxy"
@@ -310,25 +310,25 @@ Aggiorna nome, vendor, passthrough e bypass pinning per un dispositivo.
 
 ---
 
-### Context notes: `GET /api/devices/{device_id}/context`
+### Context Notes: `GET /api/devices/{device_id}/context`
 
-Legge le note contestuali per un dispositivo (utili come hint per l'LLM).
+Reads contextual notes for a device (useful as hints for the LLM).
 
-**Response** `{"device_id": "...", "context_notes": "Termostato modello XYZ"}`
+**Response** `{"device_id": "...", "context_notes": "Thermostat model XYZ"}`
 
-### Context notes: `PUT /api/devices/{device_id}/context`
+### Context Notes: `PUT /api/devices/{device_id}/context`
 
-Aggiorna le note contestuali.
+Updates contextual notes.
 
-**Body JSON** `{"context_notes": "Termostato modello ABC-123, firmware 2.4"}`
+**JSON Body** `{"context_notes": "Thermostat model ABC-123, firmware 2.4"}`
 
 ---
 
-### Assegnazione database: `POST /api/devices/{device_id}/database`
+### Database Assignment: `POST /api/devices/{device_id}/database`
 
-Assegna un database specifico a un dispositivo (SQLite o PostgreSQL).
+Assigns a specific database to a device (SQLite or PostgreSQL).
 
-**Body JSON**
+**JSON Body**
 
 ```json
 {
@@ -336,7 +336,7 @@ Assegna un database specifico a un dispositivo (SQLite o PostgreSQL).
 }
 ```
 
-OPPURE
+OR
 
 ```json
 {
@@ -346,9 +346,9 @@ OPPURE
 
 ---
 
-### Risoluzione IP: `GET /api/devices/by-ip/{ip_address}`
+### IP Resolution: `GET /api/devices/by-ip/{ip_address}`
 
-Cerca un dispositivo tramite indirizzo IP.
+Looks up a device by IP address.
 
 **Response `200 OK`**
 
@@ -361,19 +361,19 @@ Cerca un dispositivo tramite indirizzo IP.
 
 ---
 
-### Registrazione IP: `POST /api/devices/{device_id}/ip`
+### IP Registration: `POST /api/devices/{device_id}/ip`
 
-Associa un indirizzo IP a un dispositivo.
+Associates an IP address with a device.
 
-**Body JSON** `{"ip_address": "192.168.1.100"}`
+**JSON Body** `{"ip_address": "192.168.1.100"}`
 
 ---
 
 ## Buffer
 
-### Lista buffer: `GET /api/devices/{device_id}/buffer`
+### List Buffer: `GET /api/devices/{device_id}/buffer`
 
-Elenca le entry del buffer non ancora processate dall'LLM.
+Lists buffer entries not yet processed by the LLM.
 
 **Response `200 OK`**
 
@@ -399,35 +399,35 @@ Elenca le entry del buffer non ancora processate dall'LLM.
 
 ---
 
-### Elimina entry buffer: `DELETE /api/devices/{device_id}/buffer/{entry_id}`
+### Delete Buffer Entry: `DELETE /api/devices/{device_id}/buffer/{entry_id}`
 
-Rimuove una singola entry dal buffer.
+Removes a single entry from the buffer.
 
-| Parametro | Tipo | Descrizione |
+| Parameter | Type | Description |
 |-----------|------|-------------|
-| `entry_id` | int | ID numerico della entry |
+| `entry_id` | int | Numeric entry ID |
 
 **Response `200 OK** `{"device_id": "...", "entry_id": 1, "status": "deleted"}`
 
 ---
 
-### Flush su LLM: `POST /api/devices/{device_id}/llm/flush`
+### Flush to LLM: `POST /api/devices/{device_id}/llm/flush`
 
-Invia le entry del buffer selezionate all'LLM per l'analisi e l'apprendimento.
+Sends selected buffer entries to the LLM for analysis and learning.
 
-**Body JSON**
+**JSON Body**
 
 ```json
 {
   "pair_ids": [1, 2, 3, 4, 5],
-  "context_notes": "Il dispositivo invia heartbeat ogni 60 secondi"
+  "context_notes": "The device sends a heartbeat every 60 seconds"
 }
 ```
 
-| Campo | Tipo | Descrizione |
+| Field | Type | Description |
 |-------|------|-------------|
-| `pair_ids` | array[int] | (Opzionale) ID specifici da flusciare. Se omesso, flush completo |
-| `context_notes` | string | (Opzionale) Note contestuali per guidare l'LLM |
+| `pair_ids` | array[int] | (Optional) Specific IDs to flush. If omitted, full flush |
+| `context_notes` | string | (Optional) Contextual notes to guide the LLM |
 
 **Response `200 OK`**
 
@@ -442,22 +442,22 @@ Invia le entry del buffer selezionate all'LLM per l'analisi e l'apprendimento.
 
 ---
 
-### Preview LLM: `POST /api/devices/{device_id}/llm/preview`
+### LLM Preview: `POST /api/devices/{device_id}/llm/preview`
 
-Analizza le entry senza salvare i pattern. Usato per validare prima dell'import.
+Analyzes entries without saving patterns. Used to validate before importing.
 
-**Body JSON**: Stessa struttura di `/llm/flush`.
+**JSON Body**: Same structure as `/llm/flush`.
 
-**Response**: Analisi LLM senza persistenza.
+**Response**: LLM analysis without persistence.
 
 ---
 
-## Pattern
+## Patterns
 
-### Lista pattern: `GET /api/devices/{device_id}/patterns`
+### List Patterns: `GET /api/devices/{device_id}/patterns`
 
-Restituisce tutti i pattern appresi per un dispositivo, ordinati per confidence
-decrescente.
+Returns all learned patterns for a device, sorted by confidence
+in descending order.
 
 **Response `200 OK`**
 
@@ -490,45 +490,45 @@ decrescente.
 
 ---
 
-### Dettaglio pattern: `GET /api/devices/{device_id}/patterns/{pattern_id}`
+### Pattern Detail: `GET /api/devices/{device_id}/patterns/{pattern_id}`
 
-Dettaglio completo di un pattern, incluse le field mappings.
+Full detail of a pattern, including field mappings.
 
-**Response `200 OK`**: Include `pattern`, `response_template` e `field_mappings`.
-
----
-
-### Aggiorna pattern: `PUT /api/devices/{device_id}/patterns/{pattern_id}`
-
-Aggiornamento completo (upsert) di un pattern, template risposta e field mappings.
-
-**Body JSON**: Stesso formato della risposta di `GET patterns/{pattern_id}`, con
-aggiunta di `field_mappings` array.
-
-Se il `pattern_id` non esiste, viene creato (upsert).
+**Response `200 OK`**: Includes `pattern`, `response_template` and `field_mappings`.
 
 ---
 
-### Modifica parziale pattern: `PATCH /api/devices/{device_id}/patterns/{pattern_id}`
+### Update Pattern: `PUT /api/devices/{device_id}/patterns/{pattern_id}`
 
-Aggiornamento parziale — solo i campi presenti nel body vengono modificati.
+Full update (upsert) of a pattern, response template, and field mappings.
+
+**JSON Body**: Same format as `GET patterns/{pattern_id}` response, with
+an additional `field_mappings` array.
+
+If the `pattern_id` does not exist, it is created (upsert).
 
 ---
 
-### Elimina pattern: `DELETE /api/devices/{device_id}/patterns/{pattern_id}`
+### Partial Update Pattern: `PATCH /api/devices/{device_id}/patterns/{pattern_id}`
 
-Elimina il pattern, il template risposta associato e tutte le field mappings
-per quell'intent.
+Partial update — only the fields present in the body are modified.
+
+---
+
+### Delete Pattern: `DELETE /api/devices/{device_id}/patterns/{pattern_id}`
+
+Deletes the pattern, its associated response template, and all field mappings
+for that intent.
 
 **Response `200 OK`** `{"status": "deleted", "pattern_id": "abc123"}`
 
 ---
 
-### Esporta pattern: `GET /api/devices/{device_id}/patterns/export`
+### Export Patterns: `GET /api/devices/{device_id}/patterns/export`
 
-Esporta tutti i pattern di un dispositivo nel formato portabile `.ride-pattern.json`.
+Exports all patterns of a device in the portable `.ride-pattern.json` format.
 
-**Response `200 OK`**: Documento JSON conforme allo schema `PatternDB` contenente:
+**Response `200 OK`**: JSON document conforming to the `PatternDB` schema containing:
 
 ```json
 {
@@ -571,12 +571,12 @@ Esporta tutti i pattern di un dispositivo nel formato portabile `.ride-pattern.j
 
 ---
 
-### Importa pattern: `POST /api/devices/{device_id}/patterns/import`
+### Import Patterns: `POST /api/devices/{device_id}/patterns/import`
 
-Importa pattern da un file `.ride-pattern.json`. I pattern vengono validati contro
-lo schema JSON prima dell'import.
+Imports patterns from a `.ride-pattern.json` file. Patterns are validated against
+the JSON schema before importing.
 
-**Body JSON**: Documento `PatternDB` (stesso formato dell'export).
+**JSON Body**: `PatternDB` document (same format as export).
 
 **Response `200 OK`**
 
@@ -588,24 +588,24 @@ lo schema JSON prima dell'import.
 }
 ```
 
-**Codici di stato**: `200` OK, `422` Validation error (con dettagli), `400` Bad request
+**Status codes**: `200` OK, `422` Validation error (with details), `400` Bad request
 
-**Nota**: Il formato `.ride-pattern.json` è progettato per la condivisione tra
-installazioni e il backup. I pattern importati vengono applicati allo stato del
-dispositivo e alle variabili virtuali/sensori configurati.
+**Note**: The `.ride-pattern.json` format is designed for sharing between
+installations and for backup. Imported patterns are applied to the device
+state and configured virtual variables/sensors.
 
 ---
 
 ## Capture
 
-Le capture contengono coppie richiesta/risposta **raw** (non ancora analizzate
-dall'LLM), nel formato `.ride-capture.json`.
+Captures contain **raw** request/response pairs (not yet analyzed
+by the LLM), in the `.ride-capture.json` format.
 
-### Esporta capture: `GET /api/devices/{device_id}/capture/export`
+### Export Capture: `GET /api/devices/{device_id}/capture/export`
 
-Esporta il buffer grezzo in formato portabile.
+Exports the raw buffer in a portable format.
 
-**Response `200 OK`**: Documento JSON conforme allo schema `CaptureDB`:
+**Response `200 OK`**: JSON document conforming to the `CaptureDB` schema:
 
 ```json
 {
@@ -645,12 +645,12 @@ Esporta il buffer grezzo in formato portabile.
 
 ---
 
-### Importa capture: `POST /api/devices/{device_id}/capture/import`
+### Import Capture: `POST /api/devices/{device_id}/capture/import`
 
-Importa coppie raw nel buffer di un dispositivo. Validazione JSON Schema prima
-dell'import.
+Imports raw pairs into a device's buffer. JSON Schema validation before
+import.
 
-**Body JSON**: Documento `CaptureDB` (stesso formato dell'export).
+**JSON Body**: `CaptureDB` document (same format as export).
 
 **Response `200 OK`**
 
@@ -662,29 +662,29 @@ dell'import.
 }
 ```
 
-**Codici di stato**: `200` OK, `422` Validation error (con dettagli), `400` Bad request
+**Status codes**: `200` OK, `422` Validation error (with details), `400` Bad request
 
-**Nota**: Le capture importate si aggiungono al buffer esistente. Quando il buffer
-raggiunge la capacità massima (default 512 KB), viene segnalato e può essere
-flusciato manualmente all'LLM tramite `POST /api/devices/{device_id}/llm/flush`.
+**Note**: Imported captures are added to the existing buffer. When the buffer
+reaches maximum capacity (default 512 KB), it is reported and can be
+manually flushed to the LLM via `POST /api/devices/{device_id}/llm/flush`.
 
 ---
 
 ## TLS / MITM
 
-### Scarica CA: `GET /api/tls/ca-cert`
+### Download CA: `GET /api/tls/ca-cert`
 
-Scarica il certificato CA in formato PEM per installazione sui dispositivi.
+Downloads the CA certificate in PEM format for installation on devices.
 
-**Response**: `application/x-pem-file` con `Content-Disposition: attachment; filename=ride-the-api-ca.pem`
+**Response**: `application/x-pem-file` with `Content-Disposition: attachment; filename=ride-the-api-ca.pem`
 
-**Codici di stato**: `200` OK, `503` Cert manager not ready
+**Status codes**: `200` OK, `503` Cert manager not ready
 
 ---
 
-### Statistiche TLS: `GET /api/tls/stats`
+### TLS Statistics: `GET /api/tls/stats`
 
-Stato del server MITM e statistiche dei certificati.
+MITM server status and certificate statistics.
 
 ```json
 {
@@ -709,74 +709,74 @@ Stato del server MITM e statistiche dei certificati.
 
 ---
 
-### Dispositivi TLS: `GET /api/tls/device-ports`
+### TLS Devices: `GET /api/tls/device-ports`
 
-Mapping IP → dispositivo per tutte le connessioni TLS attive.
-
----
-
-### Non identificati: `GET /api/tls/unidentified`
-
-Lista dei dispositivi con ID che iniziano per `ip-` (creati automaticamente
-dal TLS handler, non ancora rinominati).
+IP → device mapping for all active TLS connections.
 
 ---
 
-### Lista porte TLS: `GET /api/tls/ports`
+### Unidentified: `GET /api/tls/unidentified`
 
-Porte di ascolto TLS attualmente attive.
+List of devices with IDs beginning with `ip-` (auto-created
+by the TLS handler, not yet renamed).
+
+---
+
+### List TLS Ports: `GET /api/tls/ports`
+
+Currently active TLS listening ports.
 
 **Response** `{"ports": [443, 8883, 8443], "enabled": true}`
 
 ---
 
-### Aggiungi porta TLS: `POST /api/tls/ports`
+### Add TLS Port: `POST /api/tls/ports`
 
-Aggiunge dinamicamente una porta di ascolto TLS (persiste in config.yaml).
+Dynamically adds a TLS listening port (persists in config.yaml).
 
-**Body JSON** `{"port": 8443}`
+**JSON Body** `{"port": 8443}`
 
 **Response** `{"status": "ok", "port": 8443, "listen_ports": [443, 8883, 8443]}`
 
 ---
 
-### Rimuovi porta TLS: `DELETE /api/tls/ports/{port}`
+### Remove TLS Port: `DELETE /api/tls/ports/{port}`
 
-Rimuove una porta di ascolto TLS.
+Removes a TLS listening port.
 
 **Response** `{"status": "ok", "port": 8443, "listen_ports": [443, 8883]}`
 
 ---
 
-### Lista certificati: `GET /api/tls/certs`
+### List Certificates: `GET /api/tls/certs`
 
-Lista di tutti i certificati importati e generati automaticamente.
-
----
-
-### Info certificato: `GET /api/tls/certs/{hostname}`
-
-Dettagli di un certificato per hostname specifico.
+List of all imported and auto-generated certificates.
 
 ---
 
-### Carica certificato: `POST /api/tls/certs/upload`
+### Certificate Info: `GET /api/tls/certs/{hostname}`
 
-Carica certificato + chiave privata in formato PEM (multipart form).
+Details of a certificate for a specific hostname.
 
-| Campo | Tipo | Descrizione |
+---
+
+### Upload Certificate: `POST /api/tls/certs/upload`
+
+Uploads certificate + private key in PEM format (multipart form).
+
+| Field | Type | Description |
 |-------|------|-------------|
-| `hostname` | string | Nome host (form) |
-| `cert` | file | File certificato PEM |
-| `key` | file | File chiave privata PEM |
+| `hostname` | string | Host name (form) |
+| `cert` | file | PEM certificate file |
+| `key` | file | PEM private key file |
 
 ---
 
-### Carica certificato JSON: `POST /api/tls/certs/upload-json`
+### Upload Certificate JSON: `POST /api/tls/certs/upload-json`
 
-Stessa operazione ma in JSON con PEM in base64.
+Same operation but in JSON with base64-encoded PEM.
 
-**Body JSON**
+**JSON Body**
 
 ```json
 {
@@ -788,59 +788,59 @@ Stessa operazione ma in JSON con PEM in base64.
 
 ---
 
-### Elimina certificato: `DELETE /api/tls/certs/{hostname}`
+### Delete Certificate: `DELETE /api/tls/certs/{hostname}`
 
-Rimuove un certificato importato (torna al certificato auto-generato).
-
----
-
-### Ruota certificato: `POST /api/tls/certs/{hostname}/rotate`
-
-Sostituisce un certificato senza downtime. Stesso formato di `upload-json`.
+Removes an imported certificate (reverts to auto-generated certificate).
 
 ---
 
-### Scarica root CA: `POST /api/tls/root-ca/download`
+### Rotate Certificate: `POST /api/tls/certs/{hostname}/rotate`
 
-Alias di `GET /api/tls/ca-cert`.
+Replaces a certificate without downtime. Same format as `upload-json`.
 
 ---
 
-### Script Frida: `GET /api/tls/frida/script.js`
+### Download Root CA: `POST /api/tls/root-ca/download`
 
-Restituisce uno script Frida JavaScript per bypassare il certificate pinning
-su dispositivi Android. Utilizzo:
+Alias of `GET /api/tls/ca-cert`.
+
+---
+
+### Frida Script: `GET /api/tls/frida/script.js`
+
+Returns a Frida JavaScript script to bypass certificate pinning
+on Android devices. Usage:
 
 ```bash
-frida -U -l script.js <nome-app>
+frida -U -l script.js <app-name>
 ```
 
 **Response**: `application/javascript`
 
 ---
 
-## Profili LLM
+## LLM Profiles
 
-Endpoint per la gestione dei profili LLM salvati dall'utente.
+Endpoints for managing user-saved LLM profiles.
 
 ### `GET /api/llm/profiles`
 
-Elenco dei profili LLM di sistema (da `config.yaml`).
+List of system LLM profiles (from `config.yaml`).
 
 ### `GET /api/llm/user-profiles`
 
-Elenco dei profili utente salvati.
+List of saved user profiles.
 
 ### `POST /api/llm/user-profiles`
 
-Crea un nuovo profilo utente.
+Creates a new user profile.
 
-**Body JSON**
+**JSON Body**
 
 ```json
 {
   "name": "my_analysis_profile",
-  "prompt_template": "Analizza i seguenti messaggi...",
+  "prompt_template": "Analyze the following messages...",
   "model_id": "gpt-4o-mini",
   "base_url": "https://api.openai.com/v1"
 }
@@ -848,23 +848,23 @@ Crea un nuovo profilo utente.
 
 ### `GET /api/llm/user-profiles/{name}`
 
-Dettaglio di un profilo utente.
+Detail of a user profile.
 
 ### `PUT /api/llm/user-profiles/{name}`
 
-Aggiorna un profilo utente.
+Updates a user profile.
 
 ### `DELETE /api/llm/user-profiles/{name}`
 
-Elimina un profilo utente.
+Deletes a user profile.
 
 ---
 
-## Server di Protocollo
+## Protocol Servers
 
 ### `GET /api/protocol-servers`
 
-Stato di tutti i server di protocollo (MQTT, CoAP, Modbus, WebSocket, ecc.).
+Status of all protocol servers (MQTT, CoAP, Modbus, WebSocket, etc.).
 
 ```json
 {
@@ -877,35 +877,35 @@ Stato di tutti i server di protocollo (MQTT, CoAP, Modbus, WebSocket, ecc.).
 
 ### `POST /api/protocol-servers/{name}/start`
 
-Avvia un server di protocollo specifico.
+Starts a specific protocol server.
 
 ### `POST /api/protocol-servers/{name}/stop`
 
-Ferma un server di protocollo.
+Stops a protocol server.
 
 ### `GET /api/protocol-servers/{name}/config`
 
-Configurazione di un server di protocollo specifico.
+Configuration of a specific protocol server.
 
 ---
 
-## Indipendenza dal Cloud
+## Cloud Independence
 
-Endpoint per verificare e gestire l'indipendenza dei dispositivi dal vendor cloud.
+Endpoints for verifying and managing device independence from the cloud vendor.
 
-| Metodo | Path | Descrizione |
+| Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/independence/{device_id}` | Verifica se un dispositivo può funzionare senza cloud |
-| `GET` | `/api/independence/` | Verifica per tutti i dispositivi |
-| `POST` | `/api/independence/{device_id}/auto-switch` | Forza auto-switch a production |
-| `GET` | `/api/independence/{device_id}/export` | Esporta pattern per backup |
-| `POST` | `/api/independence/{device_id}/import` | Importa pattern da backup |
+| `GET` | `/api/independence/{device_id}` | Checks if a device can work without the cloud |
+| `GET` | `/api/independence/` | Check for all devices |
+| `POST` | `/api/independence/{device_id}/auto-switch` | Forces auto-switch to production |
+| `GET` | `/api/independence/{device_id}/export` | Exports patterns for backup |
+| `POST` | `/api/independence/{device_id}/import` | Imports patterns from backup |
 
 ---
 
-## Riferimenti
+## References
 
-- [Deployment](deployment.md) — esecuzione diretta, Docker, Docker Compose
-- [Configurazione](configurazione.md) — riferimento completo `config.yaml`
-- [nginx Architecture](nginx-architecture.md) — reverse proxy e prevenzione loop DNS
-- [Portable Pattern Database](portable-pattern-database.md) — formato `.ride-pattern.json` / `.ride-capture.json`
+- [Deployment](deployment.md) — direct execution, Docker, Docker Compose
+- [Configuration](configuration.md) — full `config.yaml` reference
+- [nginx Architecture](nginx-architecture.md) — reverse proxy and DNS loop prevention
+- [Portable Pattern Database](portable-pattern-database.md) — `.ride-pattern.json` / `.ride-capture.json` format
