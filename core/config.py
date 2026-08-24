@@ -150,6 +150,19 @@ class ObservabilityConfig(BaseModel):
 
 
 class DNSConfig(BaseModel):
+    """Upstream DNS servers for loop-free cloud forwarding."""
+
+    dns_servers: list[str] = Field(
+        default_factory=lambda: ["8.8.8.8", "1.1.1.1"],
+        description="Upstream IPv4 DNS servers (tried in order)",
+    )
+    dns_servers_v6: list[str] = Field(
+        default_factory=lambda: [
+            "2001:4860:4860::8888",
+            "2606:4700:4700::1111",
+        ],
+        description="Upstream IPv6 DNS servers (tried in order)",
+    )
     pihole_custom_dns: str = ""
     adguard_rewrites: str = ""
 

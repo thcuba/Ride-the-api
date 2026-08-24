@@ -10,8 +10,17 @@ services:
       - "443:443"
       - "8883:8883"    # MQTT over TLS (stream proxy)
     volumes:
-      - ../deploy/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ../deploy/nginx.conf.template:/etc/nginx/nginx.conf.template:ro
+      - ../deploy/nginx-entrypoint.sh:/docker-entrypoint.sh:ro
       - ../certs:/etc/nginx/certs:ro
+    environment:
+      # Upstream DNS servers for loop-free cloud forwarding
+      # Override these to use different DNS providers
+      - DNS_PRIMARY=8.8.8.8
+      - DNS_FALLBACK=1.1.1.1
+      - DNS_PRIMARY_V6=2001:4860:4860::8888
+      - DNS_FALLBACK_V6=2606:4700:4700::1111
+    entrypoint: ["/bin/sh", "/docker-entrypoint.sh"]
     depends_on:
       - ride-the-api
     networks:
@@ -23,44 +32,20 @@ services:
       dockerfile: deploy/Dockerfile
     container_name: ride-the-api
     restart: unless-stopped
-    # Proxy is reached only through nginx (internal network), so no public
-    # port mapping is needed for 8911.  Keep 8080 for health/dashboard.
     ports:
       - "8080:8080"    # Health / dashboard (optional, remove to hide)
     volumes:
-          - ../config:/app/config:ro
-          - ../data:/app/data
-          - ../certs:/app/certs:ro
-          - ../models:/app/models:ro
-          - ../logs:/app/logs
+      - ../config:/app/config:ro
+      - ../data:/app/data
+      - ../certs:/app/certs:ro
+      - ../models:/app/models:ro
+      - ../logs:/app/logs
     environment:
       - PYTHONUNBUFFERED=1
       - LOG_LEVEL=INFO
       - CONFIG_PATH=/app/config/config.yaml
     networks:
       - ride-the-api-net
-    # Uncomment for GPU support
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu]
-
-  # Optional: PostgreSQL for production (instead of per-device SQLite)
-  # postgres:
-  #   image: postgres:16-alpine
-  #   container_name: ride-the-api-postgres
-  #   restart: unless-stopped
-  #   environment:
-  #     POSTGRES_DB: ride_the_api
-  #     POSTGRES_USER: ride_the_api
-  #     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-  #   volumes:
-  #     - postgres_data:/var/lib/postgresql/data
-  #   networks:
-  #     - ride-the-api-net
 
 networks:
   ride-the-api-net:

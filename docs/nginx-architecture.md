@@ -36,23 +36,35 @@ IoT Device ──▶ nginx (443) ──▶ Ride-the-API (8911)
 
 ## DNS resolver configuration
 
-nginx uses the `resolver` directive to resolve cloud upstream hostnames:
+The upstream DNS servers are **user-configurable** and set in two places:
 
-```nginx
-resolver 8.8.8.8 1.1.1.1 valid=300s ipv6=on;
+### Python resolver (`core/upstream_resolver.py`)
+
+Configured via `config.yaml`:
+
+```yaml
+dns:
+  dns_servers:
+    - "8.8.8.8"      # Primary IPv4
+    - "1.1.1.1"      # Fallback IPv4
+  dns_servers_v6:
+    - "2001:4860:4860::8888"  # Primary IPv6
+    - "2606:4700:4700::1111"  # Fallback IPv6
 ```
 
-- **8.8.8.8** (Google, primary) — first resolver tried
-- **1.1.1.1** (Cloudflare, fallback) — used if 8.8.8.8 is unreachable
-- **valid=300s** — results cached for 5 minutes
-- **ipv6=on** — IPv6 lookups enabled (AAA records)
+### nginx resolver (Docker Compose)
 
-### IPv6 equivalents
+Configured via environment variables in `docker-compose.yml`:
 
-| Provider | IPv4 | IPv6 |
-|----------|------|------|
-| Google   | 8.8.8.8 | 2001:4860:4860::8888 |
-| Cloudflare | 1.1.1.1 | 2606:4700:4700::1111 |
+```yaml
+environment:
+  - DNS_PRIMARY=8.8.8.8
+  - DNS_FALLBACK=1.1.1.1
+  - DNS_PRIMARY_V6=2001:4860:4860::8888
+  - DNS_FALLBACK_V6=2606:4700:4700::1111
+```
+
+The nginx container entrypoint renders `deploy/nginx.conf.template` into `nginx.conf` via `envsubst`, substituting `${DNS_RESOLVERS}` with a `resolver` directive using those servers.
 
 ## Forwarding mechanism
 
@@ -128,7 +140,10 @@ learning:
 
 ## Deployment
 
-The nginx sidecar runs alongside Ride-the-API in Docker Compose:
+The nginx sidecar runs alongside Ride-the-API in Docker Compose.
+The `deploy/nginx.conf.template` is rendered in the container by `deploy/nginx-entrypoint.sh`,
+which substitutes the `${DNS_RESOLVERS}` placeholder with the actual resolver
+directive based on environment variables (see [DNS resolver configuration](#dns-resolver-configuration)).
 
 ```yaml
 services:
@@ -139,12 +154,18 @@ services:
       - "443:443"
       - "8883:8883"
     volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./deploy/nginx.conf.template:/etc/nginx/nginx.conf.template:ro
+      - ./deploy/nginx-entrypoint.sh:/docker-entrypoint.sh:ro
       - ./data/certs:/etc/nginx/certs:ro
+    environment:
+      - DNS_PRIMARY=8.8.8.8
+      - DNS_FALLBACK=1.1.1.1
+      - DNS_PRIMARY_V6=2001:4860:4860::8888
+      - DNS_FALLBACK_V6=2606:4700:4700::1111
+    entrypoint: ["/bin/sh", "/docker-entrypoint.sh"]
 
   ride-the-api:
     build: .
-    # port 8911 NOT exposed to the host — only accessible via nginx
     expose:
       - "8911"
 ```
