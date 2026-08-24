@@ -6,6 +6,7 @@ Covers:
 - F4: ``VirtualSensor`` baseline resolution rejects NaN/Inf so corrupt
   values do not poison downstream sensor arithmetic and local responses.
 """
+
 import math
 
 from core.pattern_db.schemas import VirtualSensor

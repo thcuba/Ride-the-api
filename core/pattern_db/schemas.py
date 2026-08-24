@@ -86,7 +86,7 @@ class CaptureSession(BaseModel):
 class CaptureDB(BaseModel):
     """Root model for .ride-capture.json — raw buffer export."""
 
-    schema: str = Field(
+    schema_url: str = Field(
         "https://ride-the-api.dev/capture-schema/v1",
         alias="$schema",
     )
@@ -231,7 +231,7 @@ class ServerConfig(BaseModel):
 class PatternDB(BaseModel):
     """Root model for .ride-pattern.json — deciphered protocol patterns."""
 
-    schema: str = Field(
+    schema_url: str = Field(
         "https://ride-the-api.dev/pattern-schema/v1",
         alias="$schema",
     )
