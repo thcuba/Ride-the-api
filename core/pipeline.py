@@ -1,4 +1,4 @@
-﻿"""
+"""
 Learning/Production Pipeline - Core engine that manages device learning and local response serving.
 Handles: correlation, buffer management, LLM deciphering, pattern matching, and match rate tracking.
 """
@@ -10,7 +10,7 @@ import json
 import logging
 from collections import defaultdict, deque
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -244,6 +244,61 @@ class ContextBuffer:
             )
             stats = result.scalar_one_or_none()
             return stats.current_buffer_size_bytes if stats else 0
+
+    async def prune(
+        self,
+        device_id: str,
+        max_pairs_per_device: int = 10000,
+        pair_ttl_hours: int = 168,
+    ) -> int:
+        """Delete persisted buffer rows that are too old or exceed the cap.
+
+        Applies ``pair_ttl_hours`` to a device's flushed rows and caps the
+        retained pairs per device at ``max_pairs_per_device`` so the on-disk
+        training store cannot grow without bound. Returns rows deleted.
+        """
+        cutoff = datetime.now(UTC) - timedelta(hours=pair_ttl_hours)
+        total = 0
+        async with self.db_manager.device_session(device_id) as session:
+            result = await session.execute(
+                delete(LLMContextBuffer).where(
+                    and_(
+                        LLMContextBuffer.device_id == device_id,
+                        LLMContextBuffer.flushed == True,  # noqa: E712
+                        LLMContextBuffer.flushed_at != None,  # noqa: E711
+                        LLMContextBuffer.flushed_at < cutoff,
+                    )
+                )
+            )
+            total += result.rowcount or 0
+
+            retained = await session.execute(
+                select(LLMContextBuffer.sequence)
+                .where(
+                    and_(
+                        LLMContextBuffer.device_id == device_id,
+                        LLMContextBuffer.flushed == True,  # noqa: E712
+                    )
+                )
+                .order_by(LLMContextBuffer.sequence.desc())
+                .offset(max_pairs_per_device)
+                .limit(1)
+            )
+            oldest_kept = retained.scalar_one_or_none()
+            if oldest_kept is not None:
+                # ``oldest_kept`` is the (max_pairs+1)th-newest sequence; drop it
+                # and anything older so only the newest ``max_pairs`` survive.
+                result = await session.execute(
+                    delete(LLMContextBuffer).where(
+                        and_(
+                            LLMContextBuffer.device_id == device_id,
+                            LLMContextBuffer.flushed == True,  # noqa: E712
+                            LLMContextBuffer.sequence <= oldest_kept,
+                        )
+                    )
+                )
+                total += result.rowcount or 0
+        return total
 
     async def _next_sequence(self, device_id: str) -> int:
         """Return the next sequence number, primed from the persisted max.
@@ -551,7 +606,7 @@ class MatchRateTracker:
 
 
 class LearningPipeline:
-    """Orchestrates the learning flow: correlate â†’ buffer â†’ LLM â†’ save patterns."""
+    """Orchestrates the learning flow: correlate ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ buffer ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ LLM ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ save patterns."""
 
     def __init__(  # noqa: PLR0913
         self,
@@ -569,6 +624,22 @@ class LearningPipeline:
         self.tracker = tracker
         self.engine = engine
         self._correlation_cache: dict[str, deque] = defaultdict(lambda: deque(maxlen=1000))
+
+    def _correlation_max_age(self) -> timedelta:
+        """Max age for a pending request to be correlated.
+
+        Mirrors the configured ``pair_ttl_hours`` so that un-correlated rows
+        from a previous process run are never phantom-matched with an
+        unrelated later response. Defaults to 7 days.
+        """
+        try:
+            from core.config import get_config
+
+            cfg = get_config()
+            ttl_hours = cfg.correlation.pair_ttl_hours
+            return timedelta(hours=max(ttl_hours, 1))
+        except Exception:
+            return timedelta(days=7)
 
     async def register_request(  # noqa: PLR0913
         self,
@@ -618,6 +689,7 @@ class LearningPipeline:
 
         return corr_key
 
+
     async def match_response(  # noqa: PLR0913
         self,
         device_id: str,
@@ -661,7 +733,10 @@ class LearningPipeline:
                 )
 
         if not matched:
-            # Try DB cache
+            # Try DB cache, guarding against stale rows: a pending request left
+            # from a previous process (or an old, un-correlated row) must not be
+            # wrongly paired with an unrelated later response (phantom match).
+            cutoff = datetime.now(UTC) - self._correlation_max_age()
             async with self.db_manager.device_session(device_id) as session:
                 result = await session.execute(
                     select(SessionCache)
@@ -669,6 +744,7 @@ class LearningPipeline:
                         and_(
                             SessionCache.device_id == device_id,
                             SessionCache.correlated == False,  # noqa: E712
+                            SessionCache.created_at >= cutoff,
                         )
                     )
                     .order_by(SessionCache.created_at.desc())
@@ -676,10 +752,8 @@ class LearningPipeline:
                 )
                 for cache_entry in result.scalars().all():
                     # `protocol` may be absent on SQLite databases created
-                    # before this column existed (no migrations here â€”
-                    # create_all never alters existing tables). Default to ""
-                    # so legacy rows still flow through the fallback instead
-                    # of crashing with AttributeError.
+                    # before this column existed. Default to "" so legacy rows
+                    # still flow through the fallback instead of crashing.
                     if getattr(cache_entry, "protocol", None) == protocol:
                         matched = {
                             "correlation_key": cache_entry.correlation_key,
@@ -700,6 +774,7 @@ class LearningPipeline:
                         cache_entry.response_body = body
                         cache_entry.response_latency_ms = 0.0
                         break
+
 
         if not matched:
             return None
@@ -1174,6 +1249,44 @@ class LearningOrchestrator:
             self.buffer[device_id] = ContextBuffer(self.db_manager, buffer_size)
         return self.buffer[device_id]
 
+        async def prune_stores(self) -> None:
+            """Apply TTL/cap pruning to the persisted training store for every device.
+
+            Reads ``store_pairs`` / ``max_pairs_per_device`` / ``pair_ttl_hours``
+            from config. When pair storage is disabled the on-disk history for each
+            device is pruned to its cap so the store cannot grow without bound.
+            """
+            try:
+                from core.config import get_config
+
+                cfg = get_config()
+                corr = cfg.correlation
+            except Exception:
+                logger.debug("Prune: config unavailable; using defaults")
+                from types import SimpleNamespace
+
+                corr = SimpleNamespace(store_pairs=True, max_pairs_per_device=10000, pair_ttl_hours=168)
+
+            if not getattr(corr, "store_pairs", True):
+                logger.info("Store-pairs disabled; no correlation persistence to prune")
+                return 0
+
+            max_pairs = int(getattr(corr, "max_pairs_per_device", 10000))
+            ttl_hours = int(getattr(corr, "pair_ttl_hours", 168))
+            devices = await self.db_manager.list_devices()
+            total = 0
+            for device in devices:
+                dev_id = device["device_id"]
+                try:
+                    buffer = await self.ensure_buffer(dev_id)
+                    deleted = await buffer.prune(dev_id, max_pairs_per_device=max_pairs, pair_ttl_hours=ttl_hours)
+                    total += deleted
+                except Exception as e:  # pragma: no cover - defensive
+                    logger.warning("Prune failed for device %s: %s", dev_id, e)
+            if total:
+                logger.info("Pruned %d stale correlation rows across %d devices", total, len(devices))
+            return total
+
     async def handle_request(  # noqa: PLR0913
         self,
         device_id: str,
@@ -1392,7 +1505,7 @@ class LearningOrchestrator:
                 "buffer_flushed": needs_flush,
             }
         # Production/hybrid mode: learn from the miss. The CLOUD_MISS is NOT
-        # recorded again here â€” it was already counted once when the request
+        # recorded again here ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â it was already counted once when the request
         # was forwarded (_handle_production/_handle_hybrid record it at
         # request time). Recording it again on the response would double-count
         # total_requests/cloud_misses and understate the real match rate.

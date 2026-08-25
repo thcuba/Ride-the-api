@@ -159,6 +159,55 @@ class TestContextBuffer:
         assert len(rows) == 3  # noqa: PLR2004
         assert rows == [0, 1, 2]
 
+    @pytest.mark.asyncio
+    async def test_prune_enforces_ttl_and_cap(self, db_manager):
+        """prune() must drop flushed rows older than the TTL and cap retained entries."""
+        buffer = ContextBuffer(db_manager, max_size_bytes=1048576)
+        await buffer.add_pair("device-001", make_pair(pair_id="old"))  # seq 0
+        await buffer.flush("device-001")
+        # Backdate the flushed row past the TTL (pair_ttl_hours=1 -> cutoff 1h ago).
+        async with db_manager.device_session("device-001") as session:
+            from sqlalchemy import update as _update
+
+            now = datetime.now(UTC)
+            await session.execute(
+                _update(LLMContextBuffer)
+                .where(
+                    (LLMContextBuffer.device_id == "device-001")
+                    & (LLMContextBuffer.sequence == 0)
+                )
+                .values(flushed=True, flushed_at=now.replace(hour=now.hour - 5))
+            )
+        # Add fresh unflushed rows; prune must not touch these.
+        await buffer.add_pair("device-001", make_pair(pair_id="fresh1"))
+        deleted = await buffer.prune("device-001", max_pairs_per_device=10, pair_ttl_hours=1)
+        assert deleted >= 1
+        async with db_manager.device_session("device-001") as session:
+            result = await session.execute(
+                select(LLMContextBuffer).where(LLMContextBuffer.device_id == "device-001")
+            )
+            rows = list(result.scalars().all())
+        assert all(r.sequence != 0 for r in rows)  # stale row gone
+
+    @pytest.mark.asyncio
+    async def test_prune_cap_keeps_newest(self, db_manager):
+        """When entries exceed the cap, prune keeps only the newest sequences."""
+        buffer = ContextBuffer(db_manager, max_size_bytes=1048576)
+        for i in range(5):
+            await buffer.add_pair("device-001", make_pair(pair_id=f"p{i}"))
+        # Flush so the rows are eligible for cap pruning; only consumed
+        # (flushed) rows may be dropped, unflushed training rows are never lost.
+        await buffer.flush("device-001")
+        deleted = await buffer.prune("device-001", max_pairs_per_device=2, pair_ttl_hours=168)
+        async with db_manager.device_session("device-001") as session:
+            result = await session.execute(
+                select(LLMContextBuffer)
+                .where(LLMContextBuffer.device_id == "device-001")
+                .order_by(LLMContextBuffer.sequence)
+            )
+            seqs = list(result.scalars().all())
+        assert [s.sequence for s in seqs] == [3, 4]  # newest retained; oldest dropped
+
 
 class TestPatternMatcher:
     @pytest.mark.asyncio

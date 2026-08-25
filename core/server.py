@@ -353,8 +353,16 @@ async def lifespan(app: FastAPI):  # noqa: C901, PLR0912, PLR0915
             logger.info("TLS MITM server stopped")
         except Exception as e:
             logger.error("Error stopping TLS MITM server: %s", e)  # noqa: TRY400
-    if llm_decipher_service:
-        await llm_decipher_service.close()
+
+        # Prune stale correlation rows so the training store never grows unbounded
+        if orchestrator:
+            try:
+                await orchestrator.prune_stores()
+            except Exception as e:
+                logger.error("Error pruning correlation stores: %s", e)  # noqa: TRY400
+
+        if llm_decipher_service:
+            await llm_decipher_service.close()
     if db_manager:
         await db_manager.close()
     logger.info("Shutdown complete")
