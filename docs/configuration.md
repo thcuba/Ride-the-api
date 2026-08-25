@@ -48,7 +48,30 @@ core:
 
 ---
 
-## proxy
+  ## buffer
+
+  Transient capture buffer storage backend, independently configurable for each device.
+
+  | Field | Type | Default | Description |
+  |-------|------|---------|-------------|
+  | `backend` | `string` | `"disk"` | Where the raw capture buffer lives until it is flushed to the LLM. `disk` keeps pairs on durable storage (per-device DB); `memory` keeps them in a process-shared in-memory SQLite engine (RAM). Can be switched at runtime from the dashboard toggle or `PUT /api/settings/buffer-backend` |
+
+  Example:
+
+  ```yaml
+  buffer:
+    backend: "disk"  # or "memory" for in-process RAM buffering
+  ```
+
+  Notes:
+
+  - In `memory` mode the buffered pairs are **volatile** — they are lost on process restart. Already-learned patterns and durable stats remain on disk.
+  - Both `BufferManager` (export/import) and `ContextBuffer` (learning pipeline) share the same in-process RAM buffer, so exports still see buffered pairs while RAM mode is active.
+  - RAM mode is process-local: the buffer is not shared between separate processes (e.g. multiple replicas).
+
+  ---
+
+  ## proxy
 
 Main HTTP proxy configuration, listening TLS and fallback behavior.
 

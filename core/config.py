@@ -32,6 +32,18 @@ class CoreConfig(BaseModel):
     default_context_buffer_size: int = 524288  # 512KB default
 
 
+class BufferConfig(BaseModel):
+    """Transient capture buffer storage backend.
+
+    ``disk`` (default) keeps buffered pairs on durable storage (device DB);
+    ``memory`` keeps them in a process-shared in-memory SQLite engine (RAM).
+    The active backend can also be switched at runtime via the settings API /
+    dashboard toggle, which persists the choice for the next start.
+    """
+
+    backend: str = "disk"
+
+
 class TLSConfig(BaseModel):
     enabled: bool = True
     cert_file: str = "./certs/ride-api.pem"
@@ -405,6 +417,7 @@ class ProtocolServersConfig(BaseModel):
 
 class Config(BaseModel):
     core: CoreConfig = Field(default_factory=CoreConfig)
+    buffer: BufferConfig = Field(default_factory=BufferConfig)
     proxy: ProxyConfig = Field(default_factory=ProxyConfig)
     vendors: dict[str, VendorConfig] = Field(default_factory=dict)
     models: ModelsConfig = Field(default_factory=ModelsConfig)

@@ -209,10 +209,18 @@
   .tls-config .tc-slider::before { content: ''; position: absolute; height: 16px; width: 16px; left: 3px; bottom: 3px; background: var(--text); border-radius: 50%; transition: .3s; }
   .tls-config .tc-toggle input:checked + .tc-slider { background: var(--green); }
   .tls-config .tc-toggle input:checked + .tc-slider::before { transform: translateX(18px); }
-  @media (prefers-reduced-motion: reduce) {
-    .tls-config .tc-slider { transition: none; }
-    .tls-config .tc-slider::before { transition: none; }
-  }
+    .header-right .ram-toggle { position: relative; display: inline-block; width: 40px; height: 22px; }
+    .header-right .ram-toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
+    .header-right .ram-slider { position: absolute; cursor: pointer; inset: 0; background: var(--border); border-radius: 22px; transition: .3s; }
+    .header-right .ram-slider::before { content: ''; position: absolute; height: 16px; width: 16px; left: 3px; bottom: 3px; background: var(--text); border-radius: 50%; transition: .3s; }
+    .header-right .ram-toggle input:checked + .ram-slider { background: var(--accent); }
+    .header-right .ram-toggle input:checked + .ram-slider::before { transform: translateX(18px); }
+    .header-right .ram-label { font-size: 13px; color: var(--text-muted); display: flex; align-items: center; gap: 6px; cursor: pointer; }
+    .header-right .ram-label span { white-space: nowrap; }
+    @media (prefers-reduced-motion: reduce) {
+      .tls-config .tc-slider, .header-right .ram-slider { transition: none; }
+      .tls-config .tc-slider::before, .header-right .ram-slider::before { transition: none; }
+    }
 
   /* ── SVG Icons ─────────────────────────────────────────────────────────── */
   .icon-svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
@@ -301,7 +309,14 @@
     <span class="subtitle">Local Cloud Replacement — Device Protocol Learning &amp; Response Dashboard</span>
   </div>
   <div class="header-right">
-    <button class="btn btn-ghost" onclick="loadDevices()">
+      <div class="ram-label" title="Buffer coppie request/response nella RAM invece che su disco (volatile)">
+        <span>RAM Buffer</span>
+        <label class="ram-toggle" aria-label="Toggle RAM buffer">
+          <input type="checkbox" id="ram-buffer-toggle" onchange="toggleRamBuffer(this.checked)">
+          <span class="ram-slider"></span>
+        </label>
+      </div>
+      <button class="btn btn-ghost" onclick="loadDevices()">
       <svg class="icon-svg" aria-hidden="true" viewBox="0 0 24 24"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
       <span>Refresh</span>
     </button>
@@ -671,7 +686,32 @@ async function switchMode(deviceId) {
     } catch(e) { showToast('Failed to toggle auto-switch', 'error'); }
   }
 
-  loadDevices();
+  // ── RAM Buffer toggle ────────────────────────────────────────────────────────
+  async function toggleRamBuffer(enabled) {
+    try {
+      const res = await fetch('/api/settings/buffer-backend', {
+        method: 'PUT', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({backend: enabled ? 'memory' : 'disk'}),
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      showToast('RAM buffer ' + (enabled ? 'enabled' : 'disabled') + (enabled ? ' (volatile)' : ''), 'success');
+    } catch(e) {
+      showToast('Failed to toggle RAM buffer', 'error');
+      document.getElementById('ram-buffer-toggle').checked = !enabled;
+    }
+  }
+
+  async function loadRamBufferSetting() {
+    try {
+      const res = await fetch('/api/settings/buffer-backend');
+      if (!res.ok) return;
+      const data = await res.json();
+      document.getElementById('ram-buffer-toggle').checked = (data.backend === 'memory');
+    } catch(e) { /* settings endpoint unavailable — keep toggle off */ }
+  }
+
+    loadDevices();
+  loadRamBufferSetting();
 loadTlsBar();
 loadVendors();
 setInterval(loadDevices, 8000);
