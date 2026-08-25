@@ -1,5 +1,5 @@
 """
-Buffer Manager — accumulates raw intercepted pairs until configurable capacity,
+Buffer Manager --- accumulates raw intercepted pairs until configurable capacity,
 then flushes to the configured LLM for deciphering.
 
 Extends the existing ContextBuffer from core/pipeline with export/import
@@ -11,16 +11,15 @@ from __future__ import annotations
 import json
 import logging
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from sqlalchemy import and_, delete, func, select
+from sqlalchemy import select
 
+from core.buffer import create_buffer_store
 from core.database import (
     DatabaseManager,
     DeviceRegistry,
-    LLMContextBuffer,
-    MatchStats,
-    SessionCache,
 )
 from core.pattern_db.schemas import (
     CaptureDB,
@@ -30,6 +29,9 @@ from core.pattern_db.schemas import (
     RawResponse,
 )
 from core.pattern_db.validator import ValidationError, validate_capture
+
+if TYPE_CHECKING:
+    from core.buffer.store import BufferStore
 
 logger = logging.getLogger(__name__)
 
@@ -44,92 +46,36 @@ class BufferManager:
     - Exports/imports .ride-capture.json for sharing
     """
 
-    def __init__(self, db_manager: DatabaseManager) -> None:
+    def __init__(self, db_manager: DatabaseManager, store: BufferStore | None = None) -> None:
         self.db_manager = db_manager
-        self._current_sequence: dict[str, int] = {}
+        self.store: BufferStore = store or create_buffer_store(db_manager)
 
     async def add_pair(self, device_id: str, pair: dict) -> bool:
         """Add a correlated pair to the buffer. Returns True if buffer is full."""
         serialized = json.dumps(pair, default=str)
         estimated_size = len(serialized.encode("utf-8"))
 
-        seq = await self._next_sequence(device_id)
-
-        async with self.db_manager.device_session(device_id) as session:
-            entry = LLMContextBuffer(
-                device_id=device_id,
-                correlated_pair=pair,
-                estimated_size_bytes=estimated_size,
-                sequence=seq,
-            )
-            session.add(entry)
-
-            stats = await self._get_or_create_stats(session, device_id)
-            stats.current_buffer_size_bytes += estimated_size
-
-            return stats.current_buffer_size_bytes >= await self._get_max_buffer_size(
-                device_id, session
-            )
+        size = await self.store.add_pair(device_id, pair, estimated_size)
+        return size >= await self._get_max_buffer_size(device_id)
 
     async def get_buffer_pairs(self, device_id: str) -> list[dict]:
         """Get all unflushed buffer entries for a device."""
-        async with self.db_manager.device_session(device_id) as session:
-            result = await session.execute(
-                select(LLMContextBuffer)
-                .where(
-                    and_(
-                        LLMContextBuffer.device_id == device_id,
-                        LLMContextBuffer.flushed == False,  # noqa: E712
-                    )
-                )
-                .order_by(LLMContextBuffer.sequence)
-            )
-            return [
-                {"id": e.id, "pair": e.correlated_pair, "size": e.estimated_size_bytes}
-                for e in result.scalars().all()
-            ]
+        return await self.store.get_buffer_pairs(device_id)
 
     async def flush(self, device_id: str) -> int:
         """Mark all buffer entries as flushed and reset buffer size."""
-        async with self.db_manager.device_session(device_id) as session:
-            result = await session.execute(
-                select(LLMContextBuffer).where(
-                    and_(
-                        LLMContextBuffer.device_id == device_id,
-                        LLMContextBuffer.flushed == False,  # noqa: E712
-                    )
-                )
-            )
-            now = datetime.now(UTC)
-            count = 0
-            for entry in result.scalars().all():
-                entry.flushed = True
-                entry.flushed_at = now
-                count += 1
-
-            stats = await self._get_or_create_stats(session, device_id)
-            stats.current_buffer_size_bytes = 0
-            stats.last_flush_at = now
-            stats.buffer_flushes += 1
-
-            return count
+        return await self.store.flush(device_id)
 
     async def get_current_size(self, device_id: str) -> int:
         """Get current buffer size in bytes."""
-        async with self.db_manager.device_session(device_id) as session:
-            result = await session.execute(
-                select(MatchStats).where(MatchStats.device_id == device_id)
-            )
-            stats = result.scalar_one_or_none()
-            return stats.current_buffer_size_bytes if stats else 0
+        return await self.store.get_current_size(device_id)
 
     async def clear_cache(self, device_id: str):
         """Clear session cache after flush."""
-        async with self.db_manager.device_session(device_id) as session:
-            await session.execute(delete(SessionCache).where(SessionCache.device_id == device_id))
-            logger.info("Cleared session cache for device %s", device_id)
+        await self.store.clear_cache(device_id)
+        logger.info("Cleared session cache for device %s", device_id)
 
-    # ── Export / Import ────────────────────────────────────────────────────────
+    # -- Export / Import ------------------------------------------------------
 
     async def export_capture(
         self, device_id: str, vendor: str = "", device_type: str = ""
@@ -205,61 +151,18 @@ class BufferManager:
                 count += 1
         return count
 
-    # ── Internal helpers ───────────────────────────────────────────────────────
+    # -- Internal helpers -----------------------------------------------------
 
-    async def _next_sequence(self, device_id: str) -> int:
-        """Return the next sequence number, persisting it across restarts.
-
-        The in-memory counter is primed once per device from the maximum
-        ``sequence`` already stored in the DB so that a restart can never
-        re-use a sequence number (which would break ordering and the
-        dedup/sliding-window logic in ``ContextBuffer``).
-        """
-        next_seq = self._current_sequence.get(device_id)
-        if next_seq is not None:
-            self._current_sequence[device_id] = next_seq + 1
-            return next_seq
-
-        async with self.db_manager.device_session(device_id) as session:
-            result = await session.execute(
-                select(func.max(LLMContextBuffer.sequence)).where(
-                    LLMContextBuffer.device_id == device_id
-                )
-            )
-            max_seq = result.scalar_one_or_none() or -1
-        next_seq = max_seq + 1
-        self._current_sequence[device_id] = next_seq + 1
-        return next_seq
-
-    async def _get_max_buffer_size(self, device_id: str, session) -> int:
+    async def _get_max_buffer_size(self, device_id: str) -> int:
         """Get configured max buffer size for this device (default 512KB)."""
         try:
+            async with self.db_manager.device_session(device_id) as session:
                 result = await session.execute(
-            select(DeviceRegistry.context_buffer_size).where(
-                DeviceRegistry.device_id == device_id
-            )
+                    select(DeviceRegistry.context_buffer_size).where(
+                        DeviceRegistry.device_id == device_id
+                    )
                 )
                 row = result.one_or_none()
                 return row[0] if row else 524288
         except Exception:
-                return 524288
-
-    async def _get_or_create_stats(self, session, device_id: str):
-        result = await session.execute(select(MatchStats).where(MatchStats.device_id == device_id))
-        stats = result.scalar_one_or_none()
-        if not stats:
-            stats = MatchStats(
-                device_id=device_id,
-                total_requests=0,
-                local_hits=0,
-                cloud_misses=0,
-                errors=0,
-                match_rate_pct=0.0,
-                patterns_learned=0,
-                templates_created=0,
-                buffer_flushes=0,
-                current_buffer_size_bytes=0,
-            )
-            session.add(stats)
-            await session.flush()
-        return stats
+            return 524288

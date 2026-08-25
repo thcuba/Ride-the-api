@@ -13,16 +13,16 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from sqlalchemy import and_, delete, func, select, update
+from sqlalchemy import and_, delete, select, update
 
+from core.buffer import create_buffer_store
 from core.database import (
     DatabaseManager,
     DeviceRegistry,
     FieldMapping,
-    LLMContextBuffer,
     MatchStats,
     RequestPattern,
     ResponseTemplate,
@@ -33,6 +33,9 @@ from core.llm_decipher import LLMDecipherService, LLMProfile
 from core.pattern_db import decipher_ingest
 from core.pattern_db.pattern_engine import PatternEngine
 from core.pattern_db.schemas import PatternDB
+
+if TYPE_CHECKING:
+    from core.buffer.store import BufferStore
 
 logger = logging.getLogger(__name__)
 
@@ -75,12 +78,23 @@ class CorrelatedPair:
 
 
 class ContextBuffer:
-    """Sliding-window context buffer per device."""
+    """Sliding-window context buffer per device.
 
-    def __init__(self, db_manager: DatabaseManager, max_size_bytes: int = 524288) -> None:
+    A thin wrapper over a :class:`BufferStore`; the store decides whether the
+    buffered pairs live on durable storage (``disk``) or in-process RAM
+    (``memory``), selected at construction time via the current runtime
+    backend.
+    """
+
+    def __init__(
+        self,
+        db_manager: DatabaseManager,
+        max_size_bytes: int = 524288,
+        store: BufferStore | None = None,
+    ) -> None:
         self.db_manager = db_manager
         self.max_size_bytes = max_size_bytes
-        self._current_sequence: dict[str, int] = defaultdict(int)
+        self.store: BufferStore = store or create_buffer_store(db_manager)
 
     async def add_pair(self, device_id: str, pair: CorrelatedPair) -> bool:
         """Add a correlated pair to the buffer. Returns True if buffer is full and needs flush."""
@@ -101,149 +115,32 @@ class ContextBuffer:
         serialized = json.dumps(pair_json, default=str)
         estimated_size = len(serialized.encode("utf-8"))
 
-        seq = await self._next_sequence(device_id)
-
-        async with self.db_manager.device_session(device_id) as session:
-            entry = LLMContextBuffer(
-                device_id=device_id,
-                correlated_pair=pair_json,
-                estimated_size_bytes=estimated_size,
-                sequence=seq,
-            )
-            session.add(entry)
-
-            # Update match stats buffer size
-            stats = await self._get_or_create_stats(session, device_id)
-            stats.current_buffer_size_bytes += estimated_size
-
-            # Check if full
-            return stats.current_buffer_size_bytes >= self.max_size_bytes
+        size = await self.store.add_pair(device_id, pair_json, estimated_size)
+        return size >= self.max_size_bytes
 
     async def get_buffer_pairs(self, device_id: str) -> list[dict]:
         """Get all unflushed buffer entries for a device."""
-        async with self.db_manager.device_session(device_id) as session:
-            result = await session.execute(
-                select(LLMContextBuffer)
-                .where(
-                    and_(
-                        LLMContextBuffer.device_id == device_id,
-                        LLMContextBuffer.flushed == False,  # noqa: E712
-                    )
-                )
-                .order_by(LLMContextBuffer.sequence)
-            )
-            return [
-                {"id": e.id, "pair": e.correlated_pair, "size": e.estimated_size_bytes}
-                for e in result.scalars().all()
-            ]
+        return await self.store.get_buffer_pairs(device_id)
 
     async def flush(self, device_id: str) -> int:
         """Mark all buffer entries for a device as flushed and clear buffer size."""
-        async with self.db_manager.device_session(device_id) as session:
-            result = await session.execute(
-                select(LLMContextBuffer).where(
-                    and_(
-                        LLMContextBuffer.device_id == device_id,
-                        LLMContextBuffer.flushed == False,  # noqa: E712
-                    )
-                )
-            )
-            now = datetime.now(UTC)
-            count = 0
-            for entry in result.scalars().all():
-                entry.flushed = True
-                entry.flushed_at = now
-                count += 1
-
-            stats = await self._get_or_create_stats(session, device_id)
-            stats.current_buffer_size_bytes = 0
-            stats.last_flush_at = now
-            stats.buffer_flushes += 1
-
-            return count
+        return await self.store.flush(device_id)
 
     async def flush_selected(self, device_id: str, entry_ids: list[int]) -> int:
         """Mark only the specified buffer entries as flushed."""
-        async with self.db_manager.device_session(device_id) as session:
-            result = await session.execute(
-                select(LLMContextBuffer).where(
-                    and_(
-                        LLMContextBuffer.device_id == device_id,
-                        LLMContextBuffer.flushed == False,  # noqa: E712
-                        LLMContextBuffer.id.in_(entry_ids),
-                    )
-                )
-            )
-            now = datetime.now(UTC)
-            flushed_size = 0
-            count = 0
-            for entry in result.scalars().all():
-                entry.flushed = True
-                entry.flushed_at = now
-                flushed_size += entry.estimated_size_bytes
-                count += 1
-
-            stats = await self._get_or_create_stats(session, device_id)
-            stats.current_buffer_size_bytes = max(0, stats.current_buffer_size_bytes - flushed_size)
-            stats.last_flush_at = now
-            stats.buffer_flushes += 1
-
-            return count
+        return await self.store.flush_selected(device_id, entry_ids)
 
     async def delete_entry(self, device_id: str, entry_id: int) -> bool:
         """Delete a single buffer entry."""
-        async with self.db_manager.device_session(device_id) as session:
-            result = await session.execute(
-                select(LLMContextBuffer).where(
-                    and_(
-                        LLMContextBuffer.id == entry_id,
-                        LLMContextBuffer.device_id == device_id,
-                    )
-                )
-            )
-            entry = result.scalar_one_or_none()
-            if not entry:
-                return False
-            size = entry.estimated_size_bytes
-            await session.delete(entry)
-            stats = await self._get_or_create_stats(session, device_id)
-            stats.current_buffer_size_bytes = max(0, stats.current_buffer_size_bytes - size)
-            return True
+        return await self.store.delete_entry(device_id, entry_id)
 
     async def clear_cache(self, device_id: str):
         """Clear session cache for a device after flush."""
-        async with self.db_manager.device_session(device_id) as session:
-            await session.execute(delete(SessionCache).where(SessionCache.device_id == device_id))
-            logger.info(f"Cleared session cache for device {device_id}")
-
-    async def _get_or_create_stats(self, session, device_id: str) -> MatchStats:
-        result = await session.execute(select(MatchStats).where(MatchStats.device_id == device_id))
-        stats = result.scalar_one_or_none()
-        if not stats:
-            stats = MatchStats(
-                device_id=device_id,
-                total_requests=0,
-                local_hits=0,
-                cloud_misses=0,
-                errors=0,
-                match_rate_pct=0.0,
-                patterns_learned=0,
-                templates_created=0,
-                buffer_flushes=0,
-                current_buffer_size_bytes=0,
-            )
-            session.add(stats)
-            await session.flush()
-        return stats
+        await self.store.clear_cache(device_id)
 
     async def get_current_size(self, device_id: str) -> int:
         """Get current buffer size for a device."""
-        async with self.db_manager.device_session(device_id) as session:
-            result = await session.execute(
-                select(MatchStats).where(MatchStats.device_id == device_id)
-            )
-            stats = result.scalar_one_or_none()
-            return stats.current_buffer_size_bytes if stats else 0
+        return await self.store.get_current_size(device_id)
 
     async def prune(
         self,
@@ -299,29 +196,6 @@ class ContextBuffer:
                 )
                 total += result.rowcount or 0
         return total
-
-    async def _next_sequence(self, device_id: str) -> int:
-        """Return the next sequence number, primed from the persisted max.
-
-        Survives restarts: the counter is loaded from the maximum ``sequence``
-        already present in ``llm_context_buffer`` for the device on first use,
-        so a restarted process never re-uses sequence numbers.
-        """
-        next_seq = self._current_sequence[device_id] if device_id in self._current_sequence else None
-        if next_seq is not None:
-            self._current_sequence[device_id] += 1
-            return next_seq
-
-        async with self.db_manager.device_session(device_id) as session:
-            result = await session.execute(
-                select(func.max(LLMContextBuffer.sequence)).where(
-                    LLMContextBuffer.device_id == device_id
-                )
-            )
-            max_seq = result.scalar_one_or_none()
-        next_seq = 0 if max_seq is None else max_seq + 1
-        self._current_sequence[device_id] = next_seq + 1
-        return next_seq
 
 
 class PatternMatcher:
@@ -1255,43 +1129,51 @@ class LearningOrchestrator:
             self.buffer[device_id] = ContextBuffer(self.db_manager, buffer_size)
         return self.buffer[device_id]
 
-        async def prune_stores(self) -> None:
-            """Apply TTL/cap pruning to the persisted training store for every device.
+    def reset_buffers(self) -> None:
+        """Drop all cached context buffers so they rebuild with the new backend.
 
-            Reads ``store_pairs`` / ``max_pairs_per_device`` / ``pair_ttl_hours``
-            from config. When pair storage is disabled the on-disk history for each
-            device is pruned to its cap so the store cannot grow without bound.
-            """
+        Called when the runtime buffer backend changes (disk <-> memory) so the
+        next ``ensure_buffer`` creates stores honoring the active backend.
+        """
+        self.buffer.clear()
+
+    async def prune_stores(self) -> int:
+        """Apply TTL/cap pruning to the persisted training store for every device.
+
+        Reads ``store_pairs`` / ``max_pairs_per_device`` / ``pair_ttl_hours``
+        from config. When pair storage is disabled the on-disk history for each
+        device is pruned to its cap so the store cannot grow without bound.
+        """
+        try:
+            from core.config import get_config
+
+            cfg = get_config()
+            corr = cfg.correlation
+        except Exception:
+            logger.debug("Prune: config unavailable; using defaults")
+            from types import SimpleNamespace
+
+            corr = SimpleNamespace(store_pairs=True, max_pairs_per_device=10000, pair_ttl_hours=168)
+
+        if not getattr(corr, "store_pairs", True):
+            logger.info("Store-pairs disabled; no correlation persistence to prune")
+            return 0
+
+        max_pairs = int(getattr(corr, "max_pairs_per_device", 10000))
+        ttl_hours = int(getattr(corr, "pair_ttl_hours", 168))
+        devices = await self.db_manager.list_devices()
+        total = 0
+        for device in devices:
+            dev_id = device["device_id"]
             try:
-                from core.config import get_config
-
-                cfg = get_config()
-                corr = cfg.correlation
-            except Exception:
-                logger.debug("Prune: config unavailable; using defaults")
-                from types import SimpleNamespace
-
-                corr = SimpleNamespace(store_pairs=True, max_pairs_per_device=10000, pair_ttl_hours=168)
-
-            if not getattr(corr, "store_pairs", True):
-                logger.info("Store-pairs disabled; no correlation persistence to prune")
-                return 0
-
-            max_pairs = int(getattr(corr, "max_pairs_per_device", 10000))
-            ttl_hours = int(getattr(corr, "pair_ttl_hours", 168))
-            devices = await self.db_manager.list_devices()
-            total = 0
-            for device in devices:
-                dev_id = device["device_id"]
-                try:
-                    buffer = await self.ensure_buffer(dev_id)
-                    deleted = await buffer.prune(dev_id, max_pairs_per_device=max_pairs, pair_ttl_hours=ttl_hours)
-                    total += deleted
-                except Exception as e:  # pragma: no cover - defensive
-                    logger.warning("Prune failed for device %s: %s", dev_id, e)
-            if total:
-                logger.info("Pruned %d stale correlation rows across %d devices", total, len(devices))
-            return total
+                buffer = await self.ensure_buffer(dev_id)
+                deleted = await buffer.prune(dev_id, max_pairs_per_device=max_pairs, pair_ttl_hours=ttl_hours)
+                total += deleted
+            except Exception as e:  # pragma: no cover - defensive
+                logger.warning("Prune failed for device %s: %s", dev_id, e)
+        if total:
+            logger.info("Pruned %d stale correlation rows across %d devices", total, len(devices))
+        return total
 
     async def handle_request(  # noqa: PLR0913
         self,

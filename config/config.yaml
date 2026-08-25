@@ -19,8 +19,20 @@ core:
   default_context_buffer_size: 524288  # 512KB
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# PROXY SERVER SETTINGS
+  # BUFFER STORAGE BACKEND
 # ═══════════════════════════════════════════════════════════════════════════════
+  # Where the transient capture buffer lives until it is flushed to the LLM:
+  #   disk   - durable per-device database (default)
+  #   memory - in-process RAM (volatile, faster, lost on restart)
+  # The active backend can be switched at runtime from the dashboard (toggle) or
+  # the /api/settings/buffer-backend endpoint; that choice persists across restarts.
+
+  buffer:
+    backend: "disk"
+
+  # ═══════════════════════════════════════════════════════════════════════════════
+  # PROXY SERVER SETTINGS
+  # ═══════════════════════════════════════════════════════════════════════════════
 
 proxy:
   host: "0.0.0.0"

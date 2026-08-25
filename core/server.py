@@ -28,6 +28,13 @@ from adapters.base import (
     ProtocolAdapterRegistry,
     ProtocolType,
 )
+from core.buffer import (
+    dispose_memory_db,
+    get_buffer_backend,
+    initialize_buffer_backend,
+    persist_backend,
+    set_buffer_backend,
+)
 from core.cert_manager import CertManager, get_cert_manager
 from core.config import get_config_manager
 from core.database import (
@@ -221,6 +228,11 @@ async def lifespan(app: FastAPI):  # noqa: C901, PLR0912, PLR0915
     )
     await db_manager.initialize()
 
+    # Load the persisted buffer backend (disk | memory) so new buffer stores
+    # created by the orchestrator and export/import paths honor the UI toggle.
+    initialize_buffer_backend()
+    logger.info("Buffer backend initialized: %s", get_buffer_backend())
+
     # Initialize LLM decipher service
     llm_decipher_service = get_llm_decipher()
     profiles = llm_decipher_service.list_profiles()
@@ -363,7 +375,8 @@ async def lifespan(app: FastAPI):  # noqa: C901, PLR0912, PLR0915
             await llm_decipher_service.close()
     if db_manager:
         await db_manager.close()
-    logger.info("Shutdown complete")
+        await dispose_memory_db()
+        logger.info("Shutdown complete")
 
 
 app = FastAPI(
@@ -1397,6 +1410,33 @@ async def delete_buffer_entry(device_id: str, entry_id: int):
         return {"device_id": device_id, "entry_id": entry_id, "status": "deleted"}  # noqa: TRY300
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.get("/api/settings/buffer-backend")
+async def get_buffer_backend_setting():
+    """Return the currently active buffer backend (disk | memory)."""
+    return {"backend": get_buffer_backend()}
+
+
+@app.put("/api/settings/buffer-backend")
+async def set_buffer_backend_setting(request: Request):
+    """Switch the runtime buffer backend (disk | memory) and persist it."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
+    backend = body.get("backend")
+    if backend not in ("disk", "memory"):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "backend must be one of 'disk' or 'memory'"},
+        )
+    set_buffer_backend(backend)
+    persist_backend(backend)
+    if orchestrator:
+        orchestrator.reset_buffers()
+    logger.info("Buffer backend switched to %s via settings API", backend)
+    return {"backend": get_buffer_backend()}
 
 
 @app.get("/api/devices/{device_id}/context")
