@@ -5,6 +5,7 @@ Rules can be managed via UI/API and are evaluated in priority order.
 
 from __future__ import annotations
 
+import contextlib
 import ipaddress
 import logging
 import re
@@ -91,10 +92,10 @@ class TrafficRule:
         # Match based on type
         if self.match_type == MatchType.CIDR:
             if request_info.client_ip and self._cidr_network:
-                try:
-                    return ipaddress.ip_address(request_info.client_ip) in self._cidr_network
-                except ValueError:
-                    return False
+                # Use cached ip_obj to avoid repeated string parsing per rule match
+                ip_obj = request_info.ip_obj
+                if ip_obj is not None:
+                    return ip_obj in self._cidr_network
             return False
 
         if self.match_type == MatchType.HOSTNAME:
@@ -122,6 +123,17 @@ class TrafficRequestInfo:
     is_local: bool = False
     url: str | None = None
     path: str | None = None
+    _ip_obj: ipaddress.IPv4Address | ipaddress.IPv6Address | None = field(
+        default=None, init=False, repr=False
+    )
+
+    @property
+    def ip_obj(self) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+        """Cached ipaddress object for fast CIDR matching (eliminates repeated string parsing)."""
+        if self._ip_obj is None and self.client_ip:
+            with contextlib.suppress(ValueError):
+                self._ip_obj = ipaddress.ip_address(self.client_ip)
+        return self._ip_obj
 
 
 class TrafficSelector:
@@ -273,20 +285,23 @@ def create_request_info(  # noqa: PLR0913
     is_local: bool | None = None,
 ) -> TrafficRequestInfo:
     """Create TrafficRequestInfo with automatic local detection."""
-    if is_local is None:
-        # Auto-detect local IP
-        try:
-            ip = ipaddress.ip_address(client_ip)
-            is_local = ip.is_private or ip.is_loopback
-        except ValueError:
-            is_local = False
-
-    return TrafficRequestInfo(
+    req_info = TrafficRequestInfo(
         client_ip=client_ip,
         hostname=hostname,
         vendor=vendor,
         device_id=device_id,
-        is_local=is_local,
+        is_local=False,
         url=url,
         path=path,
     )
+    if is_local is None:
+        # Auto-detect local IP using cached ip_obj
+        ip = req_info.ip_obj
+        if ip is not None:
+            req_info.is_local = ip.is_private or ip.is_loopback
+        else:
+            req_info.is_local = False
+    else:
+        req_info.is_local = is_local
+
+    return req_info

@@ -35,6 +35,12 @@ _FORMULA_SAFE_NAMES = {
     "str": str,
 }
 
+# Pre-compiled regex patterns for template resolution and formula processing (hot paths)
+_RE_JSON_PATH_SPLIT = re.compile(r"[\.\[\]]+")
+_RE_TEMPLATE_VAR = re.compile(r"\{state\.(\w+)\}|\{request\.(\w+(?:\.\w+)*)\}|\{uuid\}")
+_RE_FORMULA_VAR = re.compile(r"\{state\.(\w+)\}|\{request\.(\w+(?:\.\w+)*)\}")
+_RE_FORMULA_RANDOM = re.compile(r"random\(([^,]+),\s*([^)]+)\)")
+
 
 def _as_formula_literal(value: Any) -> str:  # noqa: ANN401
     """Render a runtime value as a safe literal inside a formula string.
@@ -381,7 +387,7 @@ class PatternEngine:
 
     def _resolve_json_path(self, obj: Any, path: str) -> Any:  # noqa: ANN401
         """Resolve a path like 'commands[0].value' in a JSON object."""
-        parts = re.split(r"[\.\[\]]+", path)
+        parts = _RE_JSON_PATH_SPLIT.split(path)
         parts = [p for p in parts if p]
         current = obj
         for p in parts:
@@ -419,11 +425,7 @@ class PatternEngine:
                     # {uuid}  # noqa: ERA001
                     return str(uuid4())
 
-                obj = re.sub(
-                    r"\{state\.(\w+)\}|\{request\.(\w+(?:\.\w+)*)\}|\{uuid\}",
-                    _replacer,
-                    obj,
-                )
+                obj = _RE_TEMPLATE_VAR.sub(_replacer, obj)
             return obj
         if isinstance(obj, dict):
             return {k: self._resolve_template_vars(v, store, request) for k, v in obj.items()}
@@ -443,14 +445,9 @@ class PatternEngine:
                     return _as_formula_literal(val or 0)
                 return m.group(0)
 
-            resolved = re.sub(
-                r"\{state\.(\w+)\}|\{request\.(\w+(?:\.\w+)*)\}",
-                _var_replacer,
-                formula,
-            )
+            resolved = _RE_FORMULA_VAR.sub(_var_replacer, formula)
             # Replace function calls
-            resolved = re.sub(
-                r"random\(([^,]+),\s*([^)]+)\)",
+            resolved = _RE_FORMULA_RANDOM.sub(
                 lambda m: str(__import__("random").uniform(float(m.group(1)), float(m.group(2)))),
                 resolved,
             )
