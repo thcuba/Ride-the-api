@@ -15,15 +15,9 @@ from datetime import UTC, datetime
 from typing import Any
 
 from openai import AsyncOpenAI
-from tenacity import (
-    AsyncRetrying,
-    before_sleep_log,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
 
 from core.config import get_config_manager
+from core.retry import make_retryer
 
 logger = logging.getLogger(__name__)
 
@@ -393,13 +387,7 @@ Response:
             "response_format": {"type": "json_object"},
         }
 
-        retryer = AsyncRetrying(
-            stop=stop_after_attempt(profile.max_retries + 1),
-            wait=wait_exponential(multiplier=1, min=1, max=8),
-            retry=retry_if_exception_type((Exception,)),
-            before_sleep=before_sleep_log(logger, logging.WARNING),
-            reraise=False,
-        )
+        retryer = make_retryer(max_attempts=profile.max_retries + 1)
         error: str | None = None
         try:
             async for attempt in retryer:
