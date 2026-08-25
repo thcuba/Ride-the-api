@@ -27,6 +27,7 @@ class DeviceStateStore:
         self._variables: dict[str, Any] = {}
         self._sensors: dict[str, _SensorInstance] = {}
         self._last_update: float = time.time()
+        self._dirty: bool = False
 
     def apply_state_variables(self, variables: list[StateVariable]):
         """Initialize state from pattern DB state_variables."""
@@ -53,6 +54,7 @@ class DeviceStateStore:
         if name in self._variables and self._variables[name] == value:
             return False
         self._variables[name] = value
+        self._dirty = True
         return True
 
     def get_all(self) -> dict[str, Any]:
@@ -67,11 +69,21 @@ class DeviceStateStore:
         return {
             "device_id": self.device_id,
             "variables": dict(self._variables),
+            "updated_at": time.time(),
         }
 
     def restore(self, data: dict):
         """Restore from a snapshot."""
         self._variables.update(data.get("variables", {}))
+
+    @property
+    def is_dirty(self) -> bool:
+        """Whether any variable changed since the last persisted snapshot."""
+        return self._dirty
+
+    def clear_dirty(self) -> None:
+        """Mark the current variables as persisted."""
+        self._dirty = False
 
 
 class _SensorInstance:

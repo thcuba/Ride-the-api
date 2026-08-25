@@ -1,4 +1,4 @@
-"""
+﻿"""
 Learning/Production Pipeline - Core engine that manages device learning and local response serving.
 Handles: correlation, buffer management, LLM deciphering, pattern matching, and match rate tracking.
 """
@@ -529,7 +529,7 @@ class MatchRateTracker:
 
 
 class LearningPipeline:
-    """Orchestrates the learning flow: correlate → buffer → LLM → save patterns."""
+    """Orchestrates the learning flow: correlate â†’ buffer â†’ LLM â†’ save patterns."""
 
     def __init__(  # noqa: PLR0913
         self,
@@ -654,7 +654,7 @@ class LearningPipeline:
                 )
                 for cache_entry in result.scalars().all():
                     # `protocol` may be absent on SQLite databases created
-                    # before this column existed (no migrations here —
+                    # before this column existed (no migrations here â€”
                     # create_all never alters existing tables). Default to ""
                     # so legacy rows still flow through the fallback instead
                     # of crashing with AttributeError.
@@ -912,6 +912,9 @@ class LearningPipeline:
             filepath = patterns_dir / f"{device_id}.ride-pattern.json"
             self.engine.save_pattern_file(pattern_db, str(filepath))
             self.engine.apply_pattern_db(device_id, pattern_db)
+            # Restore any previously persisted device state so the refreshed
+            # pattern set starts from where the device left off.
+            await self.engine.load_state(device_id)
             logger.info(
                 "Exported and synced %d patterns for %s to %s",
                 len(pattern_db.client.endpoints),
@@ -1202,6 +1205,7 @@ class LearningOrchestrator:
                 template,
                 {"body": body, "headers": headers, "query_params": query_params},
             )
+            await self.engine.persist_state(device.device_id)
             await self.tracker.record_result(device.device_id, MatchResult.LOCAL_HIT)
             return {
                 "action": "local_response",
@@ -1254,6 +1258,7 @@ class LearningOrchestrator:
                 template,
                 {"body": body, "headers": headers, "query_params": query_params},
             )
+            await self.engine.persist_state(device.device_id)
             await self.tracker.record_result(device.device_id, MatchResult.LOCAL_HIT)
             return {
                 "action": "local_response",
@@ -1365,7 +1370,7 @@ class LearningOrchestrator:
                 "buffer_flushed": needs_flush,
             }
         # Production/hybrid mode: learn from the miss. The CLOUD_MISS is NOT
-        # recorded again here — it was already counted once when the request
+        # recorded again here â€” it was already counted once when the request
         # was forwarded (_handle_production/_handle_hybrid record it at
         # request time). Recording it again on the response would double-count
         # total_requests/cloud_misses and understate the real match rate.
