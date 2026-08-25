@@ -19,23 +19,27 @@ import tempfile
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-# Characters that are never allowed in a path component derived from external
-# input.  Anything else (e.g. spaces) is preserved verbatim.
-_UNSAFE_FILENAME_CHARS = re.compile(r'[^\w.\- ]')
+# Path separators / traversal tokens that must never appear in a path component
+# derived from external input.  This mirrors the allowlist validation used by the
+# cert manager: anything outside the safe set raises instead of silently
+# rewriting, so the guard is clearly visible to static analysis.
+_SAFE_FILENAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-]*$")
 
 
 def sanitize_filename_component(value: str) -> str:
     """Return ``value`` safe for use as a single path/DB component.
 
-    Strips path separators (``/`` ``\\``), traversal tokens (``..``), NUL, and
-    control characters so an externally supplied value (device id, client id)
-    can never escape the directory it is placed in.
+    Raises ``ValueError`` unless ``value`` is entirely made of letters, digits,
+    dot, underscore and hyphen (the same allowlist the cert manager uses for
+    hostnames).  Path separators, traversal tokens (``..``), NUL and control
+    characters are rejected outright so an externally supplied device id can
+    never escape the directory it is placed in.
     """
-    cleaned = _UNSAFE_FILENAME_CHARS.sub("_", value).strip()
-    # Reject empty results outright, and prohibit traversal even after cleaning.
-    if not cleaned or ".." in PurePosixPath("x/" + cleaned).parts:
+    if not value:
+        raise ValueError("Empty filename component")
+    if not _SAFE_FILENAME_RE.fullmatch(value):
         raise ValueError(f"Unsafe filename component: {value!r}")
-    return cleaned
+    return value
 
 
 def _validate_destination(path: Path) -> Path:
@@ -50,12 +54,16 @@ def _validate_destination(path: Path) -> Path:
         raise ValueError(f"Unsafe path (NUL byte): {path!s}")
     if ".." in PurePosixPath(Path(os.path.normpath(raw)).as_posix()).parts:
         raise ValueError(f"Unsafe path (traversal): {path!s}")
+    # The destination name must itself be a single, non-empty safe component.
+    safe = path.name
+    if not safe or safe in (".", "..") or "/" in safe or "\\" in safe:
+        raise ValueError(f"Unsafe path name: {path!s}")
     return path
 
 
 def write_text(path: Path | str, data: str, encoding: str = "utf-8") -> None:
     """Atomically write ``data`` to ``path`` via temp file + fsync + replace."""
-    dest = _validate_destination(Path(path))
+    dest = _validate_destination(Path(path)).resolve()
     dest.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(
         dir=str(dest.parent), prefix=f".{dest.name}.", suffix=".tmp"
