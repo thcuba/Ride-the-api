@@ -39,6 +39,7 @@ from core.database import (
     init_db_manager,
 )
 from core.llm_decipher import LLMDecipherService, get_llm_decipher
+from core.logging_config import setup_logging
 from core.pattern_db import buffer_manager, decipher_ingest
 from core.pattern_db.schemas import CaptureDB, PatternDB
 from core.pattern_db.validator import (
@@ -77,10 +78,7 @@ DASHBOARD_HTML = WEBUI_DIR / "dashboard.html"
 PATTERNS_HTML = WEBUI_DIR / "patterns.html"
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+setup_logging(level="INFO", fmt="json")
 logger = logging.getLogger(__name__)
 
 
@@ -1871,11 +1869,13 @@ def _extract_device_id(headers: dict, path: str) -> str:
 def main():
     """Run the server."""
     config = config_manager.config
+    lg = config.observability.logging
+    setup_logging(level=lg.level, fmt=lg.format, output=lg.output)
     uvicorn.run(
         "core.server:app",
         host=config.proxy.host,
         port=config.proxy.port,
-        log_level=config.observability.logging.level.lower(),
+        log_level=lg.level.lower(),
         reload=False,
     )
 
