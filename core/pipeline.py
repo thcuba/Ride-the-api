@@ -882,17 +882,15 @@ class LearningPipeline:
             patterns_dir = Path("patterns")
             patterns_dir.mkdir(parents=True, exist_ok=True)
 
-            # Inline allowlist guard on the user-supplied device id (the same
-            # pattern CodeQL accepts in the cert manager): anything outside
-            # ``[A-Za-z0-9._-]`` is rejected before it can shape a path.
-            if not _SAFE_FILENAME_RE.fullmatch(device_id):
+            # Derive a filesystem-safe deterministic filename component from
+            # the (potentially untrusted) device id, instead of using raw
+            # request-derived data directly in the path expression.
+            safe_device_key = hashlib.sha256(device_id.encode("utf-8")).hexdigest()
+            if not _SAFE_FILENAME_RE.fullmatch(safe_device_key):
                 raise ValueError(f"Unsafe pattern path for device {device_id!r}")
-            # Confine the write target explicitly (CodeQL tracking): the
-            # resolved, allowlisted path is checked against the base before the
-            # same guarded value is handed to the sink (mirrors the cert
-            # manager's ``_device_cert_files`` / ``_ext_dir`` pattern).
+            # Confine the write target explicitly under the patterns base dir.
             base = patterns_dir.resolve()
-            filepath = (base / f"{device_id}.ride-pattern.json").resolve()
+            filepath = (base / f"{safe_device_key}.ride-pattern.json").resolve()
             if base != filepath and base not in filepath.parents:
                 raise ValueError(f"Unsafe pattern path for device {device_id!r}")
             self.engine.save_pattern_file(pattern_db, str(filepath))
