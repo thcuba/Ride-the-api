@@ -317,7 +317,7 @@
   <span id="tlsBadges" role="list" aria-label="Active ports"></span>
   <span class="tb-add">
     <label for="newPortInput">Add port number</label>
-    <input type="number" id="newPortInput" placeholder="Port" min="1" max="65535" aria-required="false">
+    <input type="number" id="newPortInput" placeholder="Port" min="1" max="65535" aria-required="false" onkeydown="if(event.key==='Enter'){event.preventDefault();addTlsPort();}">
     <button class="btn btn-ghost" onclick="addTlsPort()" style="padding:4px 10px;font-size:12px;">+ Add</button>
   </span>
   <span class="tb-status" id="tlsStatus">loading…</span>
@@ -474,7 +474,7 @@ async function loadDeviceStats(deviceId) {
 
     detail.innerHTML = `<div class="detail-card">
       <div class="detail-header">
-        <h2 id="details-title">${s.name || deviceId} — Details</h2>
+        <h2 id="details-title" tabindex="-1">${s.name || deviceId} — Details</h2>
         <button class="close-btn" onclick="closeDetails()" aria-label="Close details panel">&times;</button>
       </div>
       ${ring}
@@ -676,6 +676,15 @@ loadTlsBar();
 loadVendors();
 setInterval(loadDevices, 8000);
 setInterval(loadTlsBar, 15000);
+
+document.addEventListener('keydown', function(event) {
+  if (event.key === 'Escape') {
+    const detail = document.getElementById('details');
+    if (detail && !detail.classList.contains('invisible')) {
+      closeDetails();
+    }
+  }
+});
 
 // ── Load vendors list for TLS config dropdown ─────────────────────────────
 async function loadVendors() {
