@@ -18,11 +18,13 @@ from uuid import uuid4
 
 from sqlalchemy import and_, delete, select, update
 
+from core.atomic_io import sanitize_filename_component
 from core.buffer import create_buffer_store
 from core.database import (
     DatabaseManager,
     DeviceRegistry,
     FieldMapping,
+    LLMContextBuffer,
     MatchStats,
     RequestPattern,
     ResponseTemplate,
@@ -880,7 +882,13 @@ class LearningPipeline:
             patterns_dir = Path("patterns")
             patterns_dir.mkdir(parents=True, exist_ok=True)
 
-            filepath = patterns_dir / f"{device_id}.ride-pattern.json"
+            safe_id = sanitize_filename_component(device_id)
+            filepath = patterns_dir / f"{safe_id}.ride-pattern.json"
+            # Confine the write target explicitly (CodeQL tracking): the
+            # sanitized device id yields a path strictly inside patterns/.
+            base = patterns_dir.resolve()
+            if base not in filepath.resolve().parents:
+                raise ValueError(f"Unsafe pattern path for device {device_id!r}")
             self.engine.save_pattern_file(pattern_db, str(filepath))
             self.engine.apply_pattern_db(device_id, pattern_db)
             # Restore any previously persisted device state so the refreshed
