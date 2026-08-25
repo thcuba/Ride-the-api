@@ -61,6 +61,7 @@ dependencies = [
     
         # TLS / MITM
         "cryptography>=42.0.0",
+                "h11>=0.14.0",
     
     # Testing
     "pytest>=8.2.0",
