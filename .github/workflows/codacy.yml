@@ -48,33 +48,33 @@ jobs:
             exit 0
           fi
           python3 << 'EOF'
-import json, os, sys
+          import json, os, sys
 
-if not os.path.exists("results.sarif"):
-    sys.exit(0)
+          if not os.path.exists("results.sarif"):
+              sys.exit(0)
 
-with open("results.sarif") as f:
-    data = json.load(f)
+          with open("results.sarif") as f:
+              data = json.load(f)
 
-runs = data.get("runs", [])
-if not runs:
-    sys.exit(0)
+          runs = data.get("runs", [])
+          if not runs:
+              sys.exit(0)
 
-results = []
-for r in runs:
-    results.extend(r.get("results", []))
+          results = []
+          for r in runs:
+              results.extend(r.get("results", []))
 
-merged = runs[0]
-merged["results"] = results
-merged["tool"]["driver"]["name"] = "Codacy (all tools)"
-merged["automationDetails"] = {"id": "codacy/merged/"}
-data["runs"] = [merged]
+          merged = runs[0]
+          merged["results"] = results
+          merged["tool"]["driver"]["name"] = "Codacy (all tools)"
+          merged["automationDetails"] = {"id": "codacy/merged/"}
+          data["runs"] = [merged]
 
-with open("results.sarif", "w") as f:
-    json.dump(data, f)
+          with open("results.sarif", "w") as f:
+              json.dump(data, f)
 
-print(f"Merged {len(runs)} runs into 1 ({len(results)} issues)")
-EOF
+          print(f"Merged {len(runs)} runs into 1 ({len(results)} issues)")
+          EOF
 
       - name: Upload SARIF results to GitHub Code Scanning
         uses: github/codeql-action/upload-sarif@v4
