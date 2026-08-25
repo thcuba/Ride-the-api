@@ -49,11 +49,11 @@ class BufferManager:
         self._current_sequence: dict[str, int] = {}
 
     async def add_pair(self, device_id: str, pair: dict) -> bool:
-            """Add a correlated pair to the buffer. Returns True if buffer is full."""
-            serialized = json.dumps(pair, default=str)
-            estimated_size = len(serialized.encode("utf-8"))
+        """Add a correlated pair to the buffer. Returns True if buffer is full."""
+        serialized = json.dumps(pair, default=str)
+        estimated_size = len(serialized.encode("utf-8"))
 
-            seq = await self._next_sequence(device_id)
+        seq = await self._next_sequence(device_id)
 
         async with self.db_manager.device_session(device_id) as session:
             entry = LLMContextBuffer(
@@ -207,42 +207,42 @@ class BufferManager:
 
     # ── Internal helpers ───────────────────────────────────────────────────────
 
-        async def _next_sequence(self, device_id: str) -> int:
-            """Return the next sequence number, persisting it across restarts.
+    async def _next_sequence(self, device_id: str) -> int:
+        """Return the next sequence number, persisting it across restarts.
 
-            The in-memory counter is primed once per device from the maximum
-            ``sequence`` already stored in the DB so that a restart can never
-            re-use a sequence number (which would break ordering and the
-            dedup/sliding-window logic in ``ContextBuffer``).
-            """
-            next_seq = self._current_sequence.get(device_id)
-            if next_seq is not None:
-                self._current_sequence[device_id] = next_seq + 1
-                return next_seq
-
-            async with self.db_manager.device_session(device_id) as session:
-                result = await session.execute(
-                    select(func.max(LLMContextBuffer.sequence)).where(
-                        LLMContextBuffer.device_id == device_id
-                    )
-                )
-                max_seq = result.scalar_one_or_none() or -1
-            next_seq = max_seq + 1
+        The in-memory counter is primed once per device from the maximum
+        ``sequence`` already stored in the DB so that a restart can never
+        re-use a sequence number (which would break ordering and the
+        dedup/sliding-window logic in ``ContextBuffer``).
+        """
+        next_seq = self._current_sequence.get(device_id)
+        if next_seq is not None:
             self._current_sequence[device_id] = next_seq + 1
             return next_seq
 
-        async def _get_max_buffer_size(self, device_id: str, session) -> int:
-        """Get configured max buffer size for this device (default 512KB)."""
-        try:
+        async with self.db_manager.device_session(device_id) as session:
             result = await session.execute(
-                select(DeviceRegistry.context_buffer_size).where(
-                    DeviceRegistry.device_id == device_id
+                select(func.max(LLMContextBuffer.sequence)).where(
+                    LLMContextBuffer.device_id == device_id
                 )
             )
-            row = result.one_or_none()
-            return row[0] if row else 524288
+            max_seq = result.scalar_one_or_none() or -1
+        next_seq = max_seq + 1
+        self._current_sequence[device_id] = next_seq + 1
+        return next_seq
+
+    async def _get_max_buffer_size(self, device_id: str, session) -> int:
+        """Get configured max buffer size for this device (default 512KB)."""
+        try:
+                result = await session.execute(
+            select(DeviceRegistry.context_buffer_size).where(
+                DeviceRegistry.device_id == device_id
+            )
+                )
+                row = result.one_or_none()
+                return row[0] if row else 524288
         except Exception:
-            return 524288
+                return 524288
 
     async def _get_or_create_stats(self, session, device_id: str):
         result = await session.execute(select(MatchStats).where(MatchStats.device_id == device_id))
