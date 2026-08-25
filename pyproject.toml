@@ -39,6 +39,10 @@ dependencies = [
     "onnxruntime>=1.18.0",
     "numpy>=1.26.0",
     
+    # LLM & Resilience
+    "openai>=2.0.0",
+    "tenacity>=9.0.0",
+    
     # Observability
         "opentelemetry-api>=1.25.0",
         "opentelemetry-sdk>=1.25.0",

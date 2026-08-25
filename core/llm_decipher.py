@@ -14,11 +14,22 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-import httpx
+from openai import AsyncOpenAI
+from tenacity import (
+    AsyncRetrying,
+    before_sleep_log,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from core.config import get_config_manager
 
 logger = logging.getLogger(__name__)
+
+
+class LLMCallError(Exception):
+    """Raised when an LLM call returns an unusable response."""
 
 
 @dataclass
@@ -82,7 +93,7 @@ class LLMDecipherService:
         self._config = None
         self._profiles: dict[str, LLMProfile] = {}
         self._default_profile = "default"
-        self._client: httpx.AsyncClient | None = None
+        self._clients: dict[str, AsyncOpenAI] = {}
         self._cache: dict[str, DecipherResult] = {}  # Simple in-memory cache
         self._cache_ttl = 3600  # 1 hour
 
@@ -131,11 +142,22 @@ class LLMDecipherService:
         logger.info("LLM decipher config changed, reloading")
         self._load_config()
 
-    def _get_client(self) -> httpx.AsyncClient:
-        """Get or create HTTP client."""
-        if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(timeout=60.0)
-        return self._client
+    def _get_client(self, profile: LLMProfile) -> AsyncOpenAI:
+            """Get or create an OpenAI-compatible async client for a profile."""
+            cached = self._clients.get(profile.name)
+            if cached:
+                return cached
+            # The SDK rejects an empty/missing api_key at construction, so pass a
+            # placeholder for local providers (e.g. Ollama) that ignore auth.
+            api_key = profile.api_key or "not-set"
+            client = AsyncOpenAI(
+                api_key=api_key,
+                base_url=profile.base_url.rstrip("/"),
+                timeout=profile.timeout,
+                max_retries=profile.max_retries,
+            )
+            self._clients[profile.name] = client
+            return client
 
     def get_profile(self, name: str | None = None) -> LLMProfile | None:
         """Get LLM profile by name, or default."""
@@ -351,62 +373,51 @@ Response:
         return decipher_result
 
     async def call_llm(self, profile: LLMProfile, prompt: str) -> dict:
-        """Call the LLM API."""
-        client = self._get_client()
+        """Call the LLM API via the OpenAI-compatible SDK with tenacity retries."""
+        client = self._get_client(profile)
 
-        headers = {
-            "Authorization": f"Bearer {profile.api_key}",
-            "Content-Type": "application/json",
-        }
-
-        payload = {
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a protocol analysis expert. Analyze IoT device "
+                    "communications and output structured JSON only."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ]
+        kwargs: dict[str, Any] = {
             "model": profile.model_id,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a protocol analysis expert. Analyze IoT device "
-                        "communications and output structured JSON only."
-                    ),
-                },
-                {"role": "user", "content": prompt},
-            ],
+            "messages": messages,
             "temperature": 0.1,
-            "max_tokens": 2000,
             "response_format": {"type": "json_object"},
         }
 
-        for attempt in range(profile.max_retries + 1):
-            try:
-                response = await client.post(
-                    f"{profile.base_url.rstrip('/')}/chat/completions",
-                    headers=headers,
-                    json=payload,
-                    timeout=profile.timeout,
-                )
-
-                if response.status_code == 200:  # noqa: PLR2004
-                    data = response.json()
-                    content = data["choices"][0]["message"]["content"]
-                    return {"success": True, "content": content}
-                error = f"LLM API error: {response.status_code} - {response.text}"
-                logger.warning(
-                    f"LLM call failed (attempt {attempt + 1}/{profile.max_retries + 1}): {error}"
-                )
-
-            except httpx.TimeoutException:
-                error = f"LLM request timeout after {profile.timeout}s"
-                logger.warning(f"LLM timeout (attempt {attempt + 1}/{profile.max_retries + 1})")
-            except Exception as e:
-                error = f"LLM call failed: {e}"
-                logger.error(  # noqa: TRY400
-                    f"LLM call error (attempt {attempt + 1}/{profile.max_retries + 1}): {e}"
-                )
-
-            if attempt < profile.max_retries:
-                await asyncio.sleep(1 * (attempt + 1))  # Exponential backoff
-
-        return {"success": False, "error": error, "raw": ""}
+        retryer = AsyncRetrying(
+            stop=stop_after_attempt(profile.max_retries + 1),
+            wait=wait_exponential(multiplier=1, min=1, max=8),
+            retry=retry_if_exception_type((Exception,)),
+            before_sleep=before_sleep_log(logger, logging.WARNING),
+            reraise=False,
+        )
+        error: str | None = None
+        try:
+            async for attempt in retryer:
+                with attempt:
+                    try:
+                        completion = await client.chat.completions.create(**kwargs)
+                        content = (completion.choices[0].message.content or "").strip()
+                        if not content:
+                            raise LLMCallError("LLM returned an empty completion")
+                        return {"success": True, "content": content}
+                    except Exception as e:  # noqa: BLE001
+                        error = f"LLM call failed: {e}"
+                        logger.warning("LLM call error (retrying): %s", e)
+                        raise
+        except Exception as e:  # noqa: BLE001
+            # All retries exhausted; tenacity re-raises RetryError here.
+            return {"success": False, "error": error or f"LLM call failed: {e}", "raw": ""}
+        return {"success": False, "error": error or "LLM call failed", "raw": ""}
 
     def _get_db_schema(self, vendor: str) -> str:
         """Get database schema for vendor (simplified)."""
@@ -459,9 +470,13 @@ Tables:
         return deciphered
 
     async def close(self):
-        """Close HTTP client."""
-        if self._client and not self._client.is_closed:
-            await self._client.aclose()
+            """Close all open OpenAI SDK clients."""
+            for client in self._clients.values():
+                try:
+                    await client.close()
+                except Exception as e:  # noqa: BLE001
+                    logger.debug("Error closing LLM client: %s", e)
+            self._clients.clear()
 
 
 # Global instance
