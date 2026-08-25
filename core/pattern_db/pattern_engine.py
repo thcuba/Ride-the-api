@@ -18,6 +18,7 @@ from uuid import uuid4
 
 from sqlalchemy import select
 
+from core.atomic_io import write_json
 from core.database import (
     DatabaseManager,
     DeviceState,
@@ -514,11 +515,8 @@ class PatternEngine:
         return pattern_db
 
     def save_pattern_file(self, pattern_db: PatternDB, filepath: str):
-        """Save a PatternDB to a .ride-pattern.json file."""
-        path = Path(filepath)
-        data = pattern_db.model_dump(by_alias=True, exclude_none=True)
-        path.write_text(
-            json.dumps(data, indent=2, default=str),
-            encoding="utf-8",
-        )
-        logger.info("Saved pattern DB to %s", filepath)
+            """Save a PatternDB to a .ride-pattern.json file (atomically)."""
+            path = Path(filepath)
+            data = pattern_db.model_dump(by_alias=True, exclude_none=True)
+            write_json(path, data)
+            logger.info("Saved pattern DB to %s", filepath)
