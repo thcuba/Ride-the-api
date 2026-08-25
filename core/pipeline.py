@@ -1031,9 +1031,16 @@ class LearningPipeline:
                 logger.warning(f"LLM profile '{profile_name}' not found, skipping analysis")
                 return None
 
-            # Override profile parameters if device-specific config provided
-            effective_profile = profile
-            if base_url or model_id:
+            # Use the profile-rotation fallback chain when no per-device
+            # overrides are set; the breaker excludes degraded providers and
+            # the chain tries healthy alternatives before giving up.
+            if not base_url and not model_id:
+                result = await self.llm_decipher.call_profile_chain(
+                    prompt=self._build_learning_prompt(profile, context),
+                    preferred=profile_name,
+                )
+            else:
+                # Override profile parameters if device-specific config provided
                 effective_profile = LLMProfile(
                     name=profile_name,
                     base_url=base_url or profile.base_url,
@@ -1044,9 +1051,8 @@ class LearningPipeline:
                     timeout=profile.timeout,
                     max_retries=profile.max_retries,
                 )
-
-            prompt = self._build_learning_prompt(effective_profile, context)
-            result = await self.llm_decipher.call_llm(effective_profile, prompt)
+                prompt = self._build_learning_prompt(effective_profile, context)
+                result = await self.llm_decipher.call_llm(effective_profile, prompt)
 
             if result["success"]:
                 try:
