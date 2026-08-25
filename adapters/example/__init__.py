@@ -8,6 +8,7 @@ This is a reference example — users/community choose their own database names.
 
 from __future__ import annotations
 
+import logging
 import re
 from datetime import UTC, datetime
 from typing import Any
@@ -23,6 +24,9 @@ from adapters.base import (
     ProtocolAdapter,
     ProtocolType,
 )
+from core.cloud_forward import forward_intercepted
+
+logger = logging.getLogger(__name__)
 
 
 class ExampleProtocolAdapter(ProtocolAdapter):
@@ -258,15 +262,47 @@ class ExampleProtocolAdapter(ProtocolAdapter):
         # Default: forward to cloud
         return await self.forward_to_cloud(request)
 
-    async def forward_to_cloud(self, _request: InterceptedRequest) -> CommandResult:
-        """Forward request to real cloud."""
-        # Implementation would use the vendor's Cloud API
-        # For now, return placeholder
-        return CommandResult(
-            success=False,
-            error="Cloud forward not implemented",
-            forwarded=True,
+    async def forward_to_cloud(self, request: InterceptedRequest) -> CommandResult:
+        """Forward request to the real vendor cloud, loop-free.
+
+        The target hostname is taken (in order) from the adapter config
+        (``cloud.api_endpoint`` or ``cloud.hostname``), from the request's
+        ``Host`` header, orfrom the vendor default ``api.example.com``. It is
+        resolved via upstream DNS (bypassing the local DNS server) so
+        forwarding never re-enters the proxy.
+        """
+        hostname = self._host_from_request(request)
+        if not hostname:
+            cfg = self.config.get("cloud") or {}
+            endpoint = cfg.get("api_endpoint") or cfg.get("hostname")
+            if endpoint:
+                hostname = self._host_from_url(endpoint)
+        if not hostname:
+            hostname = "api.example.com"
+        port = int((self.config.get("cloud") or {}).get("port", 443))
+        use_tls = bool((self.config.get("cloud") or {}).get("tls", True))
+        result = await forward_intercepted(
+            request,
+            hostname=hostname,
+            port=port,
+            use_tls=use_tls,
         )
+        if result.error:
+            logger.warning("Example cloud forward degraded: %s", result.error)
+        return result
+
+    @staticmethod
+    def _host_from_url(url: str) -> str:
+        """Extract hostname from a cloud endpoint URL."""
+        cleaned = url.split("//", 1)[-1]
+        return cleaned.split("/", 1)[0].split(":", 1)[0]
+
+    @staticmethod
+    def _host_from_request(request: InterceptedRequest) -> str | None:
+        host = (request.headers or {}).get("Host")
+        if host:
+            return host.split(":", 1)[0]
+        return None
 
     # ══════════════════════════════════════════════════════════════════════════════
     # RESPONSE BUILDING

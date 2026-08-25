@@ -26,6 +26,7 @@ from adapters.base import (
     ProtocolAdapter,
     ProtocolType,
 )
+from core.cloud_forward import forward_intercepted
 
 logger = logging.getLogger(__name__)
 
@@ -154,8 +155,37 @@ class ShellyProtocolAdapter(ProtocolAdapter):
             )
         return await self.forward_to_cloud(request)
 
-    async def forward_to_cloud(self, request: InterceptedRequest) -> CommandResult:  # noqa: ARG002
-        return CommandResult(success=False, error="Cloud forward not implemented", forwarded=True)
+    async def forward_to_cloud(self, request: InterceptedRequest) -> CommandResult:
+        """Forward to the real Shelly cloud, resolving the host loop-free.
+
+        The target hostname is taken (in order) from the adapter config
+        (``cloud.hostname``), from the request's ``Host`` header, or falls back
+        to the vendor default ``https://shelly-api-eu.shelly.cloud``. The
+        actual location is resolved via upstream DNS (bypassing the local DNS
+        server) so forwarding never re-enters the proxy.
+        """
+        hostname = (self.config.get("cloud") or {}).get("hostname") or self._host_from_request(
+            request
+        )
+        port = int((self.config.get("cloud") or {}).get("port", 443))
+        use_tls = bool((self.config.get("cloud") or {}).get("tls", True))
+        result = await forward_intercepted(
+            request,
+            hostname=hostname,
+            port=port,
+            use_tls=use_tls,
+        )
+        if result.error:
+            logger.warning("Shelly cloud forward degraded: %s", result.error)
+        return result
+
+    @staticmethod
+    def _host_from_request(request: InterceptedRequest) -> str | None:
+        host = (request.headers or {}).get("Host")
+        if host:
+            # Strip an explicit :port suffix if present.
+            return host.split(":", 1)[0]
+        return None
 
     async def build_response(self, request: InterceptedRequest, result: CommandResult) -> dict:  # noqa: ARG002
         if result.success and result.response:
