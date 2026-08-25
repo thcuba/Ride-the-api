@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import and_, delete, select, update
+from sqlalchemy import and_, delete, func, select, update
 
 from core.database import (
     DatabaseManager,
@@ -101,8 +101,7 @@ class ContextBuffer:
         serialized = json.dumps(pair_json, default=str)
         estimated_size = len(serialized.encode("utf-8"))
 
-        seq = self._current_sequence[device_id]
-        self._current_sequence[device_id] += 1
+        seq = await self._next_sequence(device_id)
 
         async with self.db_manager.device_session(device_id) as session:
             entry = LLMContextBuffer(
@@ -245,6 +244,29 @@ class ContextBuffer:
             )
             stats = result.scalar_one_or_none()
             return stats.current_buffer_size_bytes if stats else 0
+
+    async def _next_sequence(self, device_id: str) -> int:
+        """Return the next sequence number, primed from the persisted max.
+
+        Survives restarts: the counter is loaded from the maximum ``sequence``
+        already present in ``llm_context_buffer`` for the device on first use,
+        so a restarted process never re-uses sequence numbers.
+        """
+        next_seq = self._current_sequence[device_id] if device_id in self._current_sequence else None
+        if next_seq is not None:
+            self._current_sequence[device_id] += 1
+            return next_seq
+
+        async with self.db_manager.device_session(device_id) as session:
+            result = await session.execute(
+                select(func.max(LLMContextBuffer.sequence)).where(
+                    LLMContextBuffer.device_id == device_id
+                )
+            )
+            max_seq = result.scalar_one_or_none()
+        next_seq = 0 if max_seq is None else max_seq + 1
+        self._current_sequence[device_id] = next_seq + 1
+        return next_seq
 
 
 class PatternMatcher:

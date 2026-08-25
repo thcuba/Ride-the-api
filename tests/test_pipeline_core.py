@@ -9,7 +9,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import select
 
-from core.database import DatabaseManager, RequestPattern, SessionCache
+from core.database import DatabaseManager, LLMContextBuffer, RequestPattern, SessionCache
 from core.pipeline import (
     ContextBuffer,
     CorrelatedPair,
@@ -132,6 +132,32 @@ class TestContextBuffer:
         buffer = ContextBuffer(db_manager)
         size = await buffer.get_current_size("nonexistent")
         assert size == 0
+
+    @pytest.mark.asyncio
+    async def test_sequence_continues_across_restart(self, db_manager):
+        """Sequence numbers must not reset when a new ContextBuffer starts.
+
+        Simulates a process restart: a second buffer instance over the same
+        device DB must continue numbering from the persisted max, never
+        re-using a sequence number (which would break ordering/dedup).
+        """
+        first = ContextBuffer(db_manager, max_size_bytes=1048576)
+        await first.add_pair("device-001", make_pair(pair_id="a1"))
+        await first.add_pair("device-001", make_pair(pair_id="a2"))
+
+        second = ContextBuffer(db_manager, max_size_bytes=1048576)  # "restart"
+        await second.add_pair("device-001", make_pair(pair_id="a3"))
+
+        async with db_manager.device_session("device-001") as session:
+            result = await session.execute(
+                select(LLMContextBuffer.sequence)
+                .where(LLMContextBuffer.device_id == "device-001")
+                .order_by(LLMContextBuffer.sequence)
+            )
+            rows = list(result.scalars().all())
+        assert rows == sorted(set(rows))
+        assert len(rows) == 3  # noqa: PLR2004
+        assert rows == [0, 1, 2]
 
 
 class TestPatternMatcher:
