@@ -450,6 +450,27 @@ Analyzes entries without saving patterns. Used to validate before importing.
 
 **Response**: LLM analysis without persistence.
 
+### Buffer Backend: `GET /api/settings/buffer-backend`
+
+Returns the active buffer storage backend (`disk` or `memory`).
+
+**Response `200 OK`** `{"backend": "disk"}`
+
+---
+
+### Buffer Backend: `PUT /api/settings/buffer-backend`
+
+Switches the active buffer backend at runtime and persists the choice for the next start.
+
+**JSON Body** `{"backend": "memory"}`
+
+| Value | Description |
+|-------|-------------|
+| `disk` | Durable per-device buffer database (default) |
+| `memory` | In-process RAM buffer (volatile, faster, lost on restart) |
+
+**Response `200 OK`** `{"backend": "memory"}`
+
 ---
 
 ## Patterns
