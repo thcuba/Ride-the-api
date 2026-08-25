@@ -18,7 +18,7 @@ from uuid import uuid4
 
 from sqlalchemy import and_, delete, select, update
 
-from core.atomic_io import sanitize_filename_component
+from core.atomic_io import _SAFE_FILENAME_RE
 from core.buffer import create_buffer_store
 from core.database import (
     DatabaseManager,
@@ -882,12 +882,18 @@ class LearningPipeline:
             patterns_dir = Path("patterns")
             patterns_dir.mkdir(parents=True, exist_ok=True)
 
-            safe_id = sanitize_filename_component(device_id)
-            filepath = patterns_dir / f"{safe_id}.ride-pattern.json"
+            # Inline allowlist guard on the user-supplied device id (the same
+            # pattern CodeQL accepts in the cert manager): anything outside
+            # ``[A-Za-z0-9._-]`` is rejected before it can shape a path.
+            if not _SAFE_FILENAME_RE.fullmatch(device_id):
+                raise ValueError(f"Unsafe pattern path for device {device_id!r}")
             # Confine the write target explicitly (CodeQL tracking): the
-            # sanitized device id yields a path strictly inside patterns/.
+            # resolved, allowlisted path is checked against the base before the
+            # same guarded value is handed to the sink (mirrors the cert
+            # manager's ``_device_cert_files`` / ``_ext_dir`` pattern).
             base = patterns_dir.resolve()
-            if base not in filepath.resolve().parents:
+            filepath = (base / f"{device_id}.ride-pattern.json").resolve()
+            if base != filepath and base not in filepath.parents:
                 raise ValueError(f"Unsafe pattern path for device {device_id!r}")
             self.engine.save_pattern_file(pattern_db, str(filepath))
             self.engine.apply_pattern_db(device_id, pattern_db)
