@@ -1,11 +1,77 @@
-# To get started with Dependabot version updates, you'll need to specify which
-# package ecosystems to update and where the package manifests are located.
-# Please see the documentation for all configuration options:
-# https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+# Dependabot version updates configuration.
+# Docs: https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
 
 version: 2
 updates:
-  - package-ecosystem: "" # See documentation for possible values
-    directory: "/" # Location of package manifests
+  # Python dependencies (pyproject.toml)
+  - package-ecosystem: "pip"
+    directory: "/"
     schedule:
       interval: "weekly"
+      day: "monday"
+      time: "05:00"
+      timezone: "Europe/Rome"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "python"
+    groups:
+      # Bump deeply-interlinked runtime deps together so versions stay compatible.
+      llm-and-http:
+        patterns:
+          - "httpx"
+          - "openai"
+          - "litellm"
+          - "tenacity"
+          - "pydantic"
+          - "pydantic-settings"
+          - "h11"
+          - "uvicorn"
+          - "starlette"
+      sqlalchemy-ecosystem:
+        patterns:
+          - "sqlalchemy"
+          - "alembic"
+          - "aiosqlite"
+          - "greenlet"
+      async-protocol-libs:
+        patterns:
+          - "gmqtt"
+          - "aiocoap"
+          - "pymodbus"
+          - "websockets"
+          - "hyper-h2"
+          - "paho-mqtt"
+      async-common:
+        patterns:
+          - "asyncio*"
+          - "aiofiles"
+          - "aiohttp"
+
+  # Docker base images (deploy/Dockerfile)
+  - package-ecosystem: "docker"
+    directory: "/deploy"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "05:30"
+      timezone: "Europe/Rome"
+    labels:
+      - "dependencies"
+      - "docker"
+
+  # GitHub Actions (workflows in .github/workflows)
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/Rome"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    groups:
+      ci-tooling:
+        patterns:
+          - "actions/*"
