@@ -1,23 +1,23 @@
 """
-Modbus Protocol Server — industrial IoT protocol for PLCs, meters, sensors.
+Modbus Protocol Server ? industrial IoT protocol for PLCs, meters, sensors.
 
 Modbus TCP carries register read/write operations over TCP port 502.
 This server translates Modbus function codes into device commands:
 
-- Read Holding Registers (0x03)   → get_state / read sensor
-- Write Single Register (0x06)    → set command
-- Write Multiple Registers (0x10) → set command
-- Read Coils (0x01)               → read binary states
-- Write Single Coil (0x05)        → turn_on / turn_off
-- Read Input Registers (0x04)     → read sensor values
-- Read Discrete Inputs (0x02)     → read binary sensor
+- Read Holding Registers (0x03)   ? get_state / read sensor
+- Write Single Register (0x06)    ? set command
+- Write Multiple Registers (0x10) ? set command
+- Read Coils (0x01)               ? read binary states
+- Write Single Coil (0x05)        ? turn_on / turn_off
+- Read Input Registers (0x04)     ? read sensor values
+- Read Discrete Inputs (0x02)     ? read binary sensor
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
-import struct
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -25,10 +25,15 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 try:
-    from pymodbus.datastore import ModbusServerContext, ModbusSlaveContext
+    from pymodbus.datastore import (  # noqa: TC002
+        ModbusDeviceContext,
+        ModbusSequentialDataBlock,
+        ModbusServerContext,
+    )
+    from pymodbus.server import ModbusTcpServer  # noqa: TC002
 
     HAS_PYMODBUS = True
-except ImportError:
+except ImportError:  # pragma: no cover - exercised at import time only
     HAS_PYMODBUS = False
 
 from adapters.base import CommandType, InterceptedRequest, ProtocolType
@@ -57,29 +62,46 @@ class ModbusServerPlugin(ProtocolServerPlugin):
         self.handler = handler
         self._context: ModbusServerContext | None = None
         self._server_task: asyncio.Task | None = None
+        self._server: Any = None
 
     async def start(self) -> None:
         if not HAS_PYMODBUS:
-            logger.warning("Modbus: pymodbus not installed — pip install pymodbus")
+            logger.warning("Modbus: pymodbus not installed")
             self._running = False
+            return
+        if self._server_task is not None:
             return
 
         cfg = self.config
-        self._running = True
 
-        # Initialize default register store
-        store = ModbusSlaveContext(
-            zero_mode=True,
+        # Default register store (pymodbus 3.x device context).
+        zero = [0] * 32
+        store = ModbusDeviceContext(
             di=None,
-            do=None,  # discrete inputs/outputs
-            ir=struct.pack(">HHHHHHHH", 0, 0, 0, 0, 0, 0, 0, 0),  # input registers
-            hr=struct.pack(">HHHHHHHH", 0, 0, 0, 0, 0, 0, 0, 0),  # holding registers
+            co=None,
+                    ir=ModbusSequentialDataBlock(1, [0] * 8),
+                    hr=ModbusSequentialDataBlock(1, zero),
         )
-        self._context = ModbusServerContext(slaves={cfg.unit_id: store}, single=False)
+        self._context = ModbusServerContext(devices=store, single=True)
 
-        logger.info("Modbus server enabled on %s:%d (unit_id=%d)", cfg.host, cfg.port, cfg.unit_id)
+        self._server_task = asyncio.create_task(self._run_server(cfg.host, cfg.port))
+        self._running = True
+        logger.info("Modbus server listening on %s:%d (unit_id=%d)", cfg.host, cfg.port, cfg.unit_id)
+
+    async def _run_server(self, host: str, port: int) -> None:
+        """Run the pymodbus TCP server until it is stopped."""
+        with contextlib.suppress(asyncio.CancelledError, OSError):
+            server = ModbusTcpServer(self._context, address=(host, port))
+            self._server = server
+            await server.serve_forever()
 
     async def stop(self) -> None:
+        if self._server_task is not None:
+            self._server_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._server_task
+            self._server_task = None
+        self._server = None
         self._context = None
         await super().stop()
         logger.info("Modbus server stopped")

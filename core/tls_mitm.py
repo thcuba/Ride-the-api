@@ -15,7 +15,6 @@ import asyncio
 import json
 import logging
 import os
-import re
 import ssl
 import struct
 import tempfile
@@ -23,6 +22,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+import h11
 
 from core.cert_manager import CertManager
 
@@ -61,12 +62,81 @@ _HTTP_STATUS = {
     504: "Gateway Timeout",
 }
 
-# HTTP pattern for parsing decrypted request
-HTTP_REQUEST_RE = re.compile(
-    rb"(?P<method>[A-Z]+) (?P<path>[^ ]+) HTTP/(?P<version>1\.[01])\r\n"
-    rb"(?P<headers>.*?)\r\n\r\n(?P<body>.*)",
-    re.DOTALL,
-)
+def parse_decrypted_http_request(data: bytes) -> tuple[str, str, str, dict[str, str], bytes] | None:
+    """Parse a complete HTTP/1.1 request using the h11 state machine.
+
+    Returns ``(method, target, http_version, headers, body)`` once the full
+    request is available, or ``None`` when more data is needed. Malformed
+    requests also produce ``None`` (the caller can decide how to reply).
+    ``headers`` is a case-insensitive mapping (lower-cased keys).
+    """
+    conn = h11.Connection(h11.SERVER)
+    conn.receive_data(data)
+    method = target = http_version = None
+    headers: dict[str, str] = {}
+    body = bytearray()
+    got_end = False
+    try:
+        while True:
+            event = conn.next_event()
+            if event is h11.NEED_DATA:
+                break
+            if isinstance(event, h11.Request):
+                method = event.method.decode("ascii", "replace")
+                target = event.target.decode("ascii", "replace")
+                http_version = event.http_version.decode("ascii", "replace")
+                for name, value in event.headers:
+                    key = name.decode("ascii", "replace").lower()
+                    headers[key] = value.decode("iso-8859-1")
+            elif isinstance(event, h11.Data):
+                body.extend(event.data)
+            elif isinstance(event, h11.EndOfMessage):
+                got_end = True
+                break
+            elif isinstance(event, h11.ConnectionClosed):
+                break
+    except h11.RemoteProtocolError:
+        return None
+
+    if not got_end or not method or not target:
+        return None
+    return method, target, http_version, headers, bytes(body)
+
+def serialize_http_response(
+    status_code: int,
+    headers: dict[str, str] | None,
+    body: bytes,
+) -> bytes:
+    """Serialize an HTTP/1.1 response with h11 (Content-Length, keep-alive-off).
+
+    Returns the raw bytes ready to write to the TLS stream. Raises on invalid
+    status codes in the same way the state machine does.
+    """
+    reason = _HTTP_STATUS.get(status_code, "OK")
+    out_headers: list[tuple[bytes, bytes]] = [
+        (b"content-length", str(len(body)).encode("ascii")),
+        (b"connection", b"close"),
+    ]
+    for k, v in (headers or {}).items():
+        out_headers.append(
+            (
+                k.encode("latin-1", errors="replace"),
+                v.encode("latin-1", errors="replace"),
+            )
+        )
+    conn = h11.Connection(h11.SERVER)
+    raw = conn.send(
+        h11.Response(
+            status_code=status_code,
+            reason=reason,
+            headers=out_headers,
+        )
+    )
+    if body:
+        raw += conn.send(h11.Data(data=body))
+    raw += conn.send(h11.EndOfMessage())
+    return raw
+
 
 
 @dataclass
@@ -564,7 +634,7 @@ class TLSMITMServer:
         logger.warning("TLS MITM: handshake exceeded max attempts")
         return False
 
-    async def _read_http_over_tls(  # noqa: C901, PLR0913
+    async def _read_http_over_tls(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
         self,
         ssl_obj: ssl.SSLObject,
         incoming: ssl.MemoryBIO,
@@ -576,7 +646,12 @@ class TLSMITMServer:
         dst_port: int,
         hostname: str,
     ) -> DecryptedRequest | None:
-        """Read a decrypted HTTP/1.1 request from the TLS connection."""
+        """Read and parse a decrypted HTTP/1.1 request with the h11 state machine.
+
+        h11 handles request-line framing, header parsing and body consumption
+        (Content-Length or chunked) using validated HTTP/1.1 parsing instead of
+        a hand-rolled regex.
+        """
         app_buffer = bytearray()
         read_attempts = 0
         max_read_attempts = 50
@@ -584,7 +659,7 @@ class TLSMITMServer:
         while read_attempts < max_read_attempts:
             read_attempts += 1
 
-            # Try to read decrypted data from SSL
+            # Try to read decrypted data from the SSL object
             try:
                 chunk = ssl_obj.read(4096)
                 if chunk:
@@ -612,21 +687,24 @@ class TLSMITMServer:
                 logger.warning("TLS MITM: SSL error for %s: %s", client_ip, e)
                 break
 
-            # Check if we have a complete HTTP request
-            if b"\r\n\r\n" in app_buffer:
-                break
+            # Try to parse what we have so far; None means incomplete.
+            parsed = parse_decrypted_http_request(bytes(app_buffer))
+            if parsed is None:
+                continue
+            method, target, http_version, headers, body = parsed
+            return DecryptedRequest(
+                client_ip=client_ip,
+                client_port=client_port,
+                dst_port=dst_port,
+                sni=hostname,
+                method=method,
+                path=target,
+                http_version=http_version,
+                headers=headers,
+                body=body,
+            )
 
-        if not app_buffer:
-            return None
-
-        # Parse HTTP request
-        return self._parse_http_request(
-            bytes(app_buffer),
-            client_ip,
-            client_port,
-            dst_port,
-            hostname,
-        )
+        return None
 
     async def _write_http_response(
         self,
@@ -636,26 +714,21 @@ class TLSMITMServer:
         response: dict,
         client_ip: str,
     ) -> None:
-        """Encrypt and send an HTTP/1.1 response back to the device."""
-
+        """Serialize and send an HTTP/1.1 response using the h11 state machine."""
         try:
             status_code = int(response.get("status_code", 200))
-            headers = response.get("headers") or {}
+            resp_headers = response.get("headers") or {}
             body = response.get("body")
             if not isinstance(body, (str, bytes, bytearray)):
                 body = json.dumps(body, default=str) if body is not None else ""
             if isinstance(body, str):
                 body = body.encode("utf-8")
             body = bytes(body)
-
-            reason = _HTTP_STATUS.get(status_code, "OK")
-            lines = [f"HTTP/1.1 {status_code} {reason}"]
-            for k, v in (headers or {}).items():
-                lines.append(f"{k}: {v}")
-            lines.append(f"Content-Length: {len(body)}")
-            lines.append("Connection: close")
-            lines.append("")
-            raw = ("\r\n".join(lines) + "\r\n").encode("utf-8") + body
+            raw = serialize_http_response(
+                status_code=status_code,
+                headers=resp_headers if isinstance(resp_headers, dict) else {},
+                body=body,
+            )
 
             try:  # noqa: SIM105
                 ssl_obj.write(raw)
@@ -669,47 +742,6 @@ class TLSMITMServer:
                     pass
         except Exception as e:
             logger.warning("TLS MITM: failed sending response to %s: %s", client_ip, e)
-
-    @staticmethod
-    def _parse_http_request(
-        data: bytes,
-        client_ip: str,
-        client_port: int,
-        dst_port: int,
-        hostname: str,
-    ) -> DecryptedRequest | None:
-        """Parse a raw HTTP request into a DecryptedRequest."""
-        match = HTTP_REQUEST_RE.match(data)
-        if not match:
-            logger.warning("TLS MITM: could not parse HTTP request from %s", client_ip)
-            return None
-
-        method = match.group("method").decode("utf-8", errors="replace")
-        path = match.group("path").decode("utf-8", errors="replace")
-        http_version = match.group("version").decode("utf-8", errors="replace")
-        headers_raw = match.group("headers")
-        body = match.group("body")
-
-        # Parse headers
-        headers: dict[str, str] = {}
-        for line in headers_raw.split(b"\r\n"):
-            if b":" in line:
-                key, _, value = line.partition(b":")
-                headers[key.decode("utf-8", errors="replace").strip().lower()] = value.decode(
-                    "utf-8", errors="replace"
-                ).strip()
-
-        return DecryptedRequest(
-            client_ip=client_ip,
-            client_port=client_port,
-            dst_port=dst_port,
-            sni=hostname,
-            method=method,
-            path=path,
-            http_version=http_version,
-            headers=headers,
-            body=body,
-        )
 
     # ── Device routing ────────────────────────────────────────────────────────
 

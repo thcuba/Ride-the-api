@@ -1,8 +1,8 @@
-"""
-Pattern Engine — matches incoming requests against deciphered patterns,
+﻿"""
+Pattern Engine â€” matches incoming requests against deciphered patterns,
 builds local responses, manages device state, and handles sensor simulation.
 
-This is step ④ in the Engine flow, extending the existing PatternMatcher
+This is step â‘£ in the Engine flow, extending the existing PatternMatcher
 with state management and .ride-pattern.json import/export.
 """
 
@@ -18,7 +18,13 @@ from uuid import uuid4
 
 from sqlalchemy import select
 
-from core.database import DatabaseManager, RequestPattern, ResponseTemplate
+from core.atomic_io import write_json
+from core.database import (
+    DatabaseManager,
+    DeviceState,
+    RequestPattern,
+    ResponseTemplate,
+)
 from core.pattern_db.schemas import PatternDB
 from core.pattern_db.state_manager import DeviceStateStore
 
@@ -66,7 +72,7 @@ def _eval_formula_safe(formula: str) -> Any:  # noqa: ANN401
     Formulas may contain literals, the math helpers in ``_FORMULA_SAFE_NAMES``
     and basic arithmetic/comparison operators. The AST is walked directly
     (no ``eval``/``exec``), so attribute access, subscripting, imports, and
-    arbitrary calls are structurally impossible — the model cannot escape.
+    arbitrary calls are structurally impossible â€” the model cannot escape.
     """
     try:
         tree = ast.parse(formula, mode="eval").body
@@ -163,7 +169,7 @@ class PatternEngine:
         self._state_stores: dict[str, DeviceStateStore] = {}
         self._cached_patterns: dict[str, PatternDB] = {}
 
-    # ── State Management ──────────────────────────────────────────────────────
+    # â”€â”€ State Management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def get_state_store(self, device_id: str) -> DeviceStateStore:
         """Get or create the state store for a device."""
@@ -178,7 +184,42 @@ class PatternEngine:
         store.apply_virtual_sensors(pattern_db.server.virtual_sensors)
         self._cached_patterns[device_id] = pattern_db
 
-    # ── Pattern Matching ──────────────────────────────────────────────────────
+    async def load_state(self, device_id: str) -> None:
+        """Restore a device's persisted state variables into its store."""
+        store = self.get_state_store(device_id)
+        async with self.db_manager.device_session(device_id) as session:
+            result = await session.execute(
+                select(DeviceState).where(DeviceState.device_id == device_id)
+            )
+            row = result.scalar_one_or_none()
+        if row is not None and row.state:
+            store.restore({"variables": row.state})
+        store.clear_dirty()
+
+    async def persist_state(self, device_id: str) -> bool:
+        """Persist a device's state variables if they changed since last save.
+
+        Writes are done through the device DB session, so the snapshot is kept
+        durably (WAL + transactional) and survives a restart. Returns True when
+        something was written.
+        """
+        store = self.get_state_store(device_id)
+        if not store.is_dirty:
+            return False
+        variables = store.snapshot()["variables"]
+        async with self.db_manager.device_session(device_id) as session:
+            result = await session.execute(
+                select(DeviceState).where(DeviceState.device_id == device_id)
+            )
+            row = result.scalar_one_or_none()
+            if row is None:
+                session.add(DeviceState(device_id=device_id, state=variables))
+            else:
+                row.state = variables
+        store.clear_dirty()
+        return True
+
+    # â”€â”€ Pattern Matching â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     async def find_best_match(  # noqa: PLR0913, PLR0912
         self,
@@ -318,7 +359,7 @@ class PatternEngine:
         intersection = schema_keys & body_keys
         return len(intersection) / len(schema_keys)
 
-    # ── Response Building ─────────────────────────────────────────────────────
+    # â”€â”€ Response Building â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     async def build_local_response(
         self,
@@ -362,7 +403,12 @@ class PatternEngine:
                             original_request,
                             store,
                         )
-                    self._set_nested(body, target, val)
+                    # Field mappings targeting state.* mutate the persistent
+                    # device state store (survives restart via persist_state).
+                    if target.startswith("state."):
+                        store.set(target[6:], val)
+                    else:
+                        self._set_nested(body, target, val)
 
         # Resolve template variables {state.xxx} in body
         body = self._resolve_template_vars(body, store, original_request)
@@ -456,7 +502,7 @@ class PatternEngine:
             logger.warning("Formula eval failed: %s (%s)", formula, e)
             return 0
 
-    # ── Pattern DB File I/O ───────────────────────────────────────────────────
+    # â”€â”€ Pattern DB File I/O â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def load_pattern_file(self, device_id: str, filepath: str) -> PatternDB:
         """Load a .ride-pattern.json file and cache it for a device."""
@@ -469,11 +515,8 @@ class PatternEngine:
         return pattern_db
 
     def save_pattern_file(self, pattern_db: PatternDB, filepath: str):
-        """Save a PatternDB to a .ride-pattern.json file."""
-        path = Path(filepath)
-        data = pattern_db.model_dump(by_alias=True, exclude_none=True)
-        path.write_text(
-            json.dumps(data, indent=2, default=str),
-            encoding="utf-8",
-        )
-        logger.info("Saved pattern DB to %s", filepath)
+            """Save a PatternDB to a .ride-pattern.json file (atomically)."""
+            path = Path(filepath)
+            data = pattern_db.model_dump(by_alias=True, exclude_none=True)
+            write_json(path, data)
+            logger.info("Saved pattern DB to %s", filepath)

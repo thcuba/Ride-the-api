@@ -10,19 +10,21 @@ import json
 import logging
 from collections import defaultdict, deque
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from sqlalchemy import and_, select, update
+from sqlalchemy import and_, delete, select, update
 
+from core.atomic_io import sanitize_filename_component
 from core.buffer import create_buffer_store
 from core.database import (
     DatabaseManager,
     DeviceRegistry,
     FieldMapping,
+    LLMContextBuffer,
     MatchStats,
     RequestPattern,
     ResponseTemplate,
@@ -141,6 +143,61 @@ class ContextBuffer:
     async def get_current_size(self, device_id: str) -> int:
         """Get current buffer size for a device."""
         return await self.store.get_current_size(device_id)
+
+    async def prune(
+        self,
+        device_id: str,
+        max_pairs_per_device: int = 10000,
+        pair_ttl_hours: int = 168,
+    ) -> int:
+        """Delete persisted buffer rows that are too old or exceed the cap.
+
+        Applies ``pair_ttl_hours`` to a device's flushed rows and caps the
+        retained pairs per device at ``max_pairs_per_device`` so the on-disk
+        training store cannot grow without bound. Returns rows deleted.
+        """
+        cutoff = datetime.now(UTC) - timedelta(hours=pair_ttl_hours)
+        total = 0
+        async with self.db_manager.device_session(device_id) as session:
+            result = await session.execute(
+                delete(LLMContextBuffer).where(
+                    and_(
+                        LLMContextBuffer.device_id == device_id,
+                        LLMContextBuffer.flushed == True,  # noqa: E712
+                        LLMContextBuffer.flushed_at != None,  # noqa: E711
+                        LLMContextBuffer.flushed_at < cutoff,
+                    )
+                )
+            )
+            total += result.rowcount or 0
+
+            retained = await session.execute(
+                select(LLMContextBuffer.sequence)
+                .where(
+                    and_(
+                        LLMContextBuffer.device_id == device_id,
+                        LLMContextBuffer.flushed == True,  # noqa: E712
+                    )
+                )
+                .order_by(LLMContextBuffer.sequence.desc())
+                .offset(max_pairs_per_device)
+                .limit(1)
+            )
+            oldest_kept = retained.scalar_one_or_none()
+            if oldest_kept is not None:
+                # ``oldest_kept`` is the (max_pairs+1)th-newest sequence; drop it
+                # and anything older so only the newest ``max_pairs`` survive.
+                result = await session.execute(
+                    delete(LLMContextBuffer).where(
+                        and_(
+                            LLMContextBuffer.device_id == device_id,
+                            LLMContextBuffer.flushed == True,  # noqa: E712
+                            LLMContextBuffer.sequence <= oldest_kept,
+                        )
+                    )
+                )
+                total += result.rowcount or 0
+        return total
 
 
 class PatternMatcher:
@@ -425,7 +482,7 @@ class MatchRateTracker:
 
 
 class LearningPipeline:
-    """Orchestrates the learning flow: correlate → buffer → LLM → save patterns."""
+    """Orchestrates the learning flow: correlate ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ buffer ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ LLM ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ save patterns."""
 
     def __init__(  # noqa: PLR0913
         self,
@@ -443,6 +500,22 @@ class LearningPipeline:
         self.tracker = tracker
         self.engine = engine
         self._correlation_cache: dict[str, deque] = defaultdict(lambda: deque(maxlen=1000))
+
+    def _correlation_max_age(self) -> timedelta:
+        """Max age for a pending request to be correlated.
+
+        Mirrors the configured ``pair_ttl_hours`` so that un-correlated rows
+        from a previous process run are never phantom-matched with an
+        unrelated later response. Defaults to 7 days.
+        """
+        try:
+            from core.config import get_config
+
+            cfg = get_config()
+            ttl_hours = cfg.correlation.pair_ttl_hours
+            return timedelta(hours=max(ttl_hours, 1))
+        except Exception:
+            return timedelta(days=7)
 
     async def register_request(  # noqa: PLR0913
         self,
@@ -492,6 +565,7 @@ class LearningPipeline:
 
         return corr_key
 
+
     async def match_response(  # noqa: PLR0913
         self,
         device_id: str,
@@ -535,7 +609,10 @@ class LearningPipeline:
                 )
 
         if not matched:
-            # Try DB cache
+            # Try DB cache, guarding against stale rows: a pending request left
+            # from a previous process (or an old, un-correlated row) must not be
+            # wrongly paired with an unrelated later response (phantom match).
+            cutoff = datetime.now(UTC) - self._correlation_max_age()
             async with self.db_manager.device_session(device_id) as session:
                 result = await session.execute(
                     select(SessionCache)
@@ -543,6 +620,7 @@ class LearningPipeline:
                         and_(
                             SessionCache.device_id == device_id,
                             SessionCache.correlated == False,  # noqa: E712
+                            SessionCache.created_at >= cutoff,
                         )
                     )
                     .order_by(SessionCache.created_at.desc())
@@ -550,10 +628,8 @@ class LearningPipeline:
                 )
                 for cache_entry in result.scalars().all():
                     # `protocol` may be absent on SQLite databases created
-                    # before this column existed (no migrations here —
-                    # create_all never alters existing tables). Default to ""
-                    # so legacy rows still flow through the fallback instead
-                    # of crashing with AttributeError.
+                    # before this column existed. Default to "" so legacy rows
+                    # still flow through the fallback instead of crashing.
                     if getattr(cache_entry, "protocol", None) == protocol:
                         matched = {
                             "correlation_key": cache_entry.correlation_key,
@@ -574,6 +650,7 @@ class LearningPipeline:
                         cache_entry.response_body = body
                         cache_entry.response_latency_ms = 0.0
                         break
+
 
         if not matched:
             return None
@@ -805,9 +882,18 @@ class LearningPipeline:
             patterns_dir = Path("patterns")
             patterns_dir.mkdir(parents=True, exist_ok=True)
 
-            filepath = patterns_dir / f"{device_id}.ride-pattern.json"
+            safe_id = sanitize_filename_component(device_id)
+            filepath = patterns_dir / f"{safe_id}.ride-pattern.json"
+            # Confine the write target explicitly (CodeQL tracking): the
+            # sanitized device id yields a path strictly inside patterns/.
+            base = patterns_dir.resolve()
+            if base not in filepath.resolve().parents:
+                raise ValueError(f"Unsafe pattern path for device {device_id!r}")
             self.engine.save_pattern_file(pattern_db, str(filepath))
             self.engine.apply_pattern_db(device_id, pattern_db)
+            # Restore any previously persisted device state so the refreshed
+            # pattern set starts from where the device left off.
+            await self.engine.load_state(device_id)
             logger.info(
                 "Exported and synced %d patterns for %s to %s",
                 len(pattern_db.client.endpoints),
@@ -827,9 +913,16 @@ class LearningPipeline:
                 logger.warning(f"LLM profile '{profile_name}' not found, skipping analysis")
                 return None
 
-            # Override profile parameters if device-specific config provided
-            effective_profile = profile
-            if base_url or model_id:
+            # Use the profile-rotation fallback chain when no per-device
+            # overrides are set; the breaker excludes degraded providers and
+            # the chain tries healthy alternatives before giving up.
+            if not base_url and not model_id:
+                result = await self.llm_decipher.call_profile_chain(
+                    prompt=self._build_learning_prompt(profile, context),
+                    preferred=profile_name,
+                )
+            else:
+                # Override profile parameters if device-specific config provided
                 effective_profile = LLMProfile(
                     name=profile_name,
                     base_url=base_url or profile.base_url,
@@ -840,9 +933,8 @@ class LearningPipeline:
                     timeout=profile.timeout,
                     max_retries=profile.max_retries,
                 )
-
-            prompt = self._build_learning_prompt(effective_profile, context)
-            result = await self.llm_decipher.call_llm(effective_profile, prompt)
+                prompt = self._build_learning_prompt(effective_profile, context)
+                result = await self.llm_decipher.call_llm(effective_profile, prompt)
 
             if result["success"]:
                 try:
@@ -1053,6 +1145,44 @@ class LearningOrchestrator:
         """
         self.buffer.clear()
 
+    async def prune_stores(self) -> int:
+        """Apply TTL/cap pruning to the persisted training store for every device.
+
+        Reads ``store_pairs`` / ``max_pairs_per_device`` / ``pair_ttl_hours``
+        from config. When pair storage is disabled the on-disk history for each
+        device is pruned to its cap so the store cannot grow without bound.
+        """
+        try:
+            from core.config import get_config
+
+            cfg = get_config()
+            corr = cfg.correlation
+        except Exception:
+            logger.debug("Prune: config unavailable; using defaults")
+            from types import SimpleNamespace
+
+            corr = SimpleNamespace(store_pairs=True, max_pairs_per_device=10000, pair_ttl_hours=168)
+
+        if not getattr(corr, "store_pairs", True):
+            logger.info("Store-pairs disabled; no correlation persistence to prune")
+            return 0
+
+        max_pairs = int(getattr(corr, "max_pairs_per_device", 10000))
+        ttl_hours = int(getattr(corr, "pair_ttl_hours", 168))
+        devices = await self.db_manager.list_devices()
+        total = 0
+        for device in devices:
+            dev_id = device["device_id"]
+            try:
+                buffer = await self.ensure_buffer(dev_id)
+                deleted = await buffer.prune(dev_id, max_pairs_per_device=max_pairs, pair_ttl_hours=ttl_hours)
+                total += deleted
+            except Exception as e:  # pragma: no cover - defensive
+                logger.warning("Prune failed for device %s: %s", dev_id, e)
+        if total:
+            logger.info("Pruned %d stale correlation rows across %d devices", total, len(devices))
+        return total
+
     async def handle_request(  # noqa: PLR0913
         self,
         device_id: str,
@@ -1106,6 +1236,7 @@ class LearningOrchestrator:
                 template,
                 {"body": body, "headers": headers, "query_params": query_params},
             )
+            await self.engine.persist_state(device.device_id)
             await self.tracker.record_result(device.device_id, MatchResult.LOCAL_HIT)
             return {
                 "action": "local_response",
@@ -1158,6 +1289,7 @@ class LearningOrchestrator:
                 template,
                 {"body": body, "headers": headers, "query_params": query_params},
             )
+            await self.engine.persist_state(device.device_id)
             await self.tracker.record_result(device.device_id, MatchResult.LOCAL_HIT)
             return {
                 "action": "local_response",
@@ -1269,7 +1401,7 @@ class LearningOrchestrator:
                 "buffer_flushed": needs_flush,
             }
         # Production/hybrid mode: learn from the miss. The CLOUD_MISS is NOT
-        # recorded again here — it was already counted once when the request
+        # recorded again here ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â it was already counted once when the request
         # was forwarded (_handle_production/_handle_hybrid record it at
         # request time). Recording it again on the response would double-count
         # total_requests/cloud_misses and understate the real match rate.

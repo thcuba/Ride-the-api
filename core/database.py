@@ -1,4 +1,4 @@
-"""
+﻿"""
 Core Database Architecture - Device-Specific Protocol Databases
 Core DB + Per-Device DB (SQLite default, PostgreSQL optional)
 """
@@ -20,6 +20,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    event,
     func,
     select,
 )
@@ -33,13 +34,14 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.pool import NullPool
 
 from core.config import get_config
+from core.migrations import SchemaMigrator
 
 logger = logging.getLogger(__name__)
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # BASE CLASSES
-# ═══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 
 class Base(DeclarativeBase):
@@ -48,9 +50,46 @@ class Base(DeclarativeBase):
     pass
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# Sqlite durability settings applied to every engine connection. WAL journaling
+# plus synchronous=NORMAL keeps reads concurrent and commits crash-safe without
+# the write-lock stalls of the default rollback journal. busy_timeout avoids
+# "database is locked" under concurrent writers, and foreign_keys enforce
+# referential integrity the default SQLite doesn't.
+_SQLITE_PRAGMAS = (
+    "PRAGMA journal_mode=WAL",
+    "PRAGMA synchronous=NORMAL",
+    "PRAGMA busy_timeout=5000",
+    "PRAGMA foreign_keys=ON",
+)
+
+
+def _apply_sqlite_pragmas(dbapi_connection, _connection_record) -> None:
+    """Apply durability PRAGMAs to a SQLite connection (no-op otherwise)."""
+    try:
+        cursor = dbapi_connection.cursor()
+        for pragma in _SQLITE_PRAGMAS:
+            cursor.execute(pragma)
+        cursor.close()
+    except Exception:  # pragma: no cover - defensive for non-sqlite drivers
+        return
+
+
+def create_configured_engine(db_url: str, *, echo: bool = False) -> AsyncEngine:
+    """Create an async engine with durability PRAGMAs for SQLite backends.
+
+    Uses NullPool (the de-facto setting for aiosqlite here) so that every
+    connection re-runs the PRAGMAs via the connect listener. PostgreSQL accepts
+    no SQLite PRAGMAs; the listener returns without touching them.
+    """
+    engine = create_async_engine(db_url, echo=echo, poolclass=NullPool)
+    if db_url.startswith("sqlite"):
+        event.listen(engine.sync_engine, "connect", _apply_sqlite_pragmas)
+    return engine
+
+
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # CORE DATABASE MODELS (shared across all devices)
-# ═══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 
 class DeviceRegistry(Base):
@@ -72,7 +111,7 @@ class DeviceRegistry(Base):
     # IP addresses associated with this device (for routing by IP)
     ip_addresses: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
 
-    # Database assignment (optional — override default per-device db)
+    # Database assignment (optional â€” override default per-device db)
     database_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     database_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
@@ -150,11 +189,11 @@ class ModelRegistry(Base):
             DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
         )
 
-    # ═══════════════════════════════════════════════════════════════════════════════
+    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     # DEVICE-SPECIFIC DATABASE MODELS (each device gets its own DB with these tables)
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 
 class RequestPattern(Base):
@@ -383,9 +422,26 @@ class InterceptedRequest(Base):
     action: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+class DeviceState(Base):
+    """Persisted snapshot of a device's simulated state (single row per device).
+    
+    Stores the last known ``state_variables`` so that ``{state.xxx}`` values and
+    virtual-sensor baselines survive a restart. Written whenever a response's
+    field mappings mutate the state store.
+    """
+    
+    __tablename__ = "device_state"
+    
+    device_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    state: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    updated_at: Mapped[DateTime] = mapped_column(
+    DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # DATABASE MANAGER
-# ═══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 
 class DatabaseManager:
@@ -411,11 +467,7 @@ class DatabaseManager:
 
     async def initialize(self) -> None:
         """Initialize all databases."""
-        self._core_engine = create_async_engine(
-            self.core_db_url,
-            echo=self.echo,
-            poolclass=NullPool,
-        )
+        self._core_engine = create_configured_engine(self.core_db_url, echo=self.echo)
         self._core_session_factory = async_sessionmaker(
             self._core_engine,
             class_=AsyncSession,
@@ -423,6 +475,7 @@ class DatabaseManager:
         )
         async with self._core_engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+        await SchemaMigrator(self._core_engine).run()
         logger.info("Core database initialized")
 
     @staticmethod
@@ -451,7 +504,7 @@ class DatabaseManager:
         """Resolve device_id from an IP address (reverse lookup).
 
         Matches exact IPv4 membership in the per-device ``ip_addresses`` list.
-        ``JSON.contains`` is a substring test (``LIKE '%ip%'``) — a partial
+        ``JSON.contains`` is a substring test (``LIKE '%ip%'``) â€” a partial
         IPv4 like ``192.168.1.1`` matched a device storing ``192.168.1.100`` and
         routed its traffic to the wrong device DB. Load candidate rows and test
         exact membership in Python for portable SQLite/Postgres behaviour.
@@ -533,9 +586,10 @@ class DatabaseManager:
             else:
                 db_path = self.device_db_dir / f"{device_id}.db"
                 db_url = f"sqlite+aiosqlite:///{db_path}"
-        engine = create_async_engine(db_url, echo=self.echo, poolclass=NullPool)
+        engine = create_configured_engine(db_url, echo=self.echo)
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+        await SchemaMigrator(engine).run()
         self._device_engines[device_id] = engine
         self._device_sessions[device_id] = async_sessionmaker(
             engine,
@@ -691,7 +745,7 @@ class DatabaseManager:
             logger.info(f"Device {device_id} auto-switch {'enabled' if enabled else 'disabled'}")
             return True
 
-    # ── Context notes ────────────────────────────────────────────────────────
+    # â”€â”€ Context notes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     async def update_device_context_notes(self, device_id: str, notes: str) -> bool:
         """Update custom context notes for a device (injected as {context_notes})."""
@@ -715,7 +769,7 @@ class DatabaseManager:
             device = result.scalar_one_or_none()
             return device.llm_context_notes if device else None
 
-    # ── LLM Profile CRUD ────────────────────────────────────────────────────
+    # â”€â”€ LLM Profile CRUD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     async def list_llm_profiles(self) -> list[dict]:
         """List all user-saved LLM profiles."""

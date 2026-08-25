@@ -1,5 +1,5 @@
 """
-CoAP Protocol Server — UDP-based REST for constrained IoT devices.
+CoAP Protocol Server ? UDP-based REST for constrained IoT devices.
 
 CoAP (Constrained Application Protocol) is like HTTP over UDP, with:
 - Compact binary headers (4 bytes vs HTTP's hundreds)
@@ -8,12 +8,15 @@ CoAP (Constrained Application Protocol) is like HTTP over UDP, with:
 - Confirmable/Non-confirmable messages
 - DTLS for encryption (CoAPS)
 
-This server listens on UDP port 5683 (CoAP) and optionally 5684 (CoAPS/DTLS).
+This server listens on UDP port 5683 (CoAP) via the validated ``aiocoap``
+library. Requests are routed to the pipeline handler and answered from the
+learned local response.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 from datetime import UTC, datetime
@@ -24,11 +27,12 @@ if TYPE_CHECKING:
 
 try:
     import aiocoap
+    import aiocoap.resource
     from aiocoap import DELETE, GET, POST, PUT, Context, Message
     from aiocoap.numbers.contentformat import ContentFormat
 
     HAS_AIOCOAP = True
-except ImportError:
+except ImportError:  # pragma: no cover - exercised at import time only
     HAS_AIOCOAP = False
 
 from adapters.base import InterceptedRequest, ProtocolType
@@ -50,23 +54,46 @@ class CoAPServerPlugin(ProtocolServerPlugin):
 
     async def start(self) -> None:
         if not HAS_AIOCOAP:
-            logger.warning("CoAP: aiocoap not installed — pip install aiocoap")
+            logger.warning("CoAP: aiocoap not installed ? pip install aiocoap")
             self._running = False
+            return
+        if self._context is not None:
             return
 
         cfg = self.config
+
+        class _Wildcard(aiocoap.resource.Resource):
+            plugin = self
+
+            async def render(self, request: Message) -> Message:
+                segs = request.opt.uri_path
+                joined = "/".join(segs) if segs else ""
+                return (
+                    await type(self).plugin.handle_coap_request(request, joined)
+                    or Message(code=aiocoap.NOT_FOUND)
+                )
+
+        class _WellKnown(aiocoap.resource.Resource):
+            plugin = self
+
+            async def render(self, request: Message) -> Message:  # noqa: N805
+                payload = b"</>;ct=0,</.well-known/core>;ct=40"
+                return Message(code=aiocoap.CONTENT, payload=payload,
+                               content_format=ContentFormat.LINKFORMAT)
+
+        site = aiocoap.resource.Site()
+        site.add_resource([".well-known", "core"], _WellKnown())
+        site.add_resource(["*"], _Wildcard())
+
+        bind = (cfg.host, cfg.port)
+        self._context = await Context.create_server_context(site=site, bind=bind)
         self._running = True
-        logger.info(
-            "CoAP server enabled on %s:%d (DTLS: %s:%d)",
-            cfg.host,
-            cfg.port,
-            cfg.host,
-            cfg.dtls_port if cfg.dtls_enabled else 0,
-        )
+        logger.info("CoAP server listening on %s:%d", cfg.host, cfg.port)
 
     async def stop(self) -> None:
         if self._context:
-            await self._context.shutdown()
+            with contextlib.suppress(Exception):
+                await self._context.shutdown()
             self._context = None
         await super().stop()
         logger.info("CoAP server stopped")
@@ -86,8 +113,8 @@ class CoAPServerPlugin(ProtocolServerPlugin):
                 query_params[k] = v
             else:
                 query_params[item] = ""
-        # Could be absent when the request lacks a remote address
-        remote_ip = request.remote.sockname[0] if hasattr(request, "remote") else "unknown"
+        remote = getattr(request, "remote", None)
+        remote_ip = getattr(remote, "host", "unknown")
 
         body: dict | None = None
         if request.payload:

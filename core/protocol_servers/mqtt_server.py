@@ -1,8 +1,12 @@
 """
-MQTT Protocol Server — local broker that intercepts device MQTT traffic.
+MQTT Protocol Server ? local broker that intercepts device MQTT traffic.
 
-Acts as a transparent MQTT broker: devices connect here instead of the vendor cloud.
-Messages are converted to InterceptedRequest and passed to the pipeline.
+Acts as a transparent MQTT broker: devices connect here instead of the vendor
+cloud. Messages are converted to InterceptedRequest and passed to the pipeline.
+
+The broker itself is `amqtt` (a validated, pure-Python async MQTT broker); a
+paho client loop subscribes to the configured topic filters and forwards each
+captured PUBLISH to the pipeline handler.
 """
 
 from __future__ import annotations
@@ -11,8 +15,9 @@ import asyncio
 import contextlib
 import json
 import logging
+import threading
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from adapters.base import InterceptedRequest, ProtocolType
 from core.protocol_servers import ProtocolServerPlugin
@@ -23,12 +28,19 @@ if TYPE_CHECKING:
     from core.config import MQTTServerConfig
 
 try:
-    from gmqtt import Client as MQTTClient  # noqa: TC002
-    from gmqtt.mqtt.constants import MQTTv5, MQTTv311  # noqa: F401
+    from amqtt.broker import Broker as AMQTTBroker
 
-    HAS_GMQTT = True
-except ImportError:
-    HAS_GMQTT = False
+    HAS_AMQTT = True
+except ImportError:  # pragma: no cover - exercised at import time only
+    HAS_AMQTT = False
+
+try:
+    import paho.mqtt.client as mqtt
+
+    HAS_PAHO = True
+except ImportError:  # pragma: no cover - exercised at import time only
+    HAS_PAHO = False
+
 
 logger = logging.getLogger(__name__)
 
@@ -41,27 +53,93 @@ class MQTTServerPlugin(ProtocolServerPlugin):
     def __init__(self, config: MQTTServerConfig, handler: Callable | None = None) -> None:
         super().__init__(config)
         self.handler = handler
-        self._server: asyncio.AbstractServer | None = None
-        self._clients: dict[str, MQTTClient] = {}
-        self._client_subscriptions: dict[str, list[str]] = {}
+        self._broker: AMQTTBroker | None = None
+        self._forward_thread: threading.Thread | None = None
+        self._forward_client = None
+        self._stop_event = threading.Event()
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     async def start(self) -> None:
-        """Start the MQTT server."""
-        if not HAS_GMQTT:
-            logger.warning("MQTT: gmqtt not installed — install with: pip install gmqtt")
+        """Start the MQTT broker and the capture-forwarding loop."""
+        if not HAS_AMQTT:
+            logger.warning("MQTT: amqtt not installed ? install with: pip install amqtt")
+            return
+        if self._broker is not None:
             return
 
         cfg = self.config
+        self._loop = asyncio.get_running_loop()
+        broker_config = {
+            "listeners": {
+                "default": {
+                    "type": "tcp",
+                    "bind": f"{cfg.host}:{cfg.port}",
+                    "max_connections": 512,
+                }
+            },
+            "sys_interval": 0,
+            "auth": {"allow-anonymous": True},
+            "topic-check": {"enabled": False},
+        }
+        self._broker = AMQTTBroker(broker_config)
+        await self._broker.start()
         self._running = True
-        logger.info("MQTT server starting on %s:%d", cfg.host, cfg.port)
+        logger.info("MQTT broker listening on %s:%d", cfg.host, cfg.port)
+
+        # Forward captured messages to the pipeline (best-effort; devices work
+        # even if no handler is wired).
+        if HAS_PAHO and self.handler:
+            self._start_forwarder(cfg)
+
+    def _start_forwarder(self, cfg) -> None:  # noqa: ANN001
+        filters = list(getattr(cfg, "topic_filters", None) or ["#"])
+        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+        client.on_connect = self._on_connect
+        client.on_message = self._on_message
+        self._forward_client = client
+        self._stop_event.clear()
+        host = cfg.host if cfg.host not in ("0.0.0.0", "::") else "127.0.0.1"
+        self._filters = filters
+        self._forward_thread = threading.Thread(
+            target=lambda: client.connect_async(host, cfg.port)
+            or client.loop_forever(),
+            name="mqtt-forwarder",
+            daemon=True,
+        )
+        self._forward_thread.start()
+
+    def _on_connect(self, client, userdata, flags, reason_code, properties) -> None:  # noqa: ANN001
+        for topic in self._filters:
+            client.subscribe(topic)
+
+    def _on_message(self, client, userdata, msg) -> None:  # noqa: ANN001
+        if self._loop is None or self._loop.is_closed():
+            return
+        asyncio.run_coroutine_threadsafe(
+            self.handle_message(
+                client_id="mqtt-forwarder",
+                topic=msg.topic,
+                payload=msg.payload or b"",
+                qos=msg.qos,
+                retain=msg.retain,
+            ),
+            self._loop,
+        )
 
     async def stop(self) -> None:
-        """Stop the MQTT server and disconnect all clients."""
-        for cid, client in self._clients.items():
+        """Stop the MQTT broker and disconnect all clients."""
+        self._stop_event.set()
+        if self._forward_client is not None:
             with contextlib.suppress(Exception):
-                await client.disconnect()
-        self._clients.clear()
-        self._client_subscriptions.clear()
+                self._forward_client.disconnect()
+            self._forward_client = None
+        if self._forward_thread is not None:
+            self._forward_thread.join(timeout=2)
+            self._forward_thread = None
+        if self._broker is not None:
+            with contextlib.suppress(Exception):
+                await self._broker.shutdown()
+            self._broker = None
         await super().stop()
         logger.info("MQTT server stopped")
 
@@ -106,8 +184,6 @@ class MQTTServerPlugin(ProtocolServerPlugin):
             "host": self.config.host,
             "port": self.config.port,
             "tls_enabled": self.config.tls_enabled,
-            "clients": len(self._clients),
-            "subscriptions": sum(len(s) for s in self._client_subscriptions.values()),
         }
 
 
@@ -119,25 +195,31 @@ class MQTTBridgeClient(ProtocolServerPlugin):
     def __init__(self, config: MQTTServerConfig, handler: Callable | None = None) -> None:
         super().__init__(config)
         self.handler = handler
-        self._client: MQTTClient | None = None
+        self._client = None
 
     async def start(self) -> None:
         """Connect to external MQTT broker."""
-        if not HAS_GMQTT:
-            logger.warning("MQTT bridge: gmqtt not installed")
+        if not HAS_PAHO:
+            logger.warning("MQTT bridge: paho-mqtt not installed")
             return
         cfg = self.config
-        self._running = True
-        logger.info(
-            "MQTT bridge connecting to %s:%d",
-            getattr(cfg, "host", "localhost"),
-            getattr(cfg, "port", 1883),
+        host = getattr(cfg, "host", "localhost")
+        port = int(getattr(cfg, "port", 1883))
+        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+        client.connect_async(host, port)
+        self._loop = asyncio.get_running_loop()
+        self._bridge_thread = threading.Thread(
+            target=client.loop_forever, name="mqtt-bridge", daemon=True
         )
+        self._client = client
+        self._bridge_thread.start()
+        self._running = True
+        logger.info("MQTT bridge connecting to %s:%d", host, port)
 
     async def stop(self) -> None:
         if self._client:
             with contextlib.suppress(Exception):
-                await self._client.disconnect()
+                self._client.disconnect()
             self._client = None
         await super().stop()
 
@@ -146,9 +228,8 @@ class MQTTBridgeClient(ProtocolServerPlugin):
         if not self._client:
             return False
         try:
-            self._client.publish(
-                topic, json.dumps(payload) if isinstance(payload, dict) else payload, qos
-            )
+            data = json.dumps(payload) if isinstance(payload, dict) else payload
+            self._client.publish(topic, data, qos)
         except Exception:
             logger.exception("MQTT bridge publish error:")
             return False

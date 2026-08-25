@@ -3,6 +3,7 @@ Tests for Shelly Protocol Adapter — Gen1, Gen2, Gen3 intent parsing and lifecy
 """
 
 from datetime import datetime
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -404,7 +405,9 @@ class TestHandleRequest:
 
 class TestForwardAndBuild:
     @pytest.mark.asyncio
-    async def test_forward_to_cloud(self, adapter):
+    async def test_forward_to_cloud_no_host_fails_cleanly(self, adapter):
+        # No config hostname and no Host header -> must fail gracefully
+        # (forwarded signal set) without a network call.
         req = InterceptedRequest(
             device_id="test",
             timestamp=datetime.utcnow(),
@@ -413,7 +416,26 @@ class TestForwardAndBuild:
         result = await adapter.forward_to_cloud(req)
         assert result.success is False
         assert result.forwarded is True
-        assert "Cloud forward not implemented" in (result.error or "")
+        assert "no upstream host" in (result.error or "")
+
+    @pytest.mark.asyncio
+    async def test_forward_to_cloud_uses_host_header_as_hostname(self, adapter):
+        req = InterceptedRequest(
+            device_id="test",
+            timestamp=datetime.utcnow(),
+            protocol=ProtocolType.HTTP,
+            headers={"Host": "shelly-api-eu.shelly.cloud:443"},
+        )
+        with patch(
+            "core.cloud_forward.resolve_upstream",
+            AsyncMock(return_value=[]),
+        ):
+            result = await adapter.forward_to_cloud(req)
+        # Host header was consumed as the target; resolution returned no IPs,
+        # which must still yield a graceful forwarded=False-able result.
+        assert result.success is False
+        assert result.forwarded is True
+        assert "no address found" in (result.error or "")
 
     @pytest.mark.asyncio
     async def test_build_response_success(self, adapter):

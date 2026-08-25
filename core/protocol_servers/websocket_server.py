@@ -1,14 +1,16 @@
 """
-WebSocket Protocol Server — native WebSocket listener for device real-time communication.
+WebSocket Protocol Server ? native WebSocket listener for device real-time communication.
 
 Many IoT devices use WebSocket for real-time bidirectional communication
-(status updates, command streaming, event notifications). This server
-acts as a WebSocket endpoint that devices connect to instead of the vendor cloud.
+(status updates, command streaming, event notifications). This server acts as
+a WebSocket endpoint that devices connect to instead of the vendor cloud,
+using the validated ``websockets`` library.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 from datetime import UTC, datetime
@@ -18,11 +20,11 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 try:
-    import websockets  # noqa: F401
-    from websockets.server import serve as ws_serve  # noqa: F401
+    import websockets
+    from websockets.exceptions import ConnectionClosed
 
     HAS_WEBSOCKETS = True
-except ImportError:
+except ImportError:  # pragma: no cover - exercised at import time only
     HAS_WEBSOCKETS = False
 
 from adapters.base import InterceptedRequest, ProtocolType
@@ -39,59 +41,85 @@ class WebSocketServerPlugin(ProtocolServerPlugin):
     def __init__(self, config: Any, handler: Callable | None = None) -> None:  # noqa: ANN401
         super().__init__(config)
         self.handler = handler
-        self._server: asyncio.AbstractServer | None = None
+        self._serving_task: asyncio.Task | None = None
+        self._stop_future: asyncio.Future | None = None
 
     async def start(self) -> None:
         if not HAS_WEBSOCKETS:
-            logger.warning("WebSocket: websockets not installed — pip install websockets")
+            logger.warning("WebSocket: websockets not installed - pip install websockets")
             self._running = False
             return
+        if self._serving_task is not None:
+            return
 
-        cfg = self.config
+        loop = asyncio.get_running_loop()
+        self._stop_future = loop.create_future()
+        self._serving_task = asyncio.create_task(self._run())
         self._running = True
-        logger.info("WebSocket server enabled on %s:%d%s", cfg.host, cfg.port, cfg.path)
-
-    async def stop(self) -> None:
-        if self._server:
-            self._server.close()
-            await self._server.wait_closed()
-            self._server = None
-        await super().stop()
-        logger.info("WebSocket server stopped")
-
-    async def _handle_ws(self, websocket, path: str) -> None:
-        """Handle an individual WebSocket connection."""
-        remote_ip = (
-            websocket.remote_address[0] if hasattr(websocket, "remote_address") else "unknown"
+        logger.info(
+            "WebSocket server listening on %s:%d%s",
+            self.config.host, self.config.port, self.config.path,
         )
+
+    async def _run(self) -> None:
+        """Run ``websockets.serve`` as an async context manager until stopped."""
+        cfg = self.config
+        async with websockets.serve(
+            self._handle_ws, cfg.host, cfg.port, max_size=cfg.max_message_size
+        ):
+            await self._stop_future
+
+    async def _handle_ws(self, connection) -> None:  # noqa: ANN001
+        """Handle an individual WebSocket connection (websockets >= 14 API)."""
+        remote_info = connection.remote_address
+        remote_ip = remote_info[0] if remote_info else "unknown"
         device_id = f"ws-{remote_ip.replace('.', '-')}"
 
-        async for message in websocket:
-            body = None
-            try:
-                body = json.loads(message)
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                body = {"raw": message.hex() if isinstance(message, bytes) else message}
-
-            request = InterceptedRequest(
-                device_id=device_id,
-                timestamp=datetime.now(UTC).timestamp(),
-                protocol=ProtocolType.WEBSOCKET,
-                method="WS",
-                path=path or self.config.path,
-                body=body,
-            )
-
-            if self.handler:
+        try:
+            async for message in connection:
+                body = None
                 try:
-                    if asyncio.iscoroutinefunction(self.handler):
-                        result = await self.handler(request)
-                    else:
-                        result = self.handler(request)
-                    if result and isinstance(result, dict):
-                        await websocket.send(json.dumps(result))
-                except Exception:
-                    logger.exception("WebSocket handler error:")
+                    body = json.loads(message)
+                except (json.JSONDecodeError, TypeError):
+                    body = (
+                        {"raw": message.hex()}
+                        if isinstance(message, bytes)
+                        else {"raw": str(message)}
+                    )
+                request = InterceptedRequest(
+                    device_id=device_id,
+                    timestamp=datetime.now(UTC).timestamp(),
+                    protocol=ProtocolType.WEBSOCKET,
+                    method="WS",
+                    path=self.config.path,
+                    body=body,
+                )
+                if self.handler:
+                    try:
+                        if asyncio.iscoroutinefunction(self.handler):
+                            result = await self.handler(request)
+                        else:
+                            result = self.handler(request)
+                        if result and isinstance(result, dict):
+                            await connection.send(json.dumps(result))
+                    except ConnectionClosed:
+                        break
+                    except Exception:
+                        logger.exception("WebSocket handler error:")
+        except ConnectionClosed:
+            return
+        except Exception:
+            logger.exception("WebSocket connection error:")
+
+    async def stop(self) -> None:
+        if self._serving_task is not None:
+            if self._stop_future is not None and not self._stop_future.done():
+                self._stop_future.set_result(None)
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._serving_task
+            self._serving_task = None
+        await super().stop()
+        logger.info("WebSocket server stopped")
 
     async def get_status(self) -> dict:
         return {

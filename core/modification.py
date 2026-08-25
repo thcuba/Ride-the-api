@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from adapters.base import InterceptedRequest
 
+from core.atomic_io import append_jsonl
 from core.config import get_config_manager
 
 
@@ -572,9 +573,7 @@ class ModificationEngine:
         if mod_config and getattr(mod_config, "audit_log_enabled", True):
             audit_path = getattr(mod_config, "audit_log_path", "./logs/modifications.jsonl")
             try:
-                os.makedirs(os.path.dirname(audit_path), exist_ok=True)  # noqa: PTH103, PTH120
-                with open(audit_path, "a") as f:  # noqa: PTH123
-                    f.write(json.dumps(entry) + "\n")
+                append_jsonl(audit_path, entry)
             except Exception as e:
                 logger.error(f"Failed to write audit log: {e}")  # noqa: TRY400
 

@@ -44,9 +44,14 @@ class RawTCPServerPlugin(ProtocolServerPlugin):
         self._server: asyncio.AbstractServer | None = None
 
     async def start(self) -> None:
-        cfg = self.config
-        self._running = True
-        logger.info("Raw TCP server enabled on %s:%d", cfg.host, cfg.port)
+            if self._server is not None:
+                return
+            cfg = self.config
+            self._server = await asyncio.start_server(
+                self._handle_connection, host=cfg.host, port=cfg.port
+            )
+            self._running = True
+            logger.info("Raw TCP server listening on %s:%d", cfg.host, cfg.port)
 
     async def stop(self) -> None:
         if self._server:

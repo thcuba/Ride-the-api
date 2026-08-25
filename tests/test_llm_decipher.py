@@ -6,7 +6,6 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from httpx import TimeoutException
 
 from core.llm_decipher import (
     DecipherResult,
@@ -102,16 +101,15 @@ class TestLLMDecipherService:
         assert result == "sk-literal-key"
 
     @pytest.mark.asyncio
-    @patch("core.llm_decipher.httpx.AsyncClient")
+    @patch("core.llm_decipher.AsyncOpenAI")
     async def test_call_llm_success(self, mock_client_class):
-        mock_client = AsyncMock()
+        mock_client = MagicMock()
         mock_client_class.return_value = mock_client
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "choices": [{"message": {"content": '{"intent": "turn_on", "confidence": 0.95}'}}]
-        }
-        mock_client.post.return_value = mock_response
+        msg = MagicMock()
+        msg.message.content = '{"intent": "turn_on", "confidence": 0.95}'
+        choice = MagicMock()
+        choice.choices = [msg]
+        mock_client.chat.completions.create = AsyncMock(return_value=choice)
 
         service = make_service()
         profile = LLMProfile(
@@ -127,14 +125,11 @@ class TestLLMDecipherService:
         assert "intent" in result["content"]
 
     @pytest.mark.asyncio
-    @patch("core.llm_decipher.httpx.AsyncClient")
+    @patch("core.llm_decipher.AsyncOpenAI")
     async def test_call_llm_retry_then_fail(self, mock_client_class):
-        mock_client = AsyncMock()
+        mock_client = MagicMock()
         mock_client_class.return_value = mock_client
-        mock_response = MagicMock()
-        mock_response.status_code = 500
-        mock_response.text = "Server Error"
-        mock_client.post.return_value = mock_response
+        mock_client.chat.completions.create = AsyncMock(side_effect=Exception("Server Error"))
 
         service = make_service()
         profile = LLMProfile(
@@ -151,11 +146,11 @@ class TestLLMDecipherService:
         assert result["error"] is not None
 
     @pytest.mark.asyncio
-    @patch("core.llm_decipher.httpx.AsyncClient")
+    @patch("core.llm_decipher.AsyncOpenAI")
     async def test_call_llm_timeout(self, mock_client_class):
-        mock_client = AsyncMock()
+        mock_client = MagicMock()
         mock_client_class.return_value = mock_client
-        mock_client.post.side_effect = TimeoutException("timeout")
+        mock_client.chat.completions.create = AsyncMock(side_effect=Exception("request timeout exceeded"))
 
         service = make_service()
         profile = LLMProfile(
@@ -170,6 +165,45 @@ class TestLLMDecipherService:
         result = await service.call_llm(profile, "test prompt")
         assert result["success"] is False
         assert "timeout" in result["error"].lower()
+
+    def _make_client(mock_client_class, content: str):
+        """Wire a fake OpenAI completion returning ``content``."""
+        mock_client = MagicMock()
+        mock_client_class.return_value = mock_client
+        msg = MagicMock()
+        msg.message.content = content
+        choice = MagicMock()
+        choice.choices = [msg]
+        mock_client.chat.completions.create = AsyncMock(return_value=choice)
+        return mock_client
+
+    @pytest.mark.asyncio
+    @patch("core.llm_decipher.AsyncOpenAI")
+    async def test_api_key_passed_to_sdk(self, mock_client_class):
+        """The real API key must be forwarded to the SDK (regression for the
+        literal ``Authorization: ******`` bug)."""
+        mock_client = MagicMock()
+        mock_client_class.return_value = mock_client
+        msg = MagicMock()
+        msg.message.content = '{"intent": "x", "fields": {}, "confidence": 0.5}'
+        choice = MagicMock()
+        choice.choices = [msg]
+        mock_client.chat.completions.create = AsyncMock(return_value=choice)
+
+        service = make_service()
+        profile = LLMProfile(
+            name="default",
+            base_url="https://api.openai.com/v1",
+            api_key="sk-super-secret",
+            model_id="gpt-4o",
+            prompt_template="{pairs}",
+        )
+        await service.call_llm(profile, "prompt")
+
+        mock_client_class.assert_called_once()
+        _, kwargs = mock_client_class.call_args
+        assert kwargs["api_key"] == "sk-super-secret"
+        assert kwargs["base_url"] == "https://api.openai.com/v1"
 
     def test_json_extraction_from_markdown(self):
         """Test extracting JSON from ```json blocks."""
@@ -256,24 +290,18 @@ End."""
         assert "not found" in result["error"]
 
     @pytest.mark.asyncio
-    @patch("core.llm_decipher.httpx.AsyncClient")
+    @pytest.mark.asyncio
+    @patch("core.llm_decipher.AsyncOpenAI")
     async def test_decipher_with_params_success(self, mock_client_class):
-        mock_client = AsyncMock()
+        mock_client = MagicMock()
         mock_client_class.return_value = mock_client
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "choices": [
-                {
-                    "message": {
-                        "content": (
-                            '{"intent": "turn_on", "fields": {"state": "on"}, "confidence": 0.95}'
-                        ),
-                    }
-                }
-            ]
-        }
-        mock_client.post.return_value = mock_response
+        msg = MagicMock()
+        msg.message.content = (
+            '{"intent": "turn_on", "fields": {"state": "on"}, "confidence": 0.95}'
+        )
+        choice = MagicMock()
+        choice.choices = [msg]
+        mock_client.chat.completions.create = AsyncMock(return_value=choice)
 
         service = make_service()
         service._profiles["test"] = LLMProfile(

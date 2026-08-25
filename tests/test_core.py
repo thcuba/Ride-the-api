@@ -5,6 +5,7 @@ Tests for the Local Cloud Replacement Proxy architecture.
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import pytest_asyncio
@@ -448,8 +449,71 @@ class TestProtocolAdapter:
         assert parsed.device_id == "device_456"
         assert parsed.parsed_params.get("mode") == "cold"
 
+    @pytest.mark.asyncio
+    async def test_forward_to_cloud_uses_host_header(self, example_adapter):
+        """Host header wins over the default vendor host."""
+        req = InterceptedRequest(
+            device_id="",
+            timestamp=datetime.now(UTC),
+            protocol=ProtocolType.HTTPS,
+            method="GET",
+            path="/status",
+            headers={"Host": "openapi.example.com:443"},
+        )
+        with patch(
+            "core.cloud_forward.resolve_upstream",
+            AsyncMock(return_value=[]),
+        ):
+            result = await example_adapter.forward_to_cloud(req)
+        assert result.success is False
+        assert result.forwarded is True
+        assert "no address found" in (result.error or "")
 
-# ═══════════════════════════════════════════════════════════════════════════════
+    @pytest.mark.asyncio
+    async def test_forward_to_cloud_default_host(self):
+        """No config hostname / Host header -> vendor default host is used."""
+        adapter = ExampleProtocolAdapter("example", {})
+        req = InterceptedRequest(
+            device_id="",
+            timestamp=datetime.now(UTC),
+            protocol=ProtocolType.HTTPS,
+            method="GET",
+            path="/v1.0/devices/device_456/status",
+        )
+        with patch(
+            "core.cloud_forward.resolve_upstream",
+            AsyncMock(return_value=[]),
+        ):
+            result = await adapter.forward_to_cloud(req)
+        # Falls back to the default api.example.com; empty upstream -> graceful fail.
+        assert result.success is False
+        assert result.forwarded is True
+        assert "no address found" in (result.error or "")
+
+    @pytest.mark.asyncio
+    async def test_forward_to_cloud_uses_config_endpoint(self):
+        """Configured api_endpoint host is used when no Host header is present."""
+        adapter = ExampleProtocolAdapter(
+            "example",
+            {"cloud": {"api_endpoint": "https://openapi.example.com"}},
+        )
+        req = InterceptedRequest(
+            device_id="",
+            timestamp=datetime.now(UTC),
+            protocol=ProtocolType.HTTPS,
+            method="GET",
+            path="/status",
+        )
+        with patch(
+            "core.cloud_forward.resolve_upstream",
+            AsyncMock(return_value=[]),
+        ):
+            result = await adapter.forward_to_cloud(req)
+        assert result.success is False
+        assert result.forwarded is True
+        assert "no address found" in (result.error or "")
+
+
 # RESILIENCE / AUTO-SWITCH TESTS
 # ═══════════════════════════════════════════════════════════════════════════════
 
