@@ -23,6 +23,7 @@ updates:
           - "openai"
           - "litellm"
           - "tenacity"
+          - "simpleeval"
           - "pydantic"
           - "pydantic-settings"
           - "h11"

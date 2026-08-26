@@ -47,6 +47,7 @@ dependencies = [
     # LLM & Resilience
     "openai>=2.0.0",
     "tenacity>=9.0.0",
+    "simpleeval>=1.0.0",
     
     # Observability
         "opentelemetry-api>=1.25.0",
