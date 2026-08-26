@@ -79,6 +79,9 @@ autonomous local responses. Each request passes through the following stages:
   and downloading the CA certificate for manual installation on devices.
 - **Frida script injection**: provides a dynamic instrumentation script for devices that
   implement certificate pinning (`GET /api/tls/frida/script.js`).
+- **HTTP/1.1 parsing/serialization**: decrypted traffic is parsed and re-serialized with the
+  [`h11`](https://github.com/python-hyper/h11) state machine (`parse_decrypted_http_request`,
+  `serialize_http_response`) — no regex-based HTTP parsers are used.
 
 ### 2.2 TrafficSelector (`core/traffic_selector.py`)
 
@@ -98,6 +101,9 @@ passed through (forwarded directly to the cloud).
 - **Default action**: configurable; in the absence of matching rules, the default action applies
   (usually `INTERCEPT`).
 - **Hot-reload**: rules are automatically reloaded when the configuration changes.
+- **Wildcard matching**: hostname wildcard patterns are translated to regex with
+  [`fnmatch.translate`](https://docs.python.org/3/library/fnmatch.html) (stdlib) rather than a
+  hand-rolled `*` → `.*` conversion.
 
 ### 2.3 LearningOrchestrator (Pipeline) (`core/pipeline.py`)
 
@@ -153,12 +159,14 @@ analysis and field deciphering.
   request, response, vendor database schema, recent patterns, and user context notes
   (`llm_context_notes`).
 - **Response format**: the LLM must return structured JSON with `intent`, `fields`,
-  `confidence`, `suggested_dp_codes` and `protocol_notes`. The system attempts to extract JSON
-  even from markdown responses (containing ```json ... ```).
+  `confidence`, `suggested_dp_codes` and `protocol_notes`. The JSON is extracted from
+  markdown responses (```json ... ``` fences) and repaired when malformed/truncated with the
+  [`json_repair`](https://github.com/mangiucugna/json_repair) library (see `_parse_llm_json`).
 - **Cache**: deciphered results are cached in memory (TTL: 1 hour) to
   avoid redundant LLM calls.
 - **Retry with backoff**: in case of timeout or HTTP error, retries up to `max_retries` times with
-  exponential backoff (1s, 2s, …).
+  exponential backoff (1s, 2s, …) driven by the [`tenacity`](https://github.com/jd/tenacity)
+  library (shared helpers in `core/retry.py`).
 
 #### 2.3.3 DecipherIngest (`core/pattern_db/decipher_ingest.py`)
 
@@ -295,7 +303,8 @@ This completely isolates learned patterns, preventing interference between diffe
 `DatabaseManager.resolve_device_id(ip_address)` determines which device a given source IP
 belongs to by searching the `ip_addresses` list of each `DeviceRegistry`. This is the
 central mechanism for IP-first routing: **the source IP is the key to the device's
-database**.
+database**. IP validation and classification (private/loopback) use the stdlib
+[`ipaddress`](https://docs.python.org/3/library/ipaddress.html) module.
 
 ### 4.4 Custom Databases
 
@@ -321,7 +330,9 @@ cloud. Key features:
   - `MIN_TOTAL_REQUESTS` = 50 (minimum requests for reliable statistics).
 - **Forwarding loop prevention**: the `UpstreamResolver` resolves cloud names directly via
   public DNS (8.8.8.8 / 1.1.1.1, dual-stack IPv4+IPv6), bypassing local DNS
-  (dnsmasq/Pi-hole/AdGuard Home) to prevent the proxy from re-inserting itself.
+  (dnsmasq/Pi-hole/AdGuard Home) to prevent the proxy from re-inserting itself. Resolution
+  results are cached with a TTL by the [`cachetools`](https://github.com/tkem/cachetools)
+  `TTLCache` (in `core/upstream_resolver.py`).
 
 ---
 
@@ -334,6 +345,8 @@ configurable rules. Supports:
 - JavaScript/CSS injection for debugging.
 - Selective logging of modified traffic.
 - Rules based on regex patterns, HTTP methods, and specific paths.
+- JSON field access and updates via dot/bracket paths (`a.b[0].c`) are read/written with the
+  [`dpath`](https://github.com/akesterson/dpath-python) library (`_get_json_path`/`_set_json_path`).
 
 ---
 

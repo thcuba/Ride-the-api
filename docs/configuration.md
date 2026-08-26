@@ -286,6 +286,10 @@ System observability: structured logging, Prometheus metrics, distributed tracin
 | `format` | `string` | `"json"` | Log format (`json`, `text`) |
 | `output` | `string` | `"stdout"` | Log destination (`stdout`, `stderr`, file path) |
 
+Logs are emitted through a [`structlog`](https://github.com/hynek/structlog) pipeline
+configured in `core/logging_config.py` (native `python` logger integration + JSON or text
+formatter), replacing a bare `logging.basicConfig`.
+
 ### observability.metrics
 
 | Field | Type | Default | Description |
@@ -418,6 +422,10 @@ Deciphering unknown protocols or encrypted payloads via Large Language Model.
 | `api_key` | `string` | `""` | API key for LLM access |
 | `model_id` | `string` | `""` | LLM model identifier (e.g. `gpt-4o`, `claude-3`) |
 | `prompt_template` | `string` | `""` | Prompt template to guide deciphering |
+
+API keys are typed as [`pydantic`](https://docs.pydantic.dev/) `SecretStr` (via the
+`pydantic-settings` / pydantic field validators), so credentials never appear in logs, error
+messages, or serialized state.
 
 Example:
 
