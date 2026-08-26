@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from enum import Enum, StrEnum
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -207,13 +207,7 @@ class LLMDecipherConfig(BaseModel):
     profiles: dict[str, LLMDecipherProfile] = Field(default_factory=dict)
 
 
-class ModificationAction(StrEnum):
-    modify = "modify"
-    block = "block"
-    inject = "inject"
-    replace = "replace"
-    redirect = "redirect"
-    delay = "delay"
+from core.modification import ModificationAction
 
 
 class ModificationRule(BaseModel):
@@ -221,7 +215,7 @@ class ModificationRule(BaseModel):
     scope: str = "local"
     match_type: str = "hostname"
     match_value: str = ""
-    action: ModificationAction = ModificationAction.modify
+    action: ModificationAction = ModificationAction.MODIFY
     target_field: str = ""
     target_value: str = ""
     priority: int = 0

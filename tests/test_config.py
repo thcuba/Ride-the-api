@@ -178,24 +178,24 @@ class TestModificationRule:
     def test_defaults(self):
         r = ModificationRule()
         assert r.name == ""
-        assert r.action == ModificationAction.modify
+        assert r.action == ModificationAction.MODIFY
         assert r.enabled is True
         assert r.priority == 0
 
     def test_block_action(self):
-        r = ModificationRule(name="block-test", action=ModificationAction.block)
-        assert r.action is ModificationAction.block
+        r = ModificationRule(name="block-test", action=ModificationAction.BLOCK)
+        assert r.action is ModificationAction.BLOCK
 
     def test_custom(self):
         r = ModificationRule(
             name="redirect-google",
             match_type="hostname",
             match_value="google.com",
-            action=ModificationAction.redirect,
+            action=ModificationAction.REDIRECT,
             target_value="http://localhost:8080",
             priority=10,
         )
-        assert r.action is ModificationAction.redirect
+        assert r.action is ModificationAction.REDIRECT
         assert r.target_value == "http://localhost:8080"
 
 
@@ -226,12 +226,12 @@ class TestTrafficSelectionConfig:
 
 class TestModificationAction:
     def test_members(self):
-        assert ModificationAction.modify.value == "modify"
-        assert ModificationAction.block.value == "block"
-        assert ModificationAction.inject.value == "inject"
-        assert ModificationAction.replace.value == "replace"
-        assert ModificationAction.redirect.value == "redirect"
-        assert ModificationAction.delay.value == "delay"
+        assert ModificationAction.MODIFY.value == "modify"
+        assert ModificationAction.BLOCK.value == "block"
+        assert ModificationAction.INJECT.value == "inject"
+        assert ModificationAction.REPLACE.value == "replace"
+        assert ModificationAction.REDIRECT.value == "redirect"
+        assert ModificationAction.DELAY.value == "delay"
 
 
 # ---------------------------------------------------------------------------
