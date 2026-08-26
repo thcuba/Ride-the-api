@@ -200,10 +200,10 @@ with state variable resolution and safe formula evaluation.
   state variables (e.g. current temperature, operating mode) and virtual sensors.
 - **Virtual sensors**: simulated sensors that aggregate state data and apply formulas (e.g.
   moving average, unit conversion).
-- **Formula safety**: pattern formulas are evaluated via a restricted AST interpreter
-  (`_interp()`) that only allows arithmetic operations, comparisons, and basic math
-  functions (`abs`, `min`, `max`, `round`, `int`, `float`, `str`). No attribute access,
-  imports, or arbitrary calls — code injection prevention.
+- **Formula safety**: pattern formulas are evaluated via the
+  `simpleeval` library (restricted to arithmetic operations, comparisons,
+  and basic math functions — no `eval`/`exec`), replacing the hand-rolled
+  AST interpreter — no attribute access, imports, or arbitrary calls, so code injection is prevented.
 - **Caching**: patterns can be loaded from `.ride-pattern.json` files into memory for
   ultra-fast matching without touching the database.
 
