@@ -24,6 +24,7 @@ updates:
           - "litellm"
           - "tenacity"
           - "simpleeval"
+          - "json_repair"
           - "dpath"
           - "pydantic"
           - "pydantic-settings"

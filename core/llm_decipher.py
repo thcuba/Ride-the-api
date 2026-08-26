@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+import json_repair
 from openai import AsyncOpenAI
 from pydantic import BaseModel, SecretStr, field_validator
 
@@ -23,6 +24,26 @@ from core.fallback_policy import FallbackChain, ProviderCircuitBreaker
 from core.retry import make_retryer
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_llm_json(content: str) -> dict | None:
+    """Parse JSON from an LLM response, tolerating surrounding markdown/code fences.
+
+    LLMs often wrap the JSON payload in ```json ... ``` fences, add prose
+    around it, or emit slightly malformed JSON (trailing commas, truncation).
+    ``json_repair`` robustly extracts and repairs such payloads; a plain
+    ``json.loads`` still handles clean output fast. Returns the parsed dict,
+    or ``None`` when nothing recoverable is present.
+    """
+    if not content:
+        return None
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        try:
+            return json_repair.loads(content)
+        except Exception:  # noqa: BLE001 - best-effort repair
+            return None
 
 
 class LLMProfile(BaseModel):
@@ -300,11 +321,10 @@ class LLMDecipherService:
             result = await self.call_llm(effective, prompt)
             if result["success"]:
                 content = result["content"]
-                if "```json" in content:
-                    content = content.split("```json")[1].split("```")[0]
-                elif "```" in content:
-                    content = content.split("```")[1].split("```")[0]
-                return {"success": True, "analysis": json.loads(content)}
+                analysis = _parse_llm_json(content)
+                if analysis is not None:
+                    return {"success": True, "analysis": analysis}
+                return {"success": False, "error": "Unable to parse LLM analysis JSON"}
             return {"success": False, "error": result.get("error")}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -414,30 +434,24 @@ Response:
 
         # Parse LLM response
         try:
-            analysis = json.loads(result["content"])
-        except json.JSONDecodeError:
-            # Try to extract JSON from markdown
-            content = result["content"]
-            if "```json" in content:
-                content = content.split("```json")[1].split("```")[0]
-            elif "```" in content:
-                content = content.split("```")[1].split("```")[0]
-            try:
-                analysis = json.loads(content)
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse LLM response: {e}")  # noqa: TRY400
-                return DecipherResult(
-                    pair_id=pair.pair_id,
-                    device_id=pair.device_id,
-                    vendor=pair.vendor,
-                    intent="unknown",
-                    fields={},
-                    confidence=0.0,
-                    success=False,
-                    error=f"Failed to parse LLM response: {e}",
-                    processing_time_ms=processing_time,
-                    raw_response=result["content"],
-                )
+            analysis = _parse_llm_json(result["content"])
+        except Exception:  # noqa: BLE001 - defensive, mirrors old JSONDecodeError path
+            analysis = None
+        if analysis is None:
+            err = f"Failed to parse LLM response: {result['content'][:80]!r}"
+            logger.error(err)  # noqa: TRY400
+            return DecipherResult(
+                pair_id=pair.pair_id,
+                device_id=pair.device_id,
+                vendor=pair.vendor,
+                intent="unknown",
+                fields={},
+                confidence=0.0,
+                success=False,
+                error=err,
+                processing_time_ms=processing_time,
+                raw_response=result["content"],
+            )
 
         # Create result
         decipher_result = DecipherResult(

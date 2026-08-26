@@ -32,7 +32,7 @@ from core.database import (
     SessionCache,
     get_db_manager,
 )
-from core.llm_decipher import LLMDecipherService, LLMProfile
+from core.llm_decipher import LLMDecipherService, LLMProfile, _parse_llm_json
 from core.pattern_db import decipher_ingest
 from core.pattern_db.pattern_engine import (
     PatternEngine,
@@ -914,13 +914,8 @@ class LearningPipeline:
 
             if result["success"]:
                 try:
-                    content = result["content"]
-                    if "```json" in content:
-                        content = content.split("```json")[1].split("```")[0]
-                    elif "```" in content:
-                        content = content.split("```")[1].split("```")[0]
-                    return json.loads(content)
-                except json.JSONDecodeError:
+                    return _parse_llm_json(result["content"])
+                except Exception:  # noqa: BLE001 - defensive parse
                     logger.exception("Failed to parse LLM analysis result")
                     return None
             else:

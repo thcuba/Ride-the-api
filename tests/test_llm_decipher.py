@@ -2,7 +2,6 @@
 Tests for the LLM Deciphering Service.
 """
 
-import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -11,6 +10,7 @@ from core.llm_decipher import (
     DecipherResult,
     LLMDecipherService,
     LLMProfile,
+    _parse_llm_json,
 )
 
 
@@ -216,17 +216,14 @@ class TestLLMDecipherService:
         assert kwargs["base_url"] == "https://api.openai.com/v1"
 
     def test_json_extraction_from_markdown(self):
-        """Test extracting JSON from ```json blocks."""
+        """Test extracting JSON from ```json blocks via _parse_llm_json."""
         content = """Here is the analysis:
 ```json
 {"intent": "turn_on", "fields": {"state": "on"}, "confidence": 0.95}
 ```
 End."""
-        extracted = content
-        if "```json" in extracted:
-            extracted = extracted.split("```json")[1].split("```")[0]
-
-        parsed = json.loads(extracted)
+        parsed = _parse_llm_json(content)
+        assert parsed is not None
         assert parsed["intent"] == "turn_on"
         assert parsed["confidence"] == 0.95  # noqa: PLR2004
 
@@ -235,14 +232,15 @@ End."""
 ```
 {"intent": "turn_off", "fields": {}, "confidence": 0.8}
 ```"""
-        extracted = content
-        if "```json" in extracted:
-            extracted = extracted.split("```json")[1].split("```")[0]
-        elif "```" in extracted:
-            extracted = extracted.split("```")[1].split("```")[0]
-
-        parsed = json.loads(extracted)
+        parsed = _parse_llm_json(content)
+        assert parsed is not None
         assert parsed["intent"] == "turn_off"
+
+    def test_json_parse_repairs_malformed(self):
+        """A slightly damaged payload is still recovered."""
+        parsed = _parse_llm_json('{"intent": "turn_on", "confidence": 0.9,}')
+        assert parsed is not None
+        assert parsed["intent"] == "turn_on"
 
     def test_decipher_result_creation(self):
         result = DecipherResult(
