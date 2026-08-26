@@ -94,6 +94,46 @@ def _dpath_set(d: dict, path: str, value: Any) -> None:  # noqa: ANN401
     dpath.new(d, _dot_to_dpath(path), value, separator="/")
 
 
+def _path_similarity(pattern: str, actual: str) -> float:
+    """Compare a path pattern (may contain ``{placeholders}``) vs an actual path.
+
+    Shared by :class:`PatternEngine` and the pipeline's matcher so both use the
+    same scoring. Segments match when equal or when the pattern segment is a
+    ``{placeholder}``. Length mismatch within one yields a partial 0.3 score.
+    """
+    p_parts = pattern.strip("/").split("/")
+    a_parts = actual.strip("/").split("/")
+    lp = len(p_parts)
+    la = len(a_parts)
+    if lp != la:
+        return 0.3 if abs(lp - la) <= 1 else 0.0
+    if not lp:
+        return 1.0
+    matches = 0
+    # Performance optimization: direct index checks p[0] == "{" and p[-1] == "}"
+    # instead of startswith/endswith (~1.4x faster per call in request hot path).
+    for p, a in zip(p_parts, a_parts):
+        if p == a or (p and p[0] == "{" and p[-1] == "}"):
+            matches += 1
+    return matches / lp
+
+
+def _body_similarity(schema: dict, body: dict) -> float:
+    """Compare body schema keys against actual body keys (structural match).
+
+    Handles JSON-schema ``{"properties": {...}}`` wrappers and tolerates a
+    non-dict ``body`` (treated as having no keys).
+    """
+    if not schema or not body:
+        return 0.5
+    schema_keys = set(schema.get("properties", schema).keys())
+    body_keys = set(body.keys()) if isinstance(body, dict) else set()
+    if not schema_keys:
+        return 1.0
+    intersection = schema_keys & body_keys
+    return len(intersection) / len(schema_keys)
+
+
 class PatternEngine:
     """
     Matches incoming requests against learned patterns and builds local responses.
@@ -281,31 +321,10 @@ class PatternEngine:
 
     def _path_similarity(self, pattern: str, actual: str) -> float:
         """Compare path pattern (may contain {placeholders}) vs actual path."""
-        p_parts = pattern.strip("/").split("/")
-        a_parts = actual.strip("/").split("/")
-        lp = len(p_parts)
-        la = len(a_parts)
-        if lp != la:
-            return 0.3 if abs(lp - la) <= 1 else 0.0
-        if not lp:
-            return 1.0
-        matches = 0
-        # Performance optimization: use direct index checks p[0] == "{" and p[-1] == "}"
-        # instead of startswith/endswith (~1.4x faster per call in request hot path).
-        for p, a in zip(p_parts, a_parts):
-            if p == a or (p and p[0] == "{" and p[-1] == "}"):
-                matches += 1
-        return matches / lp
+        return _path_similarity(pattern, actual)
 
     def _body_similarity(self, schema: dict, body: dict) -> float:
-        if not schema or not body:
-            return 0.5
-        schema_keys = set(schema.get("properties", schema).keys())
-        body_keys = set(body.keys()) if isinstance(body, dict) else set()
-        if not schema_keys:
-            return 1.0
-        intersection = schema_keys & body_keys
-        return len(intersection) / len(schema_keys)
+        return _body_similarity(schema, body)
 
     # â”€â”€ Response Building â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 

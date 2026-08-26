@@ -36,8 +36,10 @@ from core.llm_decipher import LLMDecipherService, LLMProfile
 from core.pattern_db import decipher_ingest
 from core.pattern_db.pattern_engine import (
     PatternEngine,
+    _body_similarity,
     _dot_to_dpath,
     _dpath_set,
+    _path_similarity,
 )
 from core.pattern_db.schemas import PatternDB
 
@@ -269,7 +271,7 @@ class PatternMatcher:
 
         # Path match (partial allowed)
         total_weight += 30.0
-        path_score = self._path_similarity(pattern.path_pattern, path)
+        path_score = _path_similarity(pattern.path_pattern, path)
         score += 30.0 * path_score
 
         # Header key presence
@@ -287,7 +289,7 @@ class PatternMatcher:
         # Body structure match
         if body and pattern.body_schema:
             total_weight += 15.0
-            body_score = self._body_similarity(pattern.body_schema, body)
+            body_score = _body_similarity(pattern.body_schema, body)
             score += 15.0 * body_score
         elif not body and not pattern.body_schema:
             total_weight += 15.0
@@ -296,38 +298,6 @@ class PatternMatcher:
         if total_weight == 0:
             return 0.0
         return score / total_weight
-
-    def _path_similarity(self, pattern: str, actual: str) -> float:
-        """Compare path pattern (may contain {placeholders}) vs actual path."""
-        p_parts = pattern.strip("/").split("/")
-        a_parts = actual.strip("/").split("/")
-        lp = len(p_parts)
-        la = len(a_parts)
-
-        if lp != la:
-            return 0.3 if abs(lp - la) <= 1 else 0.0
-        if not lp:
-            return 1.0
-
-        matches = 0
-        # Performance optimization: use direct index checks p[0] == "{" and p[-1] == "}"
-        # instead of startswith/endswith (~1.4x faster per call in request hot path).
-        for p, a in zip(p_parts, a_parts):
-            if p == a or (p and p[0] == "{" and p[-1] == "}"):
-                matches += 1
-
-        return matches / lp
-
-    def _body_similarity(self, schema: dict, body: dict) -> float:
-        """Check if body keys match schema keys."""
-        if not schema or not body:
-            return 0.5
-        schema_keys = set(schema.keys())
-        body_keys = set(body.keys())
-        if not schema_keys:
-            return 1.0
-        intersection = schema_keys & body_keys
-        return len(intersection) / len(schema_keys)
 
     async def build_local_response(
         self, device_id: str, template: ResponseTemplate, original_request: dict
