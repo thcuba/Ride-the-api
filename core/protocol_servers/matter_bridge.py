@@ -18,7 +18,7 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from adapters.base import InterceptedRequest, ProtocolType
+from adapters.base import InterceptedRequest, ProtocolType, device_id_from_ip
 from core.protocol_servers import ProtocolServerPlugin
 
 if TYPE_CHECKING:
@@ -55,7 +55,7 @@ class MatterBridgePlugin(ProtocolServerPlugin):
         peername = writer.get_extra_info("peername", ("unknown", 0))
         remote_ip = peername[0]
         self._connected = True
-        device_id = f"matter-{str(remote_ip).replace('.', '-')}"
+        device_id = device_id_from_ip("matter", remote_ip)
         try:
             while True:
                 data = await reader.read(65535)

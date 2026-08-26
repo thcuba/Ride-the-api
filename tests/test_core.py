@@ -11,7 +11,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import select
 
-from adapters.base import InterceptedRequest, ProtocolType
+from adapters.base import InterceptedRequest, ProtocolType, device_id_from_ip
 from adapters.example import ExampleProtocolAdapter
 from core.database import (
     DatabaseManager,
@@ -88,6 +88,13 @@ def sample_correlated_pair():
         correlation_confidence=0.9,
         timestamp=datetime.now(UTC),
     )
+
+
+def test_device_id_from_ip():
+    """Dots in an IPv4 are replaced so the id is a safe single component."""
+    assert device_id_from_ip("raw", "192.168.1.10") == "raw-192-168-1-10"
+    assert device_id_from_ip("h2", "10.0.0.1") == "h2-10-0-0-1"
+    assert device_id_from_ip("ip", "172.16.5.2") == "ip-172-16-5-2"
 
 
 @pytest_asyncio.fixture

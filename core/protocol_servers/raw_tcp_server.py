@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-from adapters.base import InterceptedRequest, ProtocolType
+from adapters.base import InterceptedRequest, ProtocolType, device_id_from_ip
 from core.protocol_servers import ProtocolServerPlugin
 
 logger = logging.getLogger(__name__)
@@ -79,7 +79,7 @@ class RawTCPServerPlugin(ProtocolServerPlugin):
         peername = writer.get_extra_info("peername", ("unknown", 0))
         remote_ip = peername[0]
         remote_port = peername[1]
-        device_id = f"raw-{remote_ip.replace('.', '-')}"
+        device_id = device_id_from_ip("raw", remote_ip)
 
         try:
             data = await asyncio.wait_for(reader.read(self.config.buffer_size), timeout=10)

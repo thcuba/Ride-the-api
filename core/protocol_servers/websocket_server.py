@@ -27,7 +27,7 @@ try:
 except ImportError:  # pragma: no cover - exercised at import time only
     HAS_WEBSOCKETS = False
 
-from adapters.base import InterceptedRequest, ProtocolType
+from adapters.base import InterceptedRequest, ProtocolType, device_id_from_ip
 from core.protocol_servers import ProtocolServerPlugin
 
 logger = logging.getLogger(__name__)
@@ -73,7 +73,7 @@ class WebSocketServerPlugin(ProtocolServerPlugin):
         """Handle an individual WebSocket connection (websockets >= 14 API)."""
         remote_info = connection.remote_address
         remote_ip = remote_info[0] if remote_info else "unknown"
-        device_id = f"ws-{remote_ip.replace('.', '-')}"
+        device_id = device_id_from_ip("ws", remote_ip)
 
         try:
             async for message in connection:
