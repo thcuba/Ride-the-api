@@ -67,3 +67,6 @@ htmlcov/
 # Docker
 docker-compose.override.yml
 core/database.py.bak
+
+# Analysis / inventory files (auto-generated)
+INVENTARIO_HANDROLLED.md

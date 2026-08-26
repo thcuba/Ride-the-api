@@ -20,6 +20,7 @@ import struct
 import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from http import HTTPStatus
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -32,35 +33,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# ── Data structures ─────────────────────────────────────────────────────────
-
-# TLS record types
+# Data structures
 TLS_HANDSHAKE = 0x16
 TLS_CLIENT_HELLO = 0x01
 TLS_EXTENSION_SNI = 0x0000
 
-_HTTP_STATUS = {
-    200: "OK",
-    201: "Created",
-    202: "Accepted",
-    204: "No Content",
-    301: "Moved Permanently",
-    302: "Found",
-    304: "Not Modified",
-    400: "Bad Request",
-    401: "Unauthorized",
-    403: "Forbidden",
-    404: "Not Found",
-    405: "Method Not Allowed",
-    408: "Request Timeout",
-    409: "Conflict",
-    414: "URI Too Long",
-    500: "Internal Server Error",
-    501: "Not Implemented",
-    502: "Bad Gateway",
-    503: "Service Unavailable",
-    504: "Gateway Timeout",
-}
+# Cache of valid HTTP status codes (from stdlib) for fast lookup
+_VALID_HTTP_STATUSES = {s.value for s in HTTPStatus}
 
 def parse_decrypted_http_request(data: bytes) -> tuple[str, str, str, dict[str, str], bytes] | None:
     """Parse a complete HTTP/1.1 request using the h11 state machine.
@@ -112,7 +91,7 @@ def serialize_http_response(
     Returns the raw bytes ready to write to the TLS stream. Raises on invalid
     status codes in the same way the state machine does.
     """
-    reason = _HTTP_STATUS.get(status_code, "OK")
+    reason = str(HTTPStatus(status_code).phrase) if status_code in _VALID_HTTP_STATUSES else "OK"
     out_headers: list[tuple[bytes, bytes]] = [
         (b"content-length", str(len(body)).encode("ascii")),
         (b"connection", b"close"),
