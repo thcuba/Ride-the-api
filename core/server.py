@@ -27,6 +27,7 @@ from adapters.base import (
     InterceptedRequest,
     ProtocolAdapterRegistry,
     ProtocolType,
+    device_id_from_ip,
 )
 from core.buffer import (
     dispose_memory_db,
@@ -121,7 +122,7 @@ async def handle_tls_decrypted_request(req: DecryptedRequest) -> dict | None:
         return None
 
     config = config_manager.config
-    device_id = f"ip-{req.client_ip.replace('.', '-')}"
+    device_id = device_id_from_ip("ip", req.client_ip)
 
     try:
         # Create or find device by IP

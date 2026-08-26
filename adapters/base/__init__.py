@@ -70,6 +70,17 @@ class DeviceCapability(StrEnum):
     ZONE_CONTROL = "zone_control"
 
 
+def device_id_from_ip(prefix: str, ip: str) -> str:
+    """Build a stable, DNS-safe device id from a device IP.
+
+    Replaces the repeated ``f"{prefix}-{ip.replace('.', '-')}"`` idiom that
+    was hand-copied across the protocol servers. Dots are the only characters
+    in an IPv4 string that are unsafe in an id, so the result is suitable both
+    as an opaque identifier and as a filesystem/db component.
+    """
+    return f"{prefix}-{ip.replace('.', '-')}"
+
+
 @dataclass
 class DeviceInfo:
     """Standardized device information."""

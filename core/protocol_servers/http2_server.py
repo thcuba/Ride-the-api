@@ -26,7 +26,7 @@ import h2.exceptions
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-from adapters.base import InterceptedRequest, ProtocolType
+from adapters.base import InterceptedRequest, ProtocolType, device_id_from_ip
 from core.protocol_servers import ProtocolServerPlugin
 
 logger = logging.getLogger(__name__)
@@ -63,7 +63,7 @@ class HTTP2ServerPlugin(ProtocolServerPlugin):
     async def _handle_connection(self, reader: asyncio.StreamReader, writer: asyncio.Writer) -> None:
         peername = writer.get_extra_info("peername", ("unknown", 0))
         remote_ip = peername[0]
-        device_id = f"h2-{str(remote_ip).replace('.', '-')}"
+        device_id = device_id_from_ip("h2", remote_ip)
 
         try:
             conn = h2.connection.H2Connection(
