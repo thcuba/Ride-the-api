@@ -8,12 +8,13 @@ from __future__ import annotations
 import copy
 import json
 import logging
-import os
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum, StrEnum
 from typing import TYPE_CHECKING, Any
+
+import dpath
 
 if TYPE_CHECKING:
     from adapters.base import InterceptedRequest
@@ -35,6 +36,17 @@ class ResponseRecord:
 
 
 logger = logging.getLogger(__name__)
+
+
+def _dot_to_dpath(path: str) -> str:
+    """Convert dot/bracket path notation ('a.b[0].c') to dpath slash notation.
+
+    dpath uses '/' as its default separator; map '.' and '[0]' → '/', and
+    drop the closing ']'. Array indexes become segments (e.g. ``items/0/name``).
+    """
+    p = path.lstrip("$")
+    p = p.replace("[", "/").replace("]", "")
+    return p.replace(".", "/")
 
 
 class ModificationAction(StrEnum):
@@ -133,87 +145,23 @@ class ModificationRule:
         return True
 
     def _get_json_path(self, obj: Any, path: str) -> Any:  # noqa: ANN401
-        """Simple JSONPath-like getter (supports $.field.subfield[0])."""
+        """Simple JSONPath-like getter via dpath (supports $.field.subfield[0])."""
         if not obj:
             return None
+        try:
+            return dpath.get(obj, _dot_to_dpath(path), separator="/")
+        except (KeyError, TypeError, IndexError):
+            return None
 
-        # Remove leading $.
-        if path.startswith("$"):
-            path = path[1:]
-        if path.startswith("."):
-            path = path[1:]
-
-        parts = path.split(".")
-        current = obj
-
-        for part in parts:
-            if "[" in part and "]" in part:
-                # Array access
-                key = part[: part.index("[")]
-                idx = int(part[part.index("[") + 1 : part.index("]")])
-                if isinstance(current, dict) and key in current:
-                    current = current[key]
-                else:
-                    return None
-                if isinstance(current, list) and 0 <= idx < len(current):
-                    current = current[idx]
-                else:
-                    return None
-            elif isinstance(current, dict) and part in current:
-                current = current[part]
-            else:
-                return None
-
-        return current
-
-    def _set_json_path(self, obj: Any, path: str, value: Any) -> bool:  # noqa: ANN401, C901, PLR0911, PLR0912
-        """Simple JSONPath-like setter."""
+    def _set_json_path(self, obj: Any, path: str, value: Any) -> bool:  # noqa: ANN401
+        """Simple JSONPath-like setter via dpath."""
         if not obj:
             return False
-
-        if path.startswith("$"):
-            path = path[1:]
-        if path.startswith("."):
-            path = path[1:]
-
-        parts = path.split(".")
-        current = obj
-
-        for i, part in enumerate(parts[:-1]):
-            if "[" in part and "]" in part:
-                key = part[: part.index("[")]
-                idx = int(part[part.index("[") + 1 : part.index("]")])
-                if isinstance(current, dict) and key in current:
-                    current = current[key]
-                else:
-                    return False
-                if isinstance(current, list) and 0 <= idx < len(current):
-                    current = current[idx]
-                else:
-                    return False
-            elif isinstance(current, dict) and part in current:
-                current = current[part]
-            else:
-                return False
-
-        # Set final part
-        last = parts[-1]
-        if "[" in last and "]" in last:
-            key = last[: last.index("[")]
-            idx = int(last[last.index("[") + 1 : last.index("]")])
-            if (
-                isinstance(current, dict)
-                and key in current
-                and isinstance(current[key], list)
-                and 0 <= idx < len(current[key])
-            ):
-                current[key][idx] = value
-                return True
-        elif isinstance(current, dict):
-            current[last] = value
-            return True
-
-        return False
+        try:
+            dpath.new(obj, _dot_to_dpath(path), value, separator="/")
+        except (KeyError, TypeError, IndexError):
+            return False
+        return True
 
     def apply(self, intercepted: InterceptedMessage) -> InterceptedMessage:  # noqa: C901, PLR0912, PLR0915
         """Apply this modification rule to the intercepted message."""

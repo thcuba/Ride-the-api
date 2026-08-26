@@ -24,6 +24,7 @@ updates:
           - "litellm"
           - "tenacity"
           - "simpleeval"
+          - "dpath"
           - "pydantic"
           - "pydantic-settings"
           - "h11"
