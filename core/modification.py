@@ -12,14 +12,13 @@ import os
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from adapters.base import InterceptedRequest
 
 from core.atomic_io import append_jsonl
-from core.config import get_config_manager
 
 
 @dataclass
@@ -38,7 +37,7 @@ class ResponseRecord:
 logger = logging.getLogger(__name__)
 
 
-class ModificationAction(str, Enum):  # noqa: UP042
+class ModificationAction(StrEnum):
     """Types of modifications that can be applied."""
 
     MODIFY = "modify"  # Change field value
@@ -370,6 +369,8 @@ class ModificationEngine:
     """
 
     def __init__(self, config_manager=None) -> None:
+        from core.config import get_config_manager  # lazy import to avoid circular dependency
+
         self.config_manager = config_manager or get_config_manager()
         self._rules: list[ModificationRule] = []
         self._audit_log: list[dict] = []
