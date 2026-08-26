@@ -48,6 +48,7 @@ updates:
           - "asyncio*"
           - "aiofiles"
           - "aiohttp"
+          - "cachetools"
 
   # Docker base images (deploy/Dockerfile)
   - package-ecosystem: "docker"
