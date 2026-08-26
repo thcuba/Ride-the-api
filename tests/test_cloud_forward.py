@@ -16,7 +16,6 @@ from adapters.base import CommandResult, InterceptedRequest, ProtocolType
 from core.cloud_forward import (
     CloudForwarder,
     CloudForwardError,
-    _parse_status_line,
     forward_intercepted,
 )
 
@@ -137,12 +136,6 @@ async def test_forward_connection_refused():
             path="/",
             use_tls=False,
         )
-
-
-@pytest.mark.asyncio
-async def test_parse_status_line_malformed():
-    with pytest.raises(CloudForwardError):
-        _parse_status_line(b"NONSENSE\r\n")
 
 
 # --------------------

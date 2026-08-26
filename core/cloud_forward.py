@@ -14,17 +14,24 @@ the TLS SNI and ``Host`` header so the upstream serves the correct virtual
 host. A timeout prevents a hung upstream from blocking the pipeline, and
 callers can fall back to the learned local response whenever forwarding fails,
 so no request is ever dropped.
+
+The HTTP/1.1 framing itself is delegated to the ``h11`` library (RFC 7230
+state machine) instead of hand-written parsing of the status line, headers,
+chunked transfer encoding and content-length.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import ssl
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlencode
+
+import h11
 
 from adapters.base import CommandResult, InterceptedRequest
 from core.upstream_resolver import resolve_upstream
@@ -33,7 +40,7 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_TIMEOUT: float = 10.0
 _DEFAULT_CONNECT_TIMEOUT: float = 3.0
-_SPLIT_LIMIT = 2  # status line maxsplit: "HTTP/1.1 200 OK"
+_READ_CHUNK = 65536
 
 
 class CloudForwardError(Exception):
@@ -47,13 +54,6 @@ class ForwardedResponse:
     status_code: int
     headers: dict[str, str] = field(default_factory=dict)
     body: bytes = b""
-
-
-def _parse_status_line(line: bytes) -> tuple[int, str]:
-    parts = line.decode("latin-1").split(" ", _SPLIT_LIMIT)
-    if len(parts) < 2 or not parts[1].isdigit():  # noqa: PLR2004
-        raise CloudForwardError(f"Malformed HTTP status line: {line!r}")
-    return int(parts[1]), (parts[2] if len(parts) > 2 else "")  # noqa: PLR2004
 
 
 def _norm_headers(headers: dict[str, str] | None) -> dict[str, str]:
@@ -75,7 +75,7 @@ class CloudForwarder:
         """Resolve hostname to upstream IPs via the loop-safe resolver."""
         return await resolve_upstream(hostname)
 
-    async def forward(  # noqa: PLR0913
+    async def forward(  # noqa: PLR0913, C901, PLR0912, PLR0915
         self,
         *,
         hostname: str,
@@ -90,7 +90,7 @@ class CloudForwarder:
     ) -> ForwardedResponse:
         """Replay one HTTP/1.1 request to ``ip`` with SNI/Host = ``hostname``."""
         send_headers = _norm_headers(headers)
-        send_headers["Host"] = hostname if port == 443 else f"{hostname}:{port}"  # noqa: PLR2004
+        host_header = hostname if port == 443 else f"{hostname}:{port}"  # noqa: PLR2004
 
         tls_obj: ssl.SSLContext | None = None
         if use_tls:
@@ -115,88 +115,68 @@ class CloudForwarder:
                 f"connect to {hostname} ({ip}:{port}) failed: {exc}"
             ) from exc
 
+        conn = h11.Connection(our_role=h11.CLIENT)
+        # h11 expects a list of (bytes, bytes) header tuples; Host is managed
+        # explicitly so we control it instead of letting h11 infer it.
+        raw_headers: list[tuple[bytes, bytes]] = [
+            (k.encode("latin-1"), v.encode("latin-1"))
+            for k, v in send_headers.items()
+            if k.lower() != "host"
+        ]
+        raw_headers.append((b"host", host_header.encode("latin-1")))
+
+        status_code: int | None = None
+        resp_headers: dict[str, str] = {}
+        resp_body = bytearray()
+
         try:
-            w = writer.write
-
-            def _send_line(text: str) -> None:
-                w(text.encode("latin-1") + b"\r\n")
-
-            _send_line(f"{method} {path} HTTP/1.1")
-            for key, val in send_headers.items():
-                _send_line(f"{key}: {val}")
-            w(b"\r\n")
+            data = conn.send(
+                h11.Request(method=method, target=path.encode("latin-1"), headers=raw_headers)
+            )
             if body:
-                w(body)
+                data += conn.send(h11.Data(data=body))
+            data += conn.send(h11.EndOfMessage())
+            writer.write(data)
             await writer.drain()
-            return await self._read_response(reader)
+
+            while True:
+                event = conn.next_event()
+                if event is h11.NEED_DATA:
+                    try:
+                        chunk = await asyncio.wait_for(
+                            reader.read(_READ_CHUNK), timeout=self.timeout
+                        )
+                    except (TimeoutError, OSError) as exc:
+                        raise CloudForwardError(
+                            f"read from {hostname} ({ip}:{port}) failed: {exc}"
+                        ) from exc
+                    conn.receive_data(chunk)
+                    continue
+                if isinstance(event, h11.Response):
+                    status_code = event.status_code
+                    resp_headers = {
+                        k.decode("latin-1").lower(): v.decode("latin-1")
+                        for k, v in event.headers
+                    }
+                elif isinstance(event, h11.Data):
+                    resp_body.extend(event.data)
+                elif isinstance(event, (h11.EndOfMessage, h11.ConnectionClosed)):
+                    break
+        except (TimeoutError, OSError):
+            raise
+        except h11.RemoteProtocolError as exc:
+            raise CloudForwardError(f"malformed response from {hostname}: {exc}") from exc
         finally:
             writer.close()
+            with contextlib.suppress(ConnectionError, OSError):
+                await writer.wait_closed()
 
-    async def _read_response(self, reader: asyncio.StreamReader) -> ForwardedResponse:  # noqa: PLR0912
-        async def readline() -> bytes:
-            line = await asyncio.wait_for(reader.readline(), timeout=self.timeout)
-            if not line:
-                raise CloudForwardError("connection closed before status line")
-            return line
+        if status_code is None:
+            raise CloudForwardError("connection closed before response status line")
 
-        status_line = await readline()
-        status_code, _ = _parse_status_line(status_line)
-
-        headers: dict[str, str] = {}
-        while True:
-            line = await readline()
-            if line in (b"\r\n", b"\n", b""):
-                break
-            if b":" in line:
-                key, _, value = line.decode("latin-1").partition(":")
-                headers[key.strip().lower()] = value.strip()
-
-        body = await self._read_body(reader, headers)
-        return ForwardedResponse(status_code=status_code, headers=headers, body=body)
-
-    async def _read_body(self, reader: asyncio.StreamReader, headers: dict[str, str]) -> bytes:
-        if "chunked" in headers.get("transfer-encoding", "").lower():
-            return await self._read_chunked(reader)
-
-        content_length = headers.get("content-length")
-        if content_length:
-            try:
-                length = int(content_length)
-            except ValueError as exc:
-                raise CloudForwardError("malformed content-length header") from exc
-            if length <= 0:
-                return b""
-            return await asyncio.wait_for(reader.readexactly(length), timeout=self.timeout)
-
-        # No content-length: read until EOF (server closes connection).
-        chunks = bytearray()
-        while True:
-            piece = await asyncio.wait_for(reader.read(65536), timeout=self.timeout)
-            if not piece:
-                break
-            chunks.extend(piece)
-        return bytes(chunks)
-
-    async def _read_chunked(self, reader: asyncio.StreamReader) -> bytes:
-        chunks = bytearray()
-        while True:
-            size_line = await asyncio.wait_for(reader.readline(), timeout=self.timeout)
-            size_part = size_line.split(b";", 1)[0].strip()
-            try:
-                size = int(size_part, 16)
-            except ValueError as exc:
-                raise CloudForwardError("invalid chunk size") from exc
-            if size == 0:
-                while True:
-                    trailer = await asyncio.wait_for(reader.readline(), timeout=self.timeout)
-                    if trailer in (b"\r\n", b"\n", b""):
-                        break
-                break
-            chunks.extend(
-                await asyncio.wait_for(reader.readexactly(size), timeout=self.timeout)
-            )
-            await asyncio.wait_for(reader.readexactly(2), timeout=self.timeout)  # CRLF
-        return bytes(chunks)
+        return ForwardedResponse(
+            status_code=status_code, headers=resp_headers, body=bytes(resp_body)
+        )
 
 
 def _decode_body(raw: bytes) -> dict[str, Any] | None:
