@@ -103,6 +103,7 @@ shared helpers that remain are thin adaptation layers on top of them.
 | LLM JSON extraction | [`json_repair`](https://github.com/mangiucugna/json_repair) | Tolerant parsing of LLM output (code fences, malformed/truncated JSON) |
 | API-key secrets | [`pydantic-settings`](https://github.com/pydantic/pydantic-settings) | `SecretStr`-based API-key handling |
 | Wildcard→regex | [`fnmatch`](https://docs.python.org/3/library/fnmatch.html) (stdlib) | Wildcard pattern translation in `traffic_selector.py` |
+| HTTP status phrases | [`http.HTTPStatus`](https://docs.python.org/3/library/http.html#http.HTTPStatus) (stdlib) | Canonical reason phrases for responses in `tls_mitm.py` |
 
 Dependency versions are pinned in [`pyproject.toml`](pyproject.toml) and
 bundled into renewal groups in [`.github/dependabot.yml`](.github/dependabot.yml)
