@@ -16,12 +16,12 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import logging
-import time
 from typing import TYPE_CHECKING
 
 import dns.asyncresolver
 import dns.exception
 import dns.resolver
+from cachetools import TTLCache
 
 if TYPE_CHECKING:
     from core.config import Config
@@ -34,8 +34,8 @@ CACHE_TTL = 300  # 5 minutes
 # IP version constant for the prefer_ipv6 re-ordering.
 _IPV6_VERSION = 6
 
-# In-memory cache: hostname -> (timestamp, [ip_addresses])
-_resolver_cache: dict[str, tuple[float, list[str]]] = {}
+# In-memory cache: hostname -> [ip_addresses], auto-expired via TTLCache (5 min TTL)
+_resolver_cache: TTLCache[str, list[str]] = TTLCache(maxsize=1024, ttl=CACHE_TTL)
 
 # In-memory snapshot of the last DNS config so we can rebuild the resolver
 # without importing ConfigManager at module level (avoids circular imports).
@@ -99,14 +99,12 @@ async def resolve_upstream(  # noqa: C901, PLR0912
         A list of IP address strings (IPv4 and/or IPv6).  May be empty
         when both upstream DNS and system resolver are unreachable.
     """
-    now = time.time()
-
-    # Check cache
+    # Check cache (TTLCache handles expiration automatically)
     if not skip_cache:
         cached = _resolver_cache.get(hostname)
-        if cached and (now - cached[0]) < CACHE_TTL:
+        if cached is not None:
             logger.debug("Resolver cache hit for %s", hostname)
-            result = list(cached[1])
+            result = list(cached)
             if prefer_ipv6:
                 v6 = [ip for ip in result if _addr_family(ip) == _IPV6_VERSION]
                 v4 = [ip for ip in result if _addr_family(ip) != _IPV6_VERSION]
@@ -161,12 +159,9 @@ async def resolve_upstream(  # noqa: C901, PLR0912
         except Exception as exc:
             logger.error("System resolver fallback also failed for %s: %s", hostname, exc)  # noqa: TRY400
 
-    # Update cache
+    # Update cache (TTLCache manages expiration)
     if addresses:
-        _resolver_cache[hostname] = (now, list(addresses))
-        expired = [h for h, (ts, _) in _resolver_cache.items() if (now - ts) >= CACHE_TTL]
-        for h in expired:
-            _resolver_cache.pop(h, None)
+        _resolver_cache[hostname] = list(addresses)
 
     logger.debug("Resolved %s → %s", hostname, addresses)
     return addresses
