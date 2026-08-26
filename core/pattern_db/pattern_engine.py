@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 import re
 from pathlib import Path
 from typing import Any
@@ -408,7 +409,7 @@ class PatternEngine:
             resolved = _RE_FORMULA_VAR.sub(_var_replacer, formula)
             # Replace function calls
             resolved = _RE_FORMULA_RANDOM.sub(
-                lambda m: str(__import__("random").uniform(float(m.group(1)), float(m.group(2)))),
+                lambda m: str(random.uniform(float(m.group(1)), float(m.group(2)))),
                 resolved,
             )
             return simpleeval.simple_eval(resolved, functions=_FORMULA_SAFE_NAMES)
