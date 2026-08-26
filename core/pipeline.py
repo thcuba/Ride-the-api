@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
+import dpath
 from sqlalchemy import and_, delete, select, update
 
 from core.atomic_io import _SAFE_FILENAME_RE
@@ -33,7 +34,11 @@ from core.database import (
 )
 from core.llm_decipher import LLMDecipherService, LLMProfile
 from core.pattern_db import decipher_ingest
-from core.pattern_db.pattern_engine import PatternEngine
+from core.pattern_db.pattern_engine import (
+    PatternEngine,
+    _dot_to_dpath,
+    _dpath_set,
+)
 from core.pattern_db.schemas import PatternDB
 
 if TYPE_CHECKING:
@@ -376,21 +381,14 @@ class PatternMatcher:
         return None
 
     def _get_nested(self, d: dict, path: str):
-        parts = path.split(".")
-        for p in parts:
-            if isinstance(d, dict):
-                d = d.get(p)
-            else:
-                return None
-        return d
+        """Resolve a dot-separated path in a nested dict via dpath."""
+        try:
+            return dpath.get(d, _dot_to_dpath(path), separator="/")
+        except (KeyError, TypeError, IndexError):
+            return None
 
     def _set_nested(self, d: dict, path: str, value: Any) -> None:  # noqa: ANN401
-        parts = path.split(".")
-        for p in parts[:-1]:
-            if p not in d:
-                d[p] = {}
-            d = d[p]
-        d[parts[-1]] = value
+        _dpath_set(d, path, value)
 
 
 class MatchRateTracker:

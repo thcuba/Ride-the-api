@@ -59,6 +59,7 @@ dependencies = [
     "watchfiles>=0.21.0",
     "structlog>=24.1.0",
     "cachetools>=7.0.0",
+    "dpath>=2.1.0",
         "jsonschema>=4.26.0",
     
         # TLS / MITM

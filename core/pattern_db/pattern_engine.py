@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+import dpath
 import simpleeval
 from sqlalchemy import select
 
@@ -44,7 +45,6 @@ _FORMULA_SAFE_NAMES = {
 }
 
 # Pre-compiled regex patterns for template resolution and formula processing (hot paths)
-_RE_JSON_PATH_SPLIT = re.compile(r"[\.\[\]]+")
 _RE_TEMPLATE_VAR = re.compile(r"\{state\.(\w+)\}|\{request\.(\w+(?:\.\w+)*)\}|\{uuid\}")
 _RE_FORMULA_VAR = re.compile(r"\{state\.(\w+)\}|\{request\.(\w+(?:\.\w+)*)\}")
 _RE_FORMULA_RANDOM = re.compile(r"random\(([^,]+),\s*([^)]+)\)")
@@ -66,6 +66,32 @@ def _as_formula_literal(value: Any) -> str:  # noqa: ANN401
     if isinstance(value, (int, float)):
         return str(value)
     return json.dumps(value)
+
+
+def _dot_to_dpath(path: str) -> str:
+    """Convert dot/bracket path notation ('a.b[0].c') to dpath slash notation.
+
+    dpath uses '/' as its default separator; map '.' and '[0]' → '/', and
+    drop the closing ']'. Array indexes become segments (e.g. ``items/0/name``).
+    """
+    p = path.lstrip("$")
+    p = p.replace("[", "/").replace("]", "")
+    return p.replace(".", "/")
+
+
+def _dpath_set(d: dict, path: str, value: Any) -> None:  # noqa: ANN401
+    """Set a value at a dot/bracket path via dpath, creating intermediates.
+
+    dpath does not traverse ``None`` intermediates, so any segment whose value
+    is ``None`` is replaced with an empty dict before the write.
+    """
+    parts = _dot_to_dpath(path).split("/")
+    obj: Any = d
+    for p in parts[:-1]:
+        if isinstance(obj, dict) and obj.get(p) is None:
+            obj[p] = {}
+        obj = obj.get(p)
+    dpath.new(d, _dot_to_dpath(path), value, separator="/")
 
 
 class PatternEngine:
@@ -357,42 +383,13 @@ class PatternEngine:
         """Resolve a path like 'commands[0].value' in a JSON object."""
         if not path:
             return obj
-        current = obj
-        # Performance optimization: fast path for dot-separated keys without brackets
-        # avoids regex split overhead (~2.2x faster for standard field mappings).
-        if "[" not in path:
-            for p in path.split("."):
-                if isinstance(current, dict):
-                    current = current.get(p)
-                elif isinstance(current, list) and p.isdigit():
-                    idx = int(p)
-                    current = current[idx] if 0 <= idx < len(current) else None
-                else:
-                    return None
-            return current
-
-        parts = _RE_JSON_PATH_SPLIT.split(path)
-        parts = [p for p in parts if p]
-        for p in parts:
-            if isinstance(current, dict):
-                current = current.get(p)
-            elif isinstance(current, list):
-                try:
-                    idx = int(p)
-                    current = current[idx] if 0 <= idx < len(current) else None
-                except (ValueError, IndexError):
-                    return None
-            else:
-                return None
-        return current
+        try:
+            return dpath.get(obj, _dot_to_dpath(path), separator="/")
+        except (KeyError, TypeError, IndexError):
+            return None
 
     def _set_nested(self, d: dict, path: str, value: Any):  # noqa: ANN401
-        parts = path.split(".")
-        for p in parts[:-1]:
-            if p not in d or d[p] is None:
-                d[p] = {}
-            d = d[p]
-        d[parts[-1]] = value
+        _dpath_set(d, path, value)
 
     def _resolve_template_vars(self, obj: Any, store: DeviceStateStore, request: dict) -> Any:  # noqa: ANN401
         """Recursively resolve {state.x} and {request.x} placeholders in a template."""
