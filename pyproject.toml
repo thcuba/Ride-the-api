@@ -48,6 +48,7 @@ dependencies = [
     "openai>=2.0.0",
     "tenacity>=9.0.0",
     "simpleeval>=1.0.0",
+    "json_repair>=0.63.0",
     
     # Observability
         "opentelemetry-api>=1.25.0",
@@ -60,7 +61,7 @@ dependencies = [
     "structlog>=24.1.0",
     "cachetools>=7.0.0",
     "dpath>=2.1.0",
-        "jsonschema>=4.26.0",
+    "jsonschema>=4.26.0",
     
         # TLS / MITM
         "cryptography>=42.0.0",
