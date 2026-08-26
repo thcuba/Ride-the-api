@@ -6,6 +6,7 @@ Core DB + Per-Device DB (SQLite default, PostgreSQL optional)
 from __future__ import annotations
 
 import contextlib
+import ipaddress
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -480,12 +481,10 @@ class DatabaseManager:
 
     @staticmethod
     def _is_ip(value: str) -> bool:
-        """Check if a string looks like an IPv4 address."""
-        parts = value.split(".")
-        if len(parts) != 4:  # noqa: PLR2004
-            return False
+        """Check if a string looks like an IP address (IPv4 or IPv6)."""
         try:
-            return all(0 <= int(p) <= 255 for p in parts)  # noqa: PLR2004
+            ipaddress.ip_address(value)
+            return True
         except ValueError:
             return False
 
