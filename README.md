@@ -83,6 +83,32 @@ For local Ollama:
 
 MIT
 
+## Third-Party Libraries
+
+Ride-the-API is built on a small set of mature, battle-tested open-source
+libraries. Wherever the project once had hand-rolled code (DNS caching, HTTP
+parsing, safe expression evaluation, JSON path access, LLM output parsing,
+API-key handling), it now delegates to these tested building blocks. The
+shared helpers that remain are thin adaptation layers on top of them.
+
+| Area | Library | Used for |
+|---|---|---|
+| HTTP/1.1 parsing | [`h11`](https://github.com/python-hyper/h11) | State-machine parsing/serialization of decrypted HTTP in the MITM proxy (no regex parsers) |
+| Retry / backoff | [`tenacity`](https://github.com/jd/tenacity) | Resilient outbound calls (LLM, cloud forward) with shared helpers in `core/retry.py` |
+| Structured logging | [`structlog`](https://github.com/hynek/structlog) | `core/logging_config.py` pipeline replacing bare `basicConfig` |
+| Safe formula eval | [`simpleeval`](https://github.com/danthedeckie/simpleeval) | Restricted arithmetic/comparison evaluation in the pattern engine |
+| JSON path access | [`dpath`](https://github.com/akesterson/dpath-python) | Dot/bracket JSON navigation in `modification.py`, `pattern_engine.py`, `pipeline.py` |
+| IP address validation | [`ipaddress`](https://docs.python.org/3/library/ipaddress.html) (stdlib) | Robust IPv4/IPv6 validation |
+| DNS cache | [`cachetools`](https://github.com/tkem/cachetools) | TTL cache for upstream DNS resolution |
+| LLM JSON extraction | [`json_repair`](https://github.com/mangiucugna/json_repair) | Tolerant parsing of LLM output (code fences, malformed/truncated JSON) |
+| API-key secrets | [`pydantic-settings`](https://github.com/pydantic/pydantic-settings) | `SecretStr`-based API-key handling |
+| Wildcard→regex | [`fnmatch`](https://docs.python.org/3/library/fnmatch.html) (stdlib) | Wildcard pattern translation in `traffic_selector.py` |
+
+Dependency versions are pinned in [`pyproject.toml`](pyproject.toml) and
+bundled into renewal groups in [`.github/dependabot.yml`](.github/dependabot.yml)
+so interlinked libraries stay version-compatible. All libraries are
+distributed under permissive (MIT/BSD/Apache) licenses.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for dev setup, running tests/linters,
