@@ -6,6 +6,7 @@ Rules can be managed via UI/API and are evaluated in priority order.
 from __future__ import annotations
 
 import contextlib
+import fnmatch
 import ipaddress
 import logging
 import re
@@ -70,9 +71,9 @@ class TrafficRule:
         if self.match_type == MatchType.CIDR:
             self._cidr_network = ipaddress.ip_network(self.match_value, strict=False)
         elif self.match_type == MatchType.HOSTNAME:
-            # Convert wildcard pattern to regex
-            pattern = self.match_value.replace(".", r"\.").replace("*", ".*")
-            self._compiled_pattern = re.compile(f"^{pattern}$", re.IGNORECASE)
+            # Convert wildcard pattern to regex via fnmatch (stdlib)
+            pattern = fnmatch.translate(self.match_value)
+            self._compiled_pattern = re.compile(pattern, re.IGNORECASE)
 
     def __post_init__(self) -> None:
         """Compile patterns after initialization."""
