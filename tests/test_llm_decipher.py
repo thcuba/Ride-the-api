@@ -91,14 +91,24 @@ class TestLLMDecipherService:
 
     def test_resolve_api_key_from_env(self, monkeypatch):
         monkeypatch.setenv("TEST_LLM_KEY", "resolved-key")
-        service = make_service()
-        result = service._resolve_api_key("${TEST_LLM_KEY}")
-        assert result == "resolved-key"
+        profile = LLMProfile(
+            name="test",
+            base_url="https://api.openai.com/v1",
+            api_key="${TEST_LLM_KEY}",
+            model_id="gpt-4o-mini",
+            prompt_template="",
+        )
+        assert profile.api_key.get_secret_value() == "resolved-key"
 
     def test_resolve_api_key_literal(self):
-        service = make_service()
-        result = service._resolve_api_key("sk-literal-key")
-        assert result == "sk-literal-key"
+        profile = LLMProfile(
+            name="test",
+            base_url="https://api.openai.com/v1",
+            api_key="sk-literal-key",
+            model_id="gpt-4o-mini",
+            prompt_template="",
+        )
+        assert profile.api_key.get_secret_value() == "sk-literal-key"
 
     @pytest.mark.asyncio
     @patch("core.llm_decipher.AsyncOpenAI")
