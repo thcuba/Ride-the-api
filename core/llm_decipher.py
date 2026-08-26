@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from openai import AsyncOpenAI
+from pydantic import BaseModel, SecretStr, field_validator
 
 from core.config import get_config_manager
 from core.fallback_policy import FallbackChain, ProviderCircuitBreaker
@@ -24,22 +25,29 @@ from core.retry import make_retryer
 logger = logging.getLogger(__name__)
 
 
-class LLMCallError(Exception):
-    """Raised when an LLM call returns an unusable response."""
-
-
-@dataclass
-class LLMProfile:
+class LLMProfile(BaseModel):
     """Configuration for an LLM provider."""
 
     name: str
     base_url: str
-    api_key: str
+    api_key: SecretStr = SecretStr("")
     model_id: str
     prompt_template: str
     enabled: bool = True
     timeout: int = 30
     max_retries: int = 2
+
+    @field_validator("api_key", mode="before")
+    @classmethod
+    def _resolve_env_var(cls, v: str) -> str:
+        """Resolve API key from environment variable if it starts with ${}."""
+        if isinstance(v, str) and v.startswith("${") and v.endswith("}"):
+            return os.environ.get(v[2:-1], "")
+        return v if isinstance(v, str) else ""
+
+
+class LLMCallError(Exception):
+    """Raised when an LLM call returns an unusable response."""
 
 
 @dataclass
@@ -117,7 +125,7 @@ class LLMDecipherService:
             profile = LLMProfile(
                 name=name,
                 base_url=getattr(profile_config, "base_url", "https://api.openai.com/v1"),
-                api_key=self._resolve_api_key(getattr(profile_config, "api_key", "")),
+                api_key=getattr(profile_config, "api_key", ""),
                 model_id=getattr(profile_config, "model_id", "gpt-4o-mini"),
                 prompt_template=getattr(profile_config, "prompt_template", ""),
                 enabled=getattr(profile_config, "enabled", True),
@@ -131,13 +139,6 @@ class LLMDecipherService:
 
         logger.info(f"Loaded {len(self._profiles)} LLM profiles: {list(self._profiles.keys())}")
 
-    def _resolve_api_key(self, api_key: str) -> str:
-        """Resolve API key from environment variable if it starts with ${}."""
-        if api_key.startswith("${") and api_key.endswith("}"):
-            env_var = api_key[2:-1]
-            return os.environ.get(env_var, "")
-        return api_key
-
     def _on_config_change(self, _new_config):
         """Reload config on change."""
         logger.info("LLM decipher config changed, reloading")
@@ -150,7 +151,7 @@ class LLMDecipherService:
             return cached
         # The SDK rejects an empty/missing api_key at construction, so pass a
         # placeholder for local providers (e.g. Ollama) that ignore auth.
-        api_key = profile.api_key or "not-set"
+        api_key = profile.api_key.get_secret_value() or "not-set"
         client = AsyncOpenAI(
             api_key=api_key,
             base_url=profile.base_url.rstrip("/"),
