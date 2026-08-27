@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import json_repair
+from cachetools import TTLCache
 from openai import AsyncOpenAI
 from pydantic import BaseModel, SecretStr, field_validator
 
@@ -24,6 +25,32 @@ from core.fallback_policy import FallbackChain, ProviderCircuitBreaker
 from core.retry import make_retryer
 
 logger = logging.getLogger(__name__)
+
+# Bounded, TTL-expiring cache for decipher results so a long-lived process
+# does not accumulate entries unboundedly. TTLCache evicts on both age and
+# capacity.
+_CACHE_MAX_SIZE = 512
+_CACHE_TTL = 3600  # 1 hour
+
+
+def _safe_float(value, default: float = 0.0) -> float:
+    """Parse a float from an untrusted LLM-returned value without raising.
+
+    LLMs often emit ``confidence`` as ``"high"``, ``"90%"`` or ``0.9``, which
+    would make a bare ``float(...)`` raise and abort the whole ingest batch.
+    """
+    if value is None:
+        return default
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    if isinstance(value, str):
+        cleaned = value.strip().rstrip("%")
+        try:
+            f = float(cleaned)
+        except ValueError:
+            return default
+        return f
+    return default
 
 
 def _parse_llm_json(content: str) -> dict | None:
@@ -119,8 +146,8 @@ class LLMDecipherService:
         self._profiles: dict[str, LLMProfile] = {}
         self._default_profile = "default"
         self._clients: dict[str, AsyncOpenAI] = {}
-        self._cache: dict[str, DecipherResult] = {}  # Simple in-memory cache
-        self._cache_ttl = 3600  # 1 hour
+        self._cache_ttl = _CACHE_TTL  # 1 hour
+        self._cache: TTLCache = TTLCache(maxsize=_CACHE_MAX_SIZE, ttl=self._cache_ttl)
         # Circuit breaker between provider profiles: a repeatedly failing
         # profile is temporarily excluded from rotation and probed again
         # after a cooldown, so a degraded provider doesn't kill analysis
@@ -397,10 +424,9 @@ Response:
         # Check cache
         cache_key = f"{pair.pair_id}:{profile.name}"
         if cache_key in self._cache:
-            cached = self._cache[cache_key]
-            if (datetime.now(UTC) - cached.timestamp).total_seconds() < self._cache_ttl:
-                logger.debug(f"Cache hit for pair {pair.pair_id}")
-                return cached
+            cached = self._cache[cache_key]  # TTLCache expires stale entries
+            logger.debug(f"Cache hit for pair {pair.pair_id}")
+            return cached
 
         # Get database schema (simplified)
         db_schema = self._get_db_schema(pair.vendor)
@@ -460,7 +486,7 @@ Response:
             vendor=pair.vendor,
             intent=analysis.get("intent", "unknown"),
             fields=analysis.get("fields", {}),
-            confidence=float(analysis.get("confidence", 0.0)),
+            confidence=_safe_float(analysis.get("confidence", 0.0)),
             suggested_dp_codes=analysis.get("suggested_dp_codes", {}),
             protocol_notes=analysis.get("protocol_notes", ""),
             raw_response=result["content"],

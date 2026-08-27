@@ -49,6 +49,13 @@ def _dot_to_dpath(path: str) -> str:
     return p.replace(".", "/")
 
 
+def _rule_field(data: Any, key: str, default: Any = None) -> Any:  # noqa: ANN401
+    """Read a rule field from either a dict or a Pydantic/object instance."""
+    if isinstance(data, dict):
+        return data.get(key, default)
+    return getattr(data, key, default)
+
+
 class ModificationAction(StrEnum):
     """Types of modifications that can be applied."""
 
@@ -326,7 +333,7 @@ class ModificationEngine:
         self._load_rules()
 
         # Register config change callback
-        self.config_manager.add_change_callback(self._on_config_change)
+        self.config_manager.register_callback(self._on_config_change)
 
     def _load_rules(self):
         """Load modification rules from configuration."""
@@ -343,26 +350,34 @@ class ModificationEngine:
 
         for rule_data in rules_config:
             try:
+                action_name = _rule_field(rule_data, "action", "modify")
+                action = (
+                    ModificationAction(action_name)
+                    if isinstance(action_name, str)
+                                    else action_name
+                )
                 rule = ModificationRule(
-                    name=rule_data.get("name", "unnamed"),
-                    match_vendor=rule_data.get("match_vendor"),
-                    match_device_type=rule_data.get("match_device_type"),
-                    match_intent=rule_data.get("match_intent"),
-                    match_field_path=rule_data.get("match_field_path"),
-                    match_value=rule_data.get("match_value"),
-                    match_headers=rule_data.get("match_headers"),
-                    match_method=rule_data.get("match_method"),
-                    match_path_pattern=rule_data.get("match_path_pattern"),
-                    action=ModificationAction(rule_data.get("action", "modify")),
-                    action_params=rule_data.get("action_params", {}),
-                    priority=rule_data.get("priority", 10),
-                    enabled=rule_data.get("enabled", True),
-                    direction=rule_data.get("direction", "request"),
+                    name=_rule_field(rule_data, "name", "unnamed"),
+                    match_vendor=_rule_field(rule_data, "match_vendor"),
+                    match_device_type=_rule_field(rule_data, "match_device_type"),
+                    match_intent=_rule_field(rule_data, "match_intent"),
+                    match_field_path=_rule_field(rule_data, "match_field_path"),
+                    match_value=_rule_field(rule_data, "match_value"),
+                    match_headers=_rule_field(rule_data, "match_headers"),
+                    match_method=_rule_field(rule_data, "match_method"),
+                    match_path_pattern=_rule_field(rule_data, "match_path_pattern"),
+                    action=action,
+                    action_params=_rule_field(rule_data, "action_params", {}),
+                    priority=_rule_field(rule_data, "priority", 10),
+                    enabled=_rule_field(rule_data, "enabled", True),
+                    direction=_rule_field(rule_data, "direction", "request"),
                 )
                 self._rules.append(rule)
             except Exception as e:
-                logger.error(f"Failed to load modification rule {rule_data.get('name')}: {e}")  # noqa: TRY400
-
+                logger.error(  # noqa: TRY400
+                    "Failed to load modification rule "
+                    f"{_rule_field(rule_data, 'name', 'unnamed')}: {e}"
+                )
         # Sort by priority (highest first)
         self._rules.sort(key=lambda r: -r.priority)
 

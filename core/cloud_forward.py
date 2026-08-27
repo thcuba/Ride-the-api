@@ -41,6 +41,7 @@ logger = logging.getLogger(__name__)
 _DEFAULT_TIMEOUT: float = 10.0
 _DEFAULT_CONNECT_TIMEOUT: float = 3.0
 _READ_CHUNK = 65536
+_MAX_RESPONSE_BODY = 5 * 1024 * 1024  # 5 MiB cap on forwarded response body
 
 
 class CloudForwardError(Exception):
@@ -159,7 +160,13 @@ class CloudForwarder:
                         for k, v in event.headers
                     }
                 elif isinstance(event, h11.Data):
-                    resp_body.extend(event.data)
+                                    chunk = event.data
+                                    if len(resp_body) + len(chunk) > _MAX_RESPONSE_BODY:
+                                        raise CloudForwardError(
+                                            "response body from "
+                                            f"{hostname} exceeded {_MAX_RESPONSE_BODY} bytes"
+                                        )
+                                    resp_body.extend(chunk)
                 elif isinstance(event, (h11.EndOfMessage, h11.ConnectionClosed)):
                     break
         except (TimeoutError, OSError):

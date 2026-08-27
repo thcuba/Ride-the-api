@@ -1,5 +1,5 @@
 """
-HTTP/2 Protocol Server ? h2c (cleartext, prior-knowledge) server.
+HTTP/2 Protocol Server — h2c (cleartext, prior-knowledge) server.
 
 HTTP/2 is used by some modern IoT clouds and devices for multiplexed
 communication. This server implements the h2c "prior knowledge" transport
@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 import h2.config
 import h2.connection
+import h2.errors
 import h2.events
 import h2.exceptions
 
@@ -30,6 +31,18 @@ from adapters.base import InterceptedRequest, ProtocolType, device_id_from_ip
 from core.protocol_servers import ProtocolServerPlugin
 
 logger = logging.getLogger(__name__)
+
+# Idle read timeout (seconds) before a client that opens a socket but never
+# sends is dropped, preventing connection/resource exhaustion.
+_IDLE_TIMEOUT = 60
+
+# Maximum buffered request body per stream (bytes). Bodies beyond this abort
+# the stream (REFUSED_STREAM) instead of growing without bound in memory.
+_MAX_BODY_BYTES = 1024 * 1024
+
+# Maximum number of in-flight request headers held while awaiting their body.
+# Guards the per-connection request map against unbounded growth.
+_MAX_PENDING_STREAMS = 512
 
 
 class HTTP2ServerPlugin(ProtocolServerPlugin):
@@ -60,7 +73,9 @@ class HTTP2ServerPlugin(ProtocolServerPlugin):
         await super().stop()
         logger.info("HTTP/2 server stopped")
 
-    async def _handle_connection(self, reader: asyncio.StreamReader, writer: asyncio.Writer) -> None:
+    async def _handle_connection(  # noqa: C901, PLR0912, PLR0915
+        self, reader: asyncio.StreamReader, writer: asyncio.Writer
+    ) -> None:
         peername = writer.get_extra_info("peername", ("unknown", 0))
         remote_ip = peername[0]
         device_id = device_id_from_ip("h2", remote_ip)
@@ -73,18 +88,57 @@ class HTTP2ServerPlugin(ProtocolServerPlugin):
             writer.write(conn.data_to_send())
             await writer.drain()
 
-            buffered_data: dict[int, bytearray] = {}
+            # Per-stream pending requests: headers arrive in the HEADERS frame
+            # (RequestReceived) and the body arrives later in DATA frames, so
+            # we must assemble both before dispatching to the handler.
+            pending: dict[int, dict[str, Any]] = {}
 
             while True:
-                data = await reader.read(65535)
+                try:
+                    data = await asyncio.wait_for(reader.read(65535), timeout=_IDLE_TIMEOUT)
+                except TimeoutError:
+                    logger.info("HTTP/2 idle timeout from %s, closing", remote_ip)
+                    break
                 if not data:
                     break
                 events = conn.receive_data(data)
                 for event in events:
                     if isinstance(event, h2.events.RequestReceived):
-                        await self._handle_request(conn, writer, event, device_id, buffered_data)
+                        if len(pending) >= _MAX_PENDING_STREAMS:
+                            conn.reset_stream(
+                                event.stream_id,
+                                error_code=h2.errors.ErrorCodes.REFUSED_STREAM,
+                            )
+                        else:
+                            pending[event.stream_id] = {
+                                "headers": dict(event.headers),
+                                "body": bytearray(),
+                                "stream_id": event.stream_id,
+                            }
+                            # A request whose headers carry END_STREAM has no body
+                            # and is fully dispatched while here.
+                            if event.stream_ended:
+                                stream = pending.pop(event.stream_id)
+                                await self._drain(conn, writer, stream, device_id)
                     elif isinstance(event, h2.events.DataReceived):
-                        buffered_data.setdefault(event.stream_id, bytearray()).extend(event.data)
+                        stream = pending.get(event.stream_id)
+                        if stream is not None:
+                            if len(stream["body"]) + len(event.data) > _MAX_BODY_BYTES:
+                                conn.reset_stream(
+                                    event.stream_id,
+                                    error_code=h2.errors.ErrorCodes.REFUSED_STREAM,
+                                )
+                                # Drop the entry so a later StreamEnded cannot try to
+                                # send headers on a locally-closed stream.
+                                pending.pop(event.stream_id, None)
+                            else:
+                                stream["body"].extend(event.data)
+                        # Always acknowledge so flow control keeps the stream alive.
+                        conn.acknowledge_received_data(len(event.data), event.stream_id)
+                    elif isinstance(event, h2.events.StreamEnded):
+                        stream = pending.pop(event.stream_id, None)
+                        if stream is not None:
+                            await self._drain(conn, writer, stream, device_id)
                 if conn.data_to_send():
                     writer.write(conn.data_to_send())
                     await writer.drain()
@@ -97,21 +151,27 @@ class HTTP2ServerPlugin(ProtocolServerPlugin):
                 writer.close()
                 await writer.wait_closed()
 
-    async def _handle_request(self, conn, writer, event, device_id, buffered_data) -> None:  # noqa: ANN001
-        headers = dict(event.headers)
+    async def _drain(
+        self,
+        conn: h2.connection.H2Connection,
+        writer: asyncio.Writer,
+        stream: dict,
+        device_id: str,
+    ) -> None:
+        """Build the request from headers + accumulated body and dispatch."""
+        headers = stream["headers"]
+        body_raw = bytes(stream["body"])
         method = headers.get(":method", "GET")
         path = headers.get(":path", "/")
         scheme = headers.get(":scheme", "http")
-        stream_id = event.stream_id
+        stream_id = stream["stream_id"]
 
         body = None
-        data = bytes(buffered_data.get(stream_id, bytearray()))
-        if data:
+        if body_raw:
             try:
-                body = json.loads(data.decode("utf-8"))
+                body = json.loads(body_raw.decode("utf-8"))
             except (ValueError, UnicodeDecodeError):
-                body = {"raw": data.hex()}
-        buffered_data.pop(stream_id, None)
+                body = {"raw": body_raw.hex()}
 
         request = InterceptedRequest(
             device_id=device_id,

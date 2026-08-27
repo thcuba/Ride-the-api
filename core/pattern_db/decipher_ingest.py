@@ -36,6 +36,25 @@ from core.pattern_db.validator import ValidationError, validate_pattern
 logger = logging.getLogger(__name__)
 
 
+def _safe_float(value, default: float = 0.5) -> float:
+    """Parse a float from untrusted LLM output without raising.
+
+    Bare ``float(...)`` on values like ``"high"`` or ``"90%"`` raises and would
+    abort the entire ingest transaction, discarding the learn batch.
+    """
+    if value is None:
+        return default
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    if isinstance(value, str):
+        cleaned = value.strip().rstrip("%")
+        try:
+            return float(cleaned)
+        except ValueError:
+            return default
+    return default
+
+
 class DecipherIngest:
     """
     Takes LLM decipher output and saves it as structured patterns
@@ -86,7 +105,7 @@ class DecipherIngest:
                     body_schema=pat.get("body_schema", {}),
                     query_param_keys=pat.get("query_param_keys", []),
                     intent=pat.get("intent", "unknown"),
-                    confidence=float(pat.get("confidence", 0.5)),
+                    confidence=_safe_float(pat.get("confidence", 0.5)),
                 )
                 session.add(request_pattern)
 
@@ -106,7 +125,7 @@ class DecipherIngest:
                         for m in mappings
                         if m.get("target", "").startswith("result.")
                     ],
-                    confidence=float(pat.get("confidence", 0.5)),
+                    confidence=_safe_float(pat.get("confidence", 0.5)),
                 )
                 session.add(response_template)
 
@@ -121,7 +140,7 @@ class DecipherIngest:
                         transform=m.get("transform", "direct"),
                         enum_values=m.get("mapping"),
                         intent=pat.get("intent", "unknown"),
-                        confidence=float(m.get("confidence", 0.5)),
+                        confidence=_safe_float(m.get("confidence", 0.5)),
                     )
                     session.add(field_mapping)
 

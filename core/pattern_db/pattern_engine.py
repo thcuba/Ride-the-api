@@ -45,6 +45,23 @@ _FORMULA_SAFE_NAMES = {
     "str": str,
 }
 
+# Maximum length of a formula string. Cap guards against pathological inputs
+# from untrusted pattern files / LLM output (CPU / memory exhaustion) before
+# the evaluator is reached.
+_MAX_FORMULA_LENGTH = 1024
+
+# A hardened simpleeval evaluator for untrusted formula strings:
+#   * ``names`` is empty — variables are pre-substituted with typed literals.
+#   * ``allowed_attrs`` is empty — no attribute access is permitted at all, so
+#     known escape vectors like ``().__class__.__bases__`` or ``.get`` cannot
+#     reach host objects/methods.
+#   * functions are allow-listed to ``_FORMULA_SAFE_NAMES`` only.
+_FORMULA_EVALUATOR = simpleeval.SimpleEval(
+    names={},
+    functions=_FORMULA_SAFE_NAMES,
+    allowed_attrs={},
+)
+
 # Pre-compiled regex patterns for template resolution and formula processing (hot paths)
 _RE_TEMPLATE_VAR = re.compile(r"\{state\.(\w+)\}|\{request\.(\w+(?:\.\w+)*)\}|\{uuid\}")
 _RE_FORMULA_VAR = re.compile(r"\{state\.(\w+)\}|\{request\.(\w+(?:\.\w+)*)\}")
@@ -240,6 +257,9 @@ class PatternEngine:
                 if score > best_score:
                     best_score = score
                     best_pattern = ep
+                    # Reset stale template from an earlier lower-scoring endpoint;
+                    # only overwrite if a matching server response exists.
+                    best_template = None
                     # Find matching server response
                     for resp in cached.server.responses:
                         if ep.intent in resp.triggers:
@@ -267,6 +287,7 @@ class PatternEngine:
                 if score > best_score:
                     best_score = score
                     best_pattern = pat
+                    best_template = None
                     tmpl_result = await session.execute(
                         select(ResponseTemplate).where(
                             ResponseTemplate.pattern_id == pat.pattern_id
@@ -439,6 +460,9 @@ class PatternEngine:
 
     def _eval_formula(self, formula: str, request: dict, store: DeviceStateStore) -> Any:  # noqa: ANN401
         """Evaluate a simple formula expression via simpleeval (restricted, no eval)."""
+        if len(formula) > _MAX_FORMULA_LENGTH:
+            logger.warning("Formula too long (%d chars), refusing to evaluate", len(formula))
+            return 0
         try:
             # Replace variable references with re.sub (single pass, no intermediate strings)
             def _var_replacer(m: re.Match) -> str:
@@ -455,7 +479,7 @@ class PatternEngine:
                 lambda m: str(random.uniform(float(m.group(1)), float(m.group(2)))),
                 resolved,
             )
-            return simpleeval.simple_eval(resolved, functions=_FORMULA_SAFE_NAMES)
+            return _FORMULA_EVALUATOR.eval(resolved)
         except Exception as e:
             logger.warning("Formula eval failed: %s (%s)", formula, e)
             return 0

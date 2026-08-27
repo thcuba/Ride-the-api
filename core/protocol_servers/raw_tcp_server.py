@@ -86,6 +86,22 @@ class RawTCPServerPlugin(ProtocolServerPlugin):
             if not data:
                 return
 
+            # Some raw protocols split a single message across TCP segments, so
+            # keep draining for a short idle grace period up to the configured
+            # buffer cap. This stays bounded and never blocks indefinitely.
+            collected = bytearray(data)
+            while len(collected) < self.config.buffer_size:
+                try:
+                    chunk = await asyncio.wait_for(
+                        reader.read(self.config.buffer_size), timeout=0.2
+                    )
+                except TimeoutError:
+                    break  # idle: no more data in flight
+                if not chunk:
+                    break
+                collected.extend(chunk)
+            data = bytes(collected)
+
             proto, proto_name = self._detect_protocol(data, remote_port)
 
             request = InterceptedRequest(

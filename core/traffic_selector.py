@@ -10,6 +10,7 @@ import fnmatch
 import ipaddress
 import logging
 import re
+import threading
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -145,6 +146,7 @@ class TrafficSelector:
 
     def __init__(self, config_manager=None) -> None:
         self.config_manager = config_manager or get_config_manager()
+        self._lock = threading.RLock()
         self.rules: list[TrafficRule] = []
         self._default_action = TrafficAction.INTERCEPT
         self._load_rules()
@@ -157,54 +159,56 @@ class TrafficSelector:
         config = self.config_manager.config
         ts_config = getattr(config, "traffic_selection", None)
 
-        if not ts_config:
-            logger.warning("No traffic_selection config found, using defaults")
-            self._default_action = TrafficAction.INTERCEPT
-            self.rules = []
-            return
+        with self._lock:
+            if not ts_config:
+                logger.warning("No traffic_selection config found, using defaults")
+                self._default_action = TrafficAction.INTERCEPT
+                self.rules = []
+                return
 
-        # Default action
-        default = getattr(ts_config, "default_action", "intercept")
-        self._default_action = TrafficAction(default)
+            # Default action
+            default = getattr(ts_config, "default_action", "intercept")
+            self._default_action = TrafficAction(default)
 
-        # Parse rules
-        rules = getattr(ts_config, "rules", [])
-        self.rules = []
+            # Parse rules
+            rules = getattr(ts_config, "rules", [])
+            new_rules: list[TrafficRule] = []
 
-        for rule_data in rules:
-            try:
-                # Handle both Pydantic models and dicts
-                if isinstance(rule_data, dict):
-                    rule = TrafficRule(
-                        name=rule_data.get("name", "unnamed"),
-                        scope=TrafficScope(rule_data.get("scope", "local")),
-                        match_type=MatchType(rule_data.get("match_type", "cidr")),
-                        match_value=rule_data.get("match_value", ""),
-                        action=TrafficAction(rule_data.get("action", "intercept")),
-                        priority=rule_data.get("priority", 10),
-                        enabled=rule_data.get("enabled", True),
-                    )
-                else:
-                    rule = TrafficRule(
-                        name=getattr(rule_data, "name", "unnamed"),
-                        scope=TrafficScope(getattr(rule_data, "scope", "local")),
-                        match_type=MatchType(getattr(rule_data, "match_type", "cidr")),
-                        match_value=getattr(rule_data, "match_value", ""),
-                        action=TrafficAction(getattr(rule_data, "action", "intercept")),
-                        priority=getattr(rule_data, "priority", 10),
-                        enabled=getattr(rule_data, "enabled", True),
-                    )
-                self.rules.append(rule)
-            except Exception as e:
-                logger.error(f"Failed to parse traffic rule {rule_data}: {e}")  # noqa: TRY400
+            for rule_data in rules:
+                try:
+                    # Handle both Pydantic models and dicts
+                    if isinstance(rule_data, dict):
+                        rule = TrafficRule(
+                            name=rule_data.get("name", "unnamed"),
+                            scope=TrafficScope(rule_data.get("scope", "local")),
+                            match_type=MatchType(rule_data.get("match_type", "cidr")),
+                            match_value=rule_data.get("match_value", ""),
+                            action=TrafficAction(rule_data.get("action", "intercept")),
+                            priority=rule_data.get("priority", 10),
+                            enabled=rule_data.get("enabled", True),
+                        )
+                    else:
+                        rule = TrafficRule(
+                            name=getattr(rule_data, "name", "unnamed"),
+                            scope=TrafficScope(getattr(rule_data, "scope", "local")),
+                            match_type=MatchType(getattr(rule_data, "match_type", "cidr")),
+                            match_value=getattr(rule_data, "match_value", ""),
+                            action=TrafficAction(getattr(rule_data, "action", "intercept")),
+                            priority=getattr(rule_data, "priority", 10),
+                            enabled=getattr(rule_data, "enabled", True),
+                        )
+                    new_rules.append(rule)
+                except Exception as e:
+                    logger.error(f"Failed to parse traffic rule {rule_data}: {e}")  # noqa: TRY400
 
-        # Sort by priority (highest first)
-        self.rules.sort(key=lambda r: r.priority, reverse=True)
+            # Sort by priority (highest first), then atomically publish the new list.
+            new_rules.sort(key=lambda r: r.priority, reverse=True)
+            self.rules = new_rules
 
-        logger.info(
-            f"Loaded {len(self.rules)} traffic selection rules, "
-            f"default: {self._default_action.value}"
-        )
+            logger.info(
+                f"Loaded {len(self.rules)} traffic selection rules, "
+                f"default: {self._default_action.value}"
+            )
 
     def _on_config_change(self, _new_config):
         """Reload rules when config changes."""
@@ -216,17 +220,19 @@ class TrafficSelector:
         Evaluate request against rules and return action.
         First matching rule wins.
         """
-        for rule in self.rules:
-            if rule.matches(request_info):
-                logger.debug(f"Traffic rule '{rule.name}' matched: {rule.action.value}")
-                return rule.action
+        with self._lock:
+            for rule in self.rules:
+                if rule.matches(request_info):
+                    logger.debug(f"Traffic rule '{rule.name}' matched: {rule.action.value}")
+                    return rule.action
 
         logger.debug(f"No rule matched, using default: {self._default_action.value}")
         return self._default_action
 
     def get_rules(self) -> list[TrafficRule]:
         """Get all current rules."""
-        return self.rules.copy()
+        with self._lock:
+            return self.rules.copy()
 
     @property
     def default_action(self) -> TrafficAction:
@@ -235,32 +241,35 @@ class TrafficSelector:
 
     def add_rule(self, rule: TrafficRule) -> bool:
         """Add a new rule (will be re-sorted by priority)."""
-        self.rules.append(rule)
-        self.rules.sort(key=lambda r: r.priority, reverse=True)
+        with self._lock:
+            self.rules.append(rule)
+            self.rules.sort(key=lambda r: r.priority, reverse=True)
         return True
 
     def remove_rule(self, name: str) -> bool:
         """Remove rule by name."""
-        for i, rule in enumerate(self.rules):
-            if rule.name == name:
-                self.rules.pop(i)
-                return True
+        with self._lock:
+            for i, rule in enumerate(self.rules):
+                if rule.name == name:
+                    self.rules.pop(i)
+                    return True
         return False
 
     def update_rule(self, name: str, **kwargs) -> bool:
         """Update rule properties."""
-        for rule in self.rules:
-            if rule.name == name:
-                for key, value in kwargs.items():
-                    if hasattr(rule, key):
-                        setattr(rule, key, value)
-                # Recompile cached regex/CIDR if the match definition changed.
-                if any(k in kwargs for k in ("match_value", "match_type")):
-                    rule._recompile()
-                # Re-sort if priority changed
-                if "priority" in kwargs:
-                    self.rules.sort(key=lambda r: r.priority, reverse=True)
-                return True
+        with self._lock:
+            for rule in self.rules:
+                if rule.name == name:
+                    for key, value in kwargs.items():
+                        if hasattr(rule, key):
+                            setattr(rule, key, value)
+                    # Recompile cached regex/CIDR if the match definition changed.
+                    if any(k in kwargs for k in ("match_value", "match_type")):
+                        rule._recompile()
+                    # Re-sort if priority changed
+                    if "priority" in kwargs:
+                        self.rules.sort(key=lambda r: r.priority, reverse=True)
+                    return True
         return False
 
 

@@ -5,9 +5,11 @@ Core DB + Per-Device DB (SQLite default, PostgreSQL optional)
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import ipaddress
 import logging
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -485,6 +487,7 @@ class DatabaseManager:
         self._device_engines: dict[str, AsyncEngine] = {}
         self._device_sessions: dict[str, async_sessionmaker[AsyncSession]] = {}
         self._device_db_urls = device_db_urls or {}
+        self._engine_locks: dict[str, asyncio.Lock] = {}
 
     async def initialize(self) -> None:
         """Initialize all databases."""
@@ -571,7 +574,7 @@ class DatabaseManager:
         for device_id, engine in self._device_engines.items():
             db_url = self._device_db_urls.get(device_id, "")
             if not db_url:
-                db_path = self.device_db_dir / f"{device_id}.db"
+                db_path = self.device_db_dir / self._safe_db_name(device_id)
                 db_url = f"sqlite+aiosqlite:///{db_path}"
             databases.append(
                 {
@@ -594,30 +597,47 @@ class DatabaseManager:
 
         if device_id in self._device_engines:
             return self._device_engines[device_id]
-        if device_id in self._device_db_urls:
-            db_url = self._device_db_urls[device_id]
-        else:
-            # Check registry for custom database URL
-            custom_url = await self._get_device_db_url(device_id)
-            if custom_url:
-                db_url = custom_url
-                self._device_db_urls[device_id] = custom_url
-            else:
-                db_path = self.device_db_dir / f"{device_id}.db"
-                db_url = f"sqlite+aiosqlite:///{db_path}"
-        engine = create_configured_engine(db_url, echo=self.echo)
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        await SchemaMigrator(engine).run()
-        self._device_engines[device_id] = engine
-        self._device_sessions[device_id] = async_sessionmaker(
-            engine,
-            class_=AsyncSession,
-            expire_on_commit=False,
-        )
-        logger.info(f"Device database '{device_id}' initialized at {db_url}")
-        return engine
 
+        # Serialize engine creation for a given device so concurrent callers
+        # cannot each build/assign two different engines (check-then-create race).
+        lock = self._engine_locks.get(device_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._engine_locks[device_id] = lock
+        async with lock:
+            # Re-check under the lock.
+            if device_id in self._device_engines:
+                return self._device_engines[device_id]
+            if device_id in self._device_db_urls:
+                db_url = self._device_db_urls[device_id]
+            else:
+                # Check registry for custom database URL
+                custom_url = await self._get_device_db_url(device_id)
+                if custom_url:
+                    db_url = custom_url
+                    self._device_db_urls[device_id] = custom_url
+                else:
+                    db_path = self.device_db_dir / self._safe_db_name(device_id)
+                    db_url = f"sqlite+aiosqlite:///{db_path}"
+            engine = create_configured_engine(db_url, echo=self.echo)
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            await SchemaMigrator(engine).run()
+            self._device_engines[device_id] = engine
+            self._device_sessions[device_id] = async_sessionmaker(
+                engine,
+                class_=AsyncSession,
+                expire_on_commit=False,
+            )
+            logger.info(f"Device database '{device_id}' initialized at {db_url}")
+            return engine
+
+    @staticmethod
+    def _safe_db_name(device_id: str) -> str:
+        """Sanitize a device_id into a safe SQLite filename segment."""
+        sanitized = re.sub(r"[^A-Za-z0-9_.-]", "_", device_id)
+        sanitized = sanitized.strip("._")
+        return f"{sanitized or 'device'}.db"
     async def get_device_session(self, device_id: str) -> AsyncSession:
         """Get an async session for a device database."""
         await self.get_device_engine(device_id)
