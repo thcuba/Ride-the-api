@@ -240,3 +240,33 @@ class PatternDB(BaseModel):
     server: ServerConfig = Field(default_factory=ServerConfig)
 
     model_config = {"populate_by_name": True}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# DEVICE META — per-device header written at first LLM flush
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class DeviceMeta(BaseModel):
+    """Per-device header persisted in the device DB.
+
+    Written once at the first LLM flush, following the same ``meta`` +
+    ``protocols`` conventions as the portable PatternDB so the stored header
+    is structured, common and readable in clear text. After it is set it is
+    stable: later flushes do not re-derive the protocol.
+
+    ``connection_mode`` is the operational ingress decision that the server
+    reads to pick the right handler / routing (``auto`` = decided at the first
+    flush). ``protocols`` mirrors ``ClientConfig.protocols`` for the same
+    device as a cross-check of what it actually speaks.
+    """
+
+    version: int = 1
+    vendor: str = "unknown"
+    device_type: str = "unknown"
+    model: str = ""
+    protocols: list[str] = Field(default_factory=lambda: [""])
+    connection_mode: str = "auto"  # auto | tls | http | mqtt | coap | modbus
+    detected_at: datetime | None = None
+    source: str = "llm"  # llm | config_override
+

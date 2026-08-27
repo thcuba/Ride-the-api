@@ -5,7 +5,8 @@ Tests for the Local Cloud Replacement Proxy architecture.
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
@@ -15,6 +16,7 @@ from adapters.base import InterceptedRequest, ProtocolType, device_id_from_ip
 from adapters.example import ExampleProtocolAdapter
 from core.database import (
     DatabaseManager,
+    DeviceMetaRow,
     DeviceRegistry,
     FieldMapping,
     MatchStats,
@@ -24,6 +26,7 @@ from core.database import (
 from core.pipeline import (
     ContextBuffer,
     CorrelatedPair,
+    LearningPipeline,
     MatchRateTracker,
     MatchResult,
     PatternMatcher,
@@ -273,6 +276,57 @@ class TestCoreDatabase:
             assert conn2 == "auto"
             assert await db_manager.get_device_connection("profile_dev") == "http"
 
+    async def test_device_meta_write_read_roundtrip(self, db_manager):
+        """device_meta is persisted in the device DB and read back intact."""
+        await db_manager.get_or_create_device("meta_dev", "shelly", "plug", "Shelly Plug")
+        # No header yet => None (pre-first-flush, protocol unknown).
+        assert await db_manager.read_device_meta("meta_dev") is None
+
+        stored = await db_manager.write_device_meta(
+            "meta_dev",
+            {
+                "vendor": "shelly",
+                "device_type": "plug",
+                "protocols": ["mqtt"],
+                "connection_mode": "mqtt",
+                "source": "llm",
+            },
+        )
+        # Marked as llm-written; defaults filled in by the standard model.
+        assert stored["connection_mode"] == "mqtt"
+        assert stored["protocols"] == ["mqtt"]
+        assert stored["source"] == "llm"
+        assert stored["version"] == 1
+
+        # Read back round-trips the same structured header.
+        meta = await db_manager.read_device_meta("meta_dev")
+        assert meta["connection_mode"] == "mqtt"
+        assert meta["protocols"] == ["mqtt"]
+
+    async def test_device_meta_update(self, db_manager):
+        """write_device_meta upserts the single header row (does not duplicate)."""
+        await db_manager.get_or_create_device("meta_upd", "example", "ac", "Meta Upd")
+        await db_manager.write_device_meta(
+            "meta_upd",
+            {"protocols": ["http"], "connection_mode": "http"},
+        )
+        await db_manager.write_device_meta(
+            "meta_upd",
+            {"protocols": ["modbus"], "connection_mode": "modbus"},
+        )
+        meta = await db_manager.read_device_meta("meta_upd")
+        assert meta["connection_mode"] == "modbus"
+        assert meta["protocols"] == ["modbus"]
+
+        # Single row in the device_meta table after the upsert.
+        async with db_manager.device_session("meta_upd") as session:
+            rows = (
+                await session.execute(
+                    select(DeviceMetaRow).where(DeviceMetaRow.device_id == "meta_upd")
+                )
+            ).scalars().all()
+            assert len(rows) == 1
+
     async def test_update_llm_config(self, db_manager):
         """Test updating LLM config per device."""
         await db_manager.get_or_create_device("llm_test", "example", "ac", "LLM Test")
@@ -291,6 +345,93 @@ class TestCoreDatabase:
             assert device.llm_base_url == "http://localhost:11434/v1"
             assert device.llm_model_id == "llama3.1:8b"
 
+
+class TestDeviceMetaFirstFlush:
+    """The device header is written once, at the first flush, and stays stable."""
+
+    def _pipeline(self, db_manager):
+        return LearningPipeline(
+            db_manager=db_manager,
+            llm_decipher=MagicMock(),
+            buffer=MagicMock(),
+            matcher=MagicMock(),
+            tracker=MagicMock(),
+            engine=None,
+        )
+
+    async def test_persist_meta_from_flat_analysis(self, db_manager):
+        """First flush derives protocols/connection_mode from a flat LLM answer."""
+        await db_manager.get_or_create_device("pf_dev", "shelly", "plug", "Shelly Plug")
+        async with db_manager.core_session() as session:
+            dev = (
+                await session.execute(
+                    select(DeviceRegistry).where(DeviceRegistry.device_id == "pf_dev")
+                )
+            ).scalar_one()
+        pipeline = self._pipeline(db_manager)
+
+        await pipeline._persist_device_meta(
+            "pf_dev", dev, {"protocols": ["mqtt"], "connection_mode": "mqtt"}
+        )
+        meta = await db_manager.read_device_meta("pf_dev")
+        assert meta["connection_mode"] == "mqtt"
+        assert meta["protocols"] == ["mqtt"]
+        assert meta["source"] == "llm"
+        assert meta["vendor"] == "shelly"
+
+    async def test_persist_meta_from_structured_pattern_db(self, db_manager):
+        """Structured PatternDB shape (client.protocols) is extracted too."""
+        await db_manager.get_or_create_device("ps_dev", "example", "ac", "PS")
+        async with db_manager.core_session() as session:
+            dev = (
+                await session.execute(
+                    select(DeviceRegistry).where(DeviceRegistry.device_id == "ps_dev")
+                )
+            ).scalar_one()
+        pipeline = self._pipeline(db_manager)
+
+        await pipeline._persist_device_meta(
+            "ps_dev", dev, {"client": {"protocols": ["http"]}, "connection_mode": "http"}
+        )
+        meta = await db_manager.read_device_meta("ps_dev")
+        assert meta["connection_mode"] == "http"
+        assert meta["protocols"] == ["http"]
+
+    async def test_first_flush_is_stable_on_second(self, db_manager):
+        """On the second flush the header exists, so it is not overwritten.
+
+        We simulate this by writing the header once, then verifying read_device_meta
+        returns it (the pipeline only calls _persist_device_meta when read is None).
+        """
+        dbm = db_manager
+        await dbm.get_or_create_device("fs_dev", "example", "ac", "FS")
+        # First flush writes the header.
+        await dbm.write_device_meta(
+            "fs_dev", {"protocols": ["coap"], "connection_mode": "coap"}
+        )
+        # Second flush sees it already present => not None => skipped.
+        assert await dbm.read_device_meta("fs_dev") is not None
+        meta = await dbm.read_device_meta("fs_dev")
+        assert meta["connection_mode"] == "coap"
+
+    def test_first_flush_prompt_asks_for_protocol(self):
+        """When first_flush is set the prompt asks for protocols + connection_mode."""
+        pipeline = self._pipeline(None)
+        profile = SimpleNamespace(
+            prompt_template="Analyze {pairs} for {vendor} {device_type} ({device_id})"
+        )
+        prompt = pipeline._build_learning_prompt(
+            profile,
+            {"pairs": [], "first_flush": True, "vendor": "x", "device_type": "y", "device_id": "z"},
+        )
+        assert "protocols" in prompt
+        assert "connection_mode" in prompt
+
+        # Without first_flush the prompt is unchanged.
+        prompt2 = pipeline._build_learning_prompt(
+            profile, {"pairs": [], "vendor": "x", "device_type": "y", "device_id": "z"}
+        )
+        assert "connection_mode" not in prompt2
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # PIPELINE TESTS

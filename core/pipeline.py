@@ -756,6 +756,13 @@ class LearningPipeline:
 
         context = await self._build_context(device_id, device, pairs, context_notes)
 
+        # First flush: the device header is not written yet (protocol still
+        # auto). Ask the LLM to also report the protocol(s) so we can persist
+        # the stable device_meta header; later flushes keep it untouched.
+        is_first_flush = await self.db_manager.read_device_meta(device_id) is None
+        if is_first_flush:
+            context["first_flush"] = True
+
         profile_name = device.llm_profile_name or "default"
         llm_analysis = await self._analyze_with_llm(
             context, profile_name, device.llm_base_url, device.llm_model_id
@@ -770,6 +777,8 @@ class LearningPipeline:
             }
 
         await self._save_patterns(device_id, llm_analysis)
+        if is_first_flush:
+            await self._persist_device_meta(device_id, device, llm_analysis)
         await self._export_and_sync_patterns(device_id)
 
         if pair_ids is not None:
@@ -938,6 +947,19 @@ class LearningPipeline:
         }
         for placeholder, value in replacements.items():
             prompt = prompt.replace(placeholder, value)
+
+        # On the very first flush the protocol is still unknown (auto). Ask the
+        # LLM to also report the protocol(s) and the ingress connection mode so
+        # we can persist the stable device header. Later flushes skip this.
+        if context.get("first_flush"):
+            prompt += (
+                "\n\nBased on the pairs above, also answer in JSON: "
+                '"protocols": [list of protocols the device speaks, e.g. '
+                '["mqtt"], ["http"], ["modbus"], ["coap"], ["tls"]], '
+                '"connection_mode": one of auto | tls | http | mqtt | coap | '
+                "modbus (the ingress decision for this device). "
+                'Use "http" for plain HTTP(S) traffic.'
+            )
         return prompt
 
     async def _save_patterns(self, device_id: str, analysis: dict):  # noqa: C901, PLR0912
@@ -1046,6 +1068,51 @@ class LearningPipeline:
                                 confidence=resp_info.get("confidence", 0.5),
                             )
                             session.add(fmap)
+
+
+    async def _persist_device_meta(
+        self, device_id: str, device: DeviceRegistry, analysis: dict
+    ) -> None:
+        """Persist the stable per-device header on the first flush.
+
+        Derives ``protocols`` and ``connection_mode`` from the LLM analysis
+        (handles both the structured PatternDB ``client.protocols`` shape and a
+        flat ``protocols``/``connection_mode`` answer), then writes the header
+        via :meth:`DatabaseManager.write_device_meta`. Only ever called when
+        the header does not exist yet, so later flushes leave it stable.
+        """
+        protocols = analysis.get("protocols")
+        if not protocols:
+            client = analysis.get("client") or {}
+            protocols = client.get("protocols") or []
+        if isinstance(protocols, str):
+            protocols = [protocols]
+        protocols = [str(p).lower() for p in protocols if str(p).lower()]
+
+        connection_mode = analysis.get("connection_mode")
+        if not connection_mode:
+            # Derive the ingress mode from the first reported protocol.
+            connection_mode = protocols[0] if protocols else "auto"
+        connection_mode = str(connection_mode).lower()
+
+        meta = {
+            "vendor": device.vendor or "unknown",
+            "device_type": device.device_type or "unknown",
+            "model": "",
+            "protocols": protocols or [""],
+            "connection_mode": connection_mode,
+            "source": "llm",
+        }
+        try:
+            stored = await self.db_manager.write_device_meta(device_id, meta)
+            logger.info(
+                "Wrote device_meta header for %s: connection_mode=%s protocols=%s",
+                device_id,
+                stored.get("connection_mode"),
+                stored.get("protocols"),
+            )
+        except Exception as e:  # noqa: BLE001 - header is best-effort, never blocks learning
+            logger.warning("Failed to write device_meta for %s: %s", device_id, e)
 
 
 class LearningOrchestrator:
