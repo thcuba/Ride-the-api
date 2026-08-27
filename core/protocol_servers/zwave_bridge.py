@@ -125,8 +125,10 @@ class ZWaveBridgePlugin(ProtocolServerPlugin):
         )
 
     async def _route_to_pipeline(self, topic: str, body) -> None:  # noqa: ANN001
+        device = topic.split('/')[1] if len(topic.split('/')) > 1 else 'dev'
+        device = device or 'dev'
         request = InterceptedRequest(
-            device_id=f"zwave-{topic.rpartition('/')[2] if '/' in topic else 'dev'}",
+            device_id=f"zwave-{device}",
             timestamp=datetime.now(UTC).timestamp(),
             protocol=ProtocolType.ZWAVE,
             topic=topic,

@@ -58,7 +58,11 @@ class MatterBridgePlugin(ProtocolServerPlugin):
         device_id = device_id_from_ip("matter", remote_ip)
         try:
             while True:
-                data = await reader.read(65535)
+                try:
+                    data = await asyncio.wait_for(reader.read(65535), timeout=30)
+                except TimeoutError:
+                    logger.debug("Matter bridge idle timeout from %s, closing", remote_ip)
+                    break
                 if not data:
                     break
                 try:

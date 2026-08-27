@@ -48,6 +48,30 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Whitelisted protocol tokens that a device can be attributed with. Anything the
+# LLM reports outside this set is dropped so arbitrary/untrusted strings cannot
+# be persisted into the stable device header.
+_SAFE_PROTOCOLS = {
+    "http",
+    "https",
+    "tls",
+    "tcp",
+    "tcpip",
+    "mqtt",
+    "mqtt_connect",
+    "modbus",
+    "coap",
+    "matter",
+    "websocket",
+    "ws",
+    "zigbee",
+    "zwave",
+    "raw",
+}
+
+# Whitelisted ingress connection modes for the device header.
+_SAFE_CONNECTION_MODES = {"auto", "tls", "http", "mqtt", "coap", "modbus"}
+
 
 class PipelineMode(StrEnum):
     """Operation mode for the pipeline."""
@@ -1087,13 +1111,16 @@ class LearningPipeline:
             protocols = client.get("protocols") or []
         if isinstance(protocols, str):
             protocols = [protocols]
-        protocols = [str(p).lower() for p in protocols if str(p).lower()]
+        # Whitelist the LLM-derived protocols so arbitrary strings are dropped.
+        protocols = [p for p in (str(p).lower().strip() for p in protocols) if p in _SAFE_PROTOCOLS]
 
         connection_mode = analysis.get("connection_mode")
         if not connection_mode:
             # Derive the ingress mode from the first reported protocol.
             connection_mode = protocols[0] if protocols else "auto"
-        connection_mode = str(connection_mode).lower()
+        connection_mode = str(connection_mode).lower().strip()
+        if connection_mode not in _SAFE_CONNECTION_MODES:
+            connection_mode = "auto"
 
         meta = {
             "vendor": device.vendor or "unknown",

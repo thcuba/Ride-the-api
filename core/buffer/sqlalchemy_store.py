@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import threading
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime
@@ -52,6 +54,11 @@ class SqlAlchemyBufferStore(BufferStore):
     ``durable_stats_provider`` is optional: when set (RAM mode), after a
     flush/delete the durable ``MatchStats`` row on the file DB is synced so
     on-disk statistics stay coherent while the hot path stays RAM-only.
+
+    Read-modify-write operations (``add_pair``, ``flush``, ``flush_selected``,
+    ``delete_entry``) are serialized per device with an ``asyncio.Lock``,
+    preventing lost update / duplicate-row races even though each database
+    backend nominally has a single writer per device.
     """
 
     def __init__(
@@ -61,9 +68,20 @@ class SqlAlchemyBufferStore(BufferStore):
     ) -> None:
         self._session = session_provider
         self._durable_stats = durable_stats_provider
+        self._locks: dict[str, asyncio.Lock] = {}
+        self._locks_guard = threading.Lock()
+
+    def _lock_for(self, device_id: str) -> asyncio.Lock:
+        """Return (creating if needed) the per-device serialization lock."""
+        with self._locks_guard:
+            lock = self._locks.get(device_id)
+            if lock is None:
+                lock = asyncio.Lock()
+                self._locks[device_id] = lock
+            return lock
 
     async def add_pair(self, device_id: str, pair: dict, estimated_size: int) -> int:
-        async with self._session(device_id) as session:
+        async with self._lock_for(device_id), self._session(device_id) as session:
             seq = await self._next_sequence(session, device_id)
 
             entry = LLMContextBuffer(
@@ -96,81 +114,86 @@ class SqlAlchemyBufferStore(BufferStore):
             ]
 
     async def flush(self, device_id: str) -> int:
-        async with self._session(device_id) as session:
-            result = await session.execute(
-                select(LLMContextBuffer).where(
-                    and_(
-                        LLMContextBuffer.device_id == device_id,
-                        LLMContextBuffer.flushed == False,  # noqa: E712
+        async with self._lock_for(device_id):
+            async with self._session(device_id) as session:
+                result = await session.execute(
+                    select(LLMContextBuffer).where(
+                        and_(
+                            LLMContextBuffer.device_id == device_id,
+                            LLMContextBuffer.flushed == False,  # noqa: E712
+                        )
                     )
                 )
-            )
-            now = datetime.now(UTC)
-            count = 0
-            for entry in result.scalars().all():
-                entry.flushed = True
-                entry.flushed_at = now
-                count += 1
+                now = datetime.now(UTC)
+                count = 0
+                for entry in result.scalars().all():
+                    entry.flushed = True
+                    entry.flushed_at = now
+                    count += 1
 
-            stats = await _get_or_create_stats(session, device_id)
-            stats.current_buffer_size_bytes = 0
-            stats.last_flush_at = now
-            stats.buffer_flushes += 1
+                stats = await _get_or_create_stats(session, device_id)
+                stats.current_buffer_size_bytes = 0
+                stats.last_flush_at = now
+                stats.buffer_flushes += 1
 
-        if count and self._durable_stats:
-            await self._sync_durable_flush(device_id, now)
-        return count
+            if count and self._durable_stats:
+                await self._sync_durable_flush(device_id, now)
+            return count
 
     async def flush_selected(self, device_id: str, entry_ids: list[int]) -> int:
-        async with self._session(device_id) as session:
-            result = await session.execute(
-                select(LLMContextBuffer).where(
-                    and_(
-                        LLMContextBuffer.device_id == device_id,
-                        LLMContextBuffer.flushed == False,  # noqa: E712
-                        LLMContextBuffer.id.in_(entry_ids),
+        async with self._lock_for(device_id):
+            async with self._session(device_id) as session:
+                result = await session.execute(
+                    select(LLMContextBuffer).where(
+                        and_(
+                            LLMContextBuffer.device_id == device_id,
+                            LLMContextBuffer.flushed == False,  # noqa: E712
+                            LLMContextBuffer.id.in_(entry_ids),
+                        )
                     )
                 )
-            )
-            now = datetime.now(UTC)
-            flushed_size = 0
-            count = 0
-            for entry in result.scalars().all():
-                entry.flushed = True
-                entry.flushed_at = now
-                flushed_size += entry.estimated_size_bytes
-                count += 1
+                now = datetime.now(UTC)
+                flushed_size = 0
+                count = 0
+                for entry in result.scalars().all():
+                    entry.flushed = True
+                    entry.flushed_at = now
+                    flushed_size += entry.estimated_size_bytes
+                    count += 1
 
-            stats = await _get_or_create_stats(session, device_id)
-            stats.current_buffer_size_bytes = max(0, stats.current_buffer_size_bytes - flushed_size)
-            stats.last_flush_at = now
-            stats.buffer_flushes += 1
+                stats = await _get_or_create_stats(session, device_id)
+                stats.current_buffer_size_bytes = max(
+                    0, stats.current_buffer_size_bytes - flushed_size
+                )
+                stats.last_flush_at = now
+                stats.buffer_flushes += 1
 
-        if count and self._durable_stats:
-            await self._sync_durable_flush(device_id, now, delta=flushed_size)
-        return count
+            if count and self._durable_stats:
+                await self._sync_durable_flush(device_id, now, delta=flushed_size)
+            return count
 
     async def delete_entry(self, device_id: str, entry_id: int) -> bool:
-        async with self._session(device_id) as session:
-            result = await session.execute(
-                select(LLMContextBuffer).where(
-                    and_(
-                        LLMContextBuffer.id == entry_id,
-                        LLMContextBuffer.device_id == device_id,
+        async with self._lock_for(device_id):
+            async with self._session(device_id) as session:
+                result = await session.execute(
+                    select(LLMContextBuffer).where(
+                        and_(
+                            LLMContextBuffer.id == entry_id,
+                            LLMContextBuffer.device_id == device_id,
+                        )
                     )
                 )
-            )
-            entry = result.scalar_one_or_none()
-            if not entry:
-                return False
-            size = entry.estimated_size_bytes
-            await session.delete(entry)
-            stats = await _get_or_create_stats(session, device_id)
-            stats.current_buffer_size_bytes = max(0, stats.current_buffer_size_bytes - size)
+                entry = result.scalar_one_or_none()
+                if not entry:
+                    return False
+                size = entry.estimated_size_bytes
+                await session.delete(entry)
+                stats = await _get_or_create_stats(session, device_id)
+                stats.current_buffer_size_bytes = max(0, stats.current_buffer_size_bytes - size)
 
-        if self._durable_stats:
-            await self._sync_durable_delete(device_id, size)
-        return True
+            if self._durable_stats:
+                await self._sync_durable_delete(device_id, size)
+            return True
 
     async def get_current_size(self, device_id: str) -> int:
         async with self._session(device_id) as session:
@@ -191,12 +214,12 @@ class SqlAlchemyBufferStore(BufferStore):
     # -- Internal helpers -----------------------------------------------------
 
     async def _next_sequence(self, session: AsyncSession, device_id: str) -> int:
-        """Sequence within the device, stable across concurrent stores.
+        """Sequence within the device.
 
         ``SELECT MAX(sequence) + 1`` is safe in both backends today: disk mode
         uses one SQLite writer per device DB and RAM mode funnels every write
-        through a single shared connection (``StaticPool``), so the read+insert
-        pair cannot interleave from another writer.
+        through a single shared connection (``StaticPool``), and callers
+        serialize per device via ``_lock_for``.
         """
         result = await session.execute(
             select(func.max(LLMContextBuffer.sequence)).where(

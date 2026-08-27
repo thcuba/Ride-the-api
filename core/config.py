@@ -512,13 +512,16 @@ class ConfigManager:
     def _notify_callbacks(self) -> None:
         """Notify all callbacks of config change."""
         with self._lock:
-            for callback in self._callbacks:
-                try:
-                    callback(self._config)
-                except Exception:
-                    # Log but don't crash
-                    logging.getLogger(__name__).exception("Config callback error")
-
+            # Snapshot under lock, then invoke outside the lock so a slow or
+            # re-entrant callback cannot block reloads or registration.
+            callbacks = list(self._callbacks)
+            config = self._config
+        for callback in callbacks:
+            try:
+                callback(config)
+            except Exception:
+                # Log but don't crash
+                logging.getLogger(__name__).exception("Config callback error")
     def start_watching(self) -> None:
         """Start watching config file for changes."""
         if self._watch_thread and self._watch_thread.is_alive():

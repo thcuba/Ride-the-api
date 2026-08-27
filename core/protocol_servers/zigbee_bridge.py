@@ -91,8 +91,10 @@ class ZigbeeBridgePlugin(ProtocolServerPlugin):
             body = json.loads(payload.decode("utf-8"))
         except (ValueError, UnicodeDecodeError):
             body = {"raw": payload.hex()}
+        device = topic.split('/')[1] if len(topic.split('/')) > 1 else 'dev'
+        device = device or 'dev'
         request = InterceptedRequest(
-            device_id=f"zigbee-{topic.rpartition('/')[2]}",
+            device_id=f"zigbee-{device}",
             timestamp=datetime.now(UTC).timestamp(),
             protocol=ProtocolType.ZIGBEE,
             topic=topic,
