@@ -640,6 +640,53 @@ class DatabaseManager:
                 logger.info(f"Registered new device: {device_id} ({vendor})")
         await self.get_device_engine(device_id)
 
+    async def apply_ip_profile(self, device_id: str, ip: str) -> str:
+        """Apply a configured per-IP profile to a device (database + connection).
+
+        Reads ``core.ip_profiles[ip]`` from config. A ``database`` override is
+        assigned via :meth:`assign_device_database`; the connection type is
+        stored in the device's ``extra_attributes`` (default ``auto``). Returns
+        the resolved connection type as a string.
+        """
+        try:
+            profile = get_config().core.ip_profiles.get(ip)
+        except Exception:  # noqa: BLE001 - config not ready
+            profile = None
+
+        async with await self.get_core_session() as session:
+            result = await session.execute(
+                select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
+            )
+            device = result.scalar_one_or_none()
+            if not device:
+                return "auto"
+
+            extra = dict(device.extra_attributes or {})
+            connection = getattr(profile, "connection", None)
+            if connection is not None and not extra.get("connection"):
+                extra["connection"] = connection.value
+            device.extra_attributes = extra
+            await session.commit()
+
+        if profile is not None and profile.database:
+            await self.assign_device_database(device_id, database_url=profile.database)
+
+        connection_str = "auto"
+        if profile is not None:
+            connection_str = profile.connection.value
+        return connection_str
+
+    async def get_device_connection(self, device_id: str) -> str:
+        """Return the stored connection type for a device (default ``auto``)."""
+        async with await self.get_core_session() as session:
+            result = await session.execute(
+                select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
+            )
+            device = result.scalar_one_or_none()
+            if not device:
+                return "auto"
+            return (device.extra_attributes or {}).get("connection", "auto")
+
     @contextlib.asynccontextmanager
     async def core_session(self) -> AsyncGenerator[AsyncSession, None]:
         """Context manager for core DB session."""

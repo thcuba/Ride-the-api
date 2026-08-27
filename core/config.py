@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from enum import Enum
+from enum import Enum, StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +30,38 @@ class CoreConfig(BaseModel):
     device_db_dir: str = "./ridebase/devices"
     device_databases: dict[str, str] = Field(default_factory=dict)
     default_context_buffer_size: int = 524288  # 512KB default
+
+    # Per-IP overrides: how each known device IP is treated on ingress.
+    # Key = source IP (IPv4/v6 string). Values control which database the
+    # device uses and how its connection is handled (``auto`` detects whether
+    # the traffic should be TLS-decrypted or handled by a known protocol).
+    ip_profiles: dict[str, IpProfileConfig] = Field(default_factory=dict)
+
+
+class ConnectionType(StrEnum):
+    """How a device connection is handled on ingress.
+
+    - AUTO: detect on first bytes — if it looks like a TLS ClientHello it is
+      TLS to be decrypted (MITM); if it matches a known protocol (HTTP, MQTT,
+      CoAP, Modbus...) the matching handler is used.
+    - TLS: always decrypt (MITM).
+    - Any known protocol name (http, mqtt, coap, modbus, ...) forces that handler
+      without decryption.
+    """
+
+    AUTO = "auto"
+    TLS = "tls"
+    HTTP = "http"
+    MQTT = "mqtt"
+    COAP = "coap"
+    MODBUS = "modbus"
+
+
+class IpProfileConfig(BaseModel):
+    """Per-IP override for database and connection handling."""
+
+    database: str | None = None  # URL override; None -> default per-device DB
+    connection: ConnectionType = ConnectionType.AUTO
 
 
 class BufferConfig(BaseModel):

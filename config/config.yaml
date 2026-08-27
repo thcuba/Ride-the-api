@@ -14,6 +14,19 @@ core:
   # Optional: override device DB URLs (e.g., for PostgreSQL)
   # device_databases:
   #   my_ac: "postgresql://localhost/my_ac_protocol"
+
+  # Per-IP overrides: which database a source IP uses and how its connection
+  # is handled on ingress. Keys are source IP strings (IPv4/IPv6).
+  #   database:   custom DB URL for that device (default: a new per-device DB)
+  #   connection: auto (default) | tls | http | mqtt | coap | modbus
+  #     auto -> detect on first bytes: TLS ClientHello = decrypt (MITM),
+  #             otherwise route to the matching known protocol handler.
+  # ip_profiles:
+  #   "192.168.1.50":
+  #     database: "postgresql://localhost/shelly_lab"
+  #     connection: tls
+  #   "192.168.1.60":
+  #     connection: http
   
   # Default context buffer size (128KB, 256KB, 512KB, 1MB, 2MB, 5MB, 10MB)
   default_context_buffer_size: 524288  # 512KB

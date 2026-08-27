@@ -37,7 +37,7 @@ from core.buffer import (
     set_buffer_backend,
 )
 from core.cert_manager import CertManager, get_cert_manager
-from core.config import get_config_manager
+from core.config import ConnectionType, get_config_manager
 from core.database import (
     DatabaseManager,
     DeviceRegistry,
@@ -130,6 +130,9 @@ async def handle_tls_decrypted_request(req: DecryptedRequest) -> dict | None:
             device_id=device_id,
             vendor="unknown",
         )
+
+        # Apply any per-IP override: custom database + connection type (default auto)
+        await db_manager.apply_ip_profile(device_id, req.client_ip)
 
         # Ensure a dedicated device database exists
         device_db_dir = Path(config.core.device_db_dir)
@@ -998,6 +1001,50 @@ async def get_device_by_ip(ip_address: str):
     if not device_id:
         return JSONResponse(status_code=404, content={"error": "Device not found for this IP"})
     return {"device_id": device_id, "ip_address": ip_address}
+
+
+@app.get("/api/devices/{device_id}/connection")
+async def get_device_connection(device_id: str):
+    """Get the connection type for a device (default 'auto')."""
+    if not db_manager:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    async with db_manager.core_session() as session:
+        result = await session.execute(
+            select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
+        )
+        device = result.scalar_one_or_none()
+        if not device:
+            return JSONResponse(status_code=404, content={"error": "Device not found"})
+        return {
+            "device_id": device.device_id,
+            "connection": (device.extra_attributes or {}).get("connection", "auto"),
+        }
+
+
+@app.put("/api/devices/{device_id}/connection")
+async def update_device_connection(device_id: str, request: Request):
+    """Set the connection type for a device (auto | tls | http | mqtt | coap | modbus)."""
+    if not db_manager:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    body = await request.json()
+    raw = str(body.get("connection", "auto")).lower()
+    try:
+        connection = ConnectionType(raw)
+    except ValueError:
+        return JSONResponse(status_code=400, content={"error": f"Invalid connection: {raw}"})
+    async with db_manager.core_session() as session:
+        result = await session.execute(
+            select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
+        )
+        device = result.scalar_one_or_none()
+        if not device:
+            return JSONResponse(status_code=404, content={"error": "Device not found"})
+        extra = dict(device.extra_attributes or {})
+        extra["connection"] = connection.value
+        device.extra_attributes = extra
+        session.add(device)
+        await session.commit()
+    return {"device_id": device_id, "connection": connection.value}
 
 
 @app.post("/api/devices/{device_id}/ip")
