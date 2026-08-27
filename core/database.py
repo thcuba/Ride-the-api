@@ -36,6 +36,7 @@ from sqlalchemy.pool import NullPool
 
 from core.config import get_config
 from core.migrations import SchemaMigrator
+from core.pattern_db.schemas import DeviceMeta
 
 logger = logging.getLogger(__name__)
 
@@ -440,6 +441,25 @@ class DeviceState(Base):
     )
 
 
+class DeviceMetaRow(Base):
+    """Per-device header persisted in the device DB (single row per device).
+
+    Stores the structured, machine-readable header written at the first LLM
+    flush (see :class:`core.pattern_db.schemas.DeviceMeta`): the protocol(s)
+    the device speaks and the ingress ``connection_mode`` that the server reads
+    to select the right handler. It is stable once set.
+    """
+
+    __tablename__ = "device_meta"
+
+    device_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    meta: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    updated_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # DATABASE MANAGER
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -686,6 +706,40 @@ class DatabaseManager:
             if not device:
                 return "auto"
             return (device.extra_attributes or {}).get("connection", "auto")
+
+    async def read_device_meta(self, device_id: str) -> dict | None:
+        """Return the persisted device header (``device_meta``) or ``None``.
+
+        The header is the structured per-device record written at the first LLM
+        flush. A ``None`` return means the protocol has not been decided yet
+        (the device is still in ``auto`` / pre-first-flush).
+        """
+        async with self.device_session(device_id) as session:
+            result = await session.execute(
+                select(DeviceMetaRow).where(DeviceMetaRow.device_id == device_id)
+            )
+            row = result.scalar_one_or_none()
+            return dict(row.meta) if row else None
+
+    async def write_device_meta(self, device_id: str, meta: dict) -> dict:
+        """Persist (or update) the device header, validating the standard shape.
+
+        Uses :class:`core.pattern_db.schemas.DeviceMeta` to enforce the common,
+        readable header syntax. Returns the canonical stored header as a dict.
+        """
+        validated = DeviceMeta(**meta)
+        payload = validated.model_dump()
+        async with self.device_session(device_id) as session:
+            result = await session.execute(
+                select(DeviceMetaRow).where(DeviceMetaRow.device_id == device_id)
+            )
+            row = result.scalar_one_or_none()
+            if row is None:
+                session.add(DeviceMetaRow(device_id=device_id, meta=payload))
+            else:
+                row.meta = payload
+            await session.commit()
+        return payload
 
     @contextlib.asynccontextmanager
     async def core_session(self) -> AsyncGenerator[AsyncSession, None]:
