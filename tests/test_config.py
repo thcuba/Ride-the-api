@@ -10,8 +10,10 @@ import yaml
 from core.config import (
     Config,
     ConfigManager,
+    ConnectionType,
     CoreConfig,
     DNSConfig,
+    IpProfileConfig,
     LearningConfig,
     LLMDecipherConfig,
     LLMDecipherProfile,
@@ -59,6 +61,25 @@ class TestCoreConfig:
         assert c.database_url == "postgresql:///custom"
         assert c.device_db_dir == "/tmp/devices"
         assert c.default_context_buffer_size == _CUSTOM_CONTEXT_BUFFER_SIZE
+        assert c.ip_profiles == {}
+
+    def test_ip_profiles(self):
+        c = CoreConfig(
+            ip_profiles={
+                "192.168.1.50": IpProfileConfig(
+                    database="postgresql:///shelly_lab", connection=ConnectionType.TLS
+                ),
+                "192.168.1.60": IpProfileConfig(connection=ConnectionType.HTTP),
+            }
+        )
+        prof = c.ip_profiles["192.168.1.50"]
+        assert isinstance(prof, IpProfileConfig)
+        assert prof.database == "postgresql:///shelly_lab"
+        assert prof.connection == ConnectionType.TLS
+        assert c.ip_profiles["192.168.1.60"].connection == ConnectionType.HTTP
+        # default connection is auto and map is empty by default
+        assert IpProfileConfig().connection == ConnectionType.AUTO
+        assert CoreConfig().ip_profiles == {}
 
 
 class TestTLSConfig:

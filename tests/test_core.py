@@ -246,6 +246,33 @@ class TestCoreDatabase:
         assert any(d["device_id"] == "list_dev_1" for d in devices)
         assert any(d["device_id"] == "list_dev_2" for d in devices)
 
+    async def test_apply_ip_profile(self, db_manager):
+        """Per-IP profile applies the connection type to a device at ingress."""
+        await db_manager.get_or_create_device("profile_dev", "example", "ac", "Profile Dev")
+
+        from core.config import Config, ConnectionType, CoreConfig, IpProfileConfig
+
+        fake_config = Config(
+            core=CoreConfig(
+                ip_profiles={
+                    "10.0.0.9": IpProfileConfig(connection=ConnectionType.HTTP),
+                    "10.0.0.7": IpProfileConfig(
+                        database="sqlite+aiosqlite:////tmp/custom_dev.db",
+                        connection=ConnectionType.TLS,
+                    ),
+                }
+            )
+        )
+
+        with patch("core.database.get_config", return_value=fake_config):
+            conn = await db_manager.apply_ip_profile("profile_dev", "10.0.0.9")
+            assert conn == "http"
+            assert await db_manager.get_device_connection("profile_dev") == "http"
+
+            conn2 = await db_manager.apply_ip_profile("profile_dev", "10.0.0.99")
+            assert conn2 == "auto"
+            assert await db_manager.get_device_connection("profile_dev") == "http"
+
     async def test_update_llm_config(self, db_manager):
         """Test updating LLM config per device."""
         await db_manager.get_or_create_device("llm_test", "example", "ac", "LLM Test")
