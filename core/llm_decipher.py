@@ -18,7 +18,7 @@ from typing import Any
 import json_repair
 from cachetools import TTLCache
 from openai import AsyncOpenAI
-from pydantic import BaseModel, SecretStr, field_validator
+from pydantic import BaseModel, Field, SecretStr, ValidationError, field_validator
 
 from core.config import get_config_manager
 from core.fallback_policy import FallbackChain, ProviderCircuitBreaker
@@ -92,6 +92,25 @@ class LLMProfile(BaseModel):
         if isinstance(v, str) and v.startswith("${") and v.endswith("}"):
             return os.environ.get(v[2:-1], "")
         return v if isinstance(v, str) else ""
+
+
+class LLMDecipherAnalysis(BaseModel):
+    """Typed, tolerant view of an unstructured LLM analysis response.
+
+    The LLM is instructed to output structured JSON, but it may omit fields,
+    add extra keys, or emit noisy values (e.g. ``confidence: "high"``). Every
+    field defaults so a partially malformed payload never aborts deciphering,
+    unknown keys are ignored, and ``confidence`` stays untyped to be coerced
+    through :func:`_safe_float` at the point of use.
+    """
+
+    intent: str = "unknown"
+    fields: dict[str, Any] = Field(default_factory=dict)
+    confidence: Any = 0.0
+    suggested_dp_codes: dict[str, Any] = Field(default_factory=dict)
+    protocol_notes: str = ""
+
+    model_config = {"extra": "ignore"}
 
 
 class LLMCallError(Exception):
@@ -463,7 +482,7 @@ Response:
             analysis = _parse_llm_json(result["content"])
         except Exception:  # noqa: BLE001 - defensive, mirrors old JSONDecodeError path
             analysis = None
-        if analysis is None:
+        if not isinstance(analysis, dict):
             err = f"Failed to parse LLM response: {result['content'][:80]!r}"
             logger.error(err)  # noqa: TRY400
             return DecipherResult(
@@ -478,22 +497,27 @@ Response:
                 processing_time_ms=processing_time,
                 raw_response=result["content"],
             )
-
+        # Coerce the (possibly noisy / partial) JSON into a typed model. On any
+        # validation failure we fall back to defaults so a single bad field
+        # never aborts the whole decipher.
+        try:
+            parsed = LLMDecipherAnalysis.model_validate(analysis)
+        except ValidationError:
+            parsed = LLMDecipherAnalysis()
         # Create result
         decipher_result = DecipherResult(
             pair_id=pair.pair_id,
             device_id=pair.device_id,
             vendor=pair.vendor,
-            intent=analysis.get("intent", "unknown"),
-            fields=analysis.get("fields", {}),
-            confidence=_safe_float(analysis.get("confidence", 0.0)),
-            suggested_dp_codes=analysis.get("suggested_dp_codes", {}),
-            protocol_notes=analysis.get("protocol_notes", ""),
+            intent=parsed.intent,
+            fields=parsed.fields,
+            confidence=_safe_float(parsed.confidence),
+            suggested_dp_codes=parsed.suggested_dp_codes,
+            protocol_notes=parsed.protocol_notes,
             raw_response=result["content"],
             success=True,
             processing_time_ms=processing_time,
         )
-
         # Cache result
         self._cache[cache_key] = decipher_result
 
@@ -599,13 +623,13 @@ Tables:
         return deciphered
 
     async def close(self):
-            """Close all open OpenAI SDK clients."""
-            for client in self._clients.values():
-                try:
-                    await client.close()
-                except Exception as e:  # noqa: BLE001
-                    logger.debug("Error closing LLM client: %s", e)
-            self._clients.clear()
+        """Close all open OpenAI SDK clients."""
+        for client in self._clients.values():
+            try:
+                await client.close()
+            except Exception as e:  # noqa: BLE001
+                logger.debug("Error closing LLM client: %s", e)
+        self._clients.clear()
 
 
 # Global instance
