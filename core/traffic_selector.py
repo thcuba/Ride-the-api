@@ -59,9 +59,10 @@ class TrafficRule:
     _cidr_network: ipaddress.IPv4Network | ipaddress.IPv6Network | None = field(
         default=None, init=False, repr=False
     )
+    _match_value_lower: str = field(default="", init=False, repr=False)
 
     def _recompile(self) -> None:
-        """(Re)compile the cached regex/CIDR from the current match_value.
+        """(Re)compile the cached regex/CIDR/match_value from current match_value.
 
         Called at init and again by ``update_rule`` whenever ``match_value``
         or ``match_type`` changes, so an edited rule does not keep matching
@@ -69,6 +70,7 @@ class TrafficRule:
         """
         self._compiled_pattern = None
         self._cidr_network = None
+        self._match_value_lower = self.match_value.lower() if self.match_value else ""
         if self.match_type == MatchType.CIDR:
             self._cidr_network = ipaddress.ip_network(self.match_value, strict=False)
         elif self.match_type == MatchType.HOSTNAME:
@@ -106,7 +108,9 @@ class TrafficRule:
             return False
 
         if self.match_type == MatchType.VENDOR:
-            return request_info.vendor and request_info.vendor.lower() == self.match_value.lower()
+            return bool(
+                request_info.vendor and request_info.vendor.lower() == self._match_value_lower
+            )
 
         if self.match_type == MatchType.DEVICE_ID:
             return request_info.device_id and request_info.device_id == self.match_value
