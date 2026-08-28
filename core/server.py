@@ -389,11 +389,11 @@ app = FastAPI(
     version="0.2.0",
     lifespan=lifespan,
 )
-# CORS for local dashboard access
+# Security: Disable credential sharing when allowing wildcard origins to prevent CORS vulnerability.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
