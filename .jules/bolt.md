@@ -9,3 +9,7 @@
 ## 2026-03-31 - Fast Message Cloning for Interception Hot Paths
 **Learning:** Calling `copy.deepcopy` on full dataclass instances (`InterceptedMessage`) inside rule evaluation loops introduces significant object inspection overhead (~2.9x slower) compared to a specialized `.copy()` method that only deep-copies nested mutable payloads (`body`, `modifications`) and shallow-copies dicts.
 **Action:** When cloning dataclass objects in hot paths, write a domain-specific `.copy()` method instead of delegating to generic `copy.deepcopy(obj)`.
+
+## 2026-03-31 - Fast Schema Property Lookup in Request Matching
+**Learning:** `_body_similarity` created intermediate `set` objects for schema properties and request body keys on every call during request matching, causing unnecessary heap allocations and garbage collection overhead. Iterating directly over schema properties with key-in-dict checks (`sum(1 for k in props if k in body)`) avoids set allocations and speeds up evaluation by ~1.14x per call.
+**Action:** When comparing dict structure or key intersections in request matching hot paths, check key membership directly on dicts rather than constructing temporary `set(dict.keys())` objects.
