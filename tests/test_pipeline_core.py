@@ -2,7 +2,7 @@
 Tests for the Learning/Production Pipeline.
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
@@ -176,7 +176,7 @@ class TestContextBuffer:
                     (LLMContextBuffer.device_id == "device-001")
                     & (LLMContextBuffer.sequence == 0)
                 )
-                .values(flushed=True, flushed_at=now.replace(hour=now.hour - 5))
+                .values(flushed=True, flushed_at=now - timedelta(hours=5))
             )
         # Add fresh unflushed rows; prune must not touch these.
         await buffer.add_pair("device-001", make_pair(pair_id="fresh1"))

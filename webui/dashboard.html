@@ -950,12 +950,12 @@ async function loadBufferEntries(deviceId) {
           const resFull = JSON.stringify(e.pair?.response_body || '', null, 2).slice(0, 300);
           const ts = e.timestamp ? new Date(e.timestamp).toLocaleString() : '';
       return `<div class="buffer-entry" id="buf-entry-${deviceId}-${e.id}" onclick="toggleBufDetail('${deviceId}', ${e.id})">
-              <input type="checkbox" id="buf-chk-${deviceId}-${e.id}" onclick="event.stopPropagation()" onchange="updateSelectedCount('${deviceId}")">
+              <input type="checkbox" id="buf-chk-${deviceId}-${e.id}" aria-label="Select buffer entry ${method} ${path}" onclick="event.stopPropagation()" onchange="updateSelectedCount('${deviceId}')">
         <div class="be-info">
                 <div class="be-pair"><span style="color:var(--accent)">${method}</span> ${path}</div>
                 <div class="be-summary">&#x2192; ${status} &middot; ${(e.size || 0) / 1024} KB${ts ? ' &middot; ' + ts : ''}</div>
         </div>
-        <button class="be-delete" onclick="event.stopPropagation();deleteBufferEntry('${deviceId}', ${e.id})" title="Delete entry">&times;</button>
+        <button class="be-delete" onclick="event.stopPropagation();deleteBufferEntry('${deviceId}', ${e.id})" title="Delete entry" aria-label="Delete entry ${method} ${path}">&times;</button>
       </div>
       <div class="buffer-entry-detail" id="buf-detail-${deviceId}-${e.id}">
 <b>Request:</b> ${reqFull}
