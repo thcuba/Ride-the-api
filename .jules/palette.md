@@ -1,0 +1,3 @@
+## 2026-08-29 - [HTML Attribute Quotes in Template Strings & Screen Reader Controls]
+**Learning:** In dynamically generated HTML template literals inside JavaScript, single/double quote mismatches in event handler inline strings (e.g. `onchange="...('${id}")"`) cause hidden JS syntax errors that break UI interactions like count updates. Additionally, dynamically inserted icon buttons (`&times;`) and unlabeled checkboxes in buffer lists are invisible to screen readers without explicit `aria-label` attributes.
+**Action:** Always validate inline JS event handler quotes in template strings, and add descriptive `aria-label` attributes incorporating action and item context (e.g., `aria-label="Delete entry ${method} ${path}"`) when generating interactive elements dynamically.
