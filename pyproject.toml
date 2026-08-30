@@ -18,7 +18,13 @@ classifiers = [
 dependencies = [
     # Core
     "fastapi>=0.110.0",
-    "uvicorn[standard]>=0.29.0",
+    # Core. uvicorn[standard] pulls uvloop (not available on Windows), so
+    # install the full `standard` extra only on POSIX and plain uvicorn on
+    # Windows. Work on Windows does not need uvloop/httptools: it falls back
+    # to the asyncio loop + pure-Python h11 protocol, and websockets/
+    # watchfiles/dotenv/PyYAML are already direct deps below.
+    "uvicorn>=0.29.0; sys_platform == 'win32'",
+    "uvicorn[standard]>=0.29.0; sys_platform != 'win32'",
     "pydantic>=2.7.0",
     "pydantic-settings>=2.3.0",
     "python-dotenv>=1.0.0",
