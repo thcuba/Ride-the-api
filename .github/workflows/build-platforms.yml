@@ -35,7 +35,13 @@ jobs:
       matrix:
         include:
           - name: linux-x64
-            os: ubuntu-latest
+            # Pin to Ubuntu 22.04 (glibc 2.35) — NOT ubuntu-latest (24.04,
+            # glibc 2.39). PyInstaller bundles inherit the build runner's
+            # glibc; building on the newest one yields bundles requiring
+            # GLIBC_2.38+, which fail on Debian 12 / HAOS (glibc 2.36) and
+            # older Ubuntu. ubuntu-22.04 keeps the widest compatibility among
+            # still-hosted Linux images.
+            os: ubuntu-22.04
             asset: ride-the-api-linux-x64.tar.gz
           - name: linux-arm64
             os: ubuntu-24.04-arm
