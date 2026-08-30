@@ -40,6 +40,7 @@ nginx on port 443 → loop-free cloud forwarding via dedicated DNS (8.8.8.8/1.1.
 | [Quick Start](docs/quickstart.md) | Step-by-step installation guide |
 | [Configuration](docs/configuration.md) | Full config.yaml reference |
 | [Deployment](docs/deployment.md) | Docker, systemd, production setup |
+| [Deployment Windows](docs/deployment-windows.md) | Native Windows server + installer service |
 | [API Reference](docs/api.md) | All REST endpoints |
 | [Pattern DB](docs/portable-pattern-database.md) | .ride-pattern.json / .ride-capture.json format |
 | [Nginx Architecture](docs/nginx-architecture.md) | Reverse proxy + DNS loop prevention |
