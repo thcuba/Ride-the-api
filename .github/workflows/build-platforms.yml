@@ -1,0 +1,104 @@
+# Build & release native distributions for every platform.
+# PyInstaller cannot cross-compile, so each architecture/OS runs on its own
+# GitHub-hosted runner (x64 and arm64 are both available natively).
+#
+# Triggers:
+#   - push of a v* tag  -> builds all platforms, attaches assets to the release
+#   - manual workflow_dispatch -> builds all platforms, uploads as artifacts
+#
+# NOTE on macOS: Intel (macOS 13) hosted runners were retired Dec 4 2025;
+# only arm64 macOS runners remain, so macOS ships arm64 (Apple Silicon) only.
+
+name: Build & Release (multi-platform)
+
+on:
+  workflow_dispatch: {}
+  push:
+    tags:
+      - "v*"
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64
+            os: ubuntu-latest
+            asset: ride-the-api-linux-x64.tar.gz
+          - name: linux-arm64
+            os: ubuntu-24.04-arm
+            asset: ride-the-api-linux-arm64.tar.gz
+          - name: windows-x64
+            os: windows-latest
+            asset: ride-the-api-windows-x64-setup.exe
+          - name: macos-arm64
+            os: macos-14
+            asset: ride-the-api-macos-arm64.tar.gz
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install deps + PyInstaller
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m pip install pyinstaller>=6.0
+          echo "ARCH=$(uname -m 2>/dev/null || echo x64)" >> "$GITHUB_ENV"
+
+      - name: Build PyInstaller onedir
+        shell: bash
+        run: python -m PyInstaller --noconfirm --clean packaging/rta.spec
+
+      # ---- Non-Windows: tar.gz of the onedir bundle ----
+      - name: Package tar.gz (Linux / macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          cd dist
+          tar czf "${{ matrix.asset }}" ride-the-api
+          ls -lh "${{ matrix.asset }}"
+
+      # ---- Windows: build the Inno Setup installer ----
+      - name: Install Inno Setup (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+
+      - name: Build installer (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+          New-Item -ItemType Directory -Force -Path dist\installer | Out-Null
+          iscc //Qp packaging\windows\setup.iss
+          Copy-Item dist\installer\ride-the-api-setup.exe "${{ matrix.asset }}"
+          Get-ChildItem "${{ matrix.asset }}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+
+      - name: Attach to release (on tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.asset }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

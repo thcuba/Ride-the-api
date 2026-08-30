@@ -1959,8 +1959,11 @@ def main():
     config = config_manager.config
     lg = config.observability.logging
     setup_logging(level=lg.level, fmt=lg.format, output=lg.output)
+    # Pass the app object (not the "core.server:app" string): the string
+    # import path breaks in PyInstaller bundles where the module is packed and
+    # no longer importable by name. Works in both venv and frozen builds.
     uvicorn.run(
-        "core.server:app",
+        app,
         host=config.proxy.host,
         port=config.proxy.port,
         log_level=lg.level.lower(),
