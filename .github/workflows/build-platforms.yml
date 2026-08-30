@@ -8,6 +8,12 @@
 #
 # NOTE on macOS: Intel (macOS 13) hosted runners were retired Dec 4 2025;
 # only arm64 macOS runners remain, so macOS ships arm64 (Apple Silicon) only.
+#
+# Two jobs on purpose:
+#   1. `build` (matrix)  - compile + package each platform, upload artifact.
+#   2. `release`         - single job AFTER all builds; creates the GitHub
+#      Release once and attaches every asset. (Doing the attach inside the
+#      matrix would race: 4 parallel jobs creating the same release.)
 
 name: Build & Release (multi-platform)
 
@@ -55,8 +61,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e .
-          python -m pip install pyinstaller>=6.0
-          echo "ARCH=$(uname -m 2>/dev/null || echo x64)" >> "$GITHUB_ENV"
+          python -m pip install "pyinstaller>=6.0"
 
       - name: Build PyInstaller onedir
         shell: bash
@@ -71,9 +76,8 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          cp -r dist/ride-the-api dist/rta-dist
           mkdir -p dist/out/config dist/out/certs dist/out/data dist/out/logs
-          cp -r dist/rta-dist dist/out/ride-the-api
+          cp -r dist/ride-the-api dist/out/ride-the-api
           cp config/config.yaml dist/out/config/config.yaml
           cd dist/out
           tar czf "../${{ matrix.asset }}" .
@@ -92,21 +96,37 @@ jobs:
         shell: pwsh
         run: |
           $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
-          New-Item -ItemType Directory -Force -Path dist\installer | Out-Null
           iscc //Qp packaging\windows\setup.iss
+          Get-ChildItem dist\installer\ride-the-api-setup.exe
           Copy-Item dist\installer\ride-the-api-setup.exe "${{ matrix.asset }}"
-          Get-ChildItem "${{ matrix.asset }}"
 
-      - name: Upload artifact
+      # The asset must be at a stable, discoverable path for the release job.
+      - name: Upload platform artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.asset }}
+          name: rta-${{ matrix.name }}
           path: ${{ matrix.asset }}
 
-      - name: Attach to release (on tag)
-        if: startsWith(github.ref, 'refs/tags/v')
+  release:
+    # Runs only on tag pushes, after every build job succeeded.
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # create the GitHub Release and attach assets
+    steps:
+      - name: Download all platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+
+      - name: List assets
+        run: ls -lh assets
+
+      - name: Create/update Release and attach assets
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ matrix.asset }}
+          files: assets/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
