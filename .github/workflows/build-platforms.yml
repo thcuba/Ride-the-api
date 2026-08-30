@@ -109,7 +109,10 @@ jobs:
           }
           if (-not $iscc) { throw "ISCC.exe not found (did Inno Setup install?)" }
           Write-Host "Using ISCC: $iscc"
-          & $iscc //Qp packaging\windows\setup.iss
+          # /Q = quiet (errors only). Do NOT use the MSYS //Qp convention here:
+          # this step runs under pwsh, where `//` is not a path escape and is
+          # rejected by iscc as "Unknown option: //Qp".
+          & $iscc /Q packaging\windows\setup.iss
           Get-ChildItem dist\installer\ride-the-api-setup.exe
           Copy-Item dist\installer\ride-the-api-setup.exe "${{ matrix.asset }}"
 
