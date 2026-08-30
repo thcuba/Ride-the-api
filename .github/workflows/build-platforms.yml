@@ -80,8 +80,10 @@ jobs:
           cp -r dist/ride-the-api dist/out/ride-the-api
           cp config/config.yaml dist/out/config/config.yaml
           cd dist/out
-          tar czf "../${{ matrix.asset }}" .
-          ls -lh "../${{ matrix.asset }}"
+          # Write the asset to the workspace root so the upload step's
+          # `${{ matrix.asset }}` (relative to $GITHUB_WORKSPACE) finds it.
+          tar czf "${GITHUB_WORKSPACE}/${{ matrix.asset }}" .
+          ls -lh "${GITHUB_WORKSPACE}/${{ matrix.asset }}"
 
       # ---- Windows: build the Inno Setup installer ----
       - name: Install Inno Setup (Windows)
