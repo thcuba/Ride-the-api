@@ -5,11 +5,13 @@ Tests for the upstream DNS resolver (loop prevention module).
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 from dns.exception import DNSException
 
 from core.upstream_resolver import (
+    _addr_family,
     _last_dns_servers,
     _last_dns_servers_v6,
     _resolver_cache,
@@ -328,3 +330,11 @@ def test_upstream_dns_default_servers():
     assert "2606:4700:4700::1111" in _last_dns_servers_v6
     assert _last_dns_servers[0] == "8.8.8.8"  # primary
     assert _last_dns_servers[1] == "1.1.1.1"  # fallback
+
+
+def test_addr_family_detection():
+    """_addr_family correctly distinguishes IPv6 from IPv4 and non-IP strings."""
+    assert _addr_family("192.168.1.1") == 4  # noqa: PLR2004
+    assert _addr_family("2001:4860:4860::8888") == 6  # noqa: PLR2004
+    assert _addr_family("fe80::1%eth0") == 6  # noqa: PLR2004
+    assert _addr_family("example.com") == 4  # noqa: PLR2004
