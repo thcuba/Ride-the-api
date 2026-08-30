@@ -62,14 +62,22 @@ jobs:
         shell: bash
         run: python -m PyInstaller --noconfirm --clean packaging/rta.spec
 
-      # ---- Non-Windows: tar.gz of the onedir bundle ----
+      # ---- Non-Windows: tar.gz of the onedir bundle + default config dir ----
+      # The frozen binary reads config/config.yaml from the CWD (config_manager
+      # singleton), NOT from _internal/. Ship a ready-to-use layout:
+      #   ride-the-api/                 (binary + _internal + bundled cfg)
+      #   config/ certs/ data/ logs/    (runtime dirs next to it)
       - name: Package tar.gz (Linux / macOS)
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          cd dist
-          tar czf "${{ matrix.asset }}" ride-the-api
-          ls -lh "${{ matrix.asset }}"
+          cp -r dist/ride-the-api dist/rta-dist
+          mkdir -p dist/out/config dist/out/certs dist/out/data dist/out/logs
+          cp -r dist/rta-dist dist/out/ride-the-api
+          cp config/config.yaml dist/out/config/config.yaml
+          cd dist/out
+          tar czf "../${{ matrix.asset }}" .
+          ls -lh "../${{ matrix.asset }}"
 
       # ---- Windows: build the Inno Setup installer ----
       - name: Install Inno Setup (Windows)
