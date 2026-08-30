@@ -13,3 +13,7 @@
 ## 2026-03-31 - Fast Schema Property Lookup in Request Matching
 **Learning:** `_body_similarity` created intermediate `set` objects for schema properties and request body keys on every call during request matching, causing unnecessary heap allocations and garbage collection overhead. Iterating directly over schema properties with key-in-dict checks (`sum(1 for k in props if k in body)`) avoids set allocations and speeds up evaluation by ~1.14x per call.
 **Action:** When comparing dict structure or key intersections in request matching hot paths, check key membership directly on dicts rather than constructing temporary `set(dict.keys())` objects.
+
+## 2026-03-31 - Fast String-Based IP Family Check in DNS Resolution Hot Paths
+**Learning:** `_addr_family` parsed IP strings via `ipaddress.ip_address(address.split('%', maxsplit=1)[0]).version` inside DNS cache hit loops to sort IPv6 before IPv4, causing heavy parsing and allocation overhead (~87x slower) compared to a simple string check `6 if ":" in address else 4`.
+**Action:** When checking IP version (v4 vs v6) on formatted address strings in hot paths, use fast string presence checks (`":" in address`) instead of `ipaddress.ip_address` string parsing.
