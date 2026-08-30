@@ -234,6 +234,7 @@
     font-size: 14px; font-weight: 700; color: var(--accent); margin-bottom: 12px;
     display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none;
   }
+  .llm-header:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
   .llm-body { padding: 0 0 4px 0; }
   .llm-body.collapsed { display: none; }
   .llm-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; font-size: 13px; border-bottom: 1px solid rgba(45,54,72,.5); gap: 8px; }
@@ -577,7 +578,7 @@ async function loadDeviceStats(deviceId) {
 
                       <!-- LLM Context & Template Section -->
               <div class="llm-section" role="region" aria-label="LLM decoding context">
-                <div class="llm-header" onclick="toggleLLMSection('${deviceId}')">
+                <div class="llm-header" id="llm-header-${deviceId}" role="button" tabindex="0" aria-expanded="true" aria-controls="llm-body-${deviceId}" onclick="toggleLLMSection('${deviceId}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleLLMSection('${deviceId}');}">
                   <svg class="icon-svg-sm" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
                   LLM Context &amp; Template
                   <span style="margin-left:auto;font-size:12px;color:var(--text2);" id="llm-toggle-${deviceId}">&#x25BC;</span>
@@ -816,9 +817,11 @@ async function saveTlsConfig(deviceId) {
 function toggleLLMSection(id) {
   const body = document.getElementById('llm-body-' + id);
   const toggle = document.getElementById('llm-toggle-' + id);
+  const header = document.getElementById('llm-header-' + id);
   if (!body) return;
   const collapsed = body.classList.toggle('collapsed');
   toggle.innerHTML = collapsed ? '&#x25B6;' : '&#x25BC;';
+  if (header) header.setAttribute('aria-expanded', !collapsed);
 }
 
 async function loadLLMProfiles(deviceId) {
