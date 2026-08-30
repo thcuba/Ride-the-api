@@ -112,6 +112,11 @@ target-version = "py311"
 select = ["E", "F", "I", "UP", "W", "C90", "ANN", "T20", "PT", "PTH", "ERA", "RET", "SIM", "TCH", "ARG", "PL", "TRY"]
 ignore = ["ANN001", "ANN002", "ANN003", "ANN201", "ANN202", "D100", "D101", "D102", "D103", "D104", "D105", "D107", "TRY003"]
 
+# PyInstaller .spec files are executed with Analysis/PYZ/EXE/COLLECT/SPECPATH
+# injected as globals; those are not real undefined names.
+[tool.ruff.lint.per-file-ignores]
+"*.spec" = ["F821"]
+
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"

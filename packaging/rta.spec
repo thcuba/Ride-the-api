@@ -1,21 +1,27 @@
-# -*- mode: python ; coding: utf-8 -*-
 """
-PyInstaller spec per strutturare ride-the-api come server nativo Windows.
+PyInstaller spec for ride-the-api as a native server (cross-platform).
 
-Strategia onedir (piu affidabile di onefile per data files e per il servizio
-NSSM): prodotta una cartella dist/ride-the-api/ contenente ride-the-api.exe,
-il runtime Python e i file di dati. Inno Setup impacchettera poi questa
-cartella nell'installer .exe.
+Strategy onedir (more reliable than onefile for data files and for the NSSM
+service): produces dist/ride-the-api/ containing the `ride-the-api` binary
+(`.exe` on Windows), the Python runtime and data files. Inno Setup then
+wraps the onedir into a Windows installer.
 
-Nota: onnxruntime / numpy sono scaffolding morto (mai importati nel codice)
-ed vengono esclusi per ridurre dimensione e tempi di build.
+Note: onnxruntime / numpy are dead scaffolding (never imported) and are
+excluded to keep the bundle small and the build fast.
 """
 
-from PyInstaller.utils.hooks import collect_submodules, collect_data_files
+import os
+from pathlib import Path
+
+from PyInstaller.utils.hooks import collect_submodules
 
 block_cipher = None
 
-# Moduli usati "per nome" o dinamicamente che PyInstaller non rileva da solo.
+# Repo root = parent of the directory containing this spec (packaging/).
+REPO_ROOT = Path(SPECPATH).parent
+os.chdir(REPO_ROOT)
+
+# Modules used by name / dynamically that PyInstaller cannot detect alone.
 hidden = [
     "uvicorn.loops",
     "uvicorn.loops.auto",
@@ -29,21 +35,32 @@ hidden = [
     "pydantic",
     "pydantic_settings",
     "sqlalchemy.dialects.sqlite",
+    # Async SQLite driver imported by name inside SQLAlchemy (dialect
+    # aiosqlite); PyInstaller's module graph misses it otherwise.
+    "aiosqlite",
+    "watchfiles",
+    "yaml",
 ]
 hidden += collect_submodules("pydantic")
 hidden += collect_submodules("sqlalchemy")
 
-# Data files da incapsulare accanto all'exe: config di default. L'installer
-# copiera il vero config in %ProgramData%\\ride-the-api (working dir del servizio).
-datas = [
-    ("config/config.yaml", "config"),
-    ("certs", "certs"),
+# Data files bundled next to the binary: default config. The installer copies
+# the real config into %ProgramData%\ride-the-api (the service working dir).
+_datas = [
+    (str(REPO_ROOT / "config/config.yaml"), "config"),
 ]
+
+# `certs/` is generated at runtime by CertManager; bundle the (possibly empty)
+# dir only if it exists at build time to avoid a PyInstaller data-source error.
+if (REPO_ROOT / "certs").is_dir():
+    _datas.append((str(REPO_ROOT / "certs"), "certs"))
+
+datas = _datas
 
 
 a = Analysis(
-    ["core/server.py"],
-    pathex=["."],
+    [str(REPO_ROOT / "core/server.py")],
+    pathex=[str(REPO_ROOT)],
     binaries=[],
     datas=datas,
     hiddenimports=hidden,

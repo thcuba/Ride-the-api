@@ -34,12 +34,22 @@ Windows. Two paths:
 ### A) GitHub Action (recommended)
 
 A push of a `v*` tag (or a manual `workflow_dispatch`) runs
-`.github/workflows/build-windows.yml` on a `windows-latest` runner:
+`.github/workflows/build-platforms.yml`, a matrix workflow that builds on
+**every platform's own hosted runner** (PyInstaller cannot cross-compile):
+Linux x64, Linux arm64, Windows x64, macOS arm64.
 
-1. Builds the PyInstaller `onedir` via `packaging\windows\pyinstaller_build.ps1`.
-2. Installs Inno Setup (chocolatey) and compiles `packaging\windows\setup.iss`.
-3. Uploads `ride-the-api-setup.exe` as an artifact; on a tag it is also
-   attached to the GitHub Release.
+Each job:
+
+1. Installs the package + PyInstaller (`python -m pip install -e . pyinstaller`).
+2. Builds the PyInstaller `onedir` via `packaging\rta.spec`.
+3. Packages: **Windows** → compiles `packaging\windows\setup.iss` with Inno
+   Setup to `ride-the-api-windows-x64-setup.exe`; **Linux/macOS** → `tar.gz`
+   of the onedir bundle.
+4. Uploads the asset as an artifact; on a `v*` tag it is also attached to the
+   GitHub Release under a per-platform name.
+
+> Note: macOS Intel hosted runners were retired (Dec 2025); macOS ships
+> **arm64 (Apple Silicon)** only.
 
 ### B) Local build
 
