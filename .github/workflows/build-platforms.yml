@@ -88,15 +88,28 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          choco install innosetup -y --no-progress
+          choco install innosetup -y --no-progress --force
           $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
 
       - name: Build installer (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
-          iscc //Qp packaging\windows\setup.iss
+          # choco may report "already installed" without putting iscc.exe on the
+          # live PATH, so locate it explicitly instead of relying on `iscc`.
+          $candidates = @(
+            (Join-Path $env:ProgramFiles (Join-Path "Inno Setup 6" "ISCC.exe")),
+            (Join-Path ${env:ProgramFiles(x86)} (Join-Path "Inno Setup 6" "ISCC.exe")),
+            (Join-Path $env:TEMP "InnoSetup6\ISCC.exe")
+          )
+          $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) {
+            $iscc = Get-ChildItem "C:\Program Files*\Inno Setup*\ISCC.exe" -ErrorAction SilentlyContinue |
+                    Select-Object -First 1 -ExpandProperty FullName
+          }
+          if (-not $iscc) { throw "ISCC.exe not found (did Inno Setup install?)" }
+          Write-Host "Using ISCC: $iscc"
+          & $iscc //Qp packaging\windows\setup.iss
           Get-ChildItem dist\installer\ride-the-api-setup.exe
           Copy-Item dist\installer\ride-the-api-setup.exe "${{ matrix.asset }}"
 
