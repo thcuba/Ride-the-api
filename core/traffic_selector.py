@@ -245,6 +245,11 @@ class TrafficSelector:
 
     def add_rule(self, rule: TrafficRule) -> bool:
         """Add a new rule (will be re-sorted by priority)."""
+        try:
+            rule._recompile()  # validate the match definition compiles
+        except ValueError as exc:
+            logger.error(f"Rejected rule {rule.name}: invalid match definition: {exc}")  # noqa: TRY400
+            return False
         with self._lock:
             self.rules.append(rule)
             self.rules.sort(key=lambda r: r.priority, reverse=True)
@@ -264,12 +269,23 @@ class TrafficSelector:
         with self._lock:
             for rule in self.rules:
                 if rule.name == name:
+                    # Snapshot match fields so we can roll back when a new
+                    # match definition does not compile (bad regex/CIDR).
+                    old_match = (rule.match_type, rule.match_value)
                     for key, value in kwargs.items():
                         if hasattr(rule, key):
                             setattr(rule, key, value)
                     # Recompile cached regex/CIDR if the match definition changed.
                     if any(k in kwargs for k in ("match_value", "match_type")):
-                        rule._recompile()
+                        try:
+                            rule._recompile()
+                        except ValueError as exc:
+                            rule.match_type, rule.match_value = old_match
+                            rule._recompile()  # restore the old compiled state
+                            logger.error(  # noqa: TRY400
+                                f"Rejected update of rule {name}: invalid match definition: {exc}"
+                            )
+                            return False
                     # Re-sort if priority changed
                     if "priority" in kwargs:
                         self.rules.sort(key=lambda r: r.priority, reverse=True)

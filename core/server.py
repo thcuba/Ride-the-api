@@ -1148,6 +1148,8 @@ async def register_device_ip(device_id: str, request: Request):
             current_ips.append(ip_address)
             device.ip_addresses = current_ips
             await session.commit()
+            # Reflect the new IP in the reverse lookup immediately.
+            db_manager.invalidate_ip_lookup_cache()
         return {"device_id": device_id, "ip_addresses": current_ips}
 
 
@@ -1161,25 +1163,30 @@ async def get_device_patterns(device_id: str):
         patterns = await session.execute(
             select(RequestPattern).order_by(RequestPattern.confidence.desc())
         )
-        patterns_list = []
-        for p in patterns.scalars().all():
-            templates = await session.execute(
-                select(ResponseTemplate).where(ResponseTemplate.pattern_id == p.pattern_id)
+        pattern_rows = patterns.scalars().all()
+        # Load all templates in a single query (avoid N+1 per pattern).
+        templates = await session.execute(
+            select(ResponseTemplate).where(
+                ResponseTemplate.pattern_id.in_([rp.pattern_id for rp in pattern_rows])
             )
-            tpl = templates.scalar_one_or_none()
+        )
+        template_by_pattern = {t.pattern_id: t for t in templates.scalars().all()}
+        patterns_list = []
+        for pattern_row in pattern_rows:
+            tpl = template_by_pattern.get(pattern_row.pattern_id)
             patterns_list.append(
                 {
-                    "pattern_id": p.pattern_id,
-                    "method": p.method,
-                    "path": p.path_pattern,
-                    "path_pattern": p.path_pattern,
-                    "protocol": p.protocol,
-                    "intent": p.intent,
-                    "confidence": p.confidence,
-                    "hit_count": p.hit_count,
-                    "required_headers": p.required_headers,
-                    "body_schema": p.body_schema,
-                    "query_param_keys": p.query_param_keys,
+                    "pattern_id": pattern_row.pattern_id,
+                    "method": pattern_row.method,
+                    "path": pattern_row.path_pattern,
+                    "path_pattern": pattern_row.path_pattern,
+                    "protocol": pattern_row.protocol,
+                    "intent": pattern_row.intent,
+                    "confidence": pattern_row.confidence,
+                    "hit_count": pattern_row.hit_count,
+                    "required_headers": pattern_row.required_headers,
+                    "body_schema": pattern_row.body_schema,
+                    "query_param_keys": pattern_row.query_param_keys,
                     "response_template": {
                         "status_code": tpl.status_code,
                         "body_template": tpl.body_template,

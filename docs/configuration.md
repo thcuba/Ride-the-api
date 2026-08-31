@@ -469,13 +469,33 @@ Available actions (enum `ModificationAction`):
 |-------|------|---------|-------------|
 | `name` | `string` | `""` | Descriptive rule name |
 | `scope` | `string` | `"local"` | Rule scope (`local`, `cloud`) |
-| `match_type` | `string` | `"hostname"` | Match type (`hostname`, `path`, `header`, `payload`) |
-| `match_value` | `string` | `""` | Value to match |
+| `match_type` | `string` | `"hostname"` | Legacy match type (`hostname`, `path`, `header`, `payload`) |
+| `match_value` | `string` | `""` | Legacy value to match |
 | `action` | `string` | `"modify"` | Action to perform (`modify`, `block`, `inject`, `replace`, `redirect`, `delay`) |
-| `target_field` | `string` | `""` | Payload field to apply the action on |
-| `target_value` | `string` | `""` | Value to set for the target field |
+| `target_field` | `string` | `""` | Legacy payload field to apply the action on |
+| `target_value` | `string` | `""` | Legacy value to set for the target field |
+| `direction` | `string` | `"request"` | Apply direction (`request`, `response`, `both`) |
 | `priority` | `integer` | `0` | Rule priority (higher values take precedence) |
 | `enabled` | `boolean` | `true` | Enable/disable the rule |
+
+The engine also accepts the native field set, which lets a rule narrow
+matching precisely instead of relying on the legacy `match_type`/`match_value`:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `match_vendor` | `string` | Restrict to a device vendor (e.g. `shelly`) |
+| `match_device_type` | `string` | Restrict to a device type (e.g. `plug`) |
+| `match_intent` | `string` | Restrict to a deciphered intent (e.g. `turn_on`) |
+| `match_field_path` | `string` | JSONPath of the field to match on |
+| `match_headers` | `object` | Header name → expected value map |
+| `match_method` | `string` | HTTP method to match (e.g. `POST`) |
+| `match_path_pattern` | `string` | Regex for the request path |
+| `action_params` | `object` | Per-action parameters (`operation`, `value`, `field_path`, `body`, `path`, `delay_ms`, ...) |
+
+Legacy `match_type`/`match_value` rules are translated to the native format at
+load time (header-hostname matches become `match_headers`/host, and
+`target_field`/`target_value` map onto `action_params`), so existing configs
+keep working.
 
 Example:
 
