@@ -92,7 +92,13 @@ GET  /api/protocol-servers/{name}/config  # Current configuration
 ## Lifecycle
 
 1. On startup, `ProtocolServerManager` reads the configuration
-2. For each server with `enabled: true`, it creates the corresponding plugin
+2. For each server with `enabled: true`, it creates the corresponding plugin, **wiring it with a
+   common request handler** (`handle_protocol_request` in `core/server.py`)
 3. Starts each server in a separate asyncio.Task
 4. Each server intercepts packets and forwards them to `LearningOrchestrator`
 5. The orchestrator correlates and buffers as with HTTP traffic
+
+The common handler (`handle_protocol_request`) translates each plugin's `InterceptedRequest` into an
+`orchestrator.handle_request(...)` call, mapping the protocol-aware method and path (e.g. an MQTT
+topic becomes the path with method `publish`). A `local_response` result tells the plugin to send the
+response back to the device.

@@ -82,6 +82,11 @@ autonomous local responses. Each request passes through the following stages:
 - **HTTP/1.1 parsing/serialization**: decrypted traffic is parsed and re-serialized with the
   [`h11`](https://github.com/python-hyper/h11) state machine (`parse_decrypted_http_request`,
   `serialize_http_response`) — no regex-based HTTP parsers are used.
+- **Forward contract**: when the pipeline does not serve a local response, the MITM mirrors the
+  documented forward contract (`docs/nginx-architecture.md`): `action=forward` → **502** +
+  `X-Action: forward` + `X-Original-Host` (the SNI); `action=no_fallback` → **501**; anything else →
+  generic 502. A downstream nginx (or proxy) catches the `X-Action: forward` signal and re-routes
+  loop-free.
 
 ### 2.2 TrafficSelector (`core/traffic_selector.py`)
 
@@ -339,11 +344,14 @@ cloud. Key features:
 ## 6. On-the-Fly Modification (`core/modification.py`)
 
 Real-time modification engine that allows altering requests and responses on the fly according to
-configurable rules. Supports:
+configurable rules. It is **active in the HTTP serving path**: before the orchestrator local-match,
+`process_request()` runs the rules on the intercepted request (mutating it in place so the pipeline
+sees the transformed request); when a local response is served, `process_response()` runs the rules
+on it and the result is normalised back to the `{status_code, headers, body}` wrapper. Supports:
 
 - Header, body, query parameter modification.
 - JavaScript/CSS injection for debugging.
-- Selective logging of modified traffic.
+- Selective logging of modified traffic (`modifications.jsonl` audit log).
 - Rules based on regex patterns, HTTP methods, and specific paths.
 - JSON field access and updates via dot/bracket paths (`a.b[0].c`) are read/written with the
   [`dpath`](https://github.com/akesterson/dpath-python) library (`_get_json_path`/`_set_json_path`).
