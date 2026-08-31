@@ -473,31 +473,46 @@ class TLSMITMServer:
                 else:
                     # The pipeline returned a non-local action (forward,
                     # no_fallback, buffered_for_learning, …) with no local
-                    # response body. This MITM server has no cloud-upstream
-                    # forwarding path, so there is nothing real to send back
-                    # yet — reply with a conclusive 502/501 instead of closing
-                    # the connection with no response, which would hang the
-                    # device waiting forever.
+                    # response body. Mirror the documented forward contract
+                    # (docs/nginx-architecture.md) exactly like the FastAPI
+                    # HTTP handler does: a forward miss replies with
+                    # 502 + X-Action: forward so nginx (or a downstream proxy)
+                    # re-routes the request to the cloud loop-free; a
+                    # no_fallback miss replies conclusive 501. Anything else
+                    # falls back to a generic 502.
                     action = (
                         handler_result.get("action") if isinstance(handler_result, dict) else ""
                     )
-                    fallback_status = 501 if action == "no_fallback" else 502
+                    reason = (
+                        handler_result.get("reason", "not_served")
+                        if isinstance(handler_result, dict)
+                        else "not_served"
+                    )
+                    if action == "forward":
+                        status = 502
+                        headers = {
+                            "content-type": "application/json",
+                            "X-Action": "forward",
+                            "X-Original-Host": hostname,
+                        }
+                    elif action == "no_fallback":
+                        status = 501
+                        headers = {"content-type": "application/json"}
+                    else:
+                        status = 502
+                        headers = {"content-type": "application/json"}
                     await self._write_http_response(
                         ssl_obj,
                         outgoing,
                         writer,
                         {
-                            "status_code": fallback_status,
-                            "headers": {"content-type": "application/json"},
+                            "status_code": status,
+                            "headers": headers,
                             "body": json.dumps(
                                 {
                                     "error": "local_response_unavailable",
                                     "action": action,
-                                    "reason": (
-                                        handler_result.get("reason", "not_served")
-                                        if isinstance(handler_result, dict)
-                                        else "not_served"
-                                    ),
+                                    "reason": reason,
                                 }
                             ),
                         },
