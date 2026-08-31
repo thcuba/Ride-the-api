@@ -48,6 +48,7 @@ from core.database import (
 )
 from core.llm_decipher import LLMDecipherService, get_llm_decipher
 from core.logging_config import setup_logging
+from core.modification import get_modification_engine
 from core.pattern_db import buffer_manager, decipher_ingest
 from core.pattern_db.schemas import CaptureDB, PatternDB
 from core.pattern_db.validator import (
@@ -1898,25 +1899,35 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
         # Ensure device is registered
         await db_manager.get_or_create_device(device_id, vendor)
 
+        # Apply request modification rules (on-the-fly modification engine),
+        # mutating the intercepted request in place so the pipeline sees the
+        # transformed request while the local-match is served.
+        get_modification_engine().process_request(intercepted)
+
         # Pass to pipeline for processing
         result = await orchestrator.handle_request(
             device_id=device_id,
             vendor=vendor,
             protocol="http",
-            method=request.method,
-            path=f"/{path}",
-            headers=dict(request.headers),
-            body=body,
-            query_params=dict(request.query_params),
+            method=intercepted.method or request.method,
+            path=intercepted.path or f"/{path}",
+            headers=dict(intercepted.headers) if intercepted.headers else dict(request.headers),
+            body=intercepted.body,
+            query_params=(
+                dict(intercepted.query_params)
+                if hasattr(intercepted, "query_params") and intercepted.query_params
+                else dict(request.query_params)
+            ),
         )
 
         if result["action"] == "local_response":
-            # Serve locally from learned patterns
-            response = result["response"]
+            # Serve locally from learned patterns, applying on-the-fly
+            # response modification rules.
+            out_response = _apply_response_modifications(intercepted, result["response"])
             return JSONResponse(
-                status_code=response.get("status_code", 200),
-                content=response.get("body", {}),
-                headers=response.get("headers", {}),
+                status_code=out_response.get("status_code", 200),
+                content=out_response.get("body", {}),
+                headers=out_response.get("headers", {}),
             )
         if result["action"] == "forward":
             # Forward to cloud (passthrough).
@@ -1985,6 +1996,30 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
 # ═══════════════════════════════════════════════════════════════════════════════
 # HELPERS
 # ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _apply_response_modifications(
+    intercepted: InterceptedRequest, response: dict
+) -> dict:
+    """Apply on-the-fly response modification rules, normalising to a wrapper.
+
+    ``get_modification_engine().process_response`` returns either the wrapper
+    dict ``{status_code, headers, body}`` (when only ``modifications`` are
+    attached) or, when a rule rewrites the body, the body value on its own.
+    This normalises both back to a well-formed ``{status_code, headers, body}``
+    wrapper the HTTP serving path can use directly.
+    """
+    modified, _was_modified = get_modification_engine().process_response(intercepted, response)
+    if isinstance(modified, dict) and "status_code" in modified:
+        return modified
+    out = dict(response)
+    if modified is not None:
+        # ``modifications`` is engine tracking metadata, not part of the
+        # device response payload — strip it before putting it in the body.
+        if isinstance(modified, dict):
+            modified = {k: v for k, v in modified.items() if k != "modifications"}
+        out["body"] = modified
+    return out
 
 
 async def _get_request_body(request: Request) -> dict | None:
