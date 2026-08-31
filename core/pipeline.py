@@ -700,15 +700,18 @@ class LearningPipeline:
         return pair
 
     async def process_learning_pair(
-        self, device_id: str, pair: CorrelatedPair, _context_buffer_max: int
+        self, device_id: str, pair: CorrelatedPair, context_buffer_max: int
     ) -> bool:
         """Process a correlated pair in learning mode.
 
+        The flush threshold comes from the *current* device's
+        ``context_buffer_size`` (not the shared store's fixed max), so each
+        device honours its own configured limit.
+
         Returns: True if buffer was flushed (LLM analysis triggered).
         """
-        needs_flush = await self.buffer.add_pair(device_id, pair)
-
-        if needs_flush:
+        size = await self.buffer.add_pair(device_id, pair)
+        if size >= context_buffer_max:
             await self._flush_and_learn(device_id)
             return True
         return False
@@ -1292,15 +1295,18 @@ class LearningOrchestrator:
             if not device:
                 return {"action": "forward", "reason": "device_not_found"}
 
-        if device.mode == PipelineMode.PRODUCTION.value:
-            return await self._handle_production(device, method, path, headers, body, query_params)
-        if device.mode == PipelineMode.HYBRID.value:
-            return await self._handle_hybrid(device, method, path, headers, body, query_params)
-        return await self._handle_learning(device, method, path, headers, body, query_params)
+        handler = {
+            PipelineMode.PRODUCTION.value: self._handle_production,
+            PipelineMode.HYBRID.value: self._handle_hybrid,
+        }.get(device.mode, self._handle_learning)
+        return await handler(
+            device, protocol, method, path, headers, body, query_params
+        )
 
     async def _handle_production(  # noqa: PLR0913
         self,
         device: DeviceRegistry,
+        protocol: str,
         method: str,
         path: str,
         headers: dict,
@@ -1346,7 +1352,7 @@ class LearningOrchestrator:
 
         # Forward to cloud + capture for learning
         corr_key = await self._register_for_learning(
-            device, method, path, headers, body, query_params
+            device, protocol, method, path, headers, body, query_params
         )
         return {
             "action": "forward",
@@ -1358,6 +1364,7 @@ class LearningOrchestrator:
     async def _handle_hybrid(  # noqa: PLR0913
         self,
         device: DeviceRegistry,
+        protocol: str,
         method: str,
         path: str,
         headers: dict,
@@ -1389,7 +1396,7 @@ class LearningOrchestrator:
             }
         # Not confident -- forward to cloud but also capture for learning
         corr_key = await self._register_for_learning(
-            device, method, path, headers, body, query_params
+            device, protocol, method, path, headers, body, query_params
         )
         await self.tracker.record_result(device.device_id, MatchResult.CLOUD_MISS)
         return {
@@ -1403,6 +1410,7 @@ class LearningOrchestrator:
     async def _handle_learning(  # noqa: PLR0913
         self,
         device: DeviceRegistry,
+        protocol: str,
         method: str,
         path: str,
         headers: dict,
@@ -1411,7 +1419,7 @@ class LearningOrchestrator:
     ) -> dict:
         """Learning mode: forward all to cloud, correlate, and build patterns."""
         corr_key = await self._register_for_learning(
-            device, method, path, headers, body, query_params
+            device, protocol, method, path, headers, body, query_params
         )
         return {
             "action": "forward",
@@ -1422,13 +1430,14 @@ class LearningOrchestrator:
     async def _register_for_learning(  # noqa: PLR0913
         self,
         device: DeviceRegistry,
+        protocol: str,
         method: str,
         path: str,
         headers: dict,
         body: Any,  # noqa: ANN401
         query_params: dict,
     ) -> str:
-        """Register a request for learning capture."""
+        """Register a request for learning capture with its real protocol."""
         if not self.pipeline:
             buffer = await self.ensure_buffer(device.device_id, device.context_buffer_size)
             self.pipeline = LearningPipeline(
@@ -1442,7 +1451,7 @@ class LearningOrchestrator:
         return await self.pipeline.register_request(
             device.device_id,
             device.vendor,
-            "http",
+            protocol,
             method,
             path,
             headers,
