@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from http import HTTPStatus
+
 import pytest
 
 import core.server as server_mod
 from adapters.base import InterceptedRequest, ProtocolType
+from core.modification import ModificationAction, ModificationRule, get_modification_engine
 
 
 class _FakeDB:
@@ -77,3 +80,27 @@ async def test_protocol_request_service_not_ready(monkeypatch):
     req = InterceptedRequest(device_id="d1", timestamp=0, protocol=ProtocolType.HTTP)
     result = await server_mod.handle_protocol_request(req)
     assert result is None
+
+
+def test_apply_response_modifications_wrapper():
+    """Body-rewriting modification rules must normalise back to the wrapper."""
+    engine = get_modification_engine()
+    engine._rules = [
+        ModificationRule(
+            name="rewrite-status",
+            match_device_type="unknown",
+            direction="response",
+            action=ModificationAction.REPLACE,
+            action_params={"body": {"status": "modified"}},
+        )
+    ]
+    try:
+        intercepted = InterceptedRequest(device_id="d1", timestamp=0, protocol=ProtocolType.HTTP)
+        out = server_mod._apply_response_modifications(
+            intercepted,
+            {"status_code": HTTPStatus.OK, "headers": {}, "body": {"status": "ok"}},
+        )
+    finally:
+        engine._rules = []
+    assert out["status_code"] == HTTPStatus.OK
+    assert out["body"] == {"status": "modified"}

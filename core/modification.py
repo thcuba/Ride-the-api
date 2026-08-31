@@ -308,18 +308,20 @@ class InterceptedMessage:
     @classmethod
     def from_request(cls, intercepted: InterceptedRequest) -> InterceptedMessage:
         """Create from InterceptedRequest."""
+        _metadata = getattr(intercepted, "metadata", None) or {}
+        _parsed = getattr(intercepted, "parsed_intent", None)
         return cls(
             direction="request",
             device_id=intercepted.device_id,
-            vendor=intercepted.vendor,
-            device_type=intercepted.metadata.get("device_type", "unknown"),
-            intent=intercepted.parsed_intent.value if intercepted.parsed_intent else "unknown",
+            vendor=getattr(intercepted, "vendor", ""),
+            device_type=_metadata.get("device_type", "unknown"),
+            intent=_parsed.value if _parsed else "unknown",
             method=intercepted.method,
             path=intercepted.path,
             headers={k.lower(): v for k, v in intercepted.headers.items()},
             body=intercepted.body,
-            query_params=intercepted.query_params,
-            metadata=intercepted.metadata,
+            query_params=getattr(intercepted, "query_params", None) or {},
+            metadata=_metadata,
         )
 
     @classmethod
@@ -459,6 +461,8 @@ class ModificationEngine:
         Process an adapter response through modification rules.
         Returns (modified_response, was_modified).
         """
+        _metadata = getattr(intercepted, "metadata", None) or {}
+        _parsed = getattr(intercepted, "parsed_intent", None)
         # Create message from response
         response_record = ResponseRecord(
             source="edge",
@@ -469,11 +473,9 @@ class ModificationEngine:
             timestamp=datetime.now(UTC),
             metadata={
                 "device_id": intercepted.device_id,
-                "vendor": intercepted.vendor,
-                "device_type": intercepted.metadata.get("device_type", "unknown"),
-                "intent": intercepted.parsed_intent.value
-                if intercepted.parsed_intent
-                else "unknown",
+                "vendor": getattr(intercepted, "vendor", ""),
+                "device_type": _metadata.get("device_type", "unknown"),
+                "intent": _parsed.value if _parsed else "unknown",
                 "method": intercepted.method,
                 "path": intercepted.path,
             },
