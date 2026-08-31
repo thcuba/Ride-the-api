@@ -208,6 +208,53 @@ async def handle_tls_decrypted_request(req: DecryptedRequest) -> dict | None:
 # ── Application Lifespan ───────────────────────────────────────────────────────
 
 
+async def handle_protocol_request(request: InterceptedRequest) -> dict | None:
+    """Handle an intercepted request from a protocol server plugin.
+
+    Common handler wired into every protocol server plugin (MQTT, CoAP, Modbus,
+    WebSocket, Raw TCP, HTTP/2, bridges). It resolves the device, then runs the
+    request through the same orchestrator pipeline as the TLS/HTTP paths.
+
+    Returns the pipeline result dict (``action`` + optional ``response``), or
+    ``None`` when the services aren't ready. A ``local_response`` result means
+    the plugin should send ``result["response"]`` back to the device.
+    """
+    if not db_manager or not orchestrator:
+        logger.warning("Protocol handler: service not ready, dropping %s", request.device_id)
+        return None
+
+    device_id = request.device_id or "unknown"
+    protocol = (
+        request.protocol.value
+        if hasattr(request.protocol, "value")
+        else str(request.protocol or "http")
+    )
+    method = request.method or (
+        "publish" if request.topic else "GET"
+    )
+    path = request.path or (f"/{request.topic.lstrip('/')}" if request.topic else "/")
+
+    try:
+        await db_manager.get_or_create_device(device_id, "unknown")
+
+        return await orchestrator.handle_request(
+            device_id=device_id,
+            vendor="unknown",
+            protocol=protocol,
+            method=method,
+            path=path,
+            headers=request.headers or {},
+            body=request.body,
+            query_params=request.query_params or {},
+        )
+    except Exception as e:
+        logger.error("Protocol handler error for %s: %s", device_id, e, exc_info=True)
+        return None
+
+
+# ── Application Lifespan ───────────────────────────────────────────────────────
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # noqa: C901, PLR0912, PLR0915
     """Application lifespan handler."""
@@ -288,19 +335,36 @@ async def lifespan(app: FastAPI):  # noqa: C901, PLR0912, PLR0915
         try:
             proto_mgr = get_protocol_server_manager(protocol_servers_cfg)
 
-            # Register plugins based on config
+            # Register plugins based on config (handlers forwarded to the
+            # orchestrator pipeline so intercepted traffic is actually learned).
             if getattr(protocol_servers_cfg.mqtt, "enabled", False):
-                proto_mgr.register_plugin(MQTTServerPlugin(protocol_servers_cfg.mqtt))
+                proto_mgr.register_plugin(
+                    MQTTServerPlugin(protocol_servers_cfg.mqtt, handler=handle_protocol_request)
+                )
             if getattr(protocol_servers_cfg.coap, "enabled", False):
-                proto_mgr.register_plugin(CoAPServerPlugin(protocol_servers_cfg.coap))
+                proto_mgr.register_plugin(
+                    CoAPServerPlugin(protocol_servers_cfg.coap, handler=handle_protocol_request)
+                )
             if getattr(protocol_servers_cfg.modbus, "enabled", False):
-                proto_mgr.register_plugin(ModbusServerPlugin(protocol_servers_cfg.modbus))
+                proto_mgr.register_plugin(
+                    ModbusServerPlugin(protocol_servers_cfg.modbus, handler=handle_protocol_request)
+                )
             if getattr(protocol_servers_cfg.websocket, "enabled", False):
-                proto_mgr.register_plugin(WebSocketServerPlugin(protocol_servers_cfg.websocket))
+                proto_mgr.register_plugin(
+                    WebSocketServerPlugin(
+                        protocol_servers_cfg.websocket, handler=handle_protocol_request
+                    )
+                )
             if getattr(protocol_servers_cfg.raw_tcp, "enabled", False):
-                proto_mgr.register_plugin(RawTCPServerPlugin(protocol_servers_cfg.raw_tcp))
+                proto_mgr.register_plugin(
+                    RawTCPServerPlugin(
+                        protocol_servers_cfg.raw_tcp, handler=handle_protocol_request
+                    )
+                )
             if getattr(protocol_servers_cfg.http2, "enabled", False):
-                proto_mgr.register_plugin(HTTP2ServerPlugin(protocol_servers_cfg.http2))
+                proto_mgr.register_plugin(
+                    HTTP2ServerPlugin(protocol_servers_cfg.http2, handler=handle_protocol_request)
+                )
 
             # Auto-start enabled servers
             results = await proto_mgr.start_all()
@@ -309,15 +373,27 @@ async def lifespan(app: FastAPI):  # noqa: C901, PLR0912, PLR0915
 
             # Register bridges if enabled
             if getattr(protocol_servers_cfg.zigbee_bridge, "enabled", False):
-                proto_mgr.register_plugin(ZigbeeBridgePlugin(protocol_servers_cfg.zigbee_bridge))
+                proto_mgr.register_plugin(
+                    ZigbeeBridgePlugin(
+                        protocol_servers_cfg.zigbee_bridge, handler=handle_protocol_request
+                    )
+                )
                 await proto_mgr.start_plugin("zigbee_bridge")
 
             if getattr(protocol_servers_cfg.zwave_bridge, "enabled", False):
-                proto_mgr.register_plugin(ZWaveBridgePlugin(protocol_servers_cfg.zwave_bridge))
+                proto_mgr.register_plugin(
+                    ZWaveBridgePlugin(
+                        protocol_servers_cfg.zwave_bridge, handler=handle_protocol_request
+                    )
+                )
                 await proto_mgr.start_plugin("zwave_bridge")
 
             if getattr(protocol_servers_cfg.matter_bridge, "enabled", False):
-                proto_mgr.register_plugin(MatterBridgePlugin(protocol_servers_cfg.matter_bridge))
+                proto_mgr.register_plugin(
+                    MatterBridgePlugin(
+                        protocol_servers_cfg.matter_bridge, handler=handle_protocol_request
+                    )
+                )
                 await proto_mgr.start_plugin("matter_bridge")
         except Exception as e:
             logger.error("Failed to initialize protocol servers: %s", e)  # noqa: TRY400
