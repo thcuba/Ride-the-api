@@ -5,7 +5,7 @@
 # BASE STAGE
 # ═══════════════════════════════════════════════════════════════════════════════
 
-FROM python:3.11-slim AS base
+FROM python:3.14-slim AS base
 
 # System dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -59,7 +59,7 @@ RUN pip install --no-cache-dir \
 # PRODUCTION STAGE
 # ═══════════════════════════════════════════════════════════════════════════════
 
-FROM python:3.11-slim AS production
+FROM python:3.14-slim AS production
 
 # Runtime dependencies only
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -100,7 +100,7 @@ ENTRYPOINT ["python", "-m", "core.server"]
 # GPU PRODUCTION STAGE
 # ═══════════════════════════════════════════════════════════════════════════════
 
-FROM python:3.11-slim AS production-gpu
+FROM python:3.14-slim AS production-gpu
 
 # NVIDIA runtime dependencies
 ENV NVIDIA_VISIBLE_DEVICES=all
