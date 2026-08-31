@@ -254,13 +254,16 @@
     font-size: 12px; cursor: pointer;
   }
   .buffer-entry:hover { border-color: var(--accent); }
+  .buffer-entry:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   .buffer-entry.be-checked { border-color: var(--green); }
   .buffer-entry input[type="checkbox"] { margin-top: 2px; flex-shrink: 0; accent-color: var(--accent); }
+  .buffer-entry input[type="checkbox"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   .buffer-entry .be-info { flex: 1; min-width: 0; }
   .buffer-entry .be-pair { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .buffer-entry .be-meta { color: var(--text2); font-size: 11px; margin-top: 1px; }
-  .buffer-entry .be-delete { background: none; border: none; color: var(--red); cursor: pointer; font-size: 14px; padding: 0 2px; line-height: 1; }
+  .buffer-entry .be-delete { background: none; border: none; color: var(--red); cursor: pointer; font-size: 14px; padding: 0 2px; line-height: 1; border-radius: 4px; }
   .buffer-entry .be-delete:hover { opacity: .7; }
+  .buffer-entry .be-delete:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   .buffer-entry-detail {
     display: none; margin: 4px 0 4px 24px; padding: 8px; background: var(--surface2);
     border-radius: 6px; font-size: 11px; font-family: 'Courier New', monospace; white-space: pre-wrap;
@@ -310,7 +313,7 @@
     <span class="subtitle">Local Cloud Replacement — Device Protocol Learning &amp; Response Dashboard</span>
   </div>
   <div class="header-right">
-      <div class="ram-label" title="Buffer coppie request/response nella RAM invece che su disco (volatile)">
+      <div class="ram-label" title="Buffer request/response pairs in RAM instead of disk (volatile)">
         <span>RAM Buffer</span>
         <label class="ram-toggle" aria-label="Toggle RAM buffer">
           <input type="checkbox" id="ram-buffer-toggle" onchange="toggleRamBuffer(this.checked)">
@@ -952,7 +955,7 @@ async function loadBufferEntries(deviceId) {
           const reqFull = JSON.stringify(e.pair?.request_body || '', null, 2).slice(0, 300);
           const resFull = JSON.stringify(e.pair?.response_body || '', null, 2).slice(0, 300);
           const ts = e.timestamp ? new Date(e.timestamp).toLocaleString() : '';
-      return `<div class="buffer-entry" id="buf-entry-${deviceId}-${e.id}" onclick="toggleBufDetail('${deviceId}', ${e.id})">
+      return `<div class="buffer-entry" id="buf-entry-${deviceId}-${e.id}" tabindex="0" role="button" aria-expanded="false" aria-controls="buf-detail-${deviceId}-${e.id}" onclick="toggleBufDetail('${deviceId}', ${e.id})" onkeydown="if(event.key==='Enter'||event.key===' '){if(event.target===this||event.target.classList.contains('be-info')||event.target.classList.contains('be-pair')||event.target.classList.contains('be-summary')){event.preventDefault();toggleBufDetail('${deviceId}', ${e.id});}}">
               <input type="checkbox" id="buf-chk-${deviceId}-${e.id}" aria-label="Select buffer entry ${method} ${path}" onclick="event.stopPropagation()" onchange="updateSelectedCount('${deviceId}')">
         <div class="be-info">
                 <div class="be-pair"><span style="color:var(--accent)">${method}</span> ${path}</div>
@@ -972,7 +975,11 @@ async function loadBufferEntries(deviceId) {
 
 function toggleBufDetail(deviceId, entryId) {
   const detail = document.getElementById('buf-detail-' + deviceId + '-' + entryId);
-  if (detail) detail.classList.toggle('open');
+  const entry = document.getElementById('buf-entry-' + deviceId + '-' + entryId);
+  if (detail) {
+    const isOpen = detail.classList.toggle('open');
+    if (entry) entry.setAttribute('aria-expanded', isOpen);
+  }
 }
 
 function toggleSelectAll(deviceId) {
