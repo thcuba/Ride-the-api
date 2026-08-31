@@ -160,6 +160,48 @@ def _body_similarity(schema: dict, body: dict) -> float:
     return matches / len(props)
 
 
+def _normalize_field_mappings(field_mappings: Any) -> list[dict]:  # noqa: ANN401
+    """Normalise a template's ``field_mappings`` into a uniform list of dicts.
+
+    Two shapes exist depending on where the template came from:
+
+    * a Pydantic :class:`ServerResponse` (cached .ride-pattern.json) exposes
+      ``field_mappings`` as a **list** of :class:`FieldMapping` objects;
+    * a DB :class:`ResponseTemplate` exposes it as a **dict** ``{source:
+      target}`` (only a direct mapping survives, as written by
+      ``DecipherIngest``/``import_patterns``).
+
+    This helper collapses both to a list of dicts with the same keys
+    (``source``/``target``/``transform``/``mapping``/``formula``) so
+    :meth:`PatternEngine.build_local_response` never inspects the type itself.
+    """
+    if isinstance(field_mappings, dict):
+        return [
+            {
+                "source": source,
+                "target": target,
+                "transform": "direct",
+                "mapping": None,
+                "formula": "",
+            }
+            for source, target in field_mappings.items()
+        ]
+    result = []
+    for fm in field_mappings or []:
+        result.append(
+            {
+                "source": fm.source if hasattr(fm, "source") else fm.get("source", ""),
+                "target": fm.target if hasattr(fm, "target") else fm.get("target", ""),
+                "transform": (
+                    fm.transform if hasattr(fm, "transform") else fm.get("transform", "direct")
+                ),
+                "mapping": fm.mapping if hasattr(fm, "mapping") else fm.get("mapping"),
+                "formula": fm.formula if hasattr(fm, "formula") else fm.get("formula", ""),
+            }
+        )
+    return result
+
+
 class PatternEngine:
     """
     Matches incoming requests against learned patterns and builds local responses.
@@ -242,7 +284,11 @@ class PatternEngine:
         best_pattern = None
         best_template = None
 
-        # Try cached in-memory patterns first
+        # Try cached in-memory patterns first.
+        # The cache is the authoritative snapshot of the last export/import
+        # for the device, so when it is present it is used exclusively and the
+        # per-request DB scan below is skipped (avoids a redundant device DB
+        # round-trip on every production/hybrid request).
         cached = self._cached_patterns.get(device_id)
         if cached:
             for ep in cached.client.endpoints:
@@ -269,8 +315,10 @@ class PatternEngine:
                         if ep.intent in resp.triggers:
                             best_template = resp
                             break
+            return best_pattern, best_template, best_score
 
-        # Fall back to database patterns
+        # Fall back to database patterns (only when no cached pattern file exists
+        # for this device).
         async with self.db_manager.device_session(device_id) as session:
             result = await session.execute(select(RequestPattern))
             db_patterns = result.scalars().all()
@@ -364,48 +412,40 @@ class PatternEngine:
         template,
         original_request: dict,
     ) -> dict:
-        """Build a local response from a template, resolving variables."""
+        """Build a local response from a template, resolving variables.
+
+        Accepts either a Pydantic :class:`ServerResponse` (from a cached
+        .ride-pattern.json, whose ``field_mappings`` is a list of
+        :class:`FieldMapping`) or a DB :class:`ResponseTemplate` (whose
+        ``field_mappings`` is a ``{source: target}`` dict). Field mappings are
+        normalised to a uniform list before being applied, so both shapes
+        resolve identically.
+        """
         store = self.get_state_store(device_id)
 
-        # Determine if we have a ServerResponse (Pydantic) or DB ResponseTemplate
-        if hasattr(template, "body_template"):
-            body = dict(template.body_template)
-            field_mappings = getattr(template, "field_mappings", [])
-            status_code = template.status_code
-            headers = dict(template.headers_template)
-        else:
-            body = dict(template.body_template)
-            field_mappings = []
-            status_code = template.status_code
-            headers = dict(template.headers_template)
+        body = dict(template.body_template)
+        status_code = template.status_code
+        headers = dict(template.headers_template)
 
-        # If we have Pydantic field_mappings, use those
-        if field_mappings:
-            for fm in field_mappings:
-                source = fm.source if hasattr(fm, "source") else fm.get("source", "")
-                target = fm.target if hasattr(fm, "target") else fm.get("target", "")
-                transform = (
-                    fm.transform if hasattr(fm, "transform") else fm.get("transform", "direct")
-                )
-                mapping = fm.mapping if hasattr(fm, "mapping") else fm.get("mapping")
+        for fm in _normalize_field_mappings(getattr(template, "field_mappings", [])):
+            source = fm["source"]
+            target = fm["target"]
+            transform = fm["transform"]
+            mapping = fm["mapping"]
 
-                val = self._resolve_source(source, original_request, store)
-                if val is not None:
-                    if transform == "enum":
-                        enum_map = mapping or {}
-                        val = enum_map.get(str(val), val)
-                    elif transform == "formula":
-                        val = self._eval_formula(
-                            fm.formula if hasattr(fm, "formula") else fm.get("formula", ""),
-                            original_request,
-                            store,
-                        )
-                    # Field mappings targeting state.* mutate the persistent
-                    # device state store (survives restart via persist_state).
-                    if target.startswith("state."):
-                        store.set(target[6:], val)
-                    else:
-                        self._set_nested(body, target, val)
+            val = self._resolve_source(source, original_request, store)
+            if val is not None:
+                if transform == "enum":
+                    enum_map = mapping or {}
+                    val = enum_map.get(str(val), val)
+                elif transform == "formula":
+                    val = self._eval_formula(fm["formula"], original_request, store)
+                # Field mappings targeting state.* mutate the persistent
+                # device state store (survives restart via persist_state).
+                if target.startswith("state."):
+                    store.set(target[6:], val)
+                else:
+                    self._set_nested(body, target, val)
 
         # Resolve template variables {state.xxx} in body
         body = self._resolve_template_vars(body, store, original_request)

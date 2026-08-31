@@ -1182,9 +1182,7 @@ class LearningOrchestrator:
             if not search_dir.exists():
                 continue
             for pattern_file in search_dir.glob("*.ride-pattern.json"):
-                device_id = pattern_file.stem
-                if device_id.endswith(".ride-pattern"):
-                    device_id = device_id.replace(".ride-pattern", "")
+                device_id = self._device_id_from_pattern_file(pattern_file)
                 try:
                     self.engine.load_pattern_file(device_id, str(pattern_file))
                     loaded += 1
@@ -1195,6 +1193,31 @@ class LearningOrchestrator:
             logger.info("Pattern DB: auto-loaded %d pattern files", loaded)
         else:
             logger.debug("Pattern DB: no .ride-pattern.json files found to auto-load")
+
+    @staticmethod
+    def _device_id_from_pattern_file(pattern_file: Path) -> str:
+        """Recover the real device_id a .ride-pattern.json was exported for.
+
+        Files written by :meth:`_export_and_sync_patterns` are named after the
+        SHA256 hash of the device_id (for filesystem-path safety), so the hash
+        alone cannot be used as the runtime cache key. The export embeds the
+        actual device_id in ``meta.pattern_id`` using the
+        ``<device_id>-patterns`` convention; when present we recover it here,
+        falling back to the filename stem otherwise (covers manually shared
+        files that do not follow the convention).
+        """
+        device_id = pattern_file.stem
+        if device_id.endswith(".ride-pattern"):
+            device_id = device_id.replace(".ride-pattern", "")
+        try:
+            data = json.loads(pattern_file.read_text(encoding="utf-8"))
+            pattern_id = data.get("meta", {}).get("pattern_id", "")
+            suffix = "-patterns"
+            if pattern_id.endswith(suffix) and len(pattern_id) > len(suffix):
+                device_id = pattern_id[: -len(suffix)]
+        except (json.JSONDecodeError, OSError):
+            pass
+        return device_id
 
     async def ensure_buffer(self, device_id: str, buffer_size: int = 524288) -> ContextBuffer:
         """Get or create a context buffer for a device with the right size."""

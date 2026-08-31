@@ -6,11 +6,12 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.pattern_db.pattern_engine import PatternEngine
+from core.pattern_db.pattern_engine import PatternEngine, _normalize_field_mappings
 from core.pattern_db.schemas import (
     ClientConfig,
     ClientEndpoint,
@@ -522,3 +523,79 @@ def test_set_nested_overwrite(engine):
     d = {"x": 1}
     engine._set_nested(d, "x", 2)
     assert d["x"] == 2  # noqa: PLR2004
+
+
+# Test: field_mappings normalisation (dict from DB ResponseTemplate vs list from cache)
+def test_normalize_field_mappings_dict():
+    rows = _normalize_field_mappings(
+        {"request.body.target_temp": "result.temperature", "state.power": "power"}
+    )
+    assert len(rows) == 2  # noqa: PLR2004
+    by_source = {r["source"]: r for r in rows}
+    assert by_source["request.body.target_temp"]["target"] == "result.temperature"
+    assert by_source["request.body.target_temp"]["transform"] == "direct"
+    assert by_source["state.power"]["target"] == "power"
+
+
+def test_normalize_field_mappings_empty():
+    assert _normalize_field_mappings({}) == []
+    assert _normalize_field_mappings(None) == []
+
+
+@pytest.mark.asyncio
+async def test_build_local_response_db_dict_field_mappings(engine):
+    """Regression: a DB ResponseTemplate exposes field_mappings as a dict, which
+    used to crash build_local_response with AttributeError on .get()."""
+    db_template = SimpleNamespace(
+        body_template={"result": None},
+        status_code=200,
+        headers_template={"Content-Type": "application/json"},
+        field_mappings={"request.body.target_temp": "result.temperature"},
+    )
+    result = await engine.build_local_response(
+        "device-1",
+        db_template,
+        {"body": {"target_temp": 22.5}},
+    )
+    assert result["status_code"] == 200  # noqa: PLR2004
+    assert result["body"]["result"]["temperature"] == 22.5  # noqa: PLR2004
+
+
+@pytest.mark.asyncio
+async def test_find_best_match_cached_skips_db():
+    """Regression: when a cached pattern file exists, find_best_match must not
+    scan the device DB (per-request redundancy)."""
+    db = MagicMock()
+    db.device_session = MagicMock(side_effect=AssertionError("DB session should not be used"))
+    c_engine = PatternEngine(db)
+
+    pattern_db = PatternDB(
+        meta=PatternMeta(pattern_id="test", vendor="acme", device_type="ac"),
+        client=ClientConfig(
+            endpoints=[
+                ClientEndpoint(
+                    id="ep1",
+                    intent="get_status",
+                    method="GET",
+                    path="/api/v1/status",
+                ),
+            ]
+        ),
+        server=ServerConfig(
+            responses=[
+                ServerResponse(
+                    id="resp1",
+                    triggers=["get_status"],
+                    status_code=200,
+                    body_template={"status": "ok"},
+                ),
+            ]
+        ),
+    )
+    c_engine.apply_pattern_db("device-1", pattern_db)
+    pattern, template, _ = await c_engine.find_best_match(
+        "device-1", "GET", "/api/v1/status", {}, None, {}
+    )
+    assert pattern is not None
+    assert template is not None
+    db.device_session.assert_not_called()
