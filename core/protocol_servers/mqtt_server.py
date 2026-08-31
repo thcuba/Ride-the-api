@@ -115,9 +115,14 @@ class MQTTServerPlugin(ProtocolServerPlugin):
     def _on_message(self, client, userdata, msg) -> None:  # noqa: ANN001
         if self._loop is None or self._loop.is_closed():
             return
+        # Single paho forwarder client; the publishing device's client_id is
+        # not exposed on subscribe. Derive a stable per-device id from the
+        # topic's first segment so per-device learning/matching doesn't
+        # collapse to one "mqtt-forwarder" device for every message.
+        device_id = self._device_id_from_topic(msg.topic)
         asyncio.run_coroutine_threadsafe(
             self.handle_message(
-                client_id="mqtt-forwarder",
+                client_id=device_id,
                 topic=msg.topic,
                 payload=msg.payload or b"",
                 qos=msg.qos,
@@ -125,6 +130,12 @@ class MQTTServerPlugin(ProtocolServerPlugin):
             ),
             self._loop,
         )
+
+    @staticmethod
+    def _device_id_from_topic(topic: str) -> str:
+        """Derive a device id from an MQTT topic (first non-empty segment)."""
+        parts = [p for p in topic.split("/") if p]
+        return ("mqtt-" + parts[0]) if parts else "mqtt-unknown"
 
     async def stop(self) -> None:
         """Stop the MQTT broker and disconnect all clients."""

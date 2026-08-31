@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING
 import h11
 
 from core.cert_manager import CertManager
+from adapters.base import device_id_from_ip
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
@@ -754,7 +755,7 @@ class TLSMITMServer:
                 info.port = dst_port
             else:
                 self.device_ports[client_ip] = DevicePortInfo(
-                    device_id=f"unknown-{client_ip}",
+                                    device_id=device_id_from_ip("ip", client_ip),
                     ip=client_ip,
                     port=dst_port,
                     first_seen=now,
@@ -788,7 +789,7 @@ class TLSMITMServer:
                 "last_seen": info.last_seen.isoformat(),
             }
             for info in self.device_ports.values()
-            if info.device_id.startswith("unknown-")
+                        if info.device_id.startswith("ip-")
         ]
 
 

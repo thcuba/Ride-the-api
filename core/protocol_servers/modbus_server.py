@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -35,9 +36,83 @@ try:
 except ImportError:  # pragma: no cover - exercised at import time only
     HAS_PYMODBUS = False
 
+from adapters.base import InterceptedRequest, ProtocolType
 from core.protocol_servers import ProtocolServerPlugin
 
 logger = logging.getLogger(__name__)
+
+
+if HAS_PYMODBUS:
+
+    class _ForwardingModbusContext(ModbusServerContext):
+        """Modbus device store that mirrors every access to the pipeline.
+
+        Wraps the legacy pymodbus ``ModbusServerContext`` so that read/write
+        operations on the register store are forwarded to the orchestrator
+        handler in addition to being served from the local datastore. This
+        connects intercepted Modbus traffic to the learning pipeline instead of
+        silently serving a static register file.
+        """
+
+        def __init__(
+            self,
+            store: ModbusServerContext,
+            handler: Callable | None,
+            loop: asyncio.AbstractEventLoop,
+        ) -> None:
+            self._store = store
+            self._handler = handler
+            self._loop = loop
+
+        def _notify(self, device_id: int, func_code: int, address: int, values=None, count: int = 1) -> None:
+            """Fire a best-effort InterceptedRequest at the pipeline."""
+            handler = self._handler
+            if handler is None or self._loop is None or self._loop.is_closed():
+                return
+            operation = "write" if values is not None else "read"
+            body = {
+                "device_id": device_id,
+                "func_code": func_code,
+                "address": address,
+                "operation": operation,
+            }
+            if values is not None:
+                body["values"] = list(values) if isinstance(values, (list, tuple)) else values
+            else:
+                body["count"] = count
+            request = InterceptedRequest(
+                device_id=f"modbus-{device_id}",
+                timestamp=datetime.now(UTC).timestamp(),
+                protocol=ProtocolType.MODBUS,
+                method="publish" if operation == "write" else "GET",
+                path=f"/modbus/{func_code}/{address}",
+                query_params={"device_id": str(device_id), "func_code": str(func_code), "address": str(address)},
+                body=body,
+            )
+            try:
+                if asyncio.iscoroutinefunction(handler):
+                    asyncio.run_coroutine_threadsafe(
+                        self._mirror(handler, request), self._loop
+                    )
+                else:
+                    self._loop.call_soon_threadsafe(handler, request)
+            except Exception:  # pragma: no cover - defensive
+                logger.debug("Modbus forward to pipeline failed", exc_info=True)
+
+        @staticmethod
+        async def _mirror(handler, request: InterceptedRequest) -> None:
+            try:
+                await handler(request)
+            except Exception:  # pragma: no cover - defensive
+                logger.debug("Modbus pipeline handler error", exc_info=True)
+
+        async def async_getValues(self, device_id: int, func_code: int, address: int, count: int = 1):
+            self._notify(device_id, func_code, address, count=count)
+            return await self._store.async_getValues(device_id, func_code, address, count)
+
+        async def async_setValues(self, device_id: int, func_code: int, address: int, values):
+            self._notify(device_id, func_code, address, values=values)
+            return await self._store.async_setValues(device_id, func_code, address, values)
 
 
 class ModbusServerPlugin(ProtocolServerPlugin):
@@ -68,7 +143,11 @@ class ModbusServerPlugin(ProtocolServerPlugin):
             ir=ModbusSequentialDataBlock(1, [0] * 8),
             hr=ModbusSequentialDataBlock(1, zero),
         )
-        self._context = ModbusServerContext(devices=store, single=True)
+        self._context = _ForwardingModbusContext(
+            ModbusServerContext(devices=store, single=True),
+            handler=self.handler,
+            loop=asyncio.get_event_loop(),
+        )
         self._server_task = asyncio.create_task(self._run_server(cfg.host, cfg.port))
         self._running = True
         logger.info(

@@ -382,8 +382,13 @@ class ModificationEngine:
                 action = (
                     ModificationAction(action_name)
                     if isinstance(action_name, str)
-                                    else action_name
+                    else action_name
                 )
+                action_params = _rule_field(rule_data, "action_params", {})
+                if not action_params:
+                    action_params = self._translate_legacy_action_params(
+                        action, rule_data
+                    )
                 rule = ModificationRule(
                     name=_rule_field(rule_data, "name", "unnamed"),
                     match_vendor=_rule_field(rule_data, "match_vendor"),
@@ -391,11 +396,12 @@ class ModificationEngine:
                     match_intent=_rule_field(rule_data, "match_intent"),
                     match_field_path=_rule_field(rule_data, "match_field_path"),
                     match_value=_rule_field(rule_data, "match_value"),
-                    match_headers=_rule_field(rule_data, "match_headers"),
+                    match_headers=_rule_field(rule_data, "match_headers")
+                    or self._translate_legacy_match_headers(rule_data),
                     match_method=_rule_field(rule_data, "match_method"),
                     match_path_pattern=_rule_field(rule_data, "match_path_pattern"),
                     action=action,
-                    action_params=_rule_field(rule_data, "action_params", {}),
+                    action_params=action_params,
                     priority=_rule_field(rule_data, "priority", 10),
                     enabled=_rule_field(rule_data, "enabled", True),
                     direction=_rule_field(rule_data, "direction", "request"),
@@ -410,6 +416,41 @@ class ModificationEngine:
         self._rules.sort(key=lambda r: -r.priority)
 
         logger.info(f"Loaded {len(self._rules)} modification rules")
+
+    def _translate_legacy_match_headers(self, rule_data) -> dict[str, str] | None:
+        """Translate legacy ``match_type``/``match_value`` to a header match.
+
+        Legacy rules matched on ``match_type`` (hostname/path/header/field)
+        plus a ``match_value``. Only header-flavoured legacy matches map
+        cleanly onto the engine's native ``match_headers`` — everything else
+        is left to be handled by its native field or remains unmatched rather
+        than silently matching everything.
+        """
+        match_type = _rule_field(rule_data, "match_type", "hostname")
+        match_value = _rule_field(rule_data, "match_value")
+        if match_type in ("hostname", "header") and match_value:
+            return {"host": str(match_value)}
+        return None
+
+    def _translate_legacy_action_params(self, action: ModificationAction, rule_data) -> dict:
+        """Translate legacy ``target_field``/``target_value`` into action_params."""
+        target_field = _rule_field(rule_data, "target_field")
+        target_value = _rule_field(rule_data, "target_value")
+        params: dict = {}
+        if action == ModificationAction.MODIFY and target_field:
+            params = {"operation": "set", "value": target_value}
+        elif action == ModificationAction.INJECT and target_field:
+            params = {"field_path": target_field, "value": target_value}
+        elif action == ModificationAction.REPLACE and target_value is not None:
+            params = {"body": target_value}
+        elif action == ModificationAction.REDIRECT and target_value is not None:
+            params = {"path": str(target_value)}
+        elif action == ModificationAction.DELAY:
+            try:
+                params = {"delay_ms": int(target_value or 0)}
+            except (TypeError, ValueError):
+                params = {}
+        return params
 
     def _on_config_change(self, new_config):  # noqa: ARG002
         """Reload rules on config change."""

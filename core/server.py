@@ -179,19 +179,22 @@ async def handle_tls_decrypted_request(req: DecryptedRequest) -> dict | None:
             body=req.body,
         )
 
+        # Let the adapter refine the intercepted request (intent, params,
+        # device_id, query params...). Any fields it changes are what the
+        # orchestrator pipeline should see.
         if handler_adapter:
             intercepted = await handler_adapter.parse_request(intercepted)
 
         # Run through the orchestrator pipeline
         result = await orchestrator.handle_request(
-            device_id=device_id,
+            device_id=intercepted.device_id or device_id,
             vendor=device_vendor,
             protocol="https",
-            method=req.method,
-            path=req.path,
-            headers=req.headers,
-            body=req.body,
-            query_params={},
+            method=intercepted.method or req.method,
+            path=intercepted.path or req.path,
+            headers=dict(intercepted.headers) if intercepted.headers else dict(req.headers),
+            body=intercepted.body,
+            query_params=intercepted.query_params or {},
         )
 
         if result["action"] == "local_response":
