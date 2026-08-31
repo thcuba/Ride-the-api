@@ -93,6 +93,21 @@ class CloudForwarder:
         send_headers = _norm_headers(headers)
         host_header = hostname if port == 443 else f"{hostname}:{port}"  # noqa: PLR2004
 
+        # Hop-by-hop / framing headers belong to the original connection and
+        # must not be copied onto the replayed request: ``content-length`` is
+        # recomputed by h11 from the actual body bytes, ``transfer-encoding`` is
+        # h11's job (RFC 7230 framing), and ``connection`` describes the local
+        # device link, not the upstream one. Forwarding a stale ``content-length``
+        # makes the upstream hang or read a truncated/oversized body; h11 rejects
+        # it with a ``LocalProtocolError`` when it mismatches the replayed body.
+        for _h in ("content-length", "transfer-encoding", "connection"):
+            send_headers.pop(_h, None)
+        # Re-add the actual framing so h11 (which receives the body as a
+        # separate Data event) knows the true body length. h11 refuses to send
+        # a body without an explicit Content-Length/Transfer-Encoding.
+        if body is not None:
+            send_headers["content-length"] = str(len(body))
+
         tls_obj: ssl.SSLContext | None = None
         if use_tls:
             tls_obj = (

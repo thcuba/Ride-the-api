@@ -317,6 +317,11 @@ class CertManager:
         for p in (cert_path, key_path, meta_path):
             if base not in p.resolve().parents:
                 raise ValueError(f"Unsafe hostname path: {hostname!r}")
+        # The certificate and private key must belong together — importing a
+        # mismatched pair would hand MITM clients a cert whose key can't serve
+        # the handshake. Compare their public keys before persisting anything.
+        if not self._cert_matches_key(cert_pem, key_pem):
+            raise ValueError("Certificate and private key do not match")
 
         cert_path.write_text(cert_pem)
         key_path.write_text(key_pem)
@@ -495,6 +500,31 @@ class CertManager:
             return {}
         else:
             return info
+
+    @staticmethod
+    def _cert_matches_key(cert_pem: str, key_pem: str) -> bool:
+        """Return True when the cert's public key corresponds to the key PEM.
+
+        Compares the public key material of the certificate against the
+        public key derived from the imported private key, so a mismatched
+        cert/key pair (e.g. pasted from two different devices) is rejected
+        before it is persisted and served to MITM clients.
+        """
+        try:
+            cert = x509.load_pem_x509_certificate(cert_pem.encode())
+            private_key = serialization.load_pem_private_key(key_pem.encode(), password=None)
+            key_public = private_key.public_key().public_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PublicFormat.SubjectPublicKeyInfo,
+            )
+            cert_public = cert.public_key().public_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PublicFormat.SubjectPublicKeyInfo,
+            )
+            return key_public == cert_public
+        except Exception as e:  # noqa: BLE001 - malformed PEM should reject
+            logger.warning("Cert/key match check failed: %s", e)
+            return False
 
     @staticmethod
     def _safe_filename(hostname: str) -> str:

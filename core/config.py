@@ -444,6 +444,7 @@ class MatterBridgeConfig(BaseModel):
     """Matter bridge (Matter.js) configuration."""
 
     enabled: bool = False
+    host: str = "0.0.0.0"
     controller_port: int = 5540
     fabric_id: int = 1
     vendor_id: int = 65521
@@ -585,6 +586,17 @@ def get_config_manager(config_path: str | Path | None = None) -> ConfigManager:
     if _config_manager is None:
         path = config_path or "config/config.yaml"
         _config_manager = ConfigManager(path)
+    elif config_path:
+        # The singleton already exists; silently ignoring an explicit path
+        # leaves callers with a different config than they requested.
+        wanted = Path(config_path).resolve()
+        current = Path(_config_manager.config_path).resolve()
+        if wanted != current:
+            logging.getLogger(__name__).warning(
+                "Ignoring config path %s: singleton already loaded %s",
+                config_path,
+                _config_manager.config_path,
+            )
     return _config_manager
 
 
