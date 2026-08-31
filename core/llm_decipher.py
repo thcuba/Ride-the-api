@@ -172,6 +172,8 @@ class LLMDecipherService:
         # after a cooldown, so a degraded provider doesn't kill analysis
         # when a healthy alternative profile exists.
         self.profile_breaker = ProviderCircuitBreaker()
+        # Optional provider of recently deciphered patterns (LLM context).
+        self._pattern_loader = None
 
         self._load_config()
 
@@ -588,11 +590,32 @@ Tables:
 - intercepted_requests (device_id, protocol, method, path, body, parsed_intent, parsed_params)
 """
 
-    def _get_recent_patterns(self, _vendor: str, _device_type: str | None) -> list[dict]:
-        """Get recent successful deciphering patterns for context."""
-        return []
-        # TODO: Load from device database patterns table  # noqa: ERA001
-        # patterns = await db.get_recent_patterns(vendor, limit=10)  # noqa: ERA001
+    def _get_recent_patterns(self, vendor: str, device_type: str | None) -> list[dict]:
+        """Return recently deciphered patterns to use as LLM context.
+
+        The service itself owns no persistence, so recent patterns are supplied
+        by an optional loader (wired by the host with DB access) via
+        :meth:`set_pattern_loader`. When no loader is configured the prompt
+        degrades gracefully to an empty list.
+        """
+        loader = self._pattern_loader
+        if loader is None:
+            return []
+        try:
+            patterns = loader(vendor, device_type)
+        except Exception:  # noqa: BLE001 - prompt context is best-effort
+            logger.exception("Failed to load recent patterns for %s", vendor)
+            return []
+        return patterns if isinstance(patterns, list) else []
+
+    def set_pattern_loader(self, loader) -> None:
+        """Register a callable(vendor, device_type) -> list[dict] provider.
+
+        The provider resolves recently deciphered patterns (e.g. from the
+        device pattern DB) for the LLM prompt context. Passing ``None``
+        disables the context enrichment.
+        """
+        self._pattern_loader = loader
 
     async def decipher_batch(
         self,

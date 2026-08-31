@@ -288,6 +288,41 @@ End."""
         patterns = service._get_recent_patterns("shelly", "ac")
         assert patterns == []
 
+    def test_get_recent_patterns_uses_loader(self):
+        """A wired pattern loader supplies recent-pattern context to the prompt."""
+        service = make_service()
+        service.set_pattern_loader(
+            lambda vendor, device_type: [
+                {
+                    "intent": "turn_on",
+                    "confidence": 0.95,
+                    "vendor": vendor,
+                    "device_type": device_type,
+                }
+            ]
+        )
+        patterns = service._get_recent_patterns("shelly", "ac")
+        assert patterns == [
+            {"intent": "turn_on", "confidence": 0.95, "vendor": "shelly", "device_type": "ac"}
+        ]
+
+    def test_get_recent_patterns_loader_error_falls_back_empty(self):
+        """A failing loader degrades to an empty list instead of crashing the prompt."""
+        service = make_service()
+
+        def broken(_vendor, _device_type):
+            raise RuntimeError("db down")
+
+        service.set_pattern_loader(broken)
+        assert service._get_recent_patterns("shelly", "ac") == []
+
+    def test_set_pattern_loader_none_disables(self):
+        service = make_service()
+        service.set_pattern_loader(lambda v, t: [{"x": 1}])
+        assert service._get_recent_patterns("shelly", "ac") != []
+        service.set_pattern_loader(None)
+        assert service._get_recent_patterns("shelly", "ac") == []
+
     async def test_decipher_with_params_profile_not_found(self):
         service = make_service()
         result = await service.decipher_with_params(

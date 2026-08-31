@@ -180,7 +180,7 @@ tls_decrypt:
     - 8883
 ```
 
-Download the CA certificate from `http://<server-ip>:8911/api/tls/ca.pem` and install it on the device as a trusted authority.
+Download the CA certificate from `http://<server-ip>:8911/api/tls/ca-cert` and install it on the device as a trusted authority.
 
 ### 6.3 — Verify the connection
 
@@ -247,7 +247,7 @@ tail -f data/core.log
 |---|---|---|
 | Device not detected | DNS does not point to proxy | Verify `nslookup <cloud-hostname>` from the device |
 | `Connection refused` on :8911 | Server not started | Check `python -m core.server` and the logs |
-| TLS handshake fails | CA certificate not installed on device | Download and install CA from `/api/tls/ca.pem` |
+| TLS handshake fails | CA certificate not installed on device | Download and install CA from `/api/tls/ca-cert` |
 | Match rate at 0% | No patterns learned yet | Wait for a few requests in learning mode |
 | Forwarding loop | DNS resolves to the proxy itself | Use `signal_forward_to_cloud: true` with nginx |
 | `OPENAI_API_KEY` not found | Environment variable not set | `export OPENAI_API_KEY="sk-..."` |

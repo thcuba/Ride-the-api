@@ -196,6 +196,42 @@ class TestTrafficSelector:
         assert rule.matches(new) is True
         assert rule.matches(old2) is False
 
+    def test_add_rule_rejects_invalid_cidr(self):
+        """add_rule must reject a match definition that cannot compile.
+
+        A rule built with a valid CIDR then tampered to a non-compiling
+        value (simulating mutation after construction) is rejected at add
+        time instead of being appended with a broken compiled state.
+        """
+        selector = TrafficSelector()
+        initial_count = len(selector.get_rules())
+        bad = TrafficRule(
+            name="bad-cidr",
+            scope=TrafficScope.LOCAL,
+            match_type=MatchType.CIDR,
+            match_value="10.0.0.0/8",
+            action=TrafficAction.INTERCEPT,
+        )
+        bad.match_value = "not-a-cidr!!"
+        assert selector.add_rule(bad) is False
+        assert len(selector.get_rules()) == initial_count
+
+    def test_update_rule_rejects_invalid_cidr_and_rolls_back(self):
+        """A non-compiling match update must be rejected and leave the rule intact."""
+        selector = TrafficSelector()
+        rule = TrafficRule(
+            name="keepme",
+            scope=TrafficScope.LOCAL,
+            match_type=MatchType.CIDR,
+            match_value="10.0.0.0/8",
+            action=TrafficAction.INTERCEPT,
+        )
+        selector.add_rule(rule)
+        assert selector.update_rule("keepme", match_value="!!!invalid!!!") is False
+        assert rule.match_value == "10.0.0.0/8"
+        # The old compiled CIDR still drives matching.
+        assert rule.matches(TrafficRequestInfo("10.0.0.5", is_local=True))
+
     def test_priority_ordering(self):
         selector = TrafficSelector()
         low = TrafficRule(

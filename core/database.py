@@ -172,28 +172,33 @@ class ModelRegistry(Base):
     is_default: Mapped[bool] = mapped_column(default=False, nullable=False)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    class LLMProfile(Base):
-        """User-saved LLM decipher profiles/templates."""
-
-        __tablename__ = "llm_profiles"
-
-        id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-        name: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
-        description: Mapped[str | None] = mapped_column(String(512), nullable=True)
-        base_url: Mapped[str] = mapped_column(String(512), nullable=False)
-        api_key: Mapped[str] = mapped_column(String(512), default="", nullable=False)
-        model_id: Mapped[str] = mapped_column(String(128), nullable=False)
-        prompt_template: Mapped[str] = mapped_column(String(16384), nullable=False)
-        enabled: Mapped[bool] = mapped_column(default=True, nullable=False)
-        is_default: Mapped[bool] = mapped_column(default=False, nullable=False)
-        created_at: Mapped[DateTime] = mapped_column(
-            DateTime(timezone=True), server_default=func.now()
-        )
-        updated_at: Mapped[DateTime] = mapped_column(
-            DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
-        )
-
     # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+class LLMProfile(Base):
+    """User-saved LLM decipher profiles/templates.
+
+    Declared at module level (not nested inside ``ModelRegistry``) so schema
+    introspection and migration tooling discover it via ``Base.metadata``.
+    """
+
+    __tablename__ = "llm_profiles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    description: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    base_url: Mapped[str] = mapped_column(String(512), nullable=False)
+    api_key: Mapped[str] = mapped_column(String(512), default="", nullable=False)
+    model_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    prompt_template: Mapped[str] = mapped_column(String(16384), nullable=False)
+    enabled: Mapped[bool] = mapped_column(default=True, nullable=False)
+    is_default: Mapped[bool] = mapped_column(default=False, nullable=False)
+    created_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
     # DEVICE-SPECIFIC DATABASE MODELS (each device gets its own DB with these tables)
 
 
@@ -488,6 +493,7 @@ class DatabaseManager:
         self._device_sessions: dict[str, async_sessionmaker[AsyncSession]] = {}
         self._device_db_urls = device_db_urls or {}
         self._engine_locks: dict[str, asyncio.Lock] = {}
+        self._ip_lookup_cache: dict[str, str] | None = None
 
     async def initialize(self) -> None:
         """Initialize all databases."""
@@ -522,21 +528,37 @@ class DatabaseManager:
                 return device.database_url
             return None
 
+    def invalidate_ip_lookup_cache(self) -> None:
+        """Drop the cached ip -> device_id reverse index.
+
+        Call after any persistent change to a device's ``ip_addresses`` so the
+        next reverse lookup re-reads the registry instead of returning stale
+        device routes.
+        """
+        self._ip_lookup_cache = None
+
     async def resolve_device_id(self, ip_address: str) -> str | None:
         """Resolve device_id from an IP address (reverse lookup).
 
         Matches exact IPv4 membership in the per-device ``ip_addresses`` list.
-        ``JSON.contains`` is a substring test (``LIKE '%ip%'``) â€” a partial
+        ``JSON.contains`` is a substring test (``LIKE '%ip%'``) — a partial
         IPv4 like ``192.168.1.1`` matched a device storing ``192.168.1.100`` and
         routed its traffic to the wrong device DB. Load candidate rows and test
         exact membership in Python for portable SQLite/Postgres behaviour.
+
+        The full registry is read once and cached keyed by IP; the cache is
+        cleared via :meth:`invalidate_ip_lookup_cache` whenever a device's IP
+        list changes (registration routes, bulk import, etc).
         """
-        async with await self.get_core_session() as session:
-            result = await session.execute(select(DeviceRegistry))
-            for device in result.scalars().all():
-                if ip_address in (device.ip_addresses or []):
-                    return device.device_id
-            return None
+        if self._ip_lookup_cache is None:
+            async with await self.get_core_session() as session:
+                result = await session.execute(select(DeviceRegistry))
+                index: dict[str, str] = {}
+                for device in result.scalars().all():
+                    for ip in device.ip_addresses or []:
+                        index.setdefault(ip, device.device_id)
+                self._ip_lookup_cache = index
+        return self._ip_lookup_cache.get(ip_address)
 
     async def assign_device_database(
         self,
@@ -677,6 +699,8 @@ class DatabaseManager:
                 )
                 session.add(device)
                 await session.commit()
+                # A new device may bring IPs; force the reverse index rebuild.
+                self.invalidate_ip_lookup_cache()
                 logger.info(f"Registered new device: {device_id} ({vendor})")
         await self.get_device_engine(device_id)
 
@@ -895,7 +919,7 @@ class DatabaseManager:
         """List all user-saved LLM profiles."""
         async with await self.get_core_session() as session:
             result = await session.execute(
-                select(ModelRegistry.LLMProfile).order_by(ModelRegistry.LLMProfile.name)
+                select(LLMProfile).order_by(LLMProfile.name)
             )
             return [
                 {
@@ -916,7 +940,7 @@ class DatabaseManager:
         """Get a single LLM profile by name."""
         async with await self.get_core_session() as session:
             result = await session.execute(
-                select(ModelRegistry.LLMProfile).where(ModelRegistry.LLMProfile.name == name)
+                select(LLMProfile).where(LLMProfile.name == name)
             )
             p = result.scalar_one_or_none()
             if not p:
@@ -938,13 +962,13 @@ class DatabaseManager:
         """Create a new LLM profile."""
         async with await self.get_core_session() as session:
             existing = await session.execute(
-                select(ModelRegistry.LLMProfile).where(
-                    ModelRegistry.LLMProfile.name == data["name"]
+                select(LLMProfile).where(
+                    LLMProfile.name == data["name"]
                 )
             )
             if existing.scalar_one_or_none():
                 return False
-            profile = ModelRegistry.LLMProfile(
+            profile = LLMProfile(
                 name=data["name"],
                 description=data.get("description"),
                 base_url=data.get("base_url", ""),
@@ -962,7 +986,7 @@ class DatabaseManager:
         """Update an existing LLM profile."""
         async with await self.get_core_session() as session:
             result = await session.execute(
-                select(ModelRegistry.LLMProfile).where(ModelRegistry.LLMProfile.name == name)
+                select(LLMProfile).where(LLMProfile.name == name)
             )
             p = result.scalar_one_or_none()
             if not p:
@@ -988,7 +1012,7 @@ class DatabaseManager:
         """Delete an LLM profile."""
         async with await self.get_core_session() as session:
             result = await session.execute(
-                select(ModelRegistry.LLMProfile).where(ModelRegistry.LLMProfile.name == name)
+                select(LLMProfile).where(LLMProfile.name == name)
             )
             p = result.scalar_one_or_none()
             if not p:

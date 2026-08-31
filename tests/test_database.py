@@ -163,10 +163,39 @@ class TestDeviceRegistry:
         # And the exact IP still resolves
         assert await db_manager.resolve_device_id("192.168.1.100") == "device-002"
 
+    @pytest.mark.asyncio
+    async def test_resolve_device_id_cache_invalidates(self, db_manager):
+        """The reverse index must be rebuilt after IP registration.
+
+        ``resolve_device_id`` is cached so repeated lookups are O(1); when a
+        device's ``ip_addresses`` change, ``invalidate_ip_lookup_cache`` drops
+        the index so the next call sees the update.
+        """
+        await db_manager.get_or_create_device(
+            device_id="device-cache",
+            vendor="shelly",
+            device_type="plug",
+        )
+        # Miss populates the empty index first.
+        assert await db_manager.resolve_device_id("10.99.0.1") is None
+
+        async with db_manager.core_session() as session:
+            result = await session.execute(
+                select(DeviceRegistry).where(DeviceRegistry.device_id == "device-cache")
+            )
+            dev = result.scalar_one()
+            dev.ip_addresses = ["10.99.0.1"]
+
+        # Still cached (stale) until explicitly invalidated.
+        assert await db_manager.resolve_device_id("10.99.0.1") is None
+
+        db_manager.invalidate_ip_lookup_cache()
+        assert await db_manager.resolve_device_id("10.99.0.1") == "device-cache"
+
 
 # ---------------------------------------------------------------------------
-#  Device Session (per-device DB)
-# ---------------------------------------------------------------------------
+        #  Device Session (per-device DB)
+        # ---------------------------------------------------------------------------
 
 
 class TestDeviceSession:
