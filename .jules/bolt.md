@@ -17,3 +17,7 @@
 ## 2026-03-31 - Fast String-Based IP Family Check in DNS Resolution Hot Paths
 **Learning:** `_addr_family` parsed IP strings via `ipaddress.ip_address(address.split('%', maxsplit=1)[0]).version` inside DNS cache hit loops to sort IPv6 before IPv4, causing heavy parsing and allocation overhead (~87x slower) compared to a simple string check `6 if ":" in address else 4`.
 **Action:** When checking IP version (v4 vs v6) on formatted address strings in hot paths, use fast string presence checks (`":" in address`) instead of `ipaddress.ip_address` string parsing.
+
+## 2026-03-31 - Pre-computed Trigger-to-Response Map in Pattern Engine
+**Learning:** In `PatternEngine.find_best_match`, scanning `cached.server.responses` in an inner loop for every candidate endpoint introduced $O(N)$ response list iteration on every matched request. Pre-indexing triggers to responses into a `_response_trigger_maps` dict during `apply_pattern_db` replaces list iteration with $O(1)$ dict lookup (~21x faster response template resolution).
+**Action:** When mapping candidate request entities to server response definitions in hot paths, precompute a trigger-to-response dictionary upon pattern loading instead of linear scanning during request evaluation.
