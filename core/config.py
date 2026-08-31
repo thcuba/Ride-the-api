@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from watchfiles import Change, watch
 
 
@@ -243,15 +243,37 @@ from core.modification import ModificationAction
 
 
 class ModificationRule(BaseModel):
+    """A single modification rule.
+
+    Supports both the legacy field set (``match_type``/``match_value``/
+    ``target_field``/``target_value``) and the engine-native field set
+    (``match_vendor``/``match_intent``/``action_params``...). The engine
+    translates legacy rules to the native format at load time. All fields
+    are stored as a superset so the config round-trip preserves every value.
+    """
+
     name: str = ""
     scope: str = "local"
     match_type: str = "hostname"
-    match_value: str = ""
+    match_value: Any = None
     action: ModificationAction = ModificationAction.MODIFY
     target_field: str = ""
-    target_value: str = ""
+    target_value: Any = None
     priority: int = 0
     enabled: bool = True
+
+    # Engine-native fields
+    match_vendor: str | None = None
+    match_device_type: str | None = None
+    match_intent: str | None = None
+    match_field_path: str | None = None
+    match_headers: dict[str, str] | None = None
+    match_method: str | None = None
+    match_path_pattern: str | None = None
+    action_params: dict[str, Any] = Field(default_factory=dict)
+    direction: str = "request"
+
+    model_config = ConfigDict(extra="allow")
 
 
 class ModificationConfig(BaseModel):

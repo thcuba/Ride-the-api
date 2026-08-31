@@ -388,6 +388,23 @@ function modeBadge(mode) {
   return `<span class="badge ${cls}">${mode}</span>`;
 }
 function shortId(id) { return id && id.length > 30 ? id.slice(0, 12) + '…' : id || 'unknown'; }
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => (
+    {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]
+  ));
+}
+function escapeJs(s) {
+  // Embed a string inside a single-quoted JS string in a double-quoted HTML
+  // attribute. `&` first to prevent entity smuggling, then guard against
+  // breaking out of the JS string or the HTML attribute.
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '\\x3C')
+    .replace(/>/g, '\\x3E');
+}
 
 // ── SVG Icons ────────────────────────────────────────────────────────────────
 function deviceIcon() {
@@ -433,12 +450,13 @@ async function loadDevices() {
       const isUnknown = d.device_id && d.device_id.startsWith('ip-');
       const unkClass = isUnknown ? ' unidentified' : '';
       const unkBadge = isUnknown ? '<span class="badge badge-hybrid">⚠ Unidentified</span>' : modeBadge(d.mode);
-      return `<div class="device-card${unkClass}" tabindex="0" role="button" aria-label="View details for ${(d.name || d.device_id || 'unknown')}" onclick="loadDeviceStats('${d.device_id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();loadDeviceStats('${d.device_id}')}">
-        <div class="dc-top">
-          <div><div class="dc-name">${d.name || shortId(d.device_id)}</div><div class="dc-id">${shortId(d.device_id)}</div></div>
-          ${unkBadge}
-        </div>
-        <div class="dc-meta">${d.vendor || 'unknown'} · ${d.device_type || 'generic'}</div>
+            const devName = d.name || d.device_id || 'unknown';
+            return `<div class="device-card${unkClass}" tabindex="0" role="button" aria-label="View details for ${escapeHtml(devName)}" onclick="loadDeviceStats('${escapeJs(d.device_id)}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();loadDeviceStats('${escapeJs(d.device_id)}')}">
+              <div class="dc-top">
+                <div><div class="dc-name">${escapeHtml(d.name || shortId(d.device_id))}</div><div class="dc-id">${escapeHtml(shortId(d.device_id))}</div></div>
+                ${unkBadge}
+              </div>
+              <div class="dc-meta">${escapeHtml(d.vendor || 'unknown')} · ${escapeHtml(d.device_type || 'generic')}</div>
         <div class="dc-stats">
           ${rate !== null ? `<span class="dc-stat"><span class="dc-label">Match:</span><span class="dc-value" style="color:${rateColor(rate)}">${rate}%</span></span>` : ''}
           <span class="dc-stat"><span class="dc-label">Last:</span><span class="dc-value">${d.last_seen ? new Date(d.last_seen).toLocaleString() : 'Never'}</span></span>
@@ -493,7 +511,7 @@ async function loadDeviceStats(deviceId) {
 
     detail.innerHTML = `<div class="detail-card">
       <div class="detail-header">
-        <h2 id="details-title" tabindex="-1">${s.name || deviceId} — Details</h2>
+            <h2 id="details-title" tabindex="-1">${escapeHtml(s.name || deviceId)} — Details</h2>
         <button class="close-btn" onclick="closeDetails()" aria-label="Close details panel">&times;</button>
       </div>
       ${ring}
@@ -513,21 +531,21 @@ async function loadDeviceStats(deviceId) {
       </div>
       ${spark}
       <div class="mode-area">
-        <label for="mode-select-${deviceId}">Mode:</label>
-        <select id="mode-select-${deviceId}">
+        <label for="mode-select-${escapeHtml(deviceId)}">Mode:</label>
+        <select id="mode-select-${escapeHtml(deviceId)}">
           <option value="learning" ${s.mode === 'learning' ? 'selected' : ''}>Cloud — Learn All</option>
           <option value="production" ${s.mode === 'production' ? 'selected' : ''}>Local — Serve All</option>
           <option value="hybrid" ${s.mode === 'hybrid' ? 'selected' : ''}>Hybrid — Local then Cloud</option>
         </select>
-        <button class="btn btn-primary" onclick="switchMode('${deviceId}')">Apply</button>
+        <button class="btn btn-primary" onclick="switchMode('${escapeJs(deviceId)}')">Apply</button>
       </div>
 
               <!-- Auto-Switch to Production toggle -->
               <div class="mode-area" style="margin-top: 8px;">
                 <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
-                  <input type="checkbox" id="auto-switch-${deviceId}"
+                  <input type="checkbox" id="auto-switch-${escapeHtml(deviceId)}"
                          ${s.auto_switch_enabled ? 'checked' : ''}
-                         onchange="toggleAutoSwitch('${deviceId}', this.checked)">
+                         onchange="toggleAutoSwitch('${escapeJs(deviceId)}', this.checked)">
                   <span>Auto-Switch to Production (99% match rate)</span>
                 </label>
                 <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">
@@ -537,32 +555,32 @@ async function loadDeviceStats(deviceId) {
               </div>
 
               <!-- TLS Config Panel (for all devices) -->
-      <div class="tls-config" role="region" aria-label="TLS interception configuration for ${s.name || deviceId}">
+      <div class="tls-config" role="region" aria-label="TLS interception configuration for ${escapeHtml(s.name || deviceId)}">
         <h3>
           <svg class="icon-svg-sm" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
           TLS Interception
         </h3>
-        <div class="tc-row"><span class="tc-label">Device ID</span><span class="tc-value">${shortId(deviceId)}</span></div>
+        <div class="tc-row"><span class="tc-label">Device ID</span><span class="tc-value">${escapeHtml(shortId(deviceId))}</span></div>
         <div class="tc-row">
-          <label for="tc-name-${deviceId}" class="tc-label">Name</label>
-          <input type="text" id="tc-name-${deviceId}" value="${s.name || deviceId}">
+          <label for="tc-name-${escapeHtml(deviceId)}" class="tc-label">Name</label>
+          <input type="text" id="tc-name-${escapeHtml(deviceId)}" value="${escapeHtml(s.name || deviceId)}">
         </div>
         <div class="tc-row">
-          <label for="tc-vendor-${deviceId}" class="tc-label">Vendor / Adapter</label>
-          <select id="tc-vendor-${deviceId}">
+          <label for="tc-vendor-${escapeHtml(deviceId)}" class="tc-label">Vendor / Adapter</label>
+          <select id="tc-vendor-${escapeHtml(deviceId)}">
             <option value="unknown" ${(s.vendor || 'unknown') === 'unknown' ? 'selected' : ''}>unknown</option>
           </select>
         </div>
         <div class="tc-row">
-          <span class="tc-label" id="passthrough-label-${deviceId}">Passthrough to Cloud</span>
+          <span class="tc-label" id="passthrough-label-${escapeHtml(deviceId)}">Passthrough to Cloud</span>
           <label class="tc-toggle" aria-label="Toggle passthrough to cloud" role="switch" aria-checked="true">
-            <input type="checkbox" id="tc-passthrough-${deviceId}" checked aria-labelledby="passthrough-label-${deviceId}">
+            <input type="checkbox" id="tc-passthrough-${escapeHtml(deviceId)}" checked aria-labelledby="passthrough-label-${escapeHtml(deviceId)}">
             <span class="tc-slider"></span>
           </label>
         </div>
         <div class="tc-row">
-          <label for="tc-pinning-${deviceId}" class="tc-label">Pinning Bypass</label>
-          <select id="tc-pinning-${deviceId}">
+          <label for="tc-pinning-${escapeHtml(deviceId)}" class="tc-label">Pinning Bypass</label>
+          <select id="tc-pinning-${escapeHtml(deviceId)}">
             <option value="mitm_proxy">mitm_proxy (default)</option>
             <option value="frida">frida (script)</option>
             <option value="disable_pin_check">disable_pin_check</option>
@@ -573,40 +591,40 @@ async function loadDeviceStats(deviceId) {
           <button class="btn btn-ghost" onclick="downloadCaCert()" style="padding:4px 10px;font-size:12px;" aria-label="Download CA certificate">Download</button>
         </div>
         <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px;gap:8px;">
-          <a class="btn btn-ghost" href="/patterns/${deviceId}" style="padding:6px 12px;font-size:12px;">View Patterns</a>
+          <a class="btn btn-ghost" href="/patterns/${escapeHtml(deviceId)}" style="padding:6px 12px;font-size:12px;">View Patterns</a>
           <div style="text-align:right;">
-            <button class="btn btn-primary" onclick="saveTlsConfig('${deviceId}')" style="padding:6px 16px;font-size:12px;">Save TLS Config</button>
+            <button class="btn btn-primary" onclick="saveTlsConfig('${escapeJs(deviceId)}')" style="padding:6px 16px;font-size:12px;">Save TLS Config</button>
           </div>
         </div>
 
                       <!-- LLM Context & Template Section -->
               <div class="llm-section" role="region" aria-label="LLM decoding context">
-                <div class="llm-header" id="llm-header-${deviceId}" role="button" tabindex="0" aria-expanded="true" aria-controls="llm-body-${deviceId}" onclick="toggleLLMSection('${deviceId}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleLLMSection('${deviceId}');}">
+                <div class="llm-header" id="llm-header-${escapeHtml(deviceId)}" role="button" tabindex="0" aria-expanded="true" aria-controls="llm-body-${escapeHtml(deviceId)}" onclick="toggleLLMSection('${escapeJs(deviceId)}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleLLMSection('${escapeJs(deviceId)}');}">
                   <svg class="icon-svg-sm" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
                   LLM Context &amp; Template
-                  <span style="margin-left:auto;font-size:12px;color:var(--text2);" id="llm-toggle-${deviceId}">&#x25BC;</span>
+                  <span style="margin-left:auto;font-size:12px;color:var(--text2);" id="llm-toggle-${escapeHtml(deviceId)}">&#x25BC;</span>
                 </div>
-                <div class="llm-body" id="llm-body-${deviceId}">
+                <div class="llm-body" id="llm-body-${escapeHtml(deviceId)}">
 
                   <!-- Profile selector -->
                   <div class="llm-row">
                     <label>Template</label>
-                    <select id="profile-select-${deviceId}" style="flex:1;" onchange="onProfileChange('${deviceId}')">
+                    <select id="profile-select-${escapeHtml(deviceId)}" style="flex:1;" onchange="onProfileChange('${escapeJs(deviceId)}')">
                       <option value="default">Default</option>
                     </select>
-                    <button class="btn btn-ghost" style="padding:4px 8px;font-size:11px;" onclick="saveAsNewProfile('${deviceId}')">Save As</button>
+                    <button class="btn btn-ghost" style="padding:4px 8px;font-size:11px;" onclick="saveAsNewProfile('${escapeJs(deviceId)}')">Save As</button>
                   </div>
                   <div class="llm-row" style="justify-content:flex-end;gap:6px;border:none;padding-top:0;">
-                    <button class="btn btn-ghost" style="padding:2px 8px;font-size:11px;" onclick="editProfile('${deviceId}')">Edit</button>
-                    <button class="btn btn-ghost" style="padding:2px 8px;font-size:11px;" onclick="deleteProfile('${deviceId}')" id="delete-profile-btn-${deviceId}">Delete</button>
+                    <button class="btn btn-ghost" style="padding:2px 8px;font-size:11px;" onclick="editProfile('${escapeJs(deviceId)}')">Edit</button>
+                    <button class="btn btn-ghost" style="padding:2px 8px;font-size:11px;" onclick="deleteProfile('${escapeJs(deviceId)}')" id="delete-profile-btn-${escapeHtml(deviceId)}">Delete</button>
                   </div>
 
                   <!-- Context notes -->
                   <div class="llm-row" style="flex-direction:column;align-items:stretch;">
                     <label style="min-width:0;margin-bottom:4px;">Context Notes</label>
-                    <textarea id="context-notes-${deviceId}" placeholder="Add context for LLM analysis&#10;e.g.: &#34;This endpoint controls device pairing&#34;"></textarea>
+                    <textarea id="context-notes-${escapeHtml(deviceId)}" placeholder="Add context for LLM analysis&#10;e.g.: &#34;This endpoint controls device pairing&#34;"></textarea>
                     <div style="display:flex;gap:6px;margin-top:4px;justify-content:flex-end;">
-                      <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px;" onclick="saveContextNotes('${deviceId}')">Save Notes</button>
+                      <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px;" onclick="saveContextNotes('${escapeJs(deviceId)}')">Save Notes</button>
                     </div>
                   </div>
 
@@ -614,32 +632,32 @@ async function loadDeviceStats(deviceId) {
                   <div class="llm-row" style="flex-direction:column;align-items:stretch;">
                     <div style="display:flex;justify-content:space-between;align-items:center;width:100%;">
                       <label style="min-width:0;">Buffer</label>
-                      <div style="display:flex;gap:6px;align-items:center;" id="buffer-actions-${deviceId}">
-                        <span id="buf-count-${deviceId}" style="font-size:11px;color:var(--text2);">0 entries</span>
+                      <div style="display:flex;gap:6px;align-items:center;" id="buffer-actions-${escapeHtml(deviceId)}">
+                        <span id="buf-count-${escapeHtml(deviceId)}" style="font-size:11px;color:var(--text2);">0 entries</span>
                         <label style="font-size:11px;color:var(--text2);display:flex;align-items:center;gap:4px;cursor:pointer;">
-                          <input type="checkbox" id="select-all-buf-${deviceId}" onchange="toggleSelectAll('${deviceId}')"> All
+                          <input type="checkbox" id="select-all-buf-${escapeHtml(deviceId)}" onchange="toggleSelectAll('${escapeJs(deviceId)}')"> All
                         </label>
                       </div>
                     </div>
-                    <div class="llm-buffer" id="buffer-list-${deviceId}">
+                    <div class="llm-buffer" id="buffer-list-${escapeHtml(deviceId)}">
                       <div style="color:var(--text2);font-size:12px;text-align:center;padding:12px;">Loading buffer...</div>
                     </div>
                   </div>
 
                   <!-- Actions -->
                   <div class="llm-actions">
-                    <button class="btn btn-ghost" onclick="previewAnalysis('${deviceId}')" id="preview-btn-${deviceId}">&#x1F50D; Preview &amp; Edit</button>
-                    <button class="btn btn-primary" onclick="sendToLLM('${deviceId}')" id="send-btn-${deviceId}">&#x27A4; Send to LLM</button>
+                    <button class="btn btn-ghost" onclick="previewAnalysis('${escapeJs(deviceId)}')" id="preview-btn-${escapeHtml(deviceId)}">&#x1F50D; Preview &amp; Edit</button>
+                    <button class="btn btn-primary" onclick="sendToLLM('${escapeJs(deviceId)}')" id="send-btn-${escapeHtml(deviceId)}">&#x27A4; Send to LLM</button>
                   </div>
 
                   <!-- Analysis preview (hidden) -->
-                  <div class="analysis-box" id="analysis-box-${deviceId}" style="display:none;">
+                  <div class="analysis-box" id="analysis-box-${escapeHtml(deviceId)}" style="display:none;">
                     <h4>&#x1F4DD; LLM Analysis Preview</h4>
-                    <textarea id="analysis-text-${deviceId}" style="min-height:120px;"></textarea>
+                    <textarea id="analysis-text-${escapeHtml(deviceId)}" style="min-height:120px;"></textarea>
                     <div style="font-size:12px;color:var(--text2);margin:4px 0;">Edit the analysis above before committing, then click Commit to save patterns.</div>
                     <div class="llm-actions">
-                      <button class="btn btn-ghost" onclick="discardPreview('${deviceId}')">Discard</button>
-                      <button class="btn btn-primary" onclick="commitPatterns('${deviceId}')">&#x2714; Commit Patterns</button>
+                      <button class="btn btn-ghost" onclick="discardPreview('${escapeJs(deviceId)}')">Discard</button>
+                      <button class="btn btn-primary" onclick="commitPatterns('${escapeJs(deviceId)}')">&#x2714; Commit Patterns</button>
                     </div>
                   </div>
 
@@ -954,20 +972,20 @@ async function loadBufferEntries(deviceId) {
           const resPreview = (e.pair?.response_body || '').slice(0, 80);
           const reqFull = JSON.stringify(e.pair?.request_body || '', null, 2).slice(0, 300);
           const resFull = JSON.stringify(e.pair?.response_body || '', null, 2).slice(0, 300);
-          const ts = e.timestamp ? new Date(e.timestamp).toLocaleString() : '';
-      return `<div class="buffer-entry" id="buf-entry-${deviceId}-${e.id}" tabindex="0" role="button" aria-expanded="false" aria-controls="buf-detail-${deviceId}-${e.id}" onclick="toggleBufDetail('${deviceId}', ${e.id})" onkeydown="if(event.key==='Enter'||event.key===' '){if(event.target===this||event.target.classList.contains('be-info')||event.target.classList.contains('be-pair')||event.target.classList.contains('be-summary')){event.preventDefault();toggleBufDetail('${deviceId}', ${e.id});}}">
-              <input type="checkbox" id="buf-chk-${deviceId}-${e.id}" aria-label="Select buffer entry ${method} ${path}" onclick="event.stopPropagation()" onchange="updateSelectedCount('${deviceId}')">
-        <div class="be-info">
-                <div class="be-pair"><span style="color:var(--accent)">${method}</span> ${path}</div>
-                <div class="be-summary">&#x2192; ${status} &middot; ${(e.size || 0) / 1024} KB${ts ? ' &middot; ' + ts : ''}</div>
-        </div>
-        <button class="be-delete" onclick="event.stopPropagation();deleteBufferEntry('${deviceId}', ${e.id})" title="Delete entry" aria-label="Delete entry ${method} ${path}">&times;</button>
-      </div>
-      <div class="buffer-entry-detail" id="buf-detail-${deviceId}-${e.id}">
-<b>Request:</b> ${reqFull}
-<b>Response:</b> ${resFull}
-      </div>`;
-    }).join('');
+    const ts = e.timestamp ? new Date(e.timestamp).toLocaleString() : '';
+          return `<div class="buffer-entry" id="buf-entry-${escapeJs(deviceId)}-${e.id}" tabindex="0" role="button" aria-expanded="false" aria-controls="buf-detail-${escapeJs(deviceId)}-${e.id}" onclick="toggleBufDetail('${escapeJs(deviceId)}', ${e.id})" onkeydown="if(event.key==='Enter'||event.key===' '){if(event.target===this||event.target.classList.contains('be-info')||event.target.classList.contains('be-pair')||event.target.classList.contains('be-summary')){event.preventDefault();toggleBufDetail('${escapeJs(deviceId)}', ${e.id});}}">
+                  <input type="checkbox" id="buf-chk-${escapeJs(deviceId)}-${e.id}" aria-label="Select buffer entry ${escapeHtml(method)} ${escapeHtml(path)}" onclick="event.stopPropagation()" onchange="updateSelectedCount('${escapeJs(deviceId)}')">
+            <div class="be-info">
+                    <div class="be-pair"><span style="color:var(--accent)">${escapeHtml(method)}</span> ${escapeHtml(path)}</div>
+                    <div class="be-summary">&#x2192; ${escapeHtml(status)} &middot; ${(e.size || 0) / 1024} KB${ts ? ' &middot; ' + ts : ''}</div>
+            </div>
+            <button class="be-delete" onclick="event.stopPropagation();deleteBufferEntry('${escapeJs(deviceId)}', ${e.id})" title="Delete entry" aria-label="Delete entry ${escapeHtml(method)} ${escapeHtml(path)}">&times;</button>
+          </div>
+          <div class="buffer-entry-detail" id="buf-detail-${escapeJs(deviceId)}-${e.id}">
+    <b>Request:</b> ${escapeHtml(reqFull)}
+    <b>Response:</b> ${escapeHtml(resFull)}
+          </div>`;
+        }).join('');
   } catch(e) {
     container.innerHTML = '<div style="color:var(--red);font-size:12px;text-align:center;padding:12px;">Error loading buffer</div>';
   }

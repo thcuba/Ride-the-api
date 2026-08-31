@@ -128,7 +128,7 @@ class CoAPProtocolAdapter(ProtocolAdapter):
         return await self.forward_to_cloud(request)
 
     async def forward_to_cloud(self, _request: InterceptedRequest) -> CommandResult:
-        return CommandResult(success=False, error="Cloud forward not implemented", forwarded=True)
+        return CommandResult(success=False, error="Cloud forward not implemented", forwarded=False)
 
     async def build_response(self, _request: InterceptedRequest, result: CommandResult) -> dict:
         if result.success and result.response:

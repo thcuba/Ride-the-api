@@ -293,6 +293,8 @@ class TestHandleRequest:
 
     @pytest.mark.asyncio
     async def test_get_state_no_device_forwards(self, adapter):
+        """Unknown device: no local state, and the stub adapter does not
+        actually forward anything, so ``forwarded=False`` is honest."""
         req = InterceptedRequest(
             device_id="unknown",
             timestamp=datetime.now(UTC),
@@ -302,7 +304,7 @@ class TestHandleRequest:
         await adapter.parse_request(req)
         result = await adapter.handle_request(req)
         assert result.success is False
-        assert result.forwarded is True
+        assert result.forwarded is False
 
     @pytest.mark.asyncio
     async def test_non_get_state_forwards(self, adapter):
@@ -317,7 +319,7 @@ class TestHandleRequest:
         await adapter.parse_request(req)
         result = await adapter.handle_request(req)
         assert result.success is False
-        assert result.forwarded is True
+        assert result.forwarded is False
 
     @pytest.mark.asyncio
     async def test_forward_to_cloud(self, adapter):
@@ -328,7 +330,7 @@ class TestHandleRequest:
         )
         result = await adapter.forward_to_cloud(req)
         assert result.success is False
-        assert result.forwarded is True
+        assert result.forwarded is False
 
     @pytest.mark.asyncio
     async def test_build_response_success(self, adapter):

@@ -179,7 +179,7 @@ class MQTTProtocolAdapter(ProtocolAdapter):
         return await self.forward_to_cloud(request)
 
     async def forward_to_cloud(self, request: InterceptedRequest) -> CommandResult:  # noqa: ARG002
-        return CommandResult(success=False, error="Cloud forward not implemented", forwarded=True)
+        return CommandResult(success=False, error="Cloud forward not implemented", forwarded=False)
 
     async def build_response(self, request: InterceptedRequest, result: CommandResult) -> dict:  # noqa: ARG002
         if result.success and result.response:
