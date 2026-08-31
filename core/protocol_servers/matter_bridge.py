@@ -43,12 +43,12 @@ class MatterBridgePlugin(ProtocolServerPlugin):
             return
         cfg = self.config
         self._server = await asyncio.start_server(
-            self._handle_connection, host="0.0.0.0", port=cfg.controller_port
+            self._handle_connection, host=cfg.host, port=cfg.controller_port
         )
         self._running = True
         logger.info(
-            "Matter bridge listening on :%d (fabric=%d)",
-            cfg.controller_port, cfg.fabric_id,
+            "Matter bridge listening on %s:%d (fabric=%d)",
+            cfg.host, cfg.controller_port, cfg.fabric_id,
         )
 
     async def _handle_connection(self, reader: asyncio.StreamReader, writer: asyncio.Writer) -> None:

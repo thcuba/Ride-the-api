@@ -84,3 +84,54 @@ class TestExtDirContainment:
             except OSError:
                 rejected = True
             assert rejected, f"hostile hostname was accepted: {hostile!r}"
+
+
+class TestCertKeyMatch:
+    """The _cert_matches_key guard rejects mismatched cert/key pairs."""
+
+    def _make_pair(self):
+        from datetime import datetime, timedelta, timezone
+
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.x509.oid import NameOID
+
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        now = datetime.now(timezone.utc)
+        name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "test.example")])
+        for _ in range(5):  # FIPS/OpenSSL may need a retry when timing is unlucky
+            builder = (
+                x509.CertificateBuilder()
+                .subject_name(name)
+                .issuer_name(name)
+                .public_key(key.public_key())
+                .serial_number(x509.random_serial_number())
+                .not_valid_before(now - timedelta(minutes=1))
+                .not_valid_after(now + timedelta(days=30))
+                .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+            )
+            try:
+                cert = builder.sign(private_key=key, algorithm=hashes.SHA256())
+                break
+            except ValueError:
+                continue
+        cert_pem = cert.public_bytes(serialization.Encoding.PEM).decode()
+        key_pem = key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.TraditionalOpenSSL,
+            serialization.NoEncryption(),
+        ).decode()
+        return cert_pem, key_pem
+
+    def test_matching_cert_key_accepted(self):
+        cert_pem, key_pem = self._make_pair()
+        assert CertManager._cert_matches_key(cert_pem, key_pem) is True
+
+    def test_mismatched_key_rejected(self):
+        cert_pem, _ = self._make_pair()
+        _, other_key = self._make_pair()
+        assert CertManager._cert_matches_key(cert_pem, other_key) is False
+
+    def test_garbage_pem_returns_false(self):
+        assert CertManager._cert_matches_key("not a pem", "still not a key") is False

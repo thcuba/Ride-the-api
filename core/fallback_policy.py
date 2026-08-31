@@ -176,7 +176,7 @@ class FallbackChain:
         if strict:
             raise RuntimeError(f"All fallback steps failed: {last_error}")
 
-        last_step = next(reversed(self.steps.keys()))
+        last_step = next(reversed(self.steps.keys()), "")
         return FallbackOutcome(
             step=last_step,
             error=last_error,

@@ -554,8 +554,12 @@ class ModificationEngine:
             original.body = msg.body
         if msg.path != original.path:
             original.path = msg.path
-        if msg.headers:
-            original.headers = {k.title(): v for k, v in msg.headers.items()}
+        # Only rewrite headers when a rule actually changed them (the REDIRECT
+        # action sets ``host``). In all other cases keep the intercepted keys
+        # as-is: re-casing every header (e.g. ``content-type`` -> ``Content-Type``)
+        # on every request broke downstream adapters that expect lowercase keys.
+        if msg.headers != {k.lower(): v for k, v in original.headers.items()}:
+            original.headers = dict(msg.headers)
         original.metadata = msg.metadata
         original.modifications = msg.modifications
         if msg.blocked:
@@ -568,7 +572,21 @@ class ModificationEngine:
     ) -> dict[str, Any]:
         """Apply message modifications back to response dict."""
         if msg.body is not None:
-            original = msg.body
+            # Merge the modified body into the original response shape instead
+            # of replacing the dict wholesale, so status/headers set by the
+            # adapter survive the round-trip.
+            if isinstance(msg.body, dict) and isinstance(original, dict):
+                orig_body = original.get("body")
+                if isinstance(orig_body, dict):
+                    merged = dict(orig_body)
+                    merged.update(msg.body)
+                    original = dict(original)
+                    original["body"] = merged
+                else:
+                    original = dict(original)
+                    original["body"] = msg.body
+            else:
+                original = msg.body
         if msg.modifications:
             original = dict(original)
             original["modifications"] = msg.modifications

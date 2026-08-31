@@ -78,7 +78,11 @@ class RawTCPServerPlugin(ProtocolServerPlugin):
         """Handle an incoming raw TCP connection."""
         peername = writer.get_extra_info("peername", ("unknown", 0))
         remote_ip = peername[0]
-        remote_port = peername[1]
+        # The remote (source) port is an ephemeral client port - protocol port
+        # sniffing must use the local listening port from ``sockname``.
+        local_port = int(
+            (writer.get_extra_info("sockname") or (None, 0))[1] or 0
+        )
         device_id = device_id_from_ip("raw", remote_ip)
 
         try:
@@ -102,13 +106,13 @@ class RawTCPServerPlugin(ProtocolServerPlugin):
                 collected.extend(chunk)
             data = bytes(collected)
 
-            proto, proto_name = self._detect_protocol(data, remote_port)
+            proto, proto_name = self._detect_protocol(data, local_port)
 
             request = InterceptedRequest(
                 device_id=device_id,
                 timestamp=datetime.now(UTC).timestamp(),
                 protocol=proto,
-                body={"raw": data.hex(), "length": len(data), "port": remote_port},
+                body={"raw": data.hex(), "length": len(data), "port": local_port},
             )
 
             if self.handler:

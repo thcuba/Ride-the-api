@@ -404,9 +404,10 @@ Response:
 
         # Use safe replacement to avoid issues with literal braces in JSON content
         prompt = profile.prompt_template
+        request_meta = getattr(pair.request, "metadata", {}) or {}
         replacements = {
             "{vendor}": pair.vendor,
-            "{device_type}": pair.request.metadata.get("device_type", "unknown"),
+            "{device_type}": request_meta.get("device_type", "unknown"),
             "{db_schema}": db_schema,
             "{recent_patterns}": json.dumps(recent_patterns, indent=2),
             "{pairs}": pairs_text,
@@ -451,8 +452,9 @@ Response:
         db_schema = self._get_db_schema(pair.vendor)
 
         # Get recent patterns for this vendor/device_type
+        request_meta = getattr(pair.request, "metadata", {}) or {}
         recent_patterns = self._get_recent_patterns(
-            pair.vendor, pair.request.metadata.get("device_type")
+            pair.vendor, request_meta.get("device_type")
         )
 
         # Build prompt

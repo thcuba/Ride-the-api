@@ -42,6 +42,10 @@ TLS_EXTENSION_SNI = 0x0000
 # Cache of valid HTTP status codes (from stdlib) for fast lookup
 _VALID_HTTP_STATUSES = {s.value for s in HTTPStatus}
 
+# Upper bound for a single decrypted HTTP request (headers + body). Prevents a
+# compromised device from exhausting memory via an unbounded request body.
+MAX_REQUEST_SIZE = 10 * 1024 * 1024  # 10 MiB
+
 def parse_decrypted_http_request(data: bytes) -> tuple[str, str, str, dict[str, str], bytes] | None:
     """Parse a complete HTTP/1.1 request using the h11 state machine.
 
@@ -319,9 +323,12 @@ class TLSMITMServer:
             await server.wait_closed()
         self._servers.clear()
 
-        for task in self._tasks:
+        tasks = self._tasks
+        self._tasks = []
+        for task in tasks:
             task.cancel()
-        self._tasks.clear()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
         logger.info("TLS MITM: stopped")
 
@@ -659,6 +666,13 @@ class TLSMITMServer:
                 chunk = ssl_obj.read(4096)
                 if chunk:
                     app_buffer.extend(chunk)
+                    if len(app_buffer) > MAX_REQUEST_SIZE:
+                        logger.warning(
+                            "TLS MITM: request from %s exceeds %d bytes - dropping",
+                            client_ip,
+                            MAX_REQUEST_SIZE,
+                        )
+                        break
             except ssl.SSLWantReadError:
                 # Need more encrypted data from the wire
                 try:

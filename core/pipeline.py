@@ -887,7 +887,10 @@ class LearningPipeline:
                 logger.debug("No patterns to export for %s", device_id)
                 return
 
-            patterns_dir = Path("patterns")
+            # Anchor the patterns base dir next to the device databases instead
+            # of the process CWD, so exporting works the same regardless of
+            # where the daemon was started from.
+            patterns_dir = self.db_manager.device_db_dir.parent / "patterns"
             patterns_dir.mkdir(parents=True, exist_ok=True)
 
             # Derive a filesystem-safe deterministic filename component from
@@ -1049,8 +1052,19 @@ class LearningPipeline:
                     )
                     session.add(pattern)
                     stats_obj.patterns_learned += 1
+                else:
+                    # The LLM may revise a pattern on a later flush: keep the
+                    # learned fields fresh instead of leaving the old row stale.
+                    pattern.method = method
+                    pattern.path_pattern = path
+                    pattern.protocol = pattern_data.get("protocol", "http")
+                    pattern.required_headers = pattern_data.get("required_headers", [])
+                    pattern.body_schema = pattern_data.get("body_schema", {})
+                    pattern.query_param_keys = pattern_data.get("query_param_keys", [])
+                    pattern.intent = intent
+                    pattern.confidence = pattern_data.get("confidence", 0.5)
 
-                # Create response template
+                # Create/update response template
                 resp_data = pattern_data.get("response", pattern_data.get("response_template", {}))
                 if resp_data:
                     template_id = f"tpl_{pattern_id}"
@@ -1071,6 +1085,13 @@ class LearningPipeline:
                         )
                         session.add(template)
                         stats_obj.templates_created += 1
+                    else:
+                        template.status_code = resp_data.get("status_code", 200)
+                        template.headers_template = resp_data.get("headers", {})
+                        template.body_template = resp_data.get("body", {})
+                        template.field_mappings = resp_data.get("field_mappings", {})
+                        template.expected_variables = resp_data.get("expected_variables", [])
+                        template.confidence = resp_data.get("confidence", 0.5)
 
                 # Save field mappings
                 mappings = pattern_data.get("field_mappings", {})
@@ -1235,6 +1256,9 @@ class LearningOrchestrator:
         next ``ensure_buffer`` creates stores honoring the active backend.
         """
         self.buffer.clear()
+        # The lazy LearningPipeline captured its ContextBuffer at construction;
+        # drop it too so a backend switch cannot keep writing to the stale store.
+        self.pipeline = None
 
     async def prune_stores(self) -> int:
         """Apply TTL/cap pruning to the persisted training store for every device.
