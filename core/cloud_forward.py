@@ -160,13 +160,13 @@ class CloudForwarder:
                         for k, v in event.headers
                     }
                 elif isinstance(event, h11.Data):
-                                    chunk = event.data
-                                    if len(resp_body) + len(chunk) > _MAX_RESPONSE_BODY:
-                                        raise CloudForwardError(
-                                            "response body from "
-                                            f"{hostname} exceeded {_MAX_RESPONSE_BODY} bytes"
-                                        )
-                                    resp_body.extend(chunk)
+                    chunk = event.data
+                    if len(resp_body) + len(chunk) > _MAX_RESPONSE_BODY:
+                        raise CloudForwardError(
+                            "response body from "
+                            f"{hostname} exceeded {_MAX_RESPONSE_BODY} bytes"
+                        )
+                    resp_body.extend(chunk)
                 elif isinstance(event, (h11.EndOfMessage, h11.ConnectionClosed)):
                     break
         except (TimeoutError, OSError):
