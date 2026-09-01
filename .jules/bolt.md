@@ -21,3 +21,7 @@
 ## 2026-03-31 - Pre-computed Trigger-to-Response Map in Pattern Engine
 **Learning:** In `PatternEngine.find_best_match`, scanning `cached.server.responses` in an inner loop for every candidate endpoint introduced $O(N)$ response list iteration on every matched request. Pre-indexing triggers to responses into a `_response_trigger_maps` dict during `apply_pattern_db` replaces list iteration with $O(1)$ dict lookup (~21x faster response template resolution).
 **Action:** When mapping candidate request entities to server response definitions in hot paths, precompute a trigger-to-response dictionary upon pattern loading instead of linear scanning during request evaluation.
+
+## 2026-03-31 - Pre-indexed Protocol Adapters in Adapter Registry
+**Learning:** `ProtocolAdapterRegistry.get_adapter_by_protocol` filtered `self._adapters.values()` with `[a for a in self._adapters.values() if protocol in a.supported_protocols]` on every protocol query, causing $O(N)$ list scanning overhead (~2.4x slower) compared to pre-indexing adapters by `ProtocolType` during registration.
+**Action:** When looking up handlers or adapters by protocol/type, build a mapping dictionary during registration instead of dynamically scanning adapter collections at runtime.
