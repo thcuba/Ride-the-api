@@ -209,12 +209,14 @@
   .tls-config .tc-slider::before { content: ''; position: absolute; height: 16px; width: 16px; left: 3px; bottom: 3px; background: var(--text); border-radius: 50%; transition: .3s; }
   .tls-config .tc-toggle input:checked + .tc-slider { background: var(--green); }
   .tls-config .tc-toggle input:checked + .tc-slider::before { transform: translateX(18px); }
+  .tls-config .tc-toggle input:focus-visible + .tc-slider { outline: 2px solid var(--accent); outline-offset: 2px; }
     .header-right .ram-toggle { position: relative; display: inline-block; width: 40px; height: 22px; }
     .header-right .ram-toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
     .header-right .ram-slider { position: absolute; cursor: pointer; inset: 0; background: var(--border); border-radius: 22px; transition: .3s; }
     .header-right .ram-slider::before { content: ''; position: absolute; height: 16px; width: 16px; left: 3px; bottom: 3px; background: var(--text); border-radius: 50%; transition: .3s; }
     .header-right .ram-toggle input:checked + .ram-slider { background: var(--accent); }
     .header-right .ram-toggle input:checked + .ram-slider::before { transform: translateX(18px); }
+    .header-right .ram-toggle input:focus-visible + .ram-slider { outline: 2px solid var(--accent); outline-offset: 2px; }
     .header-right .ram-label { font-size: 13px; color: var(--text-muted); display: flex; align-items: center; gap: 6px; cursor: pointer; }
     .header-right .ram-label span { white-space: nowrap; }
     @media (prefers-reduced-motion: reduce) {
@@ -635,7 +637,7 @@ async function loadDeviceStats(deviceId) {
                       <div style="display:flex;gap:6px;align-items:center;" id="buffer-actions-${escapeHtml(deviceId)}">
                         <span id="buf-count-${escapeHtml(deviceId)}" style="font-size:11px;color:var(--text2);">0 entries</span>
                         <label style="font-size:11px;color:var(--text2);display:flex;align-items:center;gap:4px;cursor:pointer;">
-                          <input type="checkbox" id="select-all-buf-${escapeHtml(deviceId)}" onchange="toggleSelectAll('${escapeJs(deviceId)}')"> All
+                          <input type="checkbox" id="select-all-buf-${escapeHtml(deviceId)}" aria-label="Select all buffer entries" onchange="toggleSelectAll('${escapeJs(deviceId)}')"> All
                         </label>
                       </div>
                     </div>
@@ -1045,6 +1047,9 @@ async function previewAnalysis(deviceId) {
     return;
   }
   const notes = (document.getElementById('context-notes-' + deviceId) || {}).value || '';
+  const btn = document.getElementById('preview-btn-' + deviceId);
+  const origText = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Analyzing...'; }
   showToast('Running LLM analysis...', 'info');
   try {
     const res = await fetch(`/api/devices/${deviceId}/llm/preview`, {
@@ -1062,6 +1067,9 @@ async function previewAnalysis(deviceId) {
     if (ta) ta.value = JSON.stringify(data.analysis || data, null, 2);
     showToast('Preview ready — review and commit or discard', 'success');
   } catch(e) { showToast('Analysis failed: ' + e.message, 'error'); }
+  finally {
+    if (btn) { btn.disabled = false; btn.textContent = origText; }
+  }
 }
 
 function discardPreview(deviceId) {
@@ -1072,6 +1080,10 @@ function discardPreview(deviceId) {
 async function commitPatterns(deviceId) {
   const pairIds = getSelectedPairIds(deviceId);
   const notes = (document.getElementById('context-notes-' + deviceId) || {}).value || '';
+  const box = document.getElementById('analysis-box-' + deviceId);
+  const btn = box ? box.querySelector('button.btn-primary') : null;
+  const origText = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Committing...'; }
   showToast('Saving patterns...', 'info');
   try {
     const res = await fetch(`/api/devices/${deviceId}/llm/flush`, {
@@ -1089,6 +1101,9 @@ async function commitPatterns(deviceId) {
     updateSelectedCount(deviceId);
     loadDevices();
   } catch(e) { showToast('Failed to commit: ' + e.message, 'error'); }
+  finally {
+    if (btn) { btn.disabled = false; btn.textContent = origText; }
+  }
 }
 
 async function sendToLLM(deviceId) {
@@ -1099,6 +1114,9 @@ async function sendToLLM(deviceId) {
     return;
   }
   if (!confirm('Send ' + pairIds.length + ' selected entries to LLM for decoding?')) return;
+  const btn = document.getElementById('send-btn-' + deviceId);
+  const origText = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending...'; }
   showToast('Sending to LLM...', 'info');
   try {
     const res = await fetch(`/api/devices/${deviceId}/llm/flush`, {
@@ -1115,6 +1133,9 @@ async function sendToLLM(deviceId) {
     updateSelectedCount(deviceId);
     loadDevices();
   } catch(e) { showToast('LLM processing failed: ' + e.message, 'error'); }
+  finally {
+    if (btn) { btn.disabled = false; btn.textContent = origText; }
+  }
 }
   </script>
   </body>
