@@ -22,7 +22,8 @@
   .container { max-width:1100px; margin:0 auto; }
   .cards { display:grid; gap:12px; }
   .pattern-card { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:14px; }
-  .pc-header { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+  .pc-header { display:flex; justify-content:space-between; align-items:center; gap:12px; cursor:pointer; }
+  .pc-header:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
   .pc-title { font-weight:700; font-size:14px; color:var(--accent); }
   .badge { padding:4px 8px; border-radius:10px; font-weight:700; font-size:12px; }
   .badge-low { background:rgba(96,165,250,.08); color:var(--blue); border:1px solid rgba(96,165,250,.16); }
@@ -89,8 +90,9 @@
     cardsEl.innerHTML='';
     if(!list.length){ cardsEl.innerHTML = '<div class="empty">No patterns found</div>'; return; }
     list.forEach(p=>{
-      const card = el('div',{class:'pattern-card',tabindex:0});
-      const header = el('div',{class:'pc-header'});
+      const card = el('div',{class:'pattern-card'});
+      const bodyId = `pc-body-${p.pattern_id}`;
+      const header = el('div',{class:'pc-header',tabindex:0,role:'button','aria-expanded':'false','aria-controls':bodyId});
       const title = el('div',{class:'pc-title'},`${p.method} ${p.path} — ${p.intent || ''}`);
       const right = el('div',{},[]);
       const badge = el('span',{class:'badge badge-low'}, (p.confidence||0).toFixed(2));
@@ -99,7 +101,7 @@
       header.appendChild(title); header.appendChild(right);
       card.appendChild(header);
 
-      const body = el('div',{class:'pc-body'});
+      const body = el('div',{class:'pc-body',id:bodyId});
       // Build form fields
       const form = el('div',{});
       form.appendChild(fieldRow('Method', methodInput(p.method)));
@@ -120,11 +122,13 @@
       const fmContainer = el('div',{class:'fm-list'});
       const fmHeader = el('div',{},[]);
       fmHeader.appendChild(el('strong',{},'Field mappings'));
-      fmHeader.appendChild(el('button',{class:'btn btn-ghost',style:'margin-left:8px;'},'Add mapping'));
+      const addMappingBtn = el('button',{class:'btn btn-ghost',type:'button',style:'margin-left:8px;','aria-label':'Add field mapping'},'Add mapping');
+      fmHeader.appendChild(addMappingBtn);
       fmContainer.appendChild(fmHeader);
       const fms = (tpl.field_mappings && Array.isArray(tpl.field_mappings) ? tpl.field_mappings : []);
       const fmItems = el('div',{});
       fms.forEach(m=> fmItems.appendChild(mappingItem(m)));
+      addMappingBtn.addEventListener('click', ()=> fmItems.appendChild(mappingItem({})));
       fmContainer.appendChild(fmItems);
       form.appendChild(fmContainer);
 
@@ -139,9 +143,13 @@
       card.appendChild(body);
 
       // Toggle expand
-      header.addEventListener('click', ()=>{ body.style.display = body.style.display === 'none' ? 'block' : 'none'; });
-      // Keyboard accessible
-      card.addEventListener('keydown', (e)=>{ if(e.key==='Enter' || e.key===' ') { e.preventDefault(); header.click(); } });
+      const toggleExpand = ()=>{
+        const isHidden = getComputedStyle(body).display === 'none';
+        body.style.display = isHidden ? 'block' : 'none';
+        header.setAttribute('aria-expanded', isHidden ? 'true' : 'false');
+      };
+      header.addEventListener('click', toggleExpand);
+      header.addEventListener('keydown', (e)=>{ if(e.key==='Enter' || e.key===' ') { e.preventDefault(); toggleExpand(); } });
 
       // Save handler
       saveBtn.addEventListener('click', async ()=>{
@@ -177,8 +185,10 @@
 
   function tagInput(name, items){ const wrap = document.createElement('div'); wrap.className='tags'; wrap.dataset.name = name; items = Array.isArray(items)?items.slice():[];
       const input = document.createElement('input'); input.type='text'; input.placeholder='Add...';
-      function render(){ wrap.innerHTML=''; items.forEach((it,idx)=>{ const t = el('span',{class:'tag'}, [it, el('button',{},'×')]); t.querySelector('button').addEventListener('click', ()=>{ items.splice(idx,1); render(); }); wrap.appendChild(t); }); wrap.appendChild(input); }
-      input.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); const v = input.value.trim(); if(v){ items.push(v); input.value=''; render(); } } }); render(); return wrap; }
+      function render(){ wrap.innerHTML=''; items.forEach((it,idx)=>{ const t = el('span',{class:'tag'}, [it, el('button',{type:'button','aria-label':`Remove ${it}`},'×')]); t.querySelector('button').addEventListener('click', ()=>{ items.splice(idx,1); render(); }); wrap.appendChild(t); }); wrap.appendChild(input); }
+      input.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); const v = input.value.trim(); if(v){ items.push(v); input.value=''; render(); } } });
+      wrap.getValue = () => items.slice();
+      render(); return wrap; }
 
   function mappingItem(m){ const div = el('div',{class:'fm-item'});
     const src = inputText('request_field', m.request_field||''); const dst = inputText('response_field', m.response_field||''); const tr = el('select',{},[]); ['none','copy','transform','enum'].forEach(opt=>{ const o=document.createElement('option'); o.value=opt; o.textContent=opt; if(opt=== (m.transform||'none')) o.selected=true; tr.appendChild(o); });
