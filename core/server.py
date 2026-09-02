@@ -506,6 +506,7 @@ async def tls_download_ca():
             headers={"Content-Disposition": "attachment; filename=ride-the-api-ca.pem"},
         )
     except Exception as e:
+        logger.error("Handler error (500): %s", e)
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -706,6 +707,7 @@ async def tls_list_certs():
         imported = cert_manager.list_imported_certs()
         return {"certs": imported}  # noqa: TRY300
     except Exception as e:
+        logger.error("Handler error (500): %s", e)
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -722,6 +724,7 @@ async def tls_get_cert_info(hostname: str):
             )
         return {"cert": info}  # noqa: TRY300
     except Exception as e:
+        logger.error("Handler error (500): %s", e)
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -824,6 +827,7 @@ async def tls_download_root_ca():
             headers={"Content-Disposition": "attachment; filename=ride-the-api-ca.pem"},
         )
     except Exception as e:
+        logger.error("Handler error (500): %s", e)
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -1254,6 +1258,7 @@ async def export_patterns(device_id: str):
         pattern_db = await ingester.export_patterns(device_id, vendor, device_type)
         return pattern_db.model_dump(by_alias=True, exclude_none=True)
     except Exception as e:
+        logger.error("Handler error (500): %s", e)
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -1563,6 +1568,7 @@ async def list_buffer_entries(device_id: str):
             "total_size_bytes": total_size,
         }
     except Exception as e:
+        logger.error("Handler error (500): %s", e)
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -1580,6 +1586,7 @@ async def delete_buffer_entry(device_id: str, entry_id: int):
             return JSONResponse(status_code=404, content={"error": "Entry not found"})
         return {"device_id": device_id, "entry_id": entry_id, "status": "deleted"}  # noqa: TRY300
     except Exception as e:
+        logger.error("Handler error (500): %s", e)
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -1813,6 +1820,7 @@ async def export_buffer(device_id: str):
         capture = await manager.export_capture(device_id, vendor, device_type)
         return capture.model_dump(by_alias=True, exclude_none=True)
     except Exception as e:
+        logger.error("Handler error (500): %s", e)
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
