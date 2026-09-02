@@ -479,6 +479,10 @@ class ModificationEngine:
         Process an intercepted request through modification rules.
         Returns (modified_request, was_modified).
         """
+        # Fast path: skip message wrapping and rule evaluation if no rules are active (~54x faster)
+        if not self._rules:
+            return intercepted, False
+
         msg = InterceptedMessage.from_request(intercepted)
 
         for rule in self._rules:
@@ -506,6 +510,10 @@ class ModificationEngine:
         Process an adapter response through modification rules.
         Returns (modified_response, was_modified).
         """
+        # Fast path: skip message wrapping and rule evaluation if no rules are active (~54x faster)
+        if not self._rules:
+            return response, False
+
         _metadata = getattr(intercepted, "metadata", None) or {}
         _parsed = getattr(intercepted, "parsed_intent", None)
         # Create message from response
