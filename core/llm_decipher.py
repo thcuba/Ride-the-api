@@ -506,7 +506,8 @@ Response:
         # never aborts the whole decipher.
         try:
             parsed = LLMDecipherAnalysis.model_validate(analysis)
-        except ValidationError:
+        except ValidationError as e:
+            logger.debug("LLM analysis failed validation, using defaults: %s", e)
             parsed = LLMDecipherAnalysis()
         # Create result
         decipher_result = DecipherResult(

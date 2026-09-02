@@ -478,6 +478,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# FastAPI does not map JSONDecodeError from unguarded
+# ``await request.json()`` calls to a client error. Without this handler any
+# API route that reads a malformed JSON body would surface an unhandled 500.
+# Register a dedicated handler so a malformed body yields a clean 400.
+@app.exception_handler(json.JSONDecodeError)
+async def _json_decode_error_handler(request: Request, exc: json.JSONDecodeError) -> JSONResponse:
+    """Return a client-friendly 400 for malformed JSON payloads."""
+    del request, exc
+    return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
+
+
 # ── TLS API Routes ───────────────────────────────────────────────────────────
 
 
@@ -494,6 +506,7 @@ async def tls_download_ca():
             headers={"Content-Disposition": "attachment; filename=ride-the-api-ca.pem"},
         )
     except Exception as e:
+        logger.error("Handler error (500): %s", e)
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -694,6 +707,7 @@ async def tls_list_certs():
         imported = cert_manager.list_imported_certs()
         return {"certs": imported}  # noqa: TRY300
     except Exception as e:
+        logger.error("Handler error (500): %s", e)
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -710,6 +724,7 @@ async def tls_get_cert_info(hostname: str):
             )
         return {"cert": info}  # noqa: TRY300
     except Exception as e:
+        logger.error("Handler error (500): %s", e)
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -812,6 +827,7 @@ async def tls_download_root_ca():
             headers={"Content-Disposition": "attachment; filename=ride-the-api-ca.pem"},
         )
     except Exception as e:
+        logger.error("Handler error (500): %s", e)
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -946,6 +962,10 @@ async def set_device_mode(device_id: str, request: Request):
     if not db_manager:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
     body = await request.json()
+    if not isinstance(body, dict):
+        return JSONResponse(
+            status_code=400, content={"error": "Invalid JSON body: expected an object"}
+        )
     mode = body.get("mode", "learning")
     if mode not in ("learning", "production", "hybrid"):
         return JSONResponse(
@@ -979,6 +999,10 @@ async def set_device_auto_switch(device_id: str, request: Request):
     if not db_manager:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
     body = await request.json()
+    if not isinstance(body, dict):
+        return JSONResponse(
+            status_code=400, content={"error": "Invalid JSON body: expected an object"}
+        )
     enabled = body.get("enabled", False)
     if not isinstance(enabled, bool):
         return JSONResponse(status_code=400, content={"error": "'enabled' must be a boolean"})
@@ -994,6 +1018,10 @@ async def configure_device_llm(device_id: str, request: Request):
     if not db_manager:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
     body = await request.json()
+    if not isinstance(body, dict):
+        return JSONResponse(
+            status_code=400, content={"error": "Invalid JSON body: expected an object"}
+        )
     success = await db_manager.update_device_llm_config(
         device_id,
         base_url=body.get("base_url"),
@@ -1016,6 +1044,10 @@ async def assign_device_database(device_id: str, request: Request):
     if not db_manager:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
     body = await request.json()
+    if not isinstance(body, dict):
+        return JSONResponse(
+            status_code=400, content={"error": "Invalid JSON body: expected an object"}
+        )
     database_url = body.get("database_url")
     database_name = body.get("database_name")
 
@@ -1107,6 +1139,10 @@ async def update_device_connection(device_id: str, request: Request):
     if not db_manager:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
     body = await request.json()
+    if not isinstance(body, dict):
+        return JSONResponse(
+            status_code=400, content={"error": "Invalid JSON body: expected an object"}
+        )
     raw = str(body.get("connection", "auto")).lower()
     try:
         connection = ConnectionType(raw)
@@ -1133,6 +1169,10 @@ async def register_device_ip(device_id: str, request: Request):
     if not db_manager:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
     body = await request.json()
+    if not isinstance(body, dict):
+        return JSONResponse(
+            status_code=400, content={"error": "Invalid JSON body: expected an object"}
+        )
     ip_address = body.get("ip_address")
     if not ip_address:
         return JSONResponse(status_code=400, content={"error": "Provide 'ip_address'"})
@@ -1218,6 +1258,7 @@ async def export_patterns(device_id: str):
         pattern_db = await ingester.export_patterns(device_id, vendor, device_type)
         return pattern_db.model_dump(by_alias=True, exclude_none=True)
     except Exception as e:
+        logger.error("Handler error (500): %s", e)
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -1527,6 +1568,7 @@ async def list_buffer_entries(device_id: str):
             "total_size_bytes": total_size,
         }
     except Exception as e:
+        logger.error("Handler error (500): %s", e)
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -1544,6 +1586,7 @@ async def delete_buffer_entry(device_id: str, entry_id: int):
             return JSONResponse(status_code=404, content={"error": "Entry not found"})
         return {"device_id": device_id, "entry_id": entry_id, "status": "deleted"}  # noqa: TRY300
     except Exception as e:
+        logger.error("Handler error (500): %s", e)
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -1558,8 +1601,12 @@ async def set_buffer_backend_setting(request: Request):
     """Switch the runtime buffer backend (disk | memory) and persist it."""
     try:
         body = await request.json()
-    except Exception:
+    except (json.JSONDecodeError, UnicodeDecodeError):
         return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
+    if not isinstance(body, dict):
+        return JSONResponse(
+            status_code=400, content={"error": "Invalid JSON body: expected an object"}
+        )
     backend = body.get("backend")
     if backend not in ("disk", "memory"):
         return JSONResponse(
@@ -1589,6 +1636,10 @@ async def update_device_context(device_id: str, request: Request):
     if not db_manager:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
     body = await request.json()
+    if not isinstance(body, dict):
+        return JSONResponse(
+            status_code=400, content={"error": "Invalid JSON body: expected an object"}
+        )
     notes = body.get("context_notes", "")
     success = await db_manager.update_device_context_notes(device_id, notes)
     if not success:
@@ -1602,6 +1653,10 @@ async def flush_buffer_to_llm(device_id: str, request: Request):
     if not db_manager or not orchestrator:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
     body = await request.json()
+    if not isinstance(body, dict):
+        return JSONResponse(
+            status_code=400, content={"error": "Invalid JSON body: expected an object"}
+        )
     pair_ids = body.get("pair_ids")  # optional: list of int entry IDs
     context_notes = body.get("context_notes")
     result = await orchestrator.flush_and_learn(
@@ -1621,6 +1676,10 @@ async def preview_llm_analysis(device_id: str, request: Request):
     if not db_manager or not orchestrator:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
     body = await request.json()
+    if not isinstance(body, dict):
+        return JSONResponse(
+            status_code=400, content={"error": "Invalid JSON body: expected an object"}
+        )
     pair_ids = body.get("pair_ids")
     context_notes = body.get("context_notes")
     result = await orchestrator.preview_analysis(
@@ -1654,6 +1713,10 @@ async def create_user_profile(request: Request):
     if not db_manager:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
     body = await request.json()
+    if not isinstance(body, dict):
+        return JSONResponse(
+            status_code=400, content={"error": "Invalid JSON body: expected an object"}
+        )
     if not body.get("name") or not body.get("prompt_template"):
         return JSONResponse(
             status_code=400,
@@ -1685,6 +1748,10 @@ async def update_user_profile(name: str, request: Request):
     if not db_manager:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
     body = await request.json()
+    if not isinstance(body, dict):
+        return JSONResponse(
+            status_code=400, content={"error": "Invalid JSON body: expected an object"}
+        )
     success = await db_manager.update_llm_profile(name, body)
     if not success:
         return JSONResponse(status_code=404, content={"error": "Profile not found"})
@@ -1753,6 +1820,7 @@ async def export_buffer(device_id: str):
         capture = await manager.export_capture(device_id, vendor, device_type)
         return capture.model_dump(by_alias=True, exclude_none=True)
     except Exception as e:
+        logger.error("Handler error (500): %s", e)
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -2038,8 +2106,11 @@ async def _get_request_body(request: Request) -> dict | None:
         body = await request.body()
         if body:
             return json.loads(body)
-    except Exception:
-        pass
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        # Non-JSON request bodies (XML, raw bytes, empty) are legitimate
+        # device payloads; log at debug instead of failing the request.
+        logger.debug("Request body is not JSON: %s", e)
+        return None
     return None
 
 

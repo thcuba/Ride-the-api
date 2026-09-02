@@ -510,7 +510,8 @@ class LearningPipeline:
             cfg = get_config()
             ttl_hours = cfg.correlation.pair_ttl_hours
             return timedelta(hours=max(ttl_hours, 1))
-        except Exception:
+        except Exception as e:  # pragma: no cover - config read is best-effort
+            logger.debug("Correlation config unavailable, using 7-day TTL: %s", e)
             return timedelta(days=7)
 
     async def register_request(  # noqa: PLR0913
