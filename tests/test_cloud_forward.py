@@ -12,12 +12,19 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+import core.cloud_forward as cf
 from adapters.base import CommandResult, InterceptedRequest, ProtocolType
 from core.cloud_forward import (
     CloudForwarder,
     CloudForwardError,
+    _get_default_ssl_context,
     forward_intercepted,
 )
+
+
+def _reset_default_ssl_context() -> None:
+    """Reset the process-wide cached default SSL context for test isolation."""
+    cf._DEFAULT_SSL_CONTEXT = None  # noqa: SLF001
 
 
 def _request(**kw) -> InterceptedRequest:
@@ -136,6 +143,76 @@ async def test_forward_connection_refused():
             path="/",
             use_tls=False,
         )
+
+
+def test_default_ssl_context_is_cached_and_shared():
+    """The process-wide default SSL context is built once and reused.
+
+    ``ssl.create_default_context()`` parses the system CA bundle, which is
+    comparatively expensive and immutable after creation, so it should only be
+    constructed a single time per process and shared across all outbound TLS
+    forwards instead of on every forward.
+    """
+    _reset_default_ssl_context()
+    try:
+        with patch("core.cloud_forward.ssl.create_default_context") as mock_create:
+            first = _get_default_ssl_context()
+            second = _get_default_ssl_context()
+        # Both call sites resolve to the same cached object...
+        assert first is second
+        # ...and the underlying (expensive) context construction ran exactly once.
+        assert mock_create.call_count == 1
+    finally:
+        _reset_default_ssl_context()
+
+
+@pytest.mark.asyncio
+async def test_forward_uses_cached_default_context():
+    """A TLS forward without an explicit context reuses the cached default.
+
+    The context selection happens before ``asyncio.open_connection``, so we
+    capture the ``ssl`` argument passed to the (mocked) connection opener and
+    verify it is the process-wide cached context rather than a freshly built
+    ``ssl.create_default_context()``.
+    """
+    _reset_default_ssl_context()
+    try:
+        captured: dict = {}
+        cached_ctx = object()
+
+        async def _fake_open_connection(*, ssl=None, server_hostname=None, **_):
+            captured["ssl"] = ssl
+            captured["server_hostname"] = server_hostname
+            raise CloudForwardError("intentional connect failure")
+
+        forwarder = CloudForwarder(connect_timeout=2)
+        with (
+            patch(
+                "core.cloud_forward.asyncio.open_connection",
+                side_effect=_fake_open_connection,
+            ),
+            patch(
+                "core.cloud_forward._get_default_ssl_context",
+                return_value=cached_ctx,
+            ) as mock_get,
+            pytest.raises(CloudForwardError),
+        ):
+            await forwarder.forward(
+                hostname="cloud.example.com",
+                ip="127.0.0.1",
+                port=443,
+                method="GET",
+                path="/",
+                use_tls=True,
+            )
+
+        # The opener received the cached default context, not a fresh one.
+        assert captured["ssl"] is cached_ctx
+        assert captured["server_hostname"] == "cloud.example.com"
+        # The forward resolved its TLS context through the cache helper.
+        mock_get.assert_called_once()
+    finally:
+        _reset_default_ssl_context()
 
 
 # --------------------

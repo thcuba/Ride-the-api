@@ -43,6 +43,21 @@ _DEFAULT_CONNECT_TIMEOUT: float = 3.0
 _READ_CHUNK = 65536
 _MAX_RESPONSE_BODY = 5 * 1024 * 1024  # 5 MiB cap on forwarded response body
 
+# A process-wide default TLS context, built lazily and reused for every
+# outbound forward. ``ssl.create_default_context()`` loads and parses the
+# system CA bundle, which is comparatively expensive and immutable after
+# creation, so it is safe (and much cheaper) to build it once and share it
+# across all outbound TLS connections instead of on every forward.
+_DEFAULT_SSL_CONTEXT: ssl.SSLContext | None = None
+
+
+def _get_default_ssl_context() -> ssl.SSLContext:
+    """Return the process-wide default SSL context, building it on first use."""
+    global _DEFAULT_SSL_CONTEXT  # noqa: PLW0603
+    if _DEFAULT_SSL_CONTEXT is None:
+        _DEFAULT_SSL_CONTEXT = ssl.create_default_context()
+    return _DEFAULT_SSL_CONTEXT
+
 
 class CloudForwardError(Exception):
     """Raised when the upstream host could not be reached."""
@@ -113,7 +128,7 @@ class CloudForwarder:
             tls_obj = (
                 ssl_context
                 if isinstance(ssl_context, ssl.SSLContext)
-                else ssl.create_default_context()
+                else _get_default_ssl_context()
             )
 
         try:
