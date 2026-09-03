@@ -176,6 +176,12 @@ class InterceptedRequest:
     parsed_params: dict[str, Any] = field(default_factory=dict)
 
 
+# Pre-computed lookup tuples for fast O(1) membership checks per request inspection
+_FW_PATHS: tuple[str, ...] = ("/fota", "/firmware", "/ota", "/update", "/upgrade")
+_FW_TOPICS: tuple[str, ...] = ("fota", "firmware", "ota")
+_AUTH_PATHS: tuple[str, ...] = ("/auth", "/login", "/token", "/oauth", "/session")
+
+
 class ProtocolAdapter(abc.ABC):
     """Abstract base class for vendor protocol adapters."""
 
@@ -261,18 +267,21 @@ class ProtocolAdapter(abc.ABC):
 
     def is_firmware_request(self, request: InterceptedRequest) -> bool:
         """Check if request is firmware update related. Default implementation."""
-        fw_paths = ["/fota", "/firmware", "/ota", "/update", "/upgrade"]
         if request.path:
-            return any(p in request.path.lower() for p in fw_paths)
+            path_lower = request.path.lower()
+            if any(p in path_lower for p in _FW_PATHS):
+                return True
         if request.topic:
-            return any(p in request.topic.lower() for p in ["fota", "firmware", "ota"])
+            topic_lower = request.topic.lower()
+            if any(p in topic_lower for p in _FW_TOPICS):
+                return True
         return False
 
     def is_auth_request(self, request: InterceptedRequest) -> bool:
         """Check if request is authentication related. Default implementation."""
-        auth_paths = ["/auth", "/login", "/token", "/oauth", "/session"]
         if request.path:
-            return any(p in request.path.lower() for p in auth_paths)
+            path_lower = request.path.lower()
+            return any(p in path_lower for p in _AUTH_PATHS)
         return False
 
 

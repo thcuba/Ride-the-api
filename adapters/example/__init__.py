@@ -28,6 +28,9 @@ from core.cloud_forward import forward_intercepted
 
 logger = logging.getLogger(__name__)
 
+# Pre-compiled regex for fast device ID extraction from request path
+_RE_DEVICE_PATH = re.compile(r"/devices/([^/]+)")
+
 
 class ExampleProtocolAdapter(ProtocolAdapter):
     """Example protocol adapter for HVAC devices — reference implementation."""
@@ -177,7 +180,7 @@ class ExampleProtocolAdapter(ProtocolAdapter):
         # POST /v1.0/devices/{device_id}/firmware/upgrade   - Firmware upgrade
 
         # Extract device_id from path
-        match = re.search(r"/devices/([^/]+)", request.path)
+        match = _RE_DEVICE_PATH.search(request.path)
         if match:
             request.device_id = match.group(1)
 
