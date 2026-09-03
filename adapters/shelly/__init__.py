@@ -101,10 +101,11 @@ class ShellyProtocolAdapter(ProtocolAdapter):
             return request
 
         # Gen1 relay/switch control: /relay/0?turn=on
-        if "turn=on" in path.lower():
+        path_lower = path.lower()
+        if "turn=on" in path_lower:
             request.parsed_intent = CommandType.TURN_ON
             return request
-        if "turn=off" in path.lower():
+        if "turn=off" in path_lower:
             request.parsed_intent = CommandType.TURN_OFF
             return request
 

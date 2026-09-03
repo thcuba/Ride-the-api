@@ -29,3 +29,7 @@
 ## 2026-03-31 - Early Return Fast-Path for Unconfigured Rule Engines
 **Learning:** In `ModificationEngine.process_request` and `process_response`, constructing `InterceptedMessage` instances, lowercasing header keys, and converting message records on every request/response when no modification rules are active added ~4.5us of unnecessary overhead per request. An early check `if not self._rules:` returns immediately (~35x faster processing for unconfigured rule engines).
 **Action:** When an engine/middleware processes traffic through a dynamic rule pipeline, check if the rule list is empty first to bypass object preparation and loop overhead in the default/unconfigured state.
+
+## 2026-03-31 - Pre-computed Tuples and Regex for Adapter Request Inspection Hot Paths
+**Learning:** In `ProtocolAdapter.is_firmware_request`, `is_auth_request`, and HTTP request parsing methods, allocating inline `list` literals (e.g. `["/fota", ...]`) or calling `re.search` with raw regex strings on every incoming request introduced unnecessary heap allocation and regex compilation overhead (~1.47x slower per inspection call).
+**Action:** Define immutable module-level tuples (e.g. `_FW_PATHS`) and pre-compiled regex objects (`_RE_DEVICE_PATH = re.compile(...)`) for path/topic keywords and route patterns checked in request-inspection hot paths.
