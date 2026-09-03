@@ -15,7 +15,7 @@ Write-Host "==> Installing package + PyInstaller"
 & ".venv\Scripts\python.exe" -m pip install -e . "pyinstaller>=6.0"
 
 Write-Host "==> Running PyInstaller (onedir)"
-& ".venv\Scripts\python.exe" -m PyInstaller --noconfirm --clean packaging\windows\rta.spec
+& ".venv\Scripts\python.exe" -m PyInstaller --noconfirm --clean packaging\rta.spec
 
 if ($LASTEXITCODE -ne 0) {
     Write-Error "PyInstaller failed with exit code $LASTEXITCODE"
