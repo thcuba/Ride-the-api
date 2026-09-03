@@ -184,15 +184,17 @@
   function methodInput(val){ const s=document.createElement('select'); ['GET','POST','PUT','PATCH','DELETE'].forEach(m=>{ const o=document.createElement('option'); o.value=m; o.textContent=m; if(m===val) o.selected=true; s.appendChild(o); }); s.name='method'; return s; }
 
   function tagInput(name, items){ const wrap = document.createElement('div'); wrap.className='tags'; wrap.dataset.name = name; items = Array.isArray(items)?items.slice():[];
-      const input = document.createElement('input'); input.type='text'; input.placeholder='Add...';
+      const input = document.createElement('input'); input.type='text'; input.placeholder='Add...'; input.setAttribute('aria-label', `Add ${name.replace(/_/g, ' ')}`);
       function render(){ wrap.innerHTML=''; items.forEach((it,idx)=>{ const t = el('span',{class:'tag'}, [it, el('button',{type:'button','aria-label':`Remove ${it}`},'×')]); t.querySelector('button').addEventListener('click', ()=>{ items.splice(idx,1); render(); }); wrap.appendChild(t); }); wrap.appendChild(input); }
       input.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); const v = input.value.trim(); if(v){ items.push(v); input.value=''; render(); } } });
       wrap.getValue = () => items.slice();
       render(); return wrap; }
 
   function mappingItem(m){ const div = el('div',{class:'fm-item'});
-    const src = inputText('request_field', m.request_field||''); const dst = inputText('response_field', m.response_field||''); const tr = el('select',{},[]); ['none','copy','transform','enum'].forEach(opt=>{ const o=document.createElement('option'); o.value=opt; o.textContent=opt; if(opt=== (m.transform||'none')) o.selected=true; tr.appendChild(o); });
-    const rem = el('button',{class:'btn btn-ghost'},'Remove'); rem.addEventListener('click', ()=> div.remove()); div.appendChild(src); div.appendChild(dst); div.appendChild(tr); div.appendChild(rem); return div; }
+    const src = inputText('request_field', m.request_field||''); src.placeholder = 'Request field (e.g. body.state)'; src.setAttribute('aria-label', 'Request field');
+    const dst = inputText('response_field', m.response_field||''); dst.placeholder = 'Response field (e.g. state.on)'; dst.setAttribute('aria-label', 'Response field');
+    const tr = el('select',{'aria-label':'Transform mode'},[]); ['none','copy','transform','enum'].forEach(opt=>{ const o=document.createElement('option'); o.value=opt; o.textContent=opt; if(opt=== (m.transform||'none')) o.selected=true; tr.appendChild(o); });
+    const rem = el('button',{class:'btn btn-ghost',type:'button','aria-label':'Remove field mapping'},'Remove'); rem.addEventListener('click', ()=> div.remove()); div.appendChild(src); div.appendChild(dst); div.appendChild(tr); div.appendChild(rem); return div; }
 
   function collectPayload(form){ const payload = {};
       const methodEl = form.querySelector('select[name=method]'); if(methodEl) payload.method = methodEl.value;
