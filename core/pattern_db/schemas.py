@@ -8,6 +8,7 @@ patterns between users and across different hardware.
 from __future__ import annotations
 
 from datetime import datetime  # noqa: TC003
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -269,4 +270,156 @@ class DeviceMeta(BaseModel):
     connection_mode: str = "auto"  # auto | tls | http | mqtt | coap | modbus
     detected_at: datetime | None = None
     source: str = "llm"  # llm | config_override
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# DEVICE MODEL — v2 portable knowledge of a device (schema_url pattern-schema/v2)
+#
+# These models are ADDITIVE: they reuse the existing building blocks
+# (PatternMeta, AuthConfig, StateVariable, VirtualSensor, FieldMapping,
+# ServerResponse) instead of redefining them, so v1 .ride-pattern.json data
+# keeps parsing unchanged. They add the pieces the current model lacks:
+#   * Observation — a generic uni-directional traffic event (request,
+#     response, MQTT publish, event, Modbus frame, telemetry…) that no longer
+#     assumes a request/response pair.
+#   * ProtocolInfo — the identification result produced by the first LLM flush
+#     in mode="auto": transport, protocol, security, standard/proprietary,
+#     suggested handler and confidence.
+#   * DeviceModel — the root portable record ("what is this device and how
+#     does it behave") intended to become the new .ride-pattern.json; it is
+#     sufficient to clone a device on another installation without re-learning.
+#
+# Observation and DeviceModel are exactly the two concepts proposed: raw
+# traffic observations stay out of the model (.ride-capture.json) and only the
+# learned knowledge is exported as a DeviceModel (.ride-pattern.json v2).
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class ObservationKind(StrEnum):
+    """Direction/semantics of a raw traffic observation.
+
+    Intentionally broader than a request/response pair: MQTT publish, events,
+    WebSocket messages, Modbus frames, telemetry and last-will are all
+    uni-directional and should not be forced into a ``CorrelatedPair``.
+    """
+
+    REQUEST = "request"
+    RESPONSE = "response"
+    EVENT = "event"
+    PUBLISH = "publish"
+    SUBSCRIBE = "subscribe"
+    FRAME = "frame"
+    TELEMETRY = "telemetry"
+    WILL = "will"
+    KEEPALIVE = "keepalive"
+
+
+class TransportMeta(BaseModel):
+    """Transport/connection details of a raw observation (protocol-agnostic).
+
+    Fields that don't apply to a protocol are simply left as their default, so
+    the same model carries HTTP, MQTT, CoAP, Modbus and WebSocket metadata.
+    """
+
+    port: int = 0
+    tls: bool = False  # TLS/DTLS encrypted
+    topic: str = ""  # MQTT / CoAP observe
+    qos: int | None = None  # MQTT
+    retain: bool | None = None  # MQTT
+    func_code: int | None = None  # Modbus
+    reg_address: int | None = None  # Modbus (Coils / Holding Registers)
+
+
+class Observation(BaseModel):
+    """A single raw, uni-directional traffic observation captured from a device.
+
+    This is the buffer/raw-capture unit that generalises :class:`CorrelatedPair`
+    without assuming a request/response shape. It is the payload of
+    ``.ride-capture.json`` and the input to the LLM on flush. It is NOT part of
+    the learned ``DeviceModel``.
+    """
+
+    id: str
+    device_id: str
+    timestamp: datetime
+    protocol: str = "http"
+    kind: ObservationKind = ObservationKind.REQUEST
+    transport: TransportMeta = Field(default_factory=TransportMeta)
+    content: Any = None
+    in_reply_to: str | None = None  # id of the observation this correlates with (optional)
+    confidence: float = 0.0  # correlation/processing confidence
+
+
+class ProtocolInfo(BaseModel):
+    """Identification result of the first LLM flush in ``mode="auto"``.
+
+    Carries everything the LLM can determine at first contact: the protocol
+    and how it should be handled. ``proprietary`` flags protocols that are NOT
+    a known standard (Modbus/MQTT/CoAP/HTTP/WebSocket) so the runtime knows it
+    may need raw Observation analysis instead of a standard protocol handler.
+    ``confidence`` reflects how sure the LLM is about the whole identification.
+    """
+
+    version: int = 1
+    transport: str = ""  # tcp | udp | websocket (empty if unknown)
+    protocol: str = ""  # http | https | mqtt | coap | modbus | websocket | proprietary …
+    proprietary: bool = False  # True when NOT a known standard
+    security: str = ""  # none | tls | mqtts | dtls | …
+    handler: str = "auto"  # suggested protocol server / MITM handler
+    identity: str = ""  # vendor/model identity derived by the LLM, when any
+    ports: list[int] = Field(default_factory=list)
+    confidence: float = 0.0
+
+
+class Command(BaseModel):
+    """A device capability/action in protocol-agnostic form.
+
+    Generalises ``ClientEndpoint``: a command is no longer bound to an HTTP
+    path — it may be a GET, a publish on a MQTT topic, a CoAP PUT, a Modbus
+    register write, a WebSocket send, etc. ``kind`` carries the semantic intent
+    (get_state, set_temperature, turn_on, publish…) whether it came from an HTTP
+    endpoint or was derived by the LLM from a proprietary protocol.
+    """
+
+    id: str
+    kind: str  # get_state | set_temperature | publish | send | … (semantic intent)
+    protocol: str = "http"
+    method: str = "GET"
+    path: str = ""  # HTTP path or CoAP path ("" for topic-only protocols)
+    path_pattern: str = ""
+    topic: str = ""  # MQTT / WebSocket topic
+    headers: dict[str, list[str]] = Field(
+        default_factory=lambda: {"required": []}
+    )
+    query_params: list[str] = Field(default_factory=list)
+    body_schema: dict[str, Any] | None = None
+    confidence: float = 0.5
+
+
+class DeviceModel(BaseModel):
+    """Root portable record describing a device ("what it is, how it behaves").
+
+    Intended to become the new ``.ride-pattern.json`` (schema_url
+    ``pattern-schema/v2``). It is the learned, portable DeviceModel that is
+    sufficient to clone a device on another install without re-learning:
+    identity (meta), identification (protocol), capabilities (commands),
+    response templates + field mappings (responses/interactions) and simulated
+    behaviour (state_variables, virtual_sensors).
+
+    Reuses the existing v1 building blocks so v1 knowledge maps cleanly.
+    """
+
+    schema_url: str = Field(
+        "https://ride-the-api.dev/pattern-schema/v2",
+        alias="$schema",
+    )
+    meta: PatternMeta
+    protocol: ProtocolInfo = Field(default_factory=ProtocolInfo)
+    commands: list[Command] = Field(default_factory=list)
+    responses: list[ServerResponse] = Field(default_factory=list)
+    interactions: list[FieldMapping] = Field(default_factory=list)
+    state_variables: list[StateVariable] = Field(default_factory=list)
+    virtual_sensors: list[VirtualSensor] = Field(default_factory=list)
+
+    model_config = {"populate_by_name": True}
 
