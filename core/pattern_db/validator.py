@@ -16,6 +16,8 @@ from typing import Any
 import jsonschema
 from jsonschema import ValidationError as JsonSchemaValidationError
 
+from core.paths import resource_path
+
 logger = logging.getLogger(__name__)
 
 
@@ -45,8 +47,8 @@ class ValidationError(Exception):
         }
 
 
-# Load schemas from bundled files
-_SCHEMA_DIR = Path(__file__).parent / "schemas"
+# Load schemas from bundled files (bundle-aware: works in source and PyInstaller)
+_SCHEMA_DIR = resource_path("core/pattern_db/schemas")
 
 _CAPTURE_SCHEMA: dict[str, Any] | None = None
 _PATTERN_SCHEMA: dict[str, Any] | None = None

@@ -15,16 +15,29 @@ and how to build the Windows installer. It is complementary to
 ## 1. What the installer provides
 
 - The `ride-the-api.exe` server and its runtime.
-- A default `config/config.yaml` copied into the working data folder.
-- A Windows service `ride-the-api` set to **auto-start** (via NSSM),
-  running with working directory `%ProgramData%\ride-the-api`.
-- Logs written to `%ProgramData%\ride-the-api\logs\`.
+- A **tkinter control panel** (the exe entry point is `gui_main.py`): server
+  status, an "Open dashboard" button and a live log view. No console window.
+  Configuration still happens in the browser dashboard.
+- A Windows service `ride-the-api` set to **auto-start** (via NSSM), running
+  headless (`--service`) with working directory `%ProgramData%\ride-the-api`.
+- Logs written to the data dir (`logs/ride-the-api.log`, service mode) or
+  `logs\service-*.log` (NSSM redirection).
 
-The server is configured just like on Linux. Because `config_manager` is a
-singleton loading `config/config.yaml` relative to the process working
-directory (`core/config.py`), the service's `AppDirectory` is set to
-`%ProgramData%\ride-the-api` so the relative `./data`, `./certs` paths keep
-working unchanged.
+### Data / config resolution
+
+`gui_main.py` resolves a single writable **data dir** and makes it the process
+CWD before the server starts, so the frozen binary works no matter where it
+was launched from:
+
+1. `$RIDE_THE_API_DATA` if set — used by the NSSM service (points at
+   `%ProgramData%\ride-the-api`);
+2. the current directory if it already contains `config/config.yaml` (keeps the
+   Linux/macOS tarball layout working unchanged);
+3. `%LOCALAPPDATA%\ride-the-api` (Windows) or `$XDG_DATA_HOME`/`~/.local/share`
+   (POSIX).
+
+A default `config/config.yaml` is **seeded from the bundle** (`_internal`) on
+first run if the data dir has none.
 
 ## 2. Building the installer (from a Windows machine / CI)
 
@@ -71,12 +84,19 @@ Run `ride-the-api-setup.exe` as **Administrator** (the service registration and
 `%ProgramData%` seeding need elevation). The installer:
 
 1. Installs the app into `%ProgramFiles%\ride-the-api`.
-2. Copies the default config and creates `data/`, `certs/`, `logs/` under
-   `%ProgramData%\ride-the-api`.
-3. Runs `packaging\install_service.ps1` (bundled NSSM) which registers and
-   starts the `ride-the-api` service.
+2. Runs `packaging\install_service.ps1` (bundled NSSM) which registers and
+   starts the `ride-the-api` service (`--service`, headless).
+3. Opens the dashboard at <http://localhost:8911>.
 
-Open the dashboard at <http://localhost:8911>.
+To use the **control panel** instead of (or in addition to) the service, launch
+`ride-the-api.exe` (Start Menu → "ride-the-api"). If the service is already
+listening on `:8911` the panel just shows "Server già in esecuzione" and the
+dashboard button; otherwise it starts its own server instance. Command-line
+switches: `--service`/`--headless` (no window), `--gui`, `--no-browser`.
+
+> Note: avoid running the control panel and the NSSM service at the same time
+> — both would try to bind `:8911`. If the service is enabled, use the panel
+> only as a dashboard launcher.
 
 ### Managing the service
 

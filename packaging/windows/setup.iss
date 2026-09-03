@@ -39,6 +39,7 @@ Filename: "{cmd}"; Parameters: "/c powershell -NoProfile -ExecutionPolicy Bypass
 Filename: "http://localhost:8911"; Description: "Apri dashboard ride-the-api"; Flags: postinstall nowait skipifsilent shellexec
 
 [Icons]
+Name: "{group}\ride-the-api"; Filename: "{app}\ride-the-api.exe" ; Comment: "Lancia la console di controllo ride-the-api"
 Name: "{group}\ride-the-api Dashboard"; Filename: "http://localhost:8911"
 Name: "{group}\Rimuovi ride-the-api"; Filename: "{uninstallexe}"
 

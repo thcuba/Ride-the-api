@@ -80,9 +80,10 @@ from core.tls_mitm import (
     get_tls_mitm_server,
 )
 from core.traffic_selector import TrafficRequestInfo, get_traffic_selector
+from core.paths import resource_path
 
-# Path to webui directory (relative to project root)
-WEBUI_DIR = Path(__file__).resolve().parent.parent / "webui"
+# Path to webui directory (bundle-aware: works in source and PyInstaller builds)
+WEBUI_DIR = resource_path("webui")
 DASHBOARD_HTML = WEBUI_DIR / "dashboard.html"
 PATTERNS_HTML = WEBUI_DIR / "patterns.html"
 
@@ -404,7 +405,7 @@ async def lifespan(app: FastAPI):  # noqa: C901, PLR0912, PLR0915
 
     # Mount static files for Web UI
     try:
-        static_dir = Path(__file__).resolve().parent.parent / "webui" / "static"
+        static_dir = WEBUI_DIR / "static"
         if static_dir.exists():
             app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
     except Exception as e:
