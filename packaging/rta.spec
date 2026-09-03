@@ -3,8 +3,10 @@ PyInstaller spec for ride-the-api as a native server (cross-platform).
 
 Strategy onedir (more reliable than onefile for data files and for the NSSM
 service): produces dist/ride-the-api/ containing the `ride-the-api` binary
-(`.exe` on Windows), the Python runtime and data files. Inno Setup then
-wraps the onedir into a Windows installer.
+(`.exe` on Windows), the Python runtime and data files. The entry point is
+gui_main.py: on Windows it opens a small tkinter control panel (headless with
+`--service` for NSSM), on Linux/macOS the same binary falls back to headless.
+Inno Setup then wraps the onedir into a Windows installer.
 
 Note: onnxruntime / numpy are dead scaffolding (never imported) and are
 excluded to keep the bundle small and the build fast.
@@ -44,10 +46,17 @@ hidden = [
 hidden += collect_submodules("pydantic")
 hidden += collect_submodules("sqlalchemy")
 
-# Data files bundled next to the binary: default config. The installer copies
-# the real config into %ProgramData%\ride-the-api (the service working dir).
+# Data files bundled next to the binary:
+#   - config/config.yaml            -> default config; the gui_main launcher
+#     seeds it into a writable data dir on first run (the installer no longer
+#     needs to copy it manually).
+#   - webui/                        -> dashboard.html + patterns.html.
+#   - core/pattern_db/schemas/*.json -> JSON Schemas used by the Pattern DB
+#     validator (loaded via Path(__file__) relative to the module dir).
 _datas = [
     (str(REPO_ROOT / "config/config.yaml"), "config"),
+    (str(REPO_ROOT / "webui"), "webui"),
+    (str(REPO_ROOT / "core/pattern_db/schemas"), "core/pattern_db/schemas"),
 ]
 
 # `certs/` is generated at runtime by CertManager; bundle the (possibly empty)
@@ -59,7 +68,7 @@ datas = _datas
 
 
 a = Analysis(
-    [str(REPO_ROOT / "core/server.py")],
+    [str(REPO_ROOT / "gui_main.py")],
     pathex=[str(REPO_ROOT)],
     binaries=[],
     datas=datas,
@@ -95,7 +104,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=True,        # server a console: visibile i log in primo piano
+    console=False,    # no console window: gui_main.py owns the UI (tkinter or headless)
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

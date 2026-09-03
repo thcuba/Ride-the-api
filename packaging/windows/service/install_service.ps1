@@ -1,9 +1,12 @@
 # Installs/uninstalls ride-the-api as a Windows service via NSSM.
 # Requires Administrator. Downloads a portable NSSM if not present.
 #
-# The service runs ride-the-api.exe with the working/AppDirectory set to
-# %ProgramData%\ride-the-api so config/server.py resolves config/config.yaml
-# and the relative ./data ./certs path the same way as on Linux.
+# The service runs ride-the-api.exe --service with the working/AppDirectory set
+# to %ProgramData%\ride-the-api and RIDE_THE_API_DATA pointing at it. gui_main.py
+# resolves the data dir from that env var, seeds config/config.yaml from the
+# bundle (_internal) if missing and chdir()s into it, so config/server.py resolve
+# config/config.yaml and the relative ./data ./certs paths regardless of where
+# the exe lives.
 param(
     [switch]$Uninstall
 )
@@ -41,8 +44,16 @@ if (-not (Test-Path $ExePath)) {
 }
 if (-not (Test-Path (Join-Path $DataDir "config\config.yaml"))) {
     Write-Host "==> Seeding default config into $DataDir"
-    New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
-    Copy-Item (Join-Path $InstallDir "config\config.yaml") (Join-Path $DataDir "config\config.yaml") -Force
+    New-Item -ItemType Directory -Force -Path (Join-Path $DataDir "config") | Out-Null
+    # In the PyInstaller onedir bundle the bundled config lives under
+    # _internal\config\config.yaml (PyInstaller 6 layout), not $InstallDir\config.
+    $bundleCfg = Join-Path $InstallDir "_internal\config\config.yaml"
+    if (-not (Test-Path $bundleCfg)) { $bundleCfg = Join-Path $InstallDir "config\config.yaml" }
+    if (Test-Path $bundleCfg) {
+        Copy-Item $bundleCfg (Join-Path $DataDir "config\config.yaml") -Force
+    } else {
+        Write-Warning "Bundled config not found at $bundleCfg; the app will seed it on first start."
+    }
 }
 New-Item -ItemType Directory -Force -Path (Join-Path $DataDir "data")   | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $DataDir "certs")  | Out-Null
@@ -52,6 +63,7 @@ $nssm = Get-Nssm
 
 Write-Host "==> Installing service '$ServiceName'"
 & $nssm install $ServiceName $ExePath
+& $nssm set $ServiceName AppParameters "--service"
 & $nssm set $ServiceName AppDirectory $DataDir
 & $nssm set $ServiceName AppEnvironmentExtra "RIDE_THE_API_DATA=$DataDir"
 & $nssm set $ServiceName Description "ride-the-api: local cloud replacement proxy"
@@ -63,4 +75,4 @@ Write-Host "==> Installing service '$ServiceName'"
 Write-Host "==> Starting service"
 & $nssm start $ServiceName
 Write-Host "Service '$ServiceName' installed and started."
-Write-Host "Logs: $DataDir\logs | Data: $DataDir\data | Certs: $DataDir\certs"
+Write-Host "Logs: $DataDir\logs\ride-the-api.log | Data: $DataDir\data | Certs: $DataDir\certs"
