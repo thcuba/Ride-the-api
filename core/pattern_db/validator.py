@@ -78,6 +78,19 @@ def get_pattern_schema() -> dict[str, Any]:
     return _PATTERN_SCHEMA
 
 
+# v2 (DeviceModel) schemas cached independently from v1.
+_CAPTURE_SCHEMA_V2: dict[str, Any] | None = None
+_PATTERN_SCHEMA_V2: dict[str, Any] | None = None
+
+
+def get_pattern_schema_v2() -> dict[str, Any]:
+    """Get the v2 DeviceModel schema (pattern-schema-v2.json), loading on first access."""
+    global _PATTERN_SCHEMA_V2  # noqa: PLW0603
+    if _PATTERN_SCHEMA_V2 is None:
+        _PATTERN_SCHEMA_V2 = _load_schema("pattern-schema-v2.json")
+    return _PATTERN_SCHEMA_V2
+
+
 # ── Protocol-specific validation helpers ────────────────────────────────────
 
 # Valid HTTP methods
