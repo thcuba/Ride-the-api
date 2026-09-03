@@ -5,9 +5,10 @@
 ; Build with: iscc packaging\windows\setup.iss   (from the repo root)
 
 [Setup]
-AppId={{0B8C8E1E-2F4A-4B7A-8D1C-RIDETHEAPI01}}
+AppId={{CE2157C0-550F-4318-AD20-7A494D6264B2}}
 AppName=ride-the-api
-AppVersion=0.1.0
+; Keep in sync with `version` in pyproject.toml.
+AppVersion=0.2.0
 AppPublisher=ride-the-api
 DefaultDirName={pf}\ride-the-api
 DefaultGroupName=ride-the-api
@@ -32,8 +33,10 @@ Root: HKLM; Subkey: "SOFTWARE\ride-the-api"; ValueType: string; ValueName: "Data
 [Run]
 ; Register + start the Windows service (Ida una tantam amministrativa).
 Filename: "{cmd}"; Parameters: "/c powershell -NoProfile -ExecutionPolicy Bypass -File ""{app}\packaging\install_service.ps1"""; Flags: runhidden runascurrentuser; StatusMsg: "Registrazione servizio ride-the-api..."
-; Offer to open the web UI after install.
-Filename: "http://localhost:8911"; Description: "Apri dashboard ride-the-api"; Flags: postinstall nowait skipifsilent
+; Offer to open the web UI after install. "http://localhost:8911" has no file
+; extension, so Inno Setup treats it as an executable and tries CreateProcess
+; ("CreateProcess failed; code 2") unless we force ShellExecute via shellexec.
+Filename: "http://localhost:8911"; Description: "Apri dashboard ride-the-api"; Flags: postinstall nowait skipifsilent shellexec
 
 [Icons]
 Name: "{group}\ride-the-api Dashboard"; Filename: "http://localhost:8911"
