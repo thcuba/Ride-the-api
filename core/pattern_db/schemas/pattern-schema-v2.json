@@ -2,9 +2,12 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://ride-the-api.dev/pattern-schema/v2",
   "title": "Ride-the-API DeviceModel",
-  "description": "Portable DeviceModel format (.ride-pattern.json v2) — learned, portable knowledge of a device sufficient to clone it on another installation without re-learning. Reuses v1 building blocks (state_variable, field_mapping, server_response, virtual_sensor) and adds protocol identification and protocol-agnostic commands.",
+  "description": "Portable DeviceModel format (.ride-pattern.json v2) \u2014 learned, portable knowledge of a device sufficient to clone it on another installation without re-learning. Reuses v1 building blocks (state_variable, field_mapping, server_response, virtual_sensor) and adds protocol identification and protocol-agnostic commands.",
   "type": "object",
-  "required": ["$schema", "meta"],
+  "required": [
+    "$schema",
+    "meta"
+  ],
   "properties": {
     "$schema": {
       "const": "https://ride-the-api.dev/pattern-schema/v2"
@@ -17,165 +20,430 @@
     },
     "commands": {
       "type": "array",
-      "items": { "$ref": "#/$defs/command" }
+      "items": {
+        "$ref": "#/$defs/command"
+      }
     },
     "responses": {
       "type": "array",
-      "items": { "$ref": "#/$defs/server_response" }
+      "items": {
+        "$ref": "#/$defs/server_response"
+      }
     },
     "interactions": {
       "type": "array",
-      "items": { "$ref": "#/$defs/field_mapping" }
+      "items": {
+        "$ref": "#/$defs/field_mapping"
+      }
     },
     "state_variables": {
       "type": "array",
-      "items": { "$ref": "#/$defs/state_variable" }
+      "items": {
+        "$ref": "#/$defs/state_variable"
+      }
     },
     "virtual_sensors": {
       "type": "array",
-      "items": { "$ref": "#/$defs/virtual_sensor" }
+      "items": {
+        "$ref": "#/$defs/virtual_sensor"
+      }
+    },
+    "observation_history": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/observation"
+      }
     }
   },
   "$defs": {
     "meta": {
       "type": "object",
-      "required": ["pattern_id", "vendor", "device_type"],
+      "required": [
+        "pattern_id",
+        "vendor",
+        "device_type"
+      ],
       "properties": {
-        "version": { "type": "integer" },
-        "pattern_id": { "type": "string", "minLength": 1 },
-        "vendor": { "type": "string", "minLength": 1 },
-        "device_type": { "type": "string", "minLength": 1 },
-        "model": { "type": "string" },
+        "version": {
+          "type": "integer"
+        },
+        "pattern_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "vendor": {
+          "type": "string",
+          "minLength": 1
+        },
+        "device_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model": {
+          "type": "string"
+        },
         "firmware_versions": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         },
-        "description": { "type": "string" }
+        "description": {
+          "type": "string"
+        }
       }
     },
     "protocol_info": {
       "type": "object",
       "properties": {
-        "version": { "type": "integer" },
-        "transport": { "type": "string" },
-        "protocol": { "type": "string" },
-        "proprietary": { "type": "boolean" },
-        "security": { "type": "string" },
-        "handler": { "type": "string" },
-        "identity": { "type": "string" },
+        "version": {
+          "type": "integer"
+        },
+        "transport": {
+          "type": "string"
+        },
+        "protocol": {
+          "type": "string"
+        },
+        "proprietary": {
+          "type": "boolean"
+        },
+        "security": {
+          "type": "string"
+        },
+        "handler": {
+          "type": "string"
+        },
+        "identity": {
+          "type": "string"
+        },
         "ports": {
           "type": "array",
-          "items": { "type": "integer" }
+          "items": {
+            "type": "integer"
+          }
         },
-        "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
       }
     },
     "command": {
       "type": "object",
-      "required": ["id", "kind"],
+      "required": [
+        "id",
+        "kind"
+      ],
       "properties": {
-        "id": { "type": "string", "minLength": 1 },
-        "kind": { "type": "string", "minLength": 1 },
-        "protocol": { "type": "string" },
-        "method": { "type": "string" },
-        "path": { "type": "string" },
-        "path_pattern": { "type": "string" },
-        "topic": { "type": "string" },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "protocol": {
+          "type": "string"
+        },
+        "method": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "path_pattern": {
+          "type": "string"
+        },
+        "topic": {
+          "type": "string"
+        },
         "headers": {
           "type": "object",
           "properties": {
             "required": {
               "type": "array",
-              "items": { "type": "string" }
+              "items": {
+                "type": "string"
+              }
             }
           }
         },
         "query_params": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         },
-        "body_schema": { "type": "object" },
-        "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+        "body_schema": {
+          "type": "object"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
       }
     },
     "state_variable": {
       "type": "object",
-      "required": ["name"],
+      "required": [
+        "name"
+      ],
       "properties": {
-        "name": { "type": "string", "minLength": 1 },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
         "type": {
           "type": "string",
-          "enum": ["boolean", "integer", "float", "string", "enum"]
+          "enum": [
+            "boolean",
+            "integer",
+            "float",
+            "string",
+            "enum"
+          ]
         },
         "default": {},
-        "min": { "type": "number" },
-        "max": { "type": "number" },
+        "min": {
+          "type": "number"
+        },
+        "max": {
+          "type": "number"
+        },
         "enum": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         },
-        "unit": { "type": "string" },
-        "persist": { "type": "boolean" },
-        "description": { "type": "string" }
+        "unit": {
+          "type": "string"
+        },
+        "persist": {
+          "type": "boolean"
+        },
+        "description": {
+          "type": "string"
+        }
       }
     },
     "field_mapping": {
       "type": "object",
-      "required": ["source", "target"],
+      "required": [
+        "source",
+        "target"
+      ],
       "properties": {
-        "source": { "type": "string", "minLength": 1 },
-        "target": { "type": "string", "minLength": 1 },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "target": {
+          "type": "string",
+          "minLength": 1
+        },
         "transform": {
           "type": "string",
-          "enum": ["direct", "enum", "formula", "scale"]
+          "enum": [
+            "direct",
+            "enum",
+            "formula",
+            "scale"
+          ]
         },
-        "formula": { "type": "string" },
-        "mapping": { "type": "object" },
-        "description": { "type": "string" }
+        "formula": {
+          "type": "string"
+        },
+        "mapping": {
+          "type": "object"
+        },
+        "description": {
+          "type": "string"
+        }
       }
     },
     "server_response": {
       "type": "object",
-      "required": ["id"],
+      "required": [
+        "id"
+      ],
       "properties": {
-        "id": { "type": "string", "minLength": 1 },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
         "triggers": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         },
-        "status_code": { "type": "integer" },
-        "headers_template": { "type": "object" },
-        "body_template": { "type": "object" },
+        "status_code": {
+          "type": "integer"
+        },
+        "headers_template": {
+          "type": "object"
+        },
+        "body_template": {
+          "type": "object"
+        },
         "field_mappings": {
           "type": "array",
-          "items": { "$ref": "#/$defs/field_mapping" }
+          "items": {
+            "$ref": "#/$defs/field_mapping"
+          }
         }
       }
     },
     "virtual_sensor": {
       "type": "object",
-      "required": ["name", "behavior"],
+      "required": [
+        "name",
+        "behavior"
+      ],
       "properties": {
-        "name": { "type": "string", "minLength": 1 },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
         "type": {
           "type": "string",
-          "enum": ["integer", "float", "boolean"]
+          "enum": [
+            "integer",
+            "float",
+            "boolean"
+          ]
         },
         "behavior": {
           "type": "string",
-          "enum": ["static", "drift", "periodic", "random"]
+          "enum": [
+            "static",
+            "drift",
+            "periodic",
+            "random"
+          ]
         },
-        "baseline": { "type": "string" },
+        "baseline": {
+          "type": "string"
+        },
         "drift_range": {
           "type": "array",
-          "items": { "type": "number" },
+          "items": {
+            "type": "number"
+          },
           "minItems": 2,
           "maxItems": 2
         },
-        "period_s": { "type": "number", "minimum": 0 },
-        "amplitude": { "type": "number" },
-        "update_interval_s": { "type": "number", "minimum": 0 },
-        "description": { "type": "string" }
+        "period_s": {
+          "type": "number",
+          "minimum": 0
+        },
+        "amplitude": {
+          "type": "number"
+        },
+        "update_interval_s": {
+          "type": "number",
+          "minimum": 0
+        },
+        "description": {
+          "type": "string"
+        }
+      }
+    },
+    "transport_meta": {
+      "type": "object",
+      "properties": {
+        "port": {
+          "type": "integer"
+        },
+        "tls": {
+          "type": "boolean"
+        },
+        "topic": {
+          "type": "string"
+        },
+        "qos": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "retain": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "func_code": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "reg_address": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      }
+    },
+    "observation": {
+      "type": "object",
+      "required": [
+        "id",
+        "device_id",
+        "timestamp"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "device_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "protocol": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "request",
+            "response",
+            "event",
+            "publish",
+            "subscribe",
+            "frame",
+            "telemetry",
+            "will",
+            "keepalive"
+          ]
+        },
+        "transport": {
+          "$ref": "#/$defs/transport_meta"
+        },
+        "content": {},
+        "in_reply_to": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
       }
     }
   }

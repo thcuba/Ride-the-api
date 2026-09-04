@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from adapters.base import InterceptedRequest, ProtocolType
+from core.pattern_db.schemas import ObservationKind, TransportMeta
 from core.protocol_servers import ProtocolServerPlugin
 
 if TYPE_CHECKING:
@@ -175,6 +176,16 @@ class MQTTServerPlugin(ProtocolServerPlugin):
             qos=qos,
             retain=retain,
             body=body,
+            transport=TransportMeta(
+                port=getattr(self.config, "port", 1883),
+                tls=getattr(self.config, "tls_enabled", False),
+                topic=topic,
+                qos=qos,
+                retain=retain,
+            ),
+            security="tls" if getattr(self.config, "tls_enabled", False) else "none",
+            identity=client_id,
+            kind=ObservationKind.PUBLISH,
         )
 
         try:

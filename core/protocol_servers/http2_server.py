@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 from adapters.base import InterceptedRequest, ProtocolType, device_id_from_ip
+from core.pattern_db.schemas import ObservationKind, TransportMeta
 from core.protocol_servers import ProtocolServerPlugin
 
 logger = logging.getLogger(__name__)
@@ -182,6 +183,13 @@ class HTTP2ServerPlugin(ProtocolServerPlugin):
             scheme=scheme,
             headers=headers,
             body=body,
+            transport=TransportMeta(
+                port=getattr(self.config, "port", 443),
+                tls=getattr(self.config, "tls_enabled", False),
+            ),
+            security="tls" if getattr(self.config, "tls_enabled", False) else "none",
+            identity=device_id,
+            kind=ObservationKind.REQUEST,
         )
 
         result = None

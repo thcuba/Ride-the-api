@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from adapters.base import InterceptedRequest, ProtocolType, device_id_from_ip
+from core.pattern_db.schemas import ObservationKind, TransportMeta
 from core.protocol_servers import ProtocolServerPlugin
 
 if TYPE_CHECKING:
@@ -74,6 +75,12 @@ class MatterBridgePlugin(ProtocolServerPlugin):
                     timestamp=datetime.now(UTC).timestamp(),
                     protocol=ProtocolType.MATTER,
                     body=body,
+                    transport=TransportMeta(
+                        port=getattr(self.config, "controller_port", 0)
+                    ),
+                    security="none",
+                    identity=device_id,
+                    kind=ObservationKind.EVENT,
                 )
                 if self.handler:
                     try:

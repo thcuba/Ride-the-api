@@ -28,6 +28,7 @@ except ImportError:  # pragma: no cover - exercised at import time only
     HAS_WEBSOCKETS = False
 
 from adapters.base import InterceptedRequest, ProtocolType, device_id_from_ip
+from core.pattern_db.schemas import ObservationKind, TransportMeta
 from core.protocol_servers import ProtocolServerPlugin
 
 logger = logging.getLogger(__name__)
@@ -93,6 +94,10 @@ class WebSocketServerPlugin(ProtocolServerPlugin):
                     method="WS",
                     path=self.config.path,
                     body=body,
+                    transport=TransportMeta(port=getattr(self.config, "port", 9000)),
+                    security="none",
+                    identity=device_id,
+                    kind=ObservationKind.EVENT,
                 )
                 if self.handler:
                     try:

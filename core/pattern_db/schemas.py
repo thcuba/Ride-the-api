@@ -270,6 +270,21 @@ class DeviceMeta(BaseModel):
     connection_mode: str = "auto"  # auto | tls | http | mqtt | coap | modbus
     detected_at: datetime | None = None
     source: str = "llm"  # llm | config_override
+    # Full ProtocolInfo from the first-flush mode="auto" identification, kept in
+    # the persisted header so export_device_model can rebuild the portable
+    # ProtocolInfo losslessly (transport/security/proprietary/identity/ports/
+    # confidence are otherwise defaulted on export).
+    transport: str = ""
+    security: str = ""
+    proprietary: bool = False
+    identity: str = ""  # vendor/model identity derived by the LLM (also mirrors ``model``)
+    ports: list[int] = Field(default_factory=list)
+    confidence: float = 0.0
+    # Canonical home for behavioural config that has no SQL table. Persisted so
+    # export recovers it even without the engine's in-memory applied PatternDB
+    # (which is the only other place state_variables/virtual_sensors live).
+    state_variables: list[StateVariable] = Field(default_factory=list)
+    virtual_sensors: list[VirtualSensor] = Field(default_factory=list)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -420,6 +435,45 @@ class DeviceModel(BaseModel):
     interactions: list[FieldMapping] = Field(default_factory=list)
     state_variables: list[StateVariable] = Field(default_factory=list)
     virtual_sensors: list[VirtualSensor] = Field(default_factory=list)
+    # Learned traffic history. Grounding for extrapolating replies to requests
+    # never seen before: near-duplicate observations give a plausible basis
+    # when no exact Command matches. Kept out of the runtime critical path
+    # (used only for synthesis) and portable across installations.
+    observation_history: list[Observation] = Field(default_factory=list)
 
     model_config = {"populate_by_name": True}
+
+    def to_pattern_db(self) -> PatternDB:
+        """Map this v2 DeviceModel to a v1 PatternDB for the runtime engine.
+
+        The runtime (:class:`core.pattern_db.pattern_engine.PatternEngine`)
+        matches on the v1 ``PatternDB`` shape (client endpoints / server
+        responses + state). v2 is a superset; this projection keeps the engine
+        stable while the portable artifact carries the richer model. Lossless
+        for the v1-equivalent sections: v1 has no home for ``protocol`` or
+        ``observation_history``, so those are intentionally not projected.
+        """
+        endpoints = [
+            ClientEndpoint(
+                id=c.id,
+                intent=c.kind,
+                method=c.method or "GET",
+                path=c.path or c.path_pattern or (c.topic or ""),
+                path_pattern=c.path_pattern or c.path or (c.topic or ""),
+                headers=c.headers or {"required": []},
+                query_params=c.query_params or [],
+                body_schema=c.body_schema,
+            )
+            for c in self.commands
+        ]
+        protocols = [self.protocol.protocol] if self.protocol.protocol else ["http"]
+        return PatternDB(
+            meta=self.meta,
+            client=ClientConfig(protocols=protocols, endpoints=endpoints),
+            server=ServerConfig(
+                responses=self.responses,
+                state_variables=self.state_variables,
+                virtual_sensors=self.virtual_sensors,
+            ),
+        )
 

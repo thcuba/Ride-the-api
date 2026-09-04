@@ -17,11 +17,13 @@ import jsonschema
 from core.pattern_db.schemas import (
     Command,
     DeviceModel,
+    FieldMapping,
     Observation,
     ObservationKind,
     PatternDB,
     PatternMeta,
     ProtocolInfo,
+    ServerResponse,
     StateVariable,
     TransportMeta,
     VirtualSensor,
@@ -119,3 +121,46 @@ def test_v1_pattern_db_validates_against_v1_schema() -> None:
     )
     result = validate_pattern(pdb.model_dump(by_alias=True, exclude_none=True))
     assert result.valid
+
+
+def test_v2_device_model_validates_through_validate_pattern() -> None:
+    """validate_pattern routes v2 DeviceModels (with observation_history) to the v2 schema."""
+    dm = DeviceModel(
+        meta=PatternMeta(pattern_id="p-patterns", vendor="v", device_type="plug"),
+        protocol=ProtocolInfo(protocol="mqtt", handler="mqtt", confidence=0.9),
+        commands=[Command(id="c1", kind="set_relay", protocol="mqtt")],
+        responses=[
+            ServerResponse(
+                id="r1",
+                triggers=["set_relay"],
+                status_code=200,
+                field_mappings=[
+                    FieldMapping(source="on", target="state.relay", transform="direct")
+                ],
+            )
+        ],
+        observation_history=[
+            Observation(
+                id="obs1",
+                device_id="dev-1",
+                timestamp=_now(),
+                protocol="mqtt",
+                kind=ObservationKind.PUBLISH,
+                content={"on": True},
+            ),
+            Observation(
+                id="obs2",
+                device_id="dev-1",
+                timestamp=_now(),
+                protocol="mqtt",
+                kind=ObservationKind.REQUEST,
+                content={"command": "status"},
+            ),
+        ],
+    )
+    dump = dm.model_dump(by_alias=True, exclude_none=True, mode="json")
+    result = validate_pattern(dump)
+    assert result.valid, result.errors
+    # observation_history is preserved through the portable round-trip.
+    assert len(dump["observation_history"]) == len(dm.observation_history)
+    assert dump["observation_history"][0]["kind"] == ObservationKind.PUBLISH.value

@@ -397,6 +397,45 @@ class TestDeviceMetaFirstFlush:
         assert meta["connection_mode"] == "http"
         assert meta["protocols"] == ["http"]
 
+    async def test_persist_meta_from_structured_protocol_info(self, db_manager):
+        """A full protocol_info object persists all ProtocolInfo fields."""
+        await db_manager.get_or_create_device("pi_dev", "shelly", "plug", "Shelly Plug")
+        async with db_manager.core_session() as session:
+            dev = (
+                await session.execute(
+                    select(DeviceRegistry).where(DeviceRegistry.device_id == "pi_dev")
+                )
+            ).scalar_one()
+        pipeline = self._pipeline(db_manager)
+
+        await pipeline._persist_device_meta(
+            "pi_dev",
+            dev,
+            {
+                "protocol_info": {
+                    "protocol": "mqtt",
+                    "handler": "mqtt",
+                    "transport": "tcp",
+                    "security": "tls",
+                    "proprietary": False,
+                    "identity": "shelly-plug",
+                    "ports": [8883],
+                    "confidence": 0.93,
+                },
+                "protocols": ["mqtt"],
+                "connection_mode": "mqtt",
+            },
+        )
+        meta = await db_manager.read_device_meta("pi_dev")
+        assert meta["connection_mode"] == "mqtt"
+        assert meta["protocols"] == ["mqtt"]
+        assert meta["transport"] == "tcp"
+        assert meta["security"] == "tls"
+        assert meta["proprietary"] is False
+        assert meta["identity"] == "shelly-plug"
+        assert meta["ports"] == [8883]  # noqa: PLR2004
+        assert meta["confidence"] == 0.93  # noqa: PLR2004
+
     async def test_first_flush_is_stable_on_second(self, db_manager):
         """On the second flush the header exists, so it is not overwritten.
 
@@ -426,6 +465,7 @@ class TestDeviceMetaFirstFlush:
         )
         assert "protocols" in prompt
         assert "connection_mode" in prompt
+        assert "protocol_info" in prompt
 
         # Without first_flush the prompt is unchanged.
         prompt2 = pipeline._build_learning_prompt(

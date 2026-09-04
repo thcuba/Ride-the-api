@@ -9,9 +9,12 @@ import abc
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field  # noqa: F401  (re-exported for adapter authors)
+
+if TYPE_CHECKING:
+    from core.pattern_db.schemas import ObservationKind, TransportMeta
 
 
 class ProtocolType(StrEnum):
@@ -174,6 +177,14 @@ class InterceptedRequest:
     # Processing
     parsed_intent: CommandType = CommandType.UNKNOWN
     parsed_params: dict[str, Any] = field(default_factory=dict)
+    # Observation enrichment (D2). Populated by protocol servers so the
+    # buffer/observation layer can build a v2 Observation without re-deriving
+    # transport/security/identity/kind from the request.
+    transport: TransportMeta | None = None
+    security: str | None = None  # none | tls | dtls | mqtts | ...
+    identity: str | None = None  # device identity hint when derivable
+    kind: ObservationKind | None = None  # request | publish | event | frame | ...
+    scheme: str | None = None  # http | https | ws | wss (from HTTP/2 :scheme)
 
 
 # Pre-computed lookup tuples for fast O(1) membership checks per request inspection
