@@ -3,10 +3,17 @@
 A DNS interception proxy that sits between IoT devices and their cloud APIs, learns device protocols via LLM analysis, and serves responses locally — making devices fully functional even if the vendor shuts down its cloud servers.
 
 ```
-IoT Device ──▶ nginx/TLS MITM ──▶ Ride-the-API ──▶ Vendor Cloud (learning only)
-                                        │
-                                        └── Buffer → LLM → Pattern Engine → Local Response
+IoT Device ──▶ protocol ingress ──▶ per-device buffer ──▶ batch LLM learning
+                                      │                         │
+                                      └── compiled DeviceModel ◀─┘
+                                                │
+                                                └── local response runtime
 ```
+
+The LLM is a batch-learning component, never a request-time dependency.  The
+portable `DeviceModel` is the device's learned knowledge; a deterministic
+runtime compiled from it serves local traffic.  See the architecture document
+for the compatibility status while the legacy pattern runtime is being retired.
 
 ## Why
 

@@ -430,21 +430,42 @@ structured `protocol_info` object that identifies transport / protocol /
 security / proprietary-vs-standard / identity / handler / confidence. This is
 persisted to the device header and recovered by `export_device_model`.
 
-**Subsequent flushes (model delta):** later flushes ask the LLM for a JSON
-*delta* over `commands` / `responses` / `interactions` /
-`state_variables` / `virtual_sensors`; `merge_device_model`
-(`core/pattern_db/decipher_ingest.py`) upserts it idempotently into the device
-DB by deterministic IDs. The LLM is never on the runtime critical path (flush
-is async) and produces a structured model update, not raw SQL rows.
+**Required runtime contract:** a successful subsequent flush produces a JSON
+*delta* over `commands` / `responses` / `interactions` / `state_variables` /
+`virtual_sensors`. The delta is merged idempotently into the canonical model,
+then compiled and atomically swapped into the per-device runtime. The LLM is
+never on the request path and never writes raw SQL rows.
 
-**Runtime:** the `PatternEngine` matches on the v1 `PatternDB` projection
-(`DeviceModel.to_pattern_db()`); the in-memory compiled model is what answers
-requests, the Device DB is persistence, and the DB is not queried per request.
+The device database is durable storage and audit history, not a dependency of a
+local response. A production request must use only the compiled per-device
+runtime. It may write asynchronous telemetry, but it must not scan patterns,
+templates, or mappings from SQL.
 
-The LLM must learn **semantics and behaviour** of the device; for standard
-protocols (Modbus TCP, MQTT, CoAP, HTTP, WebSocket) the protocol handler
-interprets the wire format while the LLM learns the meaning; for unknown or
-proprietary protocols the LLM analyses Observation batches directly.
+**Protocol boundary:** during `connection_mode="auto"`, traffic is buffered
+until the first batch identifies transport, protocol, security, identity and
+whether the protocol is standard or proprietary. Afterwards, standard protocols
+(Modbus TCP, MQTT, CoAP, HTTP and WebSocket) use their deterministic native
+handler for wire interpretation; the LLM learns only semantics and behaviour.
+Unknown/proprietary protocols remain Observation-driven and are analysed by the
+LLM only in batches.
+
+### 8.4 Compatibility status and migration rule
+
+`PatternDB` and its SQL request-pattern tables are a compatibility projection
+while the v1 runtime is retired. They are not a second canonical model. New
+features must target `DeviceModel` and `CompiledDeviceRuntime`; code must not
+introduce another generic matching engine.
+
+The transition is complete only when all of these are true:
+
+1. Startup and import load a `DeviceModel`, compile it, and register it by
+   device ID.
+2. Request handling resolves that compiled runtime without SQL reads.
+3. `ProtocolInfo.handler` and `proprietary` determine the post-auto dispatch.
+4. A buffer batch is claimed, learned, committed, and acknowledged atomically;
+   a crash before acknowledgement leaves the batch retryable.
+5. `export → import → restart → export` is semantically lossless, including
+   every field claimed by `DeviceModel`.
 
 ---
 
@@ -457,17 +478,17 @@ proprietary protocols the LLM analyses Observation batches directly.
                    ↘ INTERCEPT → [Pipeline (LearningOrchestrator)]
 
    If INTERCEPT and in LEARNING mode:
-4. [Pipeline] → Request/response correlation   (connection tracking / seq # / correlation ID)
-5. [Pipeline] → BufferManager.add_pair()          (sliding window accumulation)
-6. If buffer full → BufferManager.flush()         (signal ready for LLM)
-7. [Pipeline] → LLMDecipherService.decipher_batch() (LLM analysis)
-8. [LLMDecipherService] → DecipherIngest.ingest()     (save patterns to device DB)
-9. [DecipherIngest] → BufferManager.clear_cache()     (prepare next cycle)
+4. [Pipeline] → correlate observations using protocol-native identifiers
+5. [Pipeline] → Buffer claim/snapshot               (per-device batch ownership)
+6. [Pipeline] → LLMDecipherService.decipher_batch() (first batch: AUTO ID;
+                                                       later batches: model delta)
+7. [Pipeline] → merge canonical DeviceModel → compile → atomic runtime swap
+8. [Pipeline] → acknowledge claimed batch only after the commit succeeds
 10. The original cloud response is forwarded to the device (transparent)
 
    If INTERCEPT and in PRODUCTION mode:
-4'. [Pipeline] → PatternEngine.find_best_match()     (similarity score against patterns)
-5'. If score ≥ threshold → PatternEngine.build_local_response() → local response
+4'. [Dispatcher] → standard native handler OR proprietary compiled runtime
+5'. [Compiled runtime] → deterministic command match → local response
 6'. If score < threshold and production_no_fallback → 501 (conclusive local-only)
 7'. If score < threshold and signal_forward_to_cloud → nginx forwards to cloud
 8'. If score < threshold and no flag → forward + learning from the miss
