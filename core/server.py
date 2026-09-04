@@ -50,7 +50,7 @@ from core.llm_decipher import LLMDecipherService, get_llm_decipher
 from core.logging_config import setup_logging
 from core.modification import get_modification_engine
 from core.pattern_db import buffer_manager, decipher_ingest
-from core.pattern_db.schemas import CaptureDB, PatternDB
+from core.pattern_db.schemas import CaptureDB, DeviceModel, PatternDB
 from core.pattern_db.validator import (
     ValidationError,
     validate_capture,
@@ -1282,6 +1282,14 @@ async def export_patterns(device_id: str):
             vendor = device.vendor if device else "unknown"
             device_type = device.device_type if device else "unknown"
         pattern_db = await ingester.export_patterns(device_id, vendor, device_type)
+        header = await db_manager.read_device_meta(device_id)
+        if header and (header.get("protocols") or header.get("transport")):
+            # Emit the portable v2 DeviceModel when the device has a learned
+            # protocol header, matching the documented behavior (goal #11).
+            device_model = await ingester.export_device_model(
+                device_id, vendor, device_type
+            )
+            return device_model.model_dump(by_alias=True, exclude_none=True)
         return pattern_db.model_dump(by_alias=True, exclude_none=True)
     except Exception as e:
         logger.error("Handler error (500): %s", e)
@@ -1808,16 +1816,24 @@ async def import_patterns(device_id: str, request: Request):
 
     try:
         body = await request.json()
-        # Validate against the portable JSON Schema
+        # Validate against the portable JSON Schema (v1 PatternDB or v2 DeviceModel)
         result = validate_pattern(body)
         if not result.valid:
             return JSONResponse(
                 status_code=422,
                 content={"error": "Pattern validation failed", "details": result.to_dict()},
             )
-        pattern_db = PatternDB.model_validate(body)
         ingester = decipher_ingest.DecipherIngest(db_manager)
-        count = await ingester.import_patterns(device_id, pattern_db)
+        if "pattern-schema/v2" in body.get("$schema", ""):
+            # v2 DeviceModel: full portable clone (commands/responses/protocol/
+            # state_variables/virtual_sensors/observation_history). Route to
+            # import_device_model, NOT the v1 PatternDB path which would drop
+            # every v2-only field.
+            model = DeviceModel.model_validate(body)
+            count = await ingester.import_device_model(device_id, model)
+        else:
+            pattern_db = PatternDB.model_validate(body)
+            count = await ingester.import_patterns(device_id, pattern_db)
         return {"imported": count, "device_id": device_id, "warnings": result.warnings}  # noqa: TRY300
     except ValidationError as e:
         return JSONResponse(

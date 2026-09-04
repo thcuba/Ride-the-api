@@ -604,6 +604,9 @@ Exports all patterns of a device in the portable `.ride-pattern.json` format.
 Imports patterns from a `.ride-pattern.json` file. Patterns are validated against
 the JSON schema before importing. v1 `PatternDB` and v2 `DeviceModel` documents
 are both accepted (`$schema`-aware validation, see `core/pattern_db/validator.py`).
+A v2 `DeviceModel` body is routed to `import_device_model` (persists
+`commands`/`responses`/`protocol`/`state_variables`/`virtual_sensors`), so
+importing a full clone does **not** silently drop v2-only fields.
 
 **JSON Body**: `PatternDB` document (same format as export).
 
