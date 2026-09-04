@@ -102,3 +102,9 @@ The common handler (`handle_protocol_request`) translates each plugin's `Interce
 `orchestrator.handle_request(...)` call, mapping the protocol-aware method and path (e.g. an MQTT
 topic becomes the path with method `publish`). A `local_response` result tells the plugin to send the
 response back to the device.
+
+> **Nota (verificata):** oggi ogni plugin (MQTT/CoAP/Modbus/WebSocket/Raw TCP/HTTP2) termina nello
+> stesso orchestratore legacy: non esiste ancora una diramazione per-protocollo verso un handler
+> nativo deterministico dopo l'identificazione `auto` (la prima flush persiste `ProtocolInfo.handler` /
+> `connection_mode`, ma il routing non lo consuma). L'interpretazione del frame al protocollo e la
+> scelta dell'handler dedicato è il passo pianificato della fase successiva (open question M10).

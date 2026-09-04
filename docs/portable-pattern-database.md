@@ -403,13 +403,19 @@ Descrive cosa Ride-the-API deve **rispondere**:
 
 ## Implementazione futura
 
-1. **Pattern Engine**: modificare `PatternMatcher` per caricare pattern da file `.ride-pattern.json`
-2. **Buffer Manager**: esportare il `ContextBuffer` in formato `.ride-capture.json`
-3. **Decipher Ingest**: nuovo componente che prende output LLM e popola il database decifrato
-4. **Endpoint API**: `/api/devices/{id}/patterns/import`, `/export`, `/capture/export`
-5. **State persistence**: implementare `state_variables` nel device DB per risposte dinamiche
-6. **Virtual sensors**: motore di simulazione per sensori (temperatura, umidità, etc.)
-7. ✅ **Validazione**: JSON Schema validation all'import di entrambi i formati — vedi `core/pattern_db/validator.py` e gli schemi in `core/pattern_db/schemas/`
+Sezione storica di design (molte voci sono state realizzate nelle fasi successive; è
+mantenuta come traccia). Lo stato attuale è descritto più in basso («DeviceModel v2») e
+nella sezione «Limiti verificati».
+
+1. ✅ **Pattern Engine**: caricamento pattern da `.ride-pattern.json` in cache in-memory
+   — realizzato in `PatternEngine.apply_pattern_db` / `load_pattern_file` (`pattern_engine.py`,
+   v1/v2-aware). Nota: `PatternMatcher` (ereditato) è oggi codice morto (vedi P4 nei limiti).
+2. ✅ **Buffer Manager**: `export_capture`/`import_capture` (`buffer_manager.py`) in `.ride-capture.json`
+3. ✅ **Decipher Ingest**: `DecipherIngest` popola il DB decifrato (`decipher_ingest.py`)
+4. ✅ **Endpoint API**: `/api/devices/{id}/patterns/import|export`, `/capture/export` (`server.py`)
+5. ✅ **State persistence**: `state_variables` nel DeviceState (per-device DB)
+6. ✅ **Virtual sensors**: motore di simulazione in `PatternEngine`/`DeviceStateStore`
+7. ✅ **Validazione**: JSON Schema validation all'import — `validator.py` + schemi in `core/pattern_db/schemas/`
 
 ---
 
@@ -488,7 +494,9 @@ Il v2 mantiene i blocchi costruttivi del v1 a livello radice (`commands` +
 ### Round-trip e clonazione
 
 - `export_device_model` / `import_device_model` (`decipher_ingest.py`) fanno il
-  round-trip v2, preservando `ProtocolInfo` completo e `observation_history`.
+  round-trip v2, preservando `ProtocolInfo` completo; `observation_history` è
+  preservata nel round-trip **solo se** viene fornita una lista `observations=`
+  esplicita (vedi nota sotto — oggi non è cablata nel runtime/API).
 
 > **Nota — `observation_history` (grounding):** viene serializzato **solo quando**
 > `export_device_model` riceve una lista `observations=` esplicita. Oggi il
@@ -499,8 +507,35 @@ Il v2 mantiene i blocchi costruttivi del v1 a livello radice (`commands` +
 > buffer→Observation→grounding è il follow-up pianificato (fase D1/E1).
 
 - `DeviceModel.to_pattern_db()` proietta il v2 → v1 `PatternDB` per il runtime
-  `PatternEngine` (match in-memory; il DB è persistenza, non interrogato per
-  richiesta).
+  `PatternEngine`. La cache in-memory (`_cached_patterns`) serve le richieste e,
+  quando è calda, il DB **non** viene interrogato per richiesta; ma senza una
+  cache calda il motore fa un **fallback a scansione DB** (`RequestPattern`/
+  `ResponseTemplate`) a ogni richiesta. Garantire una cache calda per ogni
+  dispositivo servito è un hardening pianificato (fase E1).
 - Importando `.ride-pattern.json` v2 su una seconda installazione, il
   dispositivo risponde a richieste già apprese (e — nei limiti del modello — a
   quelle mai viste via sintesi semantica) senza LLM né cloud.
+
+---
+
+## Limiti verificati (audit workflow, post-PR #153)
+
+Verificati contro il codice reale il 2026-09-04 (PR #151/#153 merge su main). Nessuna
+affermazione inventata; ognuna ha evidenza file:riga (report completo in
+`devicemodel_architect_analysis.md`, sezione *Audit workflow*).
+
+- **P1 — `ProtocolInfo.handler` inerte.** `_persist_device_meta` scrive `connection_mode`/
+  `handler`/`protocols`, ma `handle_request` dirama solo su `device.mode` e
+  `handle_protocol_request` convoglia tutti i plugin (MQTT/CoAP/Modbus/WebSocket/Raw
+  TCP/HTTP2) nello stesso orchestratore. Non esiste ancora una diramazione
+  standard→handler-nativo dopo l'identificazione “auto” (open question M10).
+- **P2 — Nessuna garanzia di cache calda.** La cache in-memory evita il DB quando è warm,
+  ma senza una cache calda il motore fa un fallback a scansione DB a ogni richiesta.
+  Il vincolo “Device DB fuori hot path” vale solo per dispositivi con cache warm
+  (auto-load/export). Hardening pianificato: fase E1.
+- **P3 — `observation_history` non persistita.** Serializzata solo se `observations=`
+  esplicito; i percorsi runtime/API non lo passano → i file v2 auto hanno storicamente
+  vuoto. Senza persistenza non c'è grounding offline-first. Correlata ai todo D1/E1.
+- **P4 — `PatternMatcher` codice morto.** Istanzziato da `LearningOrchestrator.initialize`
+  ma il suo `find_best_match` non è mai chiamato: tutto passa da `PatternEngine`. Candidato
+  alla rimozione una volta confermato il motore come unica fonte (niente nuova proliferazione).
