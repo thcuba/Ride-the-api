@@ -220,3 +220,77 @@ async def test_protocol_info_round_trips_full_fields(db_manager):
     assert exported.protocol.identity == "shelly-plug"
     assert exported.protocol.ports == [8883]  # noqa: PLR2004
     assert exported.protocol.confidence == 0.93  # noqa: PLR2004
+
+
+async def test_merge_device_model_is_idempotent(db_manager):
+    """Re-flushing the same v2 delta must converge, not duplicate rows (C1).
+
+    ``merge_device_model`` upserts by deterministic ids and merges the protocol
+    header without blanking the identity. A second merge with an identical delta
+    (and a partial header) must leave a single RequestPattern/ResponseTemplate
+    row and preserve the previously learned identity.
+    """
+    ingester = DecipherIngest(db_manager)
+    device_id = "device-merge-idem"
+
+    def build_model(identity: str, confidence: float):
+        return DeviceModel(
+            meta=PatternMeta(pattern_id=f"{device_id}-patterns", vendor="Shelly",
+                             device_type="plug"),
+            protocol=ProtocolInfo(protocol="mqtt", handler="mqtt",
+                                  identity=identity, confidence=confidence),
+            commands=[Command(id="c1", kind="set_relay", protocol="mqtt",
+                              topic="shellies/plug/relay")],
+            responses=[ServerResponse(id="tpl_c1", triggers=["set_relay"],
+                                      status_code=200, field_mappings=[])],
+        )
+
+    first = await ingester.merge_device_model(device_id, build_model("shelly-plug", 0.9))
+    assert first == 1  # noqa: PLR2004
+
+    # Re-merge with an identical command but a *partial* header (identity absent):
+    # must not duplicate the row and must not blank the learned identity.
+    second = await ingester.merge_device_model(
+        device_id,
+        DeviceModel(
+            meta=PatternMeta(pattern_id=f"{device_id}-patterns", vendor="Shelly",
+                             device_type="plug"),
+            protocol=ProtocolInfo(protocol="mqtt", handler="mqtt"),
+            commands=[Command(id="c1", kind="set_relay", protocol="mqtt",
+                              topic="shellies/plug/relay")],
+        ),
+    )
+    assert second == 1  # noqa: PLR2004
+    assert await _count_patterns(db_manager, device_id) == 1  # noqa: PLR2004
+
+    exported = await ingester.export_device_model(device_id, "Shelly", "plug")
+    # Identity survived the partial merge (only carried fields overwrite).
+    assert exported.protocol.identity == "shelly-plug"
+    assert len(exported.commands) == 1  # noqa: PLR2004
+    assert len(exported.responses) == 1  # noqa: PLR2004
+
+
+async def test_merge_device_model_derives_ids_for_deltas(db_manager):
+    """LLM deltas often omit ids: merge must derive stable ids so re-flush
+    converges on the same RequestPattern row (C1)."""
+    ingester = DecipherIngest(db_manager)
+    device_id = "device-merge-delta"
+
+    def delta(kind: str, path: str):
+        return DeviceModel(
+            meta=PatternMeta(pattern_id=f"{device_id}-patterns", vendor="Shelly",
+                             device_type="plug"),
+            commands=[Command(id="", kind=kind, protocol="http", method="GET",
+                              path=path)],
+            responses=[ServerResponse(id="", triggers=[kind], status_code=200,
+                                      field_mappings=[])],
+        )
+
+    await ingester.merge_device_model(device_id, delta("status", "/rpc/Status"))
+    await ingester.merge_device_model(device_id, delta("status", "/rpc/Status"))
+
+    exported = await ingester.export_device_model(device_id, "Shelly", "plug")
+    assert len(exported.commands) == 1  # noqa: PLR2004
+    assert exported.commands[0].kind == "status"
+    assert exported.commands[0].id  # a deterministic id was derived
+

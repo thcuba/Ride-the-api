@@ -41,7 +41,7 @@ from core.pattern_db.pattern_engine import (
     _dpath_set,
     _path_similarity,
 )
-from core.pattern_db.schemas import PatternDB, ProtocolInfo
+from core.pattern_db.schemas import DeviceModel, PatternDB, ProtocolInfo
 
 if TYPE_CHECKING:
     from core.buffer.store import BufferStore
@@ -746,7 +746,7 @@ class LearningPipeline:
         context_notes: str | None = None,
     ) -> dict:
         """Build context dict for LLM analysis."""
-        return {
+        ctx = {
             "device_id": device_id,
             "vendor": device.vendor,
             "device_type": device.device_type,
@@ -755,6 +755,22 @@ class LearningPipeline:
             "total_size_bytes": sum(p["size"] for p in pairs),
             "context_notes": context_notes or device.llm_context_notes or "",
         }
+        # Ground subsequent flushes with the current learned model so the LLM
+        # can produce a *delta* (C1) instead of re-deriving everything from
+        # scratch. Only present once a device header exists (i.e. not the
+        # very first flush). Best-effort: if the model cannot be exported the
+        # flush still proceeds without grounding.
+        if await self.db_manager.read_device_meta(device_id) is not None:
+            try:
+                ingester = decipher_ingest.DecipherIngest(self.db_manager)
+                current = await ingester.export_device_model(device_id)
+                ctx["current_model"] = current.model_dump(mode="json", by_alias=False)
+            except Exception:  # noqa: BLE001 - grounding must never block learning
+                logger.debug(
+                    "Could not export current DeviceModel for grounding of %s",
+                    device_id,
+                )
+        return ctx
 
     async def flush_and_learn(
         self, device_id: str, pair_ids: list[int] | None = None, context_notes: str | None = None
@@ -1001,7 +1017,7 @@ class LearningPipeline:
         if context.get("first_flush"):
             prompt += (
                 "\n\nThis is the FIRST contact with the device: identify its "
-                "protocol in mode=\"auto\" (initial device/protocol "
+                'protocol in mode="auto" (initial device/protocol '
                 "identification, not a protocol message). Based on the pairs "
                 "above, also answer in JSON with an object \"protocol_info\": "
                 '{"transport": "tcp|udp|websocket", "protocol": "mqtt|http|'
@@ -1011,19 +1027,113 @@ class LearningPipeline:
                 '"identity": "vendor/model identity if any", "ports": [list '
                 'of ports], "confidence": 0.0..1.0}. Also include "protocols": '
                 "[list of protocols the device speaks, e.g. [\"mqtt\"], "
-                "[\"http\"], [\"modbus\"], [\"coap\"], [\"tls\"]], "
+                '[\"http\"], [\"modbus\"], [\"coap\"], [\"tls\"]], '
                 '"connection_mode": one of auto | tls | http | mqtt | coap | '
                 "modbus (the ingress decision for this device). "
                 'Use "http" for plain HTTP(S) traffic.'
             )
+        # Subsequent flushes: the device is already known. Ground the LLM with
+        # the current learned model and have it return a structured *delta*
+        # (commands/responses/interactions/?), which is then merged
+        # idempotently into the DeviceModel (C1) instead of re-deriving SQL.
+        elif context.get("current_model"):
+            current_model_json = json.dumps(
+                context["current_model"], indent=2, default=str
+            )
+            prompt += (
+                "\n\nThis device has ALREADY been learned (a DeviceModel "
+                "exists). The device model is:\n"
+                f"{current_model_json}\n\n"
+                "Based ONLY on the NEW pairs above, return a JSON DELTA of the "
+                'device model: an object with "commands" (list of Command: '
+                '"id" (stable, reuse the existing id when the command is '
+                'already known), "kind", "protocol", "method", "path" or '
+                '"topic", "headers", "body_schema", "confidence"), '
+                '"responses" (list of ServerResponse: "id", "triggers" '
+                '(intents), "status_code", "headers_template", "body_template", '
+                '"field_mappings"), "interactions" (list of FieldMapping: '
+                '"source", "target", "transform", "mapping"), and optionally '
+                '"state_variables" or "virtual_sensors". Do NOT repeat '
+                "commands already in the model above unchanged; only new or "
+                "changed knowledge. If nothing is new, return "
+                '{"commands": [], "responses": [], "interactions": []}.'
+            )
         return prompt
 
-    async def _save_patterns(self, device_id: str, analysis: dict):  # noqa: C901, PLR0912
+    async def _save_patterns(self, device_id: str, analysis: dict):  # noqa: C901, PLR0912, PLR0915
         """Save LLM-decoded patterns to the device database.
 
-        Uses DecipherIngest for structured output; falls back to the
-        original dict-based save for simpler analyses.
+        Routes structured output through DecipherIngest: a v2 delta (with
+        ``commands``/``responses``/``interactions``) is merged idempotently via
+        :meth:`DecipherIngest.merge_device_model` (C1 learning update), a full
+        v1 PatternDB (``meta``/``client``/``server``) via ``import_patterns``,
+        and simpler analyses fall back to the original dict-based loop.
         """
+        # Skip the cascade of early `return`: each branch returns on success.
+        if isinstance(analysis.get("commands"), list) or isinstance(
+            analysis.get("responses"), list
+        ):
+            # v2 model delta (C1): only the fields the LLM actually returned,
+            # merged idempotently so re-learning converges instead of duping.
+            try:
+                ingester = decipher_ingest.DecipherIngest(self.db_manager)
+                pruned: dict = {}
+                for key in (
+                    "meta",
+                    "protocol",
+                    "commands",
+                    "responses",
+                    "interactions",
+                    "state_variables",
+                    "virtual_sensors",
+                    "observation_history",
+                ):
+                    if key in analysis:
+                        pruned[key] = analysis[key]
+                # DeviceModel requires meta; default it when the delta omits it.
+                if "meta" not in pruned:
+                    header = await self.db_manager.read_device_meta(device_id) or {}
+                    pruned["meta"] = {
+                        "pattern_id": f"{device_id}-patterns",
+                        "vendor": header.get("vendor", "unknown"),
+                        "device_type": header.get("device_type", "unknown"),
+                        "model": header.get("model", ""),
+                    }
+                # Command/ServerResponse ids are required by the schema but an
+                # LLM delta may omit them: derive stable ids exactly like
+                # merge_device_model does, so re-flush maps to the same row.
+                for cmd in pruned.get("commands", []):
+                    if not cmd.get("id"):
+                        path = (
+                            cmd.get("path")
+                            or cmd.get("path_pattern")
+                            or cmd.get("topic")
+                            or ""
+                        )
+                        digest = (
+                            hashlib.md5(path.encode("utf-8")).hexdigest()[:8]
+                            if path
+                            else "none"
+                        )
+                        cmd["id"] = f"{device_id}_{cmd.get('kind', 'cmd')}_{digest}"
+                for resp in pruned.get("responses", []):
+                    if not resp.get("id"):
+                        tpl_prefix = (
+                            f"tpl_{device_id}_{resp.get('triggers', ['resp'])[0]}"
+                        )
+                        resp["id"] = tpl_prefix  # matched by template_id in merge
+                model = DeviceModel.model_validate(pruned)
+                count = await ingester.merge_device_model(device_id, model)
+                logger.info(
+                    "Merged %d model command rows for %s (v2 delta)",
+                    count,
+                    device_id,
+                )
+            except Exception as e:  # noqa: BLE001 - fall back to legacy path
+                logger.warning("v2 delta merge failed, falling back: %s", e)
+            else:
+                return
+
         # Try structured ingest (PatternDB format) first
         if "meta" in analysis and "client" in analysis and "server" in analysis:
             try:
@@ -1142,7 +1252,6 @@ class LearningPipeline:
                                 confidence=resp_info.get("confidence", 0.5),
                             )
                             session.add(fmap)
-
 
     async def _persist_device_meta(
         self, device_id: str, device: DeviceRegistry, analysis: dict
