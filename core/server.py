@@ -29,6 +29,7 @@ from adapters.base import (
     ProtocolType,
     device_id_from_ip,
 )
+from core.atomic_io import sanitize_filename_component
 from core.buffer import (
     dispose_memory_db,
     get_buffer_backend,
@@ -1079,7 +1080,14 @@ async def assign_device_database(device_id: str, request: Request):
 
     # If only a name is given, create a new SQLite database for it
     if not database_url and database_name:
-        db_path = db_manager.device_db_dir / f"{database_name}.db"
+        try:
+            safe_name = sanitize_filename_component(database_name)
+        except ValueError as e:
+            return JSONResponse(
+                status_code=400,
+                content={"error": f"Invalid database_name: {e}"},
+            )
+        db_path = db_manager.device_db_dir / f"{safe_name}.db"
         database_url = f"sqlite+aiosqlite:///{db_path}"
     elif not database_url and not database_name:
         return JSONResponse(
