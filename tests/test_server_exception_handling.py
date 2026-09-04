@@ -18,12 +18,21 @@ import core.server as server_mod
 from core.server import _get_request_body, app
 
 
+from pathlib import Path
+
+
 class _FakeDB:
     def __init__(self) -> None:
         self.updated = []
+        self.device_db_dir = Path("/tmp/test_db_dir")
 
     async def update_device_mode(self, device_id: str, mode: str) -> bool:
         self.updated.append((device_id, mode))
+        return True
+
+    async def assign_device_database(
+        self, device_id: str, database_url: str | None = None, database_name: str | None = None
+    ) -> bool:
         return True
 
 
@@ -95,3 +104,23 @@ async def test_get_request_body_empty_is_none():
             return b""
 
     assert await _get_request_body(_Req()) is None
+
+
+def test_assign_device_database_path_traversal_rejected(client):
+    """Path traversal in database_name parameter must be rejected with 400."""
+    resp = client.post(
+        "/api/devices/some-device/database",
+        json={"database_name": "../../evil_db"},
+    )
+    assert resp.status_code == 400
+    assert "Invalid database_name" in resp.json()["error"]
+
+
+def test_assign_device_database_valid_name_accepted(client):
+    """Valid database_name parameter must be accepted."""
+    resp = client.post(
+        "/api/devices/some-device/database",
+        json={"database_name": "valid_db_name"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["database_name"] == "valid_db_name"
