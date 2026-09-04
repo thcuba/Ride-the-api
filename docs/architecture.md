@@ -219,6 +219,11 @@ with state variable resolution and safe formula evaluation.
   AST interpreter — no attribute access, imports, or arbitrary calls, so code injection is prevented.
 - **Caching**: patterns can be loaded from `.ride-pattern.json` files into memory for
   ultra-fast matching without touching the database.
+  **Note (verified):** the legacy `PatternMatcher` class (`pipeline.py`) is
+  instantiated by `LearningOrchestrator.initialize` but its `find_best_match`
+  is never called — all matching goes through `PatternEngine`. `PatternMatcher`
+  is effectively dead code and a candidate for removal once the engine path is
+  confirmed as the single source of truth.
 
 ---
 
@@ -416,6 +421,8 @@ knowledge). The v2 root keeps the v1 building blocks at the top level
 - **`protocol`** (`ProtocolInfo`): transport, security, proprietary flag,
   identity, ports, handler and confidence — produced by the first-flush LLM
   identification (`mode="auto"`), not a protocol handler.
+
+  **Known limit (verified):** the persisted `handler` / `connection_mode` is *not yet* consumed by request routing — `handle_request` selects behaviour from `device.mode` (production/hybrid/learning) only, and `handle_protocol_request` funnels every protocol plugin (MQTT/CoAP/Modbus/WebSocket/Raw TCP/HTTP2) through the same orchestrator pipeline. There is no per-protocol “native handler” branch after identification yet (open question M10).
 - **`observation_history`**: learned traffic history used as grounding for
   synthesising replies to requests never seen before.
 
@@ -438,8 +445,15 @@ DB by deterministic IDs. The LLM is never on the runtime critical path (flush
 is async) and produces a structured model update, not raw SQL rows.
 
 **Runtime:** the `PatternEngine` matches on the v1 `PatternDB` projection
-(`DeviceModel.to_pattern_db()`); the in-memory compiled model is what answers
-requests, the Device DB is persistence, and the DB is not queried per request.
+(`DeviceModel.to_pattern_db()`); the in-memory compiled model
+(`_cached_patterns`) answers requests and — when the cache is warm — the Device
+DB is NOT queried per request (the cache is used exclusively). If a device has
+no warm cached model (never auto-loaded, never exported/imported), the engine
+falls back to a per-request DB scan of `RequestPattern`/`ResponseTemplate`.
+Today there is no guarantee that every served device has a warm cache, so the
+"DB out of the hot path" goal is only met for devices that have completed an
+export/sync or auto-load; enforcing a compile-on-load invariant (a `DeviceModel`
+loaded into memory before serving) is a planned hardening step (phase E1).
 
 **Export path:** when a device has a learned protocol header, both the runtime
 sync (`pipeline._export_and_sync_patterns`) and the HTTP API export
