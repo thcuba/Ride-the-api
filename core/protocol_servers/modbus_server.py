@@ -37,6 +37,7 @@ except ImportError:  # pragma: no cover - exercised at import time only
     HAS_PYMODBUS = False
 
 from adapters.base import InterceptedRequest, ProtocolType
+from core.pattern_db.schemas import ObservationKind, TransportMeta
 from core.protocol_servers import ProtocolServerPlugin
 
 logger = logging.getLogger(__name__)
@@ -59,10 +60,14 @@ if HAS_PYMODBUS:
             store: ModbusServerContext,
             handler: Callable | None,
             loop: asyncio.AbstractEventLoop,
+            tls_enabled: bool = False,
+            port: int = 502,
         ) -> None:
             self._store = store
             self._handler = handler
             self._loop = loop
+            self._tls_enabled = tls_enabled
+            self._port = port
 
         def _notify(self, device_id: int, func_code: int, address: int, values=None, count: int = 1) -> None:
             """Fire a best-effort InterceptedRequest at the pipeline."""
@@ -88,6 +93,15 @@ if HAS_PYMODBUS:
                 path=f"/modbus/{func_code}/{address}",
                 query_params={"device_id": str(device_id), "func_code": str(func_code), "address": str(address)},
                 body=body,
+                transport=TransportMeta(
+                    port=self._port,
+                    tls=self._tls_enabled,
+                    func_code=func_code,
+                    reg_address=address,
+                ),
+                security="tls" if self._tls_enabled else "none",
+                identity=f"modbus-{device_id}",
+                kind=ObservationKind.FRAME,
             )
             try:
                 if asyncio.iscoroutinefunction(handler):
@@ -147,6 +161,8 @@ class ModbusServerPlugin(ProtocolServerPlugin):
             ModbusServerContext(devices=store, single=True),
             handler=self.handler,
             loop=asyncio.get_event_loop(),
+            tls_enabled=cfg.tls_enabled,
+            port=cfg.port,
         )
         self._server_task = asyncio.create_task(self._run_server(cfg.host, cfg.port))
         self._running = True

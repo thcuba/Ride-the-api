@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from adapters.base import InterceptedRequest, ProtocolType
+from core.pattern_db.schemas import ObservationKind, TransportMeta
 from core.protocol_servers import ProtocolServerPlugin
 
 if TYPE_CHECKING:
@@ -133,6 +134,13 @@ class ZWaveBridgePlugin(ProtocolServerPlugin):
             protocol=ProtocolType.ZWAVE,
             topic=topic,
             body=body,
+            transport=TransportMeta(
+                topic=topic,
+                port=getattr(self.config, "mqtt_port", 1883),
+            ),
+            security="none",
+            identity=f"zwave-{device}",
+            kind=ObservationKind.PUBLISH,
         )
         if self.handler:
             try:

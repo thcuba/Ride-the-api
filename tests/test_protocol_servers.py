@@ -55,6 +55,11 @@ async def test_raw_tcp_server_binds_and_routes():
     req = await asyncio.wait_for(received, timeout=5)
     assert req is not None
     assert req.body["raw"].startswith("68656c6c6f")  # "hello" hex
+    # D2 enrichment: raw TCP frames carry transport metadata + FRAME kind.
+    assert req.kind is not None
+    assert req.kind.value == "frame"
+    assert req.transport is not None
+    assert req.transport.port == port
     writer.close()
     await writer.wait_closed()
 
@@ -78,6 +83,9 @@ async def test_matter_bridge_binds_and_routes():
     req = await asyncio.wait_for(received, 5)
     assert req is not None
     assert req.body == {"on": True}
+    # D2 enrichment: Matter bridge events carry EVENT kind.
+    assert req.kind is not None
+    assert req.kind.value == "event"
     writer.close()
     await writer.wait_closed()
 

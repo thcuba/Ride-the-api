@@ -9,6 +9,7 @@ import pytest
 import core.server as server_mod
 from adapters.base import InterceptedRequest, ProtocolType
 from core.modification import ModificationAction, ModificationRule, get_modification_engine
+from core.pattern_db.schemas import ObservationKind, TransportMeta
 
 
 class _FakeDB:
@@ -80,6 +81,36 @@ async def test_protocol_request_service_not_ready(monkeypatch):
     req = InterceptedRequest(device_id="d1", timestamp=0, protocol=ProtocolType.HTTP)
     result = await server_mod.handle_protocol_request(req)
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_protocol_request_threads_enrichment(monkeypatch):
+    """D2: server-emitted transport/security/identity/kind reach the orchestrator."""
+    db = _FakeDB()
+    orch = _FakeOrchestrator()
+    monkeypatch.setattr(server_mod, "db_manager", db)
+    monkeypatch.setattr(server_mod, "orchestrator", orch)
+
+    req = InterceptedRequest(
+        device_id="modbus-1",
+        timestamp=0,
+        protocol=ProtocolType.MODBUS,
+        method="WRITE",
+        path="/modbus/5/100",
+        body={"func_code": 5, "address": 100, "value": 1},
+        transport=TransportMeta(port=502, tls=False, func_code=5, reg_address=100),
+        security="none",
+        identity="modbus-1",
+        kind=ObservationKind.FRAME,
+    )
+    await server_mod.handle_protocol_request(req)
+
+    call = orch.calls[0]
+    assert call["enrichment"]["kind"] == "frame"
+    assert call["enrichment"]["security"] == "none"
+    assert call["enrichment"]["identity"] == "modbus-1"
+    assert call["enrichment"]["transport"]["port"] == 502  # noqa: PLR2004
+    assert call["enrichment"]["transport"]["func_code"] == 5  # noqa: PLR2004
 
 
 def test_apply_response_modifications_wrapper():

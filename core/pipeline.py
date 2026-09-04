@@ -108,6 +108,10 @@ class CorrelatedPair:
     latency_ms: float
     correlation_confidence: float
     timestamp: datetime
+    # Observation enrichment (D2): transport/security/identity/kind carried from
+    # the protocol server. Absent (None) for HTTP/TLS-passthrough pairs and for
+    # legacy paths, so the buffer JSON stays backward-compatible.
+    enrichment: dict | None = None
 
 
 class ContextBuffer:
@@ -145,6 +149,8 @@ class ContextBuffer:
             "latency_ms": pair.latency_ms,
             "timestamp": pair.timestamp.isoformat(),
         }
+        if pair.enrichment:
+            pair_json["enrichment"] = pair.enrichment
         serialized = json.dumps(pair_json, default=str)
         estimated_size = len(serialized.encode("utf-8"))
 
@@ -524,8 +530,13 @@ class LearningPipeline:
         headers: dict,
         body: Any,  # noqa: ANN401
         query_params: dict,
+        enrichment: dict | None = None,
     ) -> str:
         """Register an outgoing request and generate a correlation key.
+
+        ``enrichment`` carries transport/security/identity/kind emitted by
+        protocol servers (D2); it is attached to the correlated pair so the
+        buffer/observation layer can reconstruct the contextual metadata.
 
         Returns: correlation_key for later matching with response.
         """
@@ -541,6 +552,7 @@ class LearningPipeline:
             "headers": headers,
             "body": body,
             "query_params": query_params,
+            "enrichment": enrichment,
             "timestamp": datetime.now(UTC),
         }
 
@@ -678,6 +690,7 @@ class LearningPipeline:
             latency_ms=latency_ms,
             correlation_confidence=0.8,
             timestamp=datetime.now(UTC),
+            enrichment=matched.get("enrichment"),
         )
 
         # Store in the _correlation_cache for the pipeline
@@ -1309,6 +1322,7 @@ class LearningOrchestrator:
         headers: dict,
         body: Any,  # noqa: ANN401
         query_params: dict,
+        enrichment: dict | None = None,
     ) -> dict:
         """Main entry point: handle an incoming request. Returns response info."""
         # Get device mode
@@ -1325,7 +1339,7 @@ class LearningOrchestrator:
             PipelineMode.HYBRID.value: self._handle_hybrid,
         }.get(device.mode, self._handle_learning)
         return await handler(
-            device, protocol, method, path, headers, body, query_params
+            device, protocol, method, path, headers, body, query_params, enrichment
         )
 
     async def _handle_production(  # noqa: PLR0913
@@ -1337,6 +1351,7 @@ class LearningOrchestrator:
         headers: dict,
         body: Any,  # noqa: ANN401
         query_params: dict,
+        enrichment: dict | None = None,
     ) -> dict:
         """Production mode: try local match, fall back to cloud forwarding + learning.
 
@@ -1377,7 +1392,7 @@ class LearningOrchestrator:
 
         # Forward to cloud + capture for learning
         corr_key = await self._register_for_learning(
-            device, protocol, method, path, headers, body, query_params
+            device, protocol, method, path, headers, body, query_params, enrichment
         )
         return {
             "action": "forward",
@@ -1395,6 +1410,7 @@ class LearningOrchestrator:
         headers: dict,
         body: Any,  # noqa: ANN401
         query_params: dict,
+        enrichment: dict | None = None,
     ) -> dict:
         """Hybrid mode: try local match first; if confident serve locally, otherwise
         forward to cloud + learn."""
@@ -1421,7 +1437,7 @@ class LearningOrchestrator:
             }
         # Not confident -- forward to cloud but also capture for learning
         corr_key = await self._register_for_learning(
-            device, protocol, method, path, headers, body, query_params
+            device, protocol, method, path, headers, body, query_params, enrichment
         )
         await self.tracker.record_result(device.device_id, MatchResult.CLOUD_MISS)
         return {
@@ -1441,10 +1457,11 @@ class LearningOrchestrator:
         headers: dict,
         body: Any,  # noqa: ANN401
         query_params: dict,
+        enrichment: dict | None = None,
     ) -> dict:
         """Learning mode: forward all to cloud, correlate, and build patterns."""
         corr_key = await self._register_for_learning(
-            device, protocol, method, path, headers, body, query_params
+            device, protocol, method, path, headers, body, query_params, enrichment
         )
         return {
             "action": "forward",
@@ -1461,6 +1478,7 @@ class LearningOrchestrator:
         headers: dict,
         body: Any,  # noqa: ANN401
         query_params: dict,
+        enrichment: dict | None = None,
     ) -> str:
         """Register a request for learning capture with its real protocol."""
         if not self.pipeline:
@@ -1482,6 +1500,7 @@ class LearningOrchestrator:
             headers,
             body,
             query_params,
+            enrichment,
         )
 
     async def handle_response(  # noqa: PLR0913

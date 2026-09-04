@@ -104,6 +104,37 @@ class TestRamMode:
         assert (await buffer.get_current_size("device-001")) == 0
 
     @pytest.mark.asyncio
+    async def test_ram_enrichment_serialized_and_omitted(self, db_manager):
+        """D2: enrichment flows into the buffer pair_json; absent when not set."""
+        set_buffer_backend("memory")
+        assert get_buffer_backend() == "memory"
+
+        buffer = ContextBuffer(db_manager, max_size_bytes=1048576)
+        enriched = make_pair(
+            enrichment={
+                "transport": {"port": 1883, "tls": False, "topic": "shelly/1/status"},
+                "security": "none",
+                "identity": "shelly-1",
+                "kind": "publish",
+            }
+        )
+        await buffer.add_pair("device-001", enriched)
+
+        pairs = await buffer.get_buffer_pairs("device-001")
+        buffered = pairs[0]["pair"]
+        assert buffered["enrichment"]["kind"] == "publish"
+        assert buffered["enrichment"]["transport"]["port"] == 1883  # noqa: PLR2004
+
+        # A pair without enrichment must not gain an empty key (backward compat).
+        await buffer.add_pair("device-001", make_pair(pair_id="pair-plain"))
+        plain = [
+            p["pair"]
+            for p in await buffer.get_buffer_pairs("device-001")
+            if p["pair"]["pair_id"] == "pair-plain"
+        ]
+        assert "enrichment" not in plain[0]
+
+    @pytest.mark.asyncio
     async def test_ram_store_shared_between_managers(self, db_manager):
         set_buffer_backend("memory")
 

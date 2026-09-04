@@ -242,6 +242,30 @@ async def handle_protocol_request(request: InterceptedRequest) -> dict | None:
     try:
         await db_manager.get_or_create_device(device_id, "unknown")
 
+        # Build the D2 enrichment dict from the InterceptedRequest fields emitted
+        # by protocol servers (transport/security/identity/kind). It flows into
+        # the correlated pair and the buffer JSON, so the observation/LLM layer
+        # can reconstruct contextual metadata without re-deriving it.
+        enrichment: dict | None = None
+        transport = getattr(request, "transport", None)
+        if transport is not None or any(
+            getattr(request, f, None) is not None for f in ("security", "identity", "kind")
+        ):
+            enrichment = {}
+            if transport is not None:
+                # TransportMeta is a pydantic model; collapse to a plain dict so
+                # the buffer JSON serializes cleanly (no str()-of-object).
+                if hasattr(transport, "model_dump"):
+                    enrichment["transport"] = transport.model_dump()
+                elif isinstance(transport, dict):
+                    enrichment["transport"] = transport
+                else:
+                    enrichment["transport"] = str(transport)
+            for f in ("security", "identity", "kind"):
+                val = getattr(request, f, None)
+                if val is not None:
+                    enrichment[f] = val.value if hasattr(val, "value") else val
+
         return await orchestrator.handle_request(
             device_id=device_id,
             vendor="unknown",
@@ -251,6 +275,7 @@ async def handle_protocol_request(request: InterceptedRequest) -> dict | None:
             headers=request.headers or {},
             body=request.body,
             query_params=request.query_params or {},
+            enrichment=enrichment,
         )
     except Exception as e:
         logger.error("Protocol handler error for %s: %s", device_id, e, exc_info=True)

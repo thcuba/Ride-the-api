@@ -36,6 +36,7 @@ except ImportError:  # pragma: no cover - exercised at import time only
     HAS_AIOCOAP = False
 
 from adapters.base import InterceptedRequest, ProtocolType
+from core.pattern_db.schemas import ObservationKind, TransportMeta
 from core.protocol_servers import ProtocolServerPlugin
 
 logger = logging.getLogger(__name__)
@@ -132,6 +133,13 @@ class CoAPServerPlugin(ProtocolServerPlugin):
             headers={},
             query_params=query_params,
             body=body,
+            transport=TransportMeta(
+                port=getattr(self.config, "port", 5683),
+                tls=getattr(self.config, "dtls_enabled", False),
+            ),
+            security="dtls" if getattr(self.config, "dtls_enabled", False) else "none",
+            identity=f"coap-{remote_ip}",
+            kind=ObservationKind.REQUEST,
         )
 
         try:

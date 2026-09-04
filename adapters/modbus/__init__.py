@@ -86,8 +86,11 @@ class ModbusProtocolAdapter(ProtocolAdapter):
         """Parse a Modbus request and extract intent."""
         body = request.body or {}
 
-        function_code = body.get("function_code")
-        register = body.get("register")
+        # Normalize naming: the modbus protocol server emits func_code/address
+        # (matching TransportMeta), while some callers use function_code/register.
+        # Accept both so the server's output is consumable end-to-end.
+        function_code = body.get("func_code", body.get("function_code"))
+        register = body.get("address", body.get("register"))
         values = body.get("values", body.get("value"))
 
         if function_code is not None and register is not None:

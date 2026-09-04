@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 from adapters.base import InterceptedRequest, ProtocolType, device_id_from_ip
+from core.pattern_db.schemas import ObservationKind, TransportMeta
 from core.protocol_servers import ProtocolServerPlugin
 
 logger = logging.getLogger(__name__)
@@ -113,6 +114,10 @@ class RawTCPServerPlugin(ProtocolServerPlugin):
                 timestamp=datetime.now(UTC).timestamp(),
                 protocol=proto,
                 body={"raw": data.hex(), "length": len(data), "port": local_port},
+                transport=TransportMeta(port=local_port),
+                security="none",
+                identity=device_id,
+                kind=ObservationKind.FRAME,
             )
 
             if self.handler:
