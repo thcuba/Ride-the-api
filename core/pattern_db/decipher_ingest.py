@@ -515,9 +515,11 @@ class DecipherIngest:
         """
         current = await self.db_manager.read_device_meta(device_id) or {}
 
-        # ?? merge protocol header (only when the delta carries it) ????????????
+        # Merge protocol header (only when the delta carries it): only carried
+        # protocol fields overwrite the existing ones, so a partial delta never
+        # blanks the identity.
+        merged = dict(current)
         if model.protocol and model.protocol.protocol:
-            merged = dict(current)
             merged["vendor"] = model.meta.vendor or current.get("vendor", "unknown")
             merged["device_type"] = (
                 model.meta.device_type or current.get("device_type", "unknown")
@@ -545,10 +547,22 @@ class DecipherIngest:
             merged["confidence"] = model.protocol.confidence or current.get(
                 "confidence", 0.0
             )
-            try:
-                await self.db_manager.write_device_meta(device_id, merged)
-            except Exception as e:  # noqa: BLE001 - header merge is best-effort
-                logger.warning("Failed to merge device header for %s: %s", device_id, e)
+        # A delta may also teach new state_variables / virtual_sensors (they
+        # have no SQL table, canonical home is the header) independently of the
+        # protocol. Merge them so export_device_model recovers them on a later
+        # flush.
+        if model.state_variables:
+            merged["state_variables"] = [
+                sv.model_dump(exclude_none=True) for sv in model.state_variables
+            ]
+        if model.virtual_sensors:
+            merged["virtual_sensors"] = [
+                vs.model_dump(exclude_none=True) for vs in model.virtual_sensors
+            ]
+        try:
+            await self.db_manager.write_device_meta(device_id, merged)
+        except Exception as e:  # noqa: BLE001 - header merge is best-effort
+            logger.warning("Failed to merge device header for %s: %s", device_id, e)
 
         updated = 0
         async with self.db_manager.device_session(device_id) as session:

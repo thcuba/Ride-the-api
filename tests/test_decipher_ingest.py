@@ -294,3 +294,29 @@ async def test_merge_device_model_derives_ids_for_deltas(db_manager):
     assert exported.commands[0].kind == "status"
     assert exported.commands[0].id  # a deterministic id was derived
 
+
+async def test_merge_device_model_carries_state_without_protocol(db_manager):
+    """A C1 delta that teaches state_variables / virtual_sensors (but carries no
+    protocol header) must still persist them. They have no SQL table and their
+    canonical home is the DeviceMeta header, so merge must write them even when
+    ``model.protocol.protocol`` is absent -- otherwise export_device_model would
+    silently drop them on the next flush."""
+    ingester = DecipherIngest(db_manager)
+    device_id = "device-merge-state-noprotocol"
+
+    await ingester.merge_device_model(
+        device_id,
+        DeviceModel(
+            meta=PatternMeta(pattern_id=f"{device_id}-patterns", vendor="Shelly",
+                             device_type="plug"),
+            state_variables=[StateVariable(name="relay", value=0, confidence=0.8)],
+            virtual_sensors=[VirtualSensor(name="power", expr="relay * 5")],
+        ),
+    )
+
+    exported = await ingester.export_device_model(device_id, "Shelly", "plug")
+    assert len(exported.state_variables) == 1  # noqa: PLR2004
+    assert exported.state_variables[0].name == "relay"
+    assert len(exported.virtual_sensors) == 1  # noqa: PLR2004
+    assert exported.virtual_sensors[0].name == "power"
+

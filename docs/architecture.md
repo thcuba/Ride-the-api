@@ -441,6 +441,14 @@ is async) and produces a structured model update, not raw SQL rows.
 (`DeviceModel.to_pattern_db()`); the in-memory compiled model is what answers
 requests, the Device DB is persistence, and the DB is not queried per request.
 
+**Export path:** when a device has a learned protocol header, both the runtime
+sync (`pipeline._export_and_sync_patterns`) and the HTTP API export
+(`GET /api/devices/{id}/patterns/export`) emit the v2 `DeviceModel` (goal #11:
+`.ride-pattern.json` = complete clone). Legacy devices that never completed a
+first-flush AUTO identification fall back to the v1 `PatternDB` shape. The
+HTTP import route dispatches a v2 body to `import_device_model` (preserving
+v2-only fields) instead of dropping them via the v1 `PatternDB` parser.
+
 The LLM must learn **semantics and behaviour** of the device; for standard
 protocols (Modbus TCP, MQTT, CoAP, HTTP, WebSocket) the protocol handler
 interprets the wire format while the LLM learns the meaning; for unknown or
