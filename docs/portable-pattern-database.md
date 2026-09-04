@@ -410,3 +410,88 @@ Descrive cosa Ride-the-API deve **rispondere**:
 5. **State persistence**: implementare `state_variables` nel device DB per risposte dinamiche
 6. **Virtual sensors**: motore di simulazione per sensori (temperatura, umidità, etc.)
 7. ✅ **Validazione**: JSON Schema validation all'import di entrambi i formati — vedi `core/pattern_db/validator.py` e gli schemi in `core/pattern_db/schemas/`
+
+---
+
+## DeviceModel v2 (superset portabile di PatternDB)
+
+> Implementato (fasi A–C1). Il `.ride-pattern.json` v2 serializza il modello
+> canonico **`DeviceModel`** (`core/pattern_db/schemas.py`), superset portabile
+> del v1 `PatternDB`, sufficiente per **clonare** un dispositivo su una seconda
+> installazione senza doverlo ri-apprendere (nessun LLM/cloud nei limiti della
+> conoscenza contenuta nel modello).
+
+### Forma v2 (root)
+
+Il v2 mantiene i blocchi costruttivi del v1 a livello radice (`commands` +
+`responses` + `interactions` + `state_variables` + `virtual_sensors`) e aggiunge:
+
+- **`protocol`** → `ProtocolInfo`:
+  `transport`, `security`, `proprietary`, `identity`, `ports`, `handler`,
+  `confidence`, `protocol`, `standard`.
+- **`observation_history`** → lista di `Observation` (storico appreso, grounding
+  per l'estrapolazione di risposte a richieste mai viste).
+
+```json
+{
+  "$schema": "https://ride-the-api.dev/pattern-schema/v2",
+  "meta": { "...v1 campi..." },
+  "protocol": {
+    "protocol": "modbus",
+    "transport": "tcp",
+    "security": "none",
+    "proprietary": false,
+    "standard": "modbus-tcp",
+    "handler": "modbus",
+    "identity": "acme/ac",
+    "ports": [502],
+    "confidence": 0.9
+  },
+  "commands": [ { "kind": "get_status", "method": "GET", "path": "/v1/status" } ],
+  "responses": [ { "...": "..." } ],
+  "interactions": [],
+  "state_variables": [],
+  "virtual_sensors": [],
+  "observation_history": []
+}
+```
+
+### Flusso di apprendimento
+
+```
+.buffer (Observation[]) ─flush 1─► LLM mode="auto" ─► ProtocolInfo ─┐
+                                                                     ▼
+                                              DeviceModel (in-memory, dev_delta)
+   ─flush succ──► LLM (model delta) ─merge─► DeviceModel ──► Device DB (persistenza)
+                                                                    │
+                        .ride-capture.json = raw Observation        ▼
+                        .ride-pattern.json = DeviceModel v2 ──► second install
+                                                                    ▼
+                                              PatternEngine (in-memory) ─► response
+```
+
+- **Primo flush** (`mode="auto"`): il prompt istruisce l'LLM a restituire un
+  oggetto `protocol_info` strutturato (identificazione iniziale del
+  dispositivo/protocollo, NON un protocollo). Viene persistito nell'header del
+  dispositivo (`DeviceMeta`) e recuperato da `export_device_model`.
+- **Flush successivi**: il prompt chiede un JSON **delta** su
+  `commands/responses/interactions/state_variables/virtual_sensors`;
+  `merge_device_model` (`decipher_ingest.py`) lo fa upsert **idempotente** nel
+  Device DB tramite ID deterministici.
+- L'LLM NON è sul percorso critico del runtime (flush asincrono) e produce un
+  aggiornamento strutturato del modello, NON righe SQL `RequestPattern`.
+- L'LLM impara la **semantica/comportamento**; per protocolli standard
+  (Modbus/MQTT/CoAP/HTTP/WebSocket) l'handler interpreta il formato, per i
+  protocolli sconosciuti/proprietari l'LLM analizza direttamente gli
+  `Observation` batch.
+
+### Round-trip e clonazione
+
+- `export_device_model` / `import_device_model` (`decipher_ingest.py`) fanno il
+  round-trip v2, preservando `ProtocolInfo` completo e `observation_history`.
+- `DeviceModel.to_pattern_db()` proietta il v2 → v1 `PatternDB` per il runtime
+  `PatternEngine` (match in-memory; il DB è persistenza, non interrogato per
+  richiesta).
+- Importando `.ride-pattern.json` v2 su una seconda installazione, il
+  dispositivo risponde a richieste già apprese (e — nei limiti del modello — a
+  quelle mai viste via sintesi semantica) senza LLM né cloud.

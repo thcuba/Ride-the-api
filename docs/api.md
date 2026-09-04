@@ -549,6 +549,13 @@ for that intent.
 
 Exports all patterns of a device in the portable `.ride-pattern.json` format.
 
+> **v2**: when the device has a learned protocol (first-flush `mode="auto"`),
+> the export is a **`DeviceModel` v2** document (see
+> `docs/portable-pattern-database.md`): the v1 `client`/`server` shape is kept
+> at the root as `commands`/`responses` plus `protocol` (`ProtocolInfo`) and
+> `observation_history`. It is sufficient to clone the device on a second
+> installation without re-learning.
+
 **Response `200 OK`**: JSON document conforming to the `PatternDB` schema containing:
 
 ```json
@@ -595,7 +602,8 @@ Exports all patterns of a device in the portable `.ride-pattern.json` format.
 ### Import Patterns: `POST /api/devices/{device_id}/patterns/import`
 
 Imports patterns from a `.ride-pattern.json` file. Patterns are validated against
-the JSON schema before importing.
+the JSON schema before importing. v1 `PatternDB` and v2 `DeviceModel` documents
+are both accepted (`$schema`-aware validation, see `core/pattern_db/validator.py`).
 
 **JSON Body**: `PatternDB` document (same format as export).
 

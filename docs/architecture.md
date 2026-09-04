@@ -403,6 +403,49 @@ Used for:
 Both formats are validated via JSON schema and support automatic obfuscation of
 sensitive data (device IDs, MAC addresses, serial numbers).
 
+### 8.3 DeviceModel v2 (portable superset of PatternDB)
+
+Since the v2 work, `.ride-pattern.json` is the serialized form of the canonical
+**`DeviceModel`** (`core/pattern_db/schemas.py`), a portable superset of the v1
+`PatternDB`. It is sufficient to clone a device on a second installation without
+re-learning it (no LLM/cloud required within the limits of the contained
+knowledge). The v2 root keeps the v1 building blocks at the top level
+(`commands` + `responses` + `interactions` + `state_variables` +
+`virtual_sensors`) and adds:
+
+- **`protocol`** (`ProtocolInfo`): transport, security, proprietary flag,
+  identity, ports, handler and confidence — produced by the first-flush LLM
+  identification (`mode="auto"`), not a protocol handler.
+- **`observation_history`**: learned traffic history used as grounding for
+  synthesising replies to requests never seen before.
+
+```
+TRAFFIC → PROTOCOL LAYER → OBSERVATION → AUTO / PROTOCOL IDENTIFICATION
+        → LLM LEARNING (batch) → DEVICE MODEL → DEVICE DB
+        → COMPILED RUNTIME → LOCAL RESPONSE
+```
+
+**First flush (AUTO):** the buffer's first flush instructs the LLM to return a
+structured `protocol_info` object that identifies transport / protocol /
+security / proprietary-vs-standard / identity / handler / confidence. This is
+persisted to the device header and recovered by `export_device_model`.
+
+**Subsequent flushes (model delta):** later flushes ask the LLM for a JSON
+*delta* over `commands` / `responses` / `interactions` /
+`state_variables` / `virtual_sensors`; `merge_device_model`
+(`core/pattern_db/decipher_ingest.py`) upserts it idempotently into the device
+DB by deterministic IDs. The LLM is never on the runtime critical path (flush
+is async) and produces a structured model update, not raw SQL rows.
+
+**Runtime:** the `PatternEngine` matches on the v1 `PatternDB` projection
+(`DeviceModel.to_pattern_db()`); the in-memory compiled model is what answers
+requests, the Device DB is persistence, and the DB is not queried per request.
+
+The LLM must learn **semantics and behaviour** of the device; for standard
+protocols (Modbus TCP, MQTT, CoAP, HTTP, WebSocket) the protocol handler
+interprets the wire format while the LLM learns the meaning; for unknown or
+proprietary protocols the LLM analyses Observation batches directly.
+
 ---
 
 ## 9. Request Lifecycle Summary
