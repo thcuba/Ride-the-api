@@ -156,11 +156,20 @@
   }
   .toast.success { border-color: var(--green); }
   .toast.error { border-color: var(--red); }
+  .toast.warning { border-color: var(--yellow); }
   .toast.info { border-color: var(--blue); }
+  .toast-icon { font-weight: 700; font-size: 14px; flex-shrink: 0; }
+  .toast.success .toast-icon { color: var(--green); }
+  .toast.error .toast-icon { color: var(--red); }
+  .toast.warning .toast-icon { color: var(--yellow); }
+  .toast.info .toast-icon { color: var(--blue); }
   @keyframes slideIn { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: translateX(0); } }
+  @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+  .btn-spinning .icon-svg { animation: spin .75s linear infinite; }
   @media (prefers-reduced-motion: reduce) {
     .toast { animation: none; }
     .device-card, .btn { transition: none; }
+    .btn-spinning .icon-svg { animation: none; }
     .ring-fg { transition: none; }
     .chart .bar { transition: none; }
   }
@@ -322,7 +331,7 @@
           <span class="ram-slider"></span>
         </label>
       </div>
-      <button class="btn btn-ghost" onclick="loadDevices()">
+      <button class="btn btn-ghost" id="refreshBtn" onclick="loadDevices()" aria-label="Refresh device list">
       <svg class="icon-svg" aria-hidden="true" viewBox="0 0 24 24"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
       <span>Refresh</span>
     </button>
@@ -417,14 +426,25 @@ function deviceIcon() {
 function showToast(msg, type) {
   const c = document.getElementById('toasts');
   const t = document.createElement('div');
-  t.className = 'toast ' + (type || 'info');
-  t.textContent = msg;
+  const toastType = type || 'info';
+  t.className = 'toast ' + toastType;
+  const icons = { success: '✓', error: '✕', warning: '⚠', info: 'ℹ' };
+  const iconSpan = document.createElement('span');
+  iconSpan.className = 'toast-icon';
+  iconSpan.setAttribute('aria-hidden', 'true');
+  iconSpan.textContent = icons[toastType] || 'ℹ';
+  const textSpan = document.createElement('span');
+  textSpan.textContent = msg;
+  t.appendChild(iconSpan);
+  t.appendChild(textSpan);
   c.appendChild(t);
   setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity .3s'; setTimeout(() => t.remove(), 300); }, 3000);
 }
 
 // ── Load device list ─────────────────────────────────────────────────────────
 async function loadDevices() {
+  const btn = document.getElementById('refreshBtn');
+  if (btn) { btn.disabled = true; btn.classList.add('btn-spinning'); }
   try {
     const res = await fetch('/api/devices');
     const data = await res.json();
@@ -470,6 +490,8 @@ async function loadDevices() {
       '<svg class="icon-svg" aria-hidden="true" viewBox="0 0 24 24" style="width:48px;height:48px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>' +
       '</div><div class="empty-text">Error loading devices</div><div class="empty-sub">Is the server running?</div></div>';
     showToast('Failed to load devices', 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.classList.remove('btn-spinning'); }
   }
 }
 

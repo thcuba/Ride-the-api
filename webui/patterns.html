@@ -41,7 +41,16 @@
   .fm-item input, .fm-item select { width:auto; min-width:120px; }
   .actions { display:flex; gap:8px; justify-content:flex-end; margin-top:12px; }
   .toast-container { position:fixed; top:20px; right:20px; z-index:1000; display:flex; flex-direction:column; gap:8px; }
-  .toast { padding:10px 14px; border-radius:8px; background:var(--surface); border:1px solid var(--border); }
+  .toast { padding:10px 14px; border-radius:8px; background:var(--surface); border:1px solid var(--border); display:flex; align-items:center; gap:8px; font-size:13px; font-weight:500; max-width:360px; }
+  .toast.success { border-color: var(--green); }
+  .toast.error { border-color: var(--red); }
+  .toast.warning { border-color: var(--yellow); }
+  .toast.info { border-color: var(--blue); }
+  .toast-icon { font-weight: 700; font-size: 14px; flex-shrink: 0; }
+  .toast.success .toast-icon { color: var(--green); }
+  .toast.error .toast-icon { color: var(--red); }
+  .toast.warning .toast-icon { color: var(--yellow); }
+  .toast.info .toast-icon { color: var(--blue); }
   @media (min-width:720px) { .cards { grid-template-columns: 1fr; } }
 </style>
 </head>
@@ -71,7 +80,19 @@
   const toasts = document.getElementById('toasts');
 
   function showToast(msg, type='info'){
-    const t = document.createElement('div'); t.className='toast '+type; t.textContent = msg; toasts.appendChild(t);
+    const t = document.createElement('div');
+    const toastType = type || 'info';
+    t.className = 'toast ' + toastType;
+    const icons = { success: '✓', error: '✕', warning: '⚠', info: 'ℹ' };
+    const iconSpan = document.createElement('span');
+    iconSpan.className = 'toast-icon';
+    iconSpan.setAttribute('aria-hidden', 'true');
+    iconSpan.textContent = icons[toastType] || 'ℹ';
+    const textSpan = document.createElement('span');
+    textSpan.textContent = msg;
+    t.appendChild(iconSpan);
+    t.appendChild(textSpan);
+    toasts.appendChild(t);
     setTimeout(()=> t.remove(), 4000);
   }
 
