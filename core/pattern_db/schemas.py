@@ -270,6 +270,16 @@ class DeviceMeta(BaseModel):
     connection_mode: str = "auto"  # auto | tls | http | mqtt | coap | modbus
     detected_at: datetime | None = None
     source: str = "llm"  # llm | config_override
+    # Full ProtocolInfo from the first-flush mode="auto" identification, kept in
+    # the persisted header so export_device_model can rebuild the portable
+    # ProtocolInfo losslessly (transport/security/proprietary/identity/ports/
+    # confidence are otherwise defaulted on export).
+    transport: str = ""
+    security: str = ""
+    proprietary: bool = False
+    identity: str = ""  # vendor/model identity derived by the LLM (also mirrors ``model``)
+    ports: list[int] = Field(default_factory=list)
+    confidence: float = 0.0
     # Canonical home for behavioural config that has no SQL table. Persisted so
     # export recovers it even without the engine's in-memory applied PatternDB
     # (which is the only other place state_variables/virtual_sensors live).

@@ -41,7 +41,7 @@ from core.pattern_db.pattern_engine import (
     _dpath_set,
     _path_similarity,
 )
-from core.pattern_db.schemas import PatternDB
+from core.pattern_db.schemas import PatternDB, ProtocolInfo
 
 if TYPE_CHECKING:
     from core.buffer.store import BufferStore
@@ -993,13 +993,25 @@ class LearningPipeline:
             prompt = prompt.replace(placeholder, value)
 
         # On the very first flush the protocol is still unknown (auto). Ask the
-        # LLM to also report the protocol(s) and the ingress connection mode so
-        # we can persist the stable device header. Later flushes skip this.
+        # LLM to identify the device/protocol in mode="auto" and return a full
+        # structured protocol_info object (transport/security/proprietary/
+        # handler/identity/ports/confidence) plus the legacy flat protocols/
+        # connection_mode so we can persist the stable device header. Later
+        # flushes skip this.
         if context.get("first_flush"):
             prompt += (
-                "\n\nBased on the pairs above, also answer in JSON: "
-                '"protocols": [list of protocols the device speaks, e.g. '
-                '["mqtt"], ["http"], ["modbus"], ["coap"], ["tls"]], '
+                "\n\nThis is the FIRST contact with the device: identify its "
+                "protocol in mode=\"auto\" (initial device/protocol "
+                "identification, not a protocol message). Based on the pairs "
+                "above, also answer in JSON with an object \"protocol_info\": "
+                '{"transport": "tcp|udp|websocket", "protocol": "mqtt|http|'
+                'modbus|coap|websocket|proprietary|...", "proprietary": '
+                "true|false, \"security\": \"none|tls|mqtts|dtls|...\", "
+                '"handler": "the protocol server / MITM handler to use", '
+                '"identity": "vendor/model identity if any", "ports": [list '
+                'of ports], "confidence": 0.0..1.0}. Also include "protocols": '
+                "[list of protocols the device speaks, e.g. [\"mqtt\"], "
+                "[\"http\"], [\"modbus\"], [\"coap\"], [\"tls\"]], "
                 '"connection_mode": one of auto | tls | http | mqtt | coap | '
                 "modbus (the ingress decision for this device). "
                 'Use "http" for plain HTTP(S) traffic.'
@@ -1138,12 +1150,28 @@ class LearningPipeline:
         """Persist the stable per-device header on the first flush.
 
         Derives ``protocols`` and ``connection_mode`` from the LLM analysis
-        (handles both the structured PatternDB ``client.protocols`` shape and a
-        flat ``protocols``/``connection_mode`` answer), then writes the header
-        via :meth:`DatabaseManager.write_device_meta`. Only ever called when
-        the header does not exist yet, so later flushes leave it stable.
+        (handles the structured PatternDB ``client.protocols`` shape, a flat
+        ``protocols``/``connection_mode`` answer, or a full ``protocol_info``
+        object produced in mode="auto"), then writes the header via
+        :meth:`DatabaseManager.write_device_meta`. Only ever called when the
+        header does not exist yet, so later flushes leave it stable.
         """
+        # A structured protocol_info (first-flush mode="auto") is the richest
+        # source: it carries transport/security/proprietary/identity/ports/
+        # confidence that the flat protocols/connection_mode answer lacks.
+        protocol_info = analysis.get("protocol_info")
+        protocol_dict: dict = {}
+        if isinstance(protocol_info, dict):
+            try:
+                protocol_dict = ProtocolInfo.model_validate(protocol_info).model_dump()
+            except Exception:  # noqa: BLE001 - best-effort, header must not fail
+                logger.debug("protocol_info failed validation, using flat answer")
+
+        # protocols: prefer the structured singular protocol, then a flat list,
+        # then the structured PatternDB client.protocols shape.
         protocols = analysis.get("protocols")
+        if not protocols and protocol_dict.get("protocol"):
+            protocols = [protocol_dict["protocol"]]
         if not protocols:
             client = analysis.get("client") or {}
             protocols = client.get("protocols") or []
@@ -1152,7 +1180,7 @@ class LearningPipeline:
         # Whitelist the LLM-derived protocols so arbitrary strings are dropped.
         protocols = [p for p in (str(p).lower().strip() for p in protocols) if p in _SAFE_PROTOCOLS]
 
-        connection_mode = analysis.get("connection_mode")
+        connection_mode = analysis.get("connection_mode") or protocol_dict.get("handler")
         if not connection_mode:
             # Derive the ingress mode from the first reported protocol.
             connection_mode = protocols[0] if protocols else "auto"
@@ -1163,10 +1191,16 @@ class LearningPipeline:
         meta = {
             "vendor": device.vendor or "unknown",
             "device_type": device.device_type or "unknown",
-            "model": "",
+            "model": protocol_dict.get("identity", "") or "",
             "protocols": protocols or [""],
             "connection_mode": connection_mode,
             "source": "llm",
+            "transport": protocol_dict.get("transport", "") or "",
+            "security": protocol_dict.get("security", "") or "",
+            "proprietary": bool(protocol_dict.get("proprietary", False)),
+            "identity": protocol_dict.get("identity", "") or "",
+            "ports": protocol_dict.get("ports") or [],
+            "confidence": float(protocol_dict.get("confidence", 0.0) or 0.0),
         }
         try:
             stored = await self.db_manager.write_device_meta(device_id, meta)

@@ -420,7 +420,8 @@ class DecipherIngest:
             protocol.transport = meta.get("transport", "")
             protocol.security = meta.get("security", "")
             protocol.proprietary = bool(meta.get("proprietary", False))
-            protocol.identity = meta.get("model", "")
+            protocol.identity = meta.get("identity") or meta.get("model", "")
+            protocol.ports = list(meta.get("ports") or [])
             protocol.confidence = _safe_float(meta.get("confidence"), 0.0)
 
         # state_variables / virtual_sensors have no SQL table: their canonical
@@ -470,6 +471,12 @@ class DecipherIngest:
             "vendor": model.meta.vendor,
             "device_type": model.meta.device_type,
             "model": model.protocol.identity or model.meta.model,
+            "transport": model.protocol.transport,
+            "security": model.protocol.security,
+            "proprietary": model.protocol.proprietary,
+            "identity": model.protocol.identity,
+            "ports": model.protocol.ports,
+            "confidence": model.protocol.confidence,
             "state_variables": [
                 sv.model_dump(exclude_none=True) for sv in model.state_variables
             ],

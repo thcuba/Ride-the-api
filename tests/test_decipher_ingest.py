@@ -138,6 +138,7 @@ async def test_export_device_model_carries_state_and_protocol(db_manager):
     )
     assert exported.schema_url == "https://ride-the-api.dev/pattern-schema/v2"
     assert exported.protocol.protocol == "mqtt"
+    assert exported.protocol.identity == "shelly-plug"
     assert exported.state_variables[0].name == "relay"
     assert exported.virtual_sensors[0].name == "power"
     assert len(exported.observation_history) == 1
@@ -179,3 +180,43 @@ async def test_v2_pattern_file_loads_on_second_install(db_manager, tmp_path):
     assert isinstance(engine2._state_stores.get(device_id), DeviceStateStore)
     assert engine2._state_stores[device_id].get("power") is not None
 
+
+async def test_protocol_info_round_trips_full_fields(db_manager):
+    """export->import->export must preserve all ProtocolInfo fields (B1).
+
+    The first-flush mode="auto" identification (transport/security/
+    proprietary/identity/ports/confidence) is persisted into DeviceMeta and
+    must round-trip losslessly through the portable v2 DeviceModel.
+    """
+    ingester = DecipherIngest(db_manager)
+    device_id = "device-protoinfo-roundtrip"
+
+    model = DeviceModel(
+        meta=PatternMeta(pattern_id=f"{device_id}-patterns", vendor="Shelly",
+                         device_type="plug"),
+        protocol=ProtocolInfo(
+            protocol="mqtt",
+            handler="mqtt",
+            transport="tcp",
+            security="tls",
+            proprietary=False,
+            identity="shelly-plug",
+            ports=[8883],
+            confidence=0.93,
+        ),
+        commands=[Command(id="c1", kind="set_relay", protocol="mqtt",
+                          topic="shellies/plug/relay")],
+        responses=[ServerResponse(id="r1", triggers=["set_relay"], status_code=200,
+                                  field_mappings=[])],
+    )
+    await ingester.import_device_model(device_id, model)
+
+    exported = await ingester.export_device_model(device_id, "Shelly", "plug")
+    assert exported.protocol.protocol == "mqtt"
+    assert exported.protocol.handler == "mqtt"
+    assert exported.protocol.transport == "tcp"
+    assert exported.protocol.security == "tls"
+    assert exported.protocol.proprietary is False
+    assert exported.protocol.identity == "shelly-plug"
+    assert exported.protocol.ports == [8883]  # noqa: PLR2004
+    assert exported.protocol.confidence == 0.93  # noqa: PLR2004
