@@ -28,7 +28,7 @@ from core.database import (
     RequestPattern,
     ResponseTemplate,
 )
-from core.pattern_db.schemas import PatternDB
+from core.pattern_db.schemas import DeviceModel, PatternDB
 from core.pattern_db.state_manager import DeviceStateStore
 
 logger = logging.getLogger(__name__)
@@ -545,18 +545,33 @@ class PatternEngine:
     # â”€â”€ Pattern DB File I/O â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def load_pattern_file(self, device_id: str, filepath: str) -> PatternDB:
-        """Load a .ride-pattern.json file and cache it for a device."""
+        """Load a .ride-pattern.json file and cache it for a device.
+
+        Handles both portable formats: v1 (``PatternDB``) and v2 (``DeviceModel``,
+        detected by the ``$schema`` URL). A v2 file is projected to the v1
+        PatternDB shape via :meth:`DeviceModel.to_pattern_db` before being
+        applied, so a device cloned on a second install works without LLM/cloud
+        within the knowledge carried by the model.
+        """
         path = Path(filepath)
         if not path.exists():
             raise FileNotFoundError(f"Pattern file not found: {filepath}")
         data = json.loads(path.read_text(encoding="utf-8"))
-        pattern_db = PatternDB.model_validate(data)
+        if "pattern-schema/v2" in data.get("$schema", ""):
+            device_model = DeviceModel.model_validate(data)
+            pattern_db = device_model.to_pattern_db()
+        else:
+            pattern_db = PatternDB.model_validate(data)
         self.apply_pattern_db(device_id, pattern_db)
         return pattern_db
 
-    def save_pattern_file(self, pattern_db: PatternDB, filepath: str):
-            """Save a PatternDB to a .ride-pattern.json file (atomically)."""
-            path = Path(filepath)
-            data = pattern_db.model_dump(by_alias=True, exclude_none=True)
-            write_json(path, data)
-            logger.info("Saved pattern DB to %s", filepath)
+    def save_pattern_file(self, pattern_db: PatternDB | DeviceModel, filepath: str):
+        """Save a PatternDB (v1) or DeviceModel (v2) to a .ride-pattern.json file.
+
+        The schema URL embedded in the model decides the format: v2 for a
+        :class:`DeviceModel`, v1 otherwise. Writes are atomic.
+        """
+        path = Path(filepath)
+        data = pattern_db.model_dump(by_alias=True, exclude_none=True)
+        write_json(path, data)
+        logger.info("Saved pattern DB to %s", filepath)

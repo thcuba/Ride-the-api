@@ -23,10 +23,16 @@ from core.database import (
 from core.pattern_db.schemas import (
     ClientConfig,
     ClientEndpoint,
+    Command,
+    DeviceModel,
+    Observation,
     PatternDB,
     PatternMeta,
+    ProtocolInfo,
     ServerConfig,
     ServerResponse,
+    StateVariable,
+    VirtualSensor,
 )
 from core.pattern_db.schemas import (
     FieldMapping as SchemaFieldMapping,
@@ -176,13 +182,23 @@ class DecipherIngest:
     # ── PatternDB export / import ──────────────────────────────────────────────
 
     async def export_patterns(
-        self, device_id: str, vendor: str = "", device_type: str = ""
+        self,
+        device_id: str,
+        vendor: str = "",
+        device_type: str = "",
+        applied: PatternDB | None = None,
     ) -> PatternDB:
-        """Export deciphered patterns from the device DB to portable format."""
+        """Export deciphered patterns from the device DB to portable format.
+
+        ``applied`` is the engine's in-memory applied PatternDB for this device
+        (optional). Its ``state_variables`` and ``virtual_sensors`` are not
+        persisted in SQL - they only live in the applied in-memory config - so
+        this carries them into the export instead of dropping them.
+        """
         client_endpoints = []
         server_responses = []
-        state_vars = []
-        sensors = []
+        state_vars = list(applied.server.state_variables) if applied and applied.server else []
+        sensors = list(applied.server.virtual_sensors) if applied and applied.server else []
 
         async with self.db_manager.device_session(device_id) as session:
             result = await session.execute(select(RequestPattern))
@@ -309,3 +325,162 @@ class DecipherIngest:
 
         logger.info("Imported %d patterns for device %s", count, device_id)
         return count
+
+    # -- DeviceModel (v2) export / import ----------------------------------
+    #
+    # The v1 PatternDB export above is SQL-faithful but drops state_variables /
+    # virtual_sensors (they live only in the engine's in-memory applied config)
+    # and has no home for ProtocolInfo or observation_history. These v2 methods
+    # round-trip the full portable DeviceModel: SQL (commands/responses/
+    # interactions) + applied in-memory state + DeviceMeta protocol.
+
+    async def export_device_model(
+        self,
+        device_id: str,
+        vendor: str = "",
+        device_type: str = "",
+        applied: PatternDB | None = None,
+        observations: list[Observation] | None = None,
+    ) -> DeviceModel:
+        """Export the full portable v2 DeviceModel for a device.
+
+        Combines three sources:
+          * SQL tables (RequestPattern / ResponseTemplate / FieldMapping) for
+            commands, responses and interactions;
+          * the engine's in-memory applied PatternDB (when given) for
+            state_variables / virtual_sensors, which have no SQL table;
+          * the persisted DeviceMeta header for ProtocolInfo.
+
+        ``observations`` (optional) are carried as ``observation_history`` so a
+        second install has grounding when no exact command matches.
+        """
+        commands: list[Command] = []
+        responses: list[ServerResponse] = []
+        interactions: list[SchemaFieldMapping] = []
+
+        async with self.db_manager.device_session(device_id) as session:
+            result = await session.execute(select(RequestPattern))
+            patterns = result.scalars().all()
+
+            for pat in patterns:
+                commands.append(
+                    Command(
+                        id=pat.pattern_id,
+                        kind=pat.intent or pat.pattern_id,
+                        protocol=pat.protocol or "http",
+                        method=pat.method or "GET",
+                        path=pat.path_pattern or "",
+                        path_pattern=pat.path_pattern or "",
+                        headers={"required": pat.required_headers or []},
+                        query_params=pat.query_param_keys or [],
+                        body_schema=pat.body_schema or None,
+                        confidence=_safe_float(pat.confidence),
+                    )
+                )
+
+                tmpl_result = await session.execute(
+                    select(ResponseTemplate).where(
+                        ResponseTemplate.pattern_id == pat.pattern_id
+                    )
+                )
+                tmpl = tmpl_result.scalar_one_or_none()
+                if tmpl:
+                    mappings_result = await session.execute(
+                        select(FieldMapping).where(FieldMapping.intent == pat.intent)
+                    )
+                    mappings = mappings_result.scalars().all()
+                    fms = [
+                        SchemaFieldMapping(
+                            source=m.request_field,
+                            target=m.response_field,
+                            transform=m.transform or "direct",
+                            mapping=m.enum_values,
+                        )
+                        for m in mappings
+                    ]
+                    responses.append(
+                        ServerResponse(
+                            id=tmpl.template_id,
+                            triggers=[pat.intent] if pat.intent else [],
+                            status_code=tmpl.status_code,
+                            headers_template=tmpl.headers_template or {},
+                            body_template=tmpl.body_template or {},
+                            field_mappings=fms,
+                        )
+                    )
+                    interactions.extend(fms)
+
+        protocol = ProtocolInfo()
+        meta = await self.db_manager.read_device_meta(device_id)
+        if meta:
+            protocols = meta.get("protocols") or []
+            if protocols:
+                protocol.protocol = protocols[0]
+            protocol.handler = meta.get("connection_mode", "auto")
+            protocol.transport = meta.get("transport", "")
+            protocol.security = meta.get("security", "")
+            protocol.proprietary = bool(meta.get("proprietary", False))
+            protocol.identity = meta.get("model", "")
+            protocol.confidence = _safe_float(meta.get("confidence"), 0.0)
+
+        # state_variables / virtual_sensors have no SQL table: their canonical
+        # home is the persisted header (DeviceMeta). Fall back to the engine's
+        # in-memory applied config when the header has none (legacy pre-v2).
+        state_variables: list = []
+        virtual_sensors: list = []
+        if meta and (meta.get("state_variables") or meta.get("virtual_sensors")):
+            state_variables = [
+                StateVariable(**sv) for sv in meta.get("state_variables", [])
+            ]
+            virtual_sensors = [
+                VirtualSensor(**vs) for vs in meta.get("virtual_sensors", [])
+            ]
+        elif applied and applied.server:
+            state_variables = list(applied.server.state_variables)
+            virtual_sensors = list(applied.server.virtual_sensors)
+
+        return DeviceModel(
+            meta=PatternMeta(
+                pattern_id=f"{device_id}-patterns",
+                vendor=vendor or "unknown",
+                device_type=device_type or "unknown",
+                model=meta.get("model", "") if meta else "",
+            ),
+            protocol=protocol,
+            commands=commands,
+            responses=responses,
+            interactions=interactions,
+            state_variables=state_variables,
+            virtual_sensors=virtual_sensors,
+            observation_history=list(observations or []),
+        )
+
+    async def import_device_model(self, device_id: str, model: DeviceModel) -> int:
+        """Import a portable v2 DeviceModel into this device DB.
+
+        Writes the v1 SQL tables (RequestPattern / ResponseTemplate /
+        FieldMapping) via :meth:`DeviceModel.to_pattern_db`, and persists the
+        identification header (protocol) into DeviceMeta so routing can consume
+        it. ``observation_history`` is preserved in the model object (and any
+        re-export) but is handed to the buffer/observation layer, not SQL.
+        """
+        header = {
+            "protocols": [model.protocol.protocol] if model.protocol.protocol else [],
+            "connection_mode": model.protocol.handler or "auto",
+            "vendor": model.meta.vendor,
+            "device_type": model.meta.device_type,
+            "model": model.protocol.identity or model.meta.model,
+            "state_variables": [
+                sv.model_dump(exclude_none=True) for sv in model.state_variables
+            ],
+            "virtual_sensors": [
+                vs.model_dump(exclude_none=True) for vs in model.virtual_sensors
+            ],
+        }
+        try:
+            await self.db_manager.write_device_meta(device_id, header)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Failed to persist device header for %s: %s", device_id, e)
+
+        pattern_db = model.to_pattern_db()
+        return await self.import_patterns(device_id, pattern_db)

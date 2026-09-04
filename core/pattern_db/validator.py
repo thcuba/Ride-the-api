@@ -262,12 +262,18 @@ def validate_pattern(data: dict[str, Any]) -> ValidationResult:  # noqa: C901, P
     Validate a .ride-pattern.json dictionary against the pattern schema.
 
     Includes:
-    - JSON Schema conformance
+    - JSON Schema conformance (v1 or v2 DeviceModel based on ``$schema``)
     - Protocol consistency checks
     - Cross-reference warnings (e.g. endpoint triggers without matching response)
     """
     result = ValidationResult()
-    schema = get_pattern_schema()
+
+    # Route to the correct portable schema: the v2 DeviceModel shares the
+    # protocol/consistency cross-checks with v1 but has a distinct root and
+    # added knowledge sections. Fall back to v1 for legacy files that omit
+    # ``$schema`` (kept retro-compatible).
+    schema_url = data.get("$schema", "https://ride-the-api.dev/pattern-schema/v1")
+    schema = get_pattern_schema_v2() if "pattern-schema/v2" in schema_url else get_pattern_schema()
 
     # JSON Schema validation
     try:
@@ -279,25 +285,53 @@ def validate_pattern(data: dict[str, Any]) -> ValidationResult:  # noqa: C901, P
 
     client = data.get("client", {})
     server = data.get("server", {})
-    protocols = client.get("protocols", ["http"])
+
+    # v2 DeviceModel keeps the v1 building blocks at the root level instead of
+    # nesting them under client/server. Map both shapes so the consistency
+    # checks below run for v1 and v2 alike.
+    is_v2 = "pattern-schema/v2" in data.get("$schema", "")
+    if is_v2:
+        endpoints = [
+            {
+                "id": c.get("id"),
+                "intent": c.get("kind"),
+                "method": c.get("method"),
+                "protocol": c.get(
+                    "protocol",
+                    data.get("protocol", {}).get("protocol", "http"),
+                ),
+            }
+            for c in data.get("commands", [])
+        ]
+        responses = data.get("responses", [])
+        state_variables = data.get("state_variables", [])
+        virtual_sensors = data.get("virtual_sensors", [])
+        protocol_name = data.get("protocol", {}).get("protocol")
+        protocols = [protocol_name] if protocol_name else ["http"]
+    else:
+        endpoints = client.get("endpoints", [])
+        responses = server.get("responses", [])
+        state_variables = server.get("state_variables", [])
+        virtual_sensors = server.get("virtual_sensors", [])
+        protocols = client.get("protocols", ["http"])
 
     # Check for unknown protocols
     for p in protocols:
         if p not in ALL_PROTOCOLS:
             result.warnings.append(f"Unknown protocol '{p}' in client.protocols")
 
-    # MQTT topic prefix check
-    if "mqtt" in protocols and not client.get("mqtt_topic_prefix"):
+    # MQTT topic prefix check (v1 shape only - v2 carries topic at command level)
+    if not is_v2 and "mqtt" in protocols and not client.get("mqtt_topic_prefix"):
         result.warnings.append("Protocol 'mqtt' is declared but no 'mqtt_topic_prefix' is set")
 
     # Endpoint cross-checks
-    endpoint_intents = {ep.get("id"): ep.get("intent") for ep in client.get("endpoints", [])}
+    endpoint_intents = {ep.get("id"): ep.get("intent") for ep in endpoints}
     response_triggers = set()
-    for resp in server.get("responses", []):
+    for resp in responses:
         for trigger in resp.get("triggers", []):
             response_triggers.add(trigger)
 
-    for ep in client.get("endpoints", []):
+    for ep in endpoints:
         intent = ep.get("intent", "")
         ep_id = ep.get("id", "?")
         if intent and intent not in response_triggers:
@@ -306,7 +340,7 @@ def validate_pattern(data: dict[str, Any]) -> ValidationResult:  # noqa: C901, P
             )
 
     # Check for orphaned responses (no matching endpoint)
-    for resp in server.get("responses", []):
+    for resp in responses:
         for trigger in resp.get("triggers", []):
             if trigger not in endpoint_intents.values():
                 result.warnings.append(
@@ -315,8 +349,8 @@ def validate_pattern(data: dict[str, Any]) -> ValidationResult:  # noqa: C901, P
                 )
 
     # Virtual sensor baseline references
-    state_var_names = {sv.get("name") for sv in server.get("state_variables", [])}
-    for vs in server.get("virtual_sensors", []):
+    state_var_names = {sv.get("name") for sv in state_variables}
+    for vs in virtual_sensors:
         baseline = vs.get("baseline", "")
         if baseline.startswith("{state."):
             ref = baseline[7:-1]
