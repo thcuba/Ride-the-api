@@ -15,7 +15,7 @@
 **Action:** When comparing dict structure or key intersections in request matching hot paths, check key membership directly on dicts rather than constructing temporary `set(dict.keys())` objects.
 
 ## 2026-03-31 - Fast String-Based IP Family Check in DNS Resolution Hot Paths
-**Learning:** `_addr_family` parsed IP strings via `ipaddress.ip_address(address.split('%', maxsplit=1)[0]).version` inside DNS cache hit loops to sort IPv6 before IPv4, causing heavy parsing and allocation overhead (~87x slower) compared to a simple string check `6 if ":" in address else 4`.
+**Learning:** `_addr_family` parsed IP strings via `ipaddress.ip_address(address.split('%', maxsplit=1)[0]).version` inside DNS cache hit loops to sort IPv6 before IPv4, causing heavy parsing and allocation overhead (~87x slower) compared to a simple string check `6 if ":" in address` else `4`.
 **Action:** When checking IP version (v4 vs v6) on formatted address strings in hot paths, use fast string presence checks (`":" in address`) instead of `ipaddress.ip_address` string parsing.
 
 ## 2026-03-31 - Pre-computed Trigger-to-Response Map in Pattern Engine
@@ -33,3 +33,7 @@
 ## 2026-03-31 - Pre-computed Tuples and Regex for Adapter Request Inspection Hot Paths
 **Learning:** In `ProtocolAdapter.is_firmware_request`, `is_auth_request`, and HTTP request parsing methods, allocating inline `list` literals (e.g. `["/fota", ...]`) or calling `re.search` with raw regex strings on every incoming request introduced unnecessary heap allocation and regex compilation overhead (~1.47x slower per inspection call).
 **Action:** Define immutable module-level tuples (e.g. `_FW_PATHS`) and pre-compiled regex objects (`_RE_DEVICE_PATH = re.compile(...)`) for path/topic keywords and route patterns checked in request-inspection hot paths.
+
+## 2026-03-31 - Fast Direct Dict Navigation for JSON Path Hot Paths
+**Learning:** Resolving and setting dot-separated JSON paths via generic `dpath.get` and `dpath.new` during local response building and rule evaluation introduced significant path parsing, string splitting, and regex/AST traversal overhead. Adding a fast-path direct dictionary/list traversal for dot-paths without array brackets (`[`) yields ~35.9x faster path resolution and ~8.3x faster overall local response generation, while falling back to `dpath` when array index brackets are present.
+**Action:** When evaluating or setting nested properties in JSON payload hot paths, attempt direct dictionary key and integer list index navigation first before calling heavy JSONPath/dpath libraries.
