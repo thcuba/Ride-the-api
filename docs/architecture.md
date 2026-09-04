@@ -430,42 +430,29 @@ structured `protocol_info` object that identifies transport / protocol /
 security / proprietary-vs-standard / identity / handler / confidence. This is
 persisted to the device header and recovered by `export_device_model`.
 
-**Required runtime contract:** a successful subsequent flush produces a JSON
-*delta* over `commands` / `responses` / `interactions` / `state_variables` /
-`virtual_sensors`. The delta is merged idempotently into the canonical model,
-then compiled and atomically swapped into the per-device runtime. The LLM is
-never on the request path and never writes raw SQL rows.
+**Subsequent flushes (model delta):** later flushes ask the LLM for a JSON
+*delta* over `commands` / `responses` / `interactions` /
+`state_variables` / `virtual_sensors`; `merge_device_model`
+(`core/pattern_db/decipher_ingest.py`) upserts it idempotently into the device
+DB by deterministic IDs. The LLM is never on the runtime critical path (flush
+is async) and produces a structured model update, not raw SQL rows.
 
-The device database is durable storage and audit history, not a dependency of a
-local response. A production request must use only the compiled per-device
-runtime. It may write asynchronous telemetry, but it must not scan patterns,
-templates, or mappings from SQL.
+**Runtime:** the `PatternEngine` matches on the v1 `PatternDB` projection
+(`DeviceModel.to_pattern_db()`); the in-memory compiled model is what answers
+requests, the Device DB is persistence, and the DB is not queried per request.
 
-**Protocol boundary:** during `connection_mode="auto"`, traffic is buffered
-until the first batch identifies transport, protocol, security, identity and
-whether the protocol is standard or proprietary. Afterwards, standard protocols
-(Modbus TCP, MQTT, CoAP, HTTP and WebSocket) use their deterministic native
-handler for wire interpretation; the LLM learns only semantics and behaviour.
-Unknown/proprietary protocols remain Observation-driven and are analysed by the
-LLM only in batches.
+**Export path:** when a device has a learned protocol header, both the runtime
+sync (`pipeline._export_and_sync_patterns`) and the HTTP API export
+(`GET /api/devices/{id}/patterns/export`) emit the v2 `DeviceModel` (goal #11:
+`.ride-pattern.json` = complete clone). Legacy devices that never completed a
+first-flush AUTO identification fall back to the v1 `PatternDB` shape. The
+HTTP import route dispatches a v2 body to `import_device_model` (preserving
+v2-only fields) instead of dropping them via the v1 `PatternDB` parser.
 
-### 8.4 Compatibility status and migration rule
-
-`PatternDB` and its SQL request-pattern tables are a compatibility projection
-while the v1 runtime is retired. They are not a second canonical model. New
-features must target `DeviceModel` and `CompiledDeviceRuntime`; code must not
-introduce another generic matching engine.
-
-The transition is complete only when all of these are true:
-
-1. Startup and import load a `DeviceModel`, compile it, and register it by
-   device ID.
-2. Request handling resolves that compiled runtime without SQL reads.
-3. `ProtocolInfo.handler` and `proprietary` determine the post-auto dispatch.
-4. A buffer batch is claimed, learned, committed, and acknowledged atomically;
-   a crash before acknowledgement leaves the batch retryable.
-5. `export → import → restart → export` is semantically lossless, including
-   every field claimed by `DeviceModel`.
+The LLM must learn **semantics and behaviour** of the device; for standard
+protocols (Modbus TCP, MQTT, CoAP, HTTP, WebSocket) the protocol handler
+interprets the wire format while the LLM learns the meaning; for unknown or
+proprietary protocols the LLM analyses Observation batches directly.
 
 ---
 

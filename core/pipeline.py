@@ -950,7 +950,19 @@ class LearningPipeline:
             filepath = (base / f"{safe_device_key}.ride-pattern.json").resolve()
             if base != filepath and base not in filepath.parents:
                 raise ValueError(f"Unsafe pattern path for device {device_id!r}")
-            self.engine.save_pattern_file(pattern_db, str(filepath))
+            # Write the portable v2 DeviceModel when the device has a learned
+            # protocol header, so the on-disk .ride-pattern.json is a complete
+            # clone (goal #11). Fall back to the v1 PatternDB for legacy
+            # devices that never completed a first-flush AUTO identification.
+            applied = self.engine._cached_patterns.get(device_id)  # noqa: SLF001
+            header = await self.db_manager.read_device_meta(device_id)
+            if header and (header.get("protocols") or header.get("transport")):
+                device_model = await ingester.export_device_model(
+                    device_id, vendor, device_type, applied=applied
+                )
+                self.engine.save_pattern_file(device_model, str(filepath))
+            else:
+                self.engine.save_pattern_file(pattern_db, str(filepath))
             self.engine.apply_pattern_db(device_id, pattern_db)
             # Restore any previously persisted device state so the refreshed
             # pattern set starts from where the device left off.

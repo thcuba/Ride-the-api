@@ -489,6 +489,15 @@ Il v2 mantiene i blocchi costruttivi del v1 a livello radice (`commands` +
 
 - `export_device_model` / `import_device_model` (`decipher_ingest.py`) fanno il
   round-trip v2, preservando `ProtocolInfo` completo e `observation_history`.
+
+> **Nota — `observation_history` (grounding):** viene serializzato **solo quando**
+> `export_device_model` riceve una lista `observations=` esplicita. Oggi il
+> percorso runtime (`_export_and_sync_patterns` in `pipeline.py`) e l'export API
+> NON passano osservazioni, quindi nei file v2 prodotti automaticamente
+> `observation_history` è vuoto: `commands`/`responses`/`protocol`/`state_variables`
+> restano il contenuto canonico del clone. Il cablaggio della pipeline
+> buffer→Observation→grounding è il follow-up pianificato (fase D1/E1).
+
 - `DeviceModel.to_pattern_db()` proietta il v2 → v1 `PatternDB` per il runtime
   `PatternEngine` (match in-memory; il DB è persistenza, non interrogato per
   richiesta).
