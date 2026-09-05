@@ -37,3 +37,7 @@
 ## 2026-03-31 - Fast Direct Dict Navigation for JSON Path Hot Paths
 **Learning:** Resolving and setting dot-separated JSON paths via generic `dpath.get` and `dpath.new` during local response building and rule evaluation introduced significant path parsing, string splitting, and regex/AST traversal overhead. Adding a fast-path direct dictionary/list traversal for dot-paths without array brackets (`[`) yields ~35.9x faster path resolution and ~8.3x faster overall local response generation, while falling back to `dpath` when array index brackets are present.
 **Action:** When evaluating or setting nested properties in JSON payload hot paths, attempt direct dictionary key and integer list index navigation first before calling heavy JSONPath/dpath libraries.
+
+## 2026-03-31 - Fast String Prefix Check for Local IP Classification
+**Learning:** Checking whether an IP address is local/private via `ipaddress.ip_address(ip).is_private` on every incoming request introduced significant string parsing and object allocation overhead (~7.0us per check). Implementing a fast-path string prefix check for standard private IPv4 ranges (`192.168.`, `10.`, `127.`, `169.254.`, `172.16-31.`) and exact IPv6 loopback (`::1`) reduces local IP detection overhead to ~735ns per call (~9.5x speedup), falling back to `ipaddress` for uncommon ranges.
+**Action:** Use fast string prefix matching for standard IPv4/IPv6 private IP classifications in request evaluation hot paths before falling back to full `ipaddress.ip_address` object parsing.
