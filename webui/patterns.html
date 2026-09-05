@@ -113,7 +113,7 @@
     list.forEach(p=>{
       const card = el('div',{class:'pattern-card'});
       const bodyId = `pc-body-${p.pattern_id}`;
-      const header = el('div',{class:'pc-header',tabindex:0,role:'button','aria-expanded':'false','aria-controls':bodyId});
+      const header = el('div',{class:'pc-header',tabindex:0,role:'button','aria-expanded':'false','aria-controls':bodyId,'aria-label':`Toggle pattern details for ${p.method} ${p.path}`});
       const title = el('div',{class:'pc-title'},`${p.method} ${p.path} — ${p.intent || ''}`);
       const right = el('div',{},[]);
       const badge = el('span',{class:'badge badge-low'}, (p.confidence||0).toFixed(2));
@@ -156,8 +156,8 @@
       body.appendChild(form);
 
       const actions = el('div',{class:'actions'});
-      const saveBtn = el('button',{class:'btn btn-primary'},'Save');
-      const delBtn = el('button',{class:'btn btn-ghost'},'Delete');
+      const saveBtn = el('button',{class:'btn btn-primary','aria-label':`Save pattern ${p.method} ${p.path}`},'Save');
+      const delBtn = el('button',{class:'btn btn-ghost','aria-label':`Delete pattern ${p.method} ${p.path}`},'Delete');
       actions.appendChild(delBtn); actions.appendChild(saveBtn);
       body.appendChild(actions);
 
@@ -174,23 +174,39 @@
 
       // Save handler
       saveBtn.addEventListener('click', async ()=>{
+        if(saveBtn.disabled) return;
+        saveBtn.disabled = true;
+        const origText = saveBtn.textContent;
+        saveBtn.textContent = 'Saving…';
         try{
           const payload = collectPayload(form);
           const resp = await fetch(`/api/devices/${deviceId}/patterns/${p.pattern_id}`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
           if(!resp.ok) throw new Error('save failed');
           showToast('Pattern saved','success');
           loadPatterns();
-        }catch(err){ showToast('Save failed','error'); }
+        }catch(err){
+          showToast('Save failed','error');
+          saveBtn.disabled = false;
+          saveBtn.textContent = origText;
+        }
       });
 
       delBtn.addEventListener('click', async ()=>{
+        if(delBtn.disabled) return;
         if(!confirm('Delete this pattern?')) return;
+        delBtn.disabled = true;
+        const origText = delBtn.textContent;
+        delBtn.textContent = 'Deleting…';
         try{
           const resp = await fetch(`/api/devices/${deviceId}/patterns/${p.pattern_id}`, { method: 'DELETE' });
           if(!resp.ok) throw new Error('delete failed');
           showToast('Pattern deleted','success');
           loadPatterns();
-        }catch(e){ showToast('Delete failed','error'); }
+        }catch(e){
+          showToast('Delete failed','error');
+          delBtn.disabled = false;
+          delBtn.textContent = origText;
+        }
       });
 
       cardsEl.appendChild(card);
