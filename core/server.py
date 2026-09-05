@@ -80,7 +80,7 @@ from core.tls_mitm import (
     TLSMITMServer,
     get_tls_mitm_server,
 )
-from core.traffic_selector import TrafficRequestInfo, get_traffic_selector
+from core.traffic_selector import TrafficRequestInfo, get_traffic_selector, is_local_ip
 from core.paths import resource_path
 
 # Path to webui directory (bundle-aware: works in source and PyInstaller builds)
@@ -2166,11 +2166,7 @@ async def _get_request_body(request: Request) -> dict | None:
 
 def _is_local_ip(ip: str) -> bool:
     """Check if IP is in a private/local range."""
-    try:
-        ip_obj = ipaddress.ip_address(ip)
-        return ip_obj.is_private or ip_obj.is_loopback  # noqa: TRY300
-    except ValueError:
-        return False
+    return is_local_ip(ip)
 
 
 def _extract_device_id(headers: dict, path: str) -> str:
