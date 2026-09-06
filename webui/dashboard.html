@@ -391,6 +391,8 @@
 <div id="details" class="invisible" role="dialog" aria-labelledby="details-title" aria-modal="true"></div>
 
 <script>
+let lastActiveElement = null;
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function rateClass(pct) { return pct >= 80 ? 'good' : pct >= 50 ? 'warning' : 'danger'; }
 function rateColor(pct) { return pct >= 80 ? '#34d399' : pct >= 50 ? '#fbbf24' : '#f87171'; }
@@ -497,6 +499,7 @@ async function loadDevices() {
 
 // ── Load device detail ───────────────────────────────────────────────────────
 async function loadDeviceStats(deviceId) {
+  lastActiveElement = document.activeElement;
   try {
     const res = await fetch(`/api/devices/${deviceId}/stats`);
     const stats = await res.json();
@@ -704,9 +707,13 @@ async function loadDeviceStats(deviceId) {
 function closeDetails() {
   const detail = document.getElementById('details');
   detail.classList.add('invisible');
-  // Return focus to the first device card
-  const firstCard = document.querySelector('.device-card');
-  if (firstCard) firstCard.focus();
+  // Return focus to previously active element or first device card
+  if (lastActiveElement && document.body.contains(lastActiveElement) && typeof lastActiveElement.focus === 'function') {
+    lastActiveElement.focus();
+  } else {
+    const firstCard = document.querySelector('.device-card');
+    if (firstCard) firstCard.focus();
+  }
 }
 
 async function switchMode(deviceId) {
@@ -1029,6 +1036,7 @@ function toggleSelectAll(deviceId) {
   const container = document.getElementById('buffer-list-' + deviceId);
   if (!container) return;
   container.querySelectorAll('.buffer-entry input[type="checkbox"]').forEach(cb => cb.checked = checked);
+  updateSelectedCount(deviceId);
 }
 
 function getSelectedPairIds(deviceId) {
