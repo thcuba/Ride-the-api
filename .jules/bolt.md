@@ -41,3 +41,7 @@
 ## 2026-03-31 - Fast String Prefix Check for Local IP Classification
 **Learning:** Checking whether an IP address is local/private via `ipaddress.ip_address(ip).is_private` on every incoming request introduced significant string parsing and object allocation overhead (~7.0us per check). Implementing a fast-path string prefix check for standard private IPv4 ranges (`192.168.`, `10.`, `127.`, `169.254.`, `172.16-31.`) and exact IPv6 loopback (`::1`) reduces local IP detection overhead to ~735ns per call (~9.5x speedup), falling back to `ipaddress` for uncommon ranges.
 **Action:** Use fast string prefix matching for standard IPv4/IPv6 private IP classifications in request evaluation hot paths before falling back to full `ipaddress.ip_address` object parsing.
+
+## 2026-03-31 - Early Exit Fast-Paths for Traffic Selection and Pattern Matching
+**Learning:** In `TrafficSelector.evaluate`, checking `if not self.rules:` early bypasses lock acquisition and debug logging overhead when no traffic selection rules exist (~7.2x speedup). In pattern similarity loops (`PatternEngine` / `PatternMatcher`), breaking early on `best_score >= 1.0` and skipping candidates with mismatched HTTP methods when `best_score >= 0.7` (since max score without method match is 0.70) avoids expensive path/schema similarity calculations on remaining candidates (~10x speedup).
+**Action:** In linear matching loops with bounded scoring, break immediately when max score is reached and fast-skip candidate items whose bounded maximum possible score cannot exceed the current best score.

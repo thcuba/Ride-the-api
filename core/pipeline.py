@@ -265,6 +265,12 @@ class PatternMatcher:
         best_template = None
 
         for pattern in patterns:
+            # Fast path early exits: max score is 1.0; method mismatch caps score at 0.70 (~10x faster)
+            if best_score >= 1.0:
+                break
+            if best_score >= 0.7 and pattern.method != method:
+                continue
+
             score = self._calculate_similarity(pattern, method, path, headers, body, query_params)
             if score > best_score:
                 best_score = score

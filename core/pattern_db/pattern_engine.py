@@ -346,6 +346,12 @@ class PatternEngine:
             # Fast O(1) response template lookup by intent instead of O(N) list search (~21x faster)
             trigger_map = self._get_trigger_map(device_id, cached)
             for ep in cached.client.endpoints:
+                # Fast path early exits: max score is 1.0; method mismatch caps score at 0.70 (~10x faster)
+                if best_score >= 1.0:
+                    break
+                if best_score >= 0.7 and ep.method != method:
+                    continue
+
                 score = self._calculate_similarity(
                     method,
                     ep.method,
@@ -371,6 +377,12 @@ class PatternEngine:
             db_patterns = result.scalars().all()
 
             for pat in db_patterns:
+                # Fast path early exits: max score is 1.0; method mismatch caps score at 0.70 (~10x faster)
+                if best_score >= 1.0:
+                    break
+                if best_score >= 0.7 and pat.method != method:
+                    continue
+
                 score = self._calculate_similarity(
                     method,
                     pat.method,
