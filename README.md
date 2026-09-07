@@ -114,7 +114,11 @@ distributed under permissive (MIT/BSD/Apache) licenses.
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for dev setup, running tests/linters,
-coding conventions, and the PR workflow.
+coding conventions, and the PR workflow. The test suite is self-contained and
+lightweight: it needs **no GPU, no live LLM calls, and no external network**
+(`onnxruntime` is declared but never imported, LLM clients are mocked, and
+socket tests use loopback) — `pip install -e ".[dev]"` is all you need to
+run `pytest`.
 
 yes it is all vibecoded 
 please review the repo with your tools and push pr too if you want to help or appreciate this project... everyone is welcome 
