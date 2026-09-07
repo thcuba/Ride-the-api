@@ -619,10 +619,12 @@ async def tls_add_port(request: Request):
             tls_mitm_server = server
             config.tls_decrypt.enabled = True
         except Exception as e:  # noqa: BLE001
+            # Log the full exception server-side; the client only gets a
+            # generic message (CodeQL: information exposure through exception).
             logger.error("TLS MITM: on-demand start failed: %s", e)  # noqa: TRY400
             return JSONResponse(
                 status_code=503,
-                content={"error": f"TLS MITM could not be started: {e}"},
+                content={"error": "TLS MITM could not be started"},
             )
 
     error = await tls_mitm_server.add_port(port)

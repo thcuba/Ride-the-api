@@ -354,13 +354,14 @@ class TLSMITMServer:
                 port=port,
             )
         except OSError as e:
-            reason = f"port already in use or cannot be bound ({e})"
+            # Log the full exception server-side, but return a generic reason:
+            # the raw OSError text can contain stack-trace info that must not
+            # be exposed to the client (CodeQL: information exposure).
             logger.warning("TLS MITM: cannot add port %d — %s", port, e)
-            return reason
+            return "port already in use or cannot be bound"
         except Exception as e:  # noqa: BLE001
-            reason = f"unexpected error: {e!r}"
             logger.warning("TLS MITM: cannot add port %d — %s", port, e)
-            return reason
+            return "unexpected error while binding port"
         self._servers.append(server)
         self.listen_ports.append(port)
         logger.info("TLS MITM: added port %d", port)
