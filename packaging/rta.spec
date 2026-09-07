@@ -56,6 +56,7 @@ hidden += collect_submodules("sqlalchemy")
 _datas = [
     (str(REPO_ROOT / "config/config.yaml"), "config"),
     (str(REPO_ROOT / "webui"), "webui"),
+    (str(REPO_ROOT / "assets"), "assets"),
     (str(REPO_ROOT / "core/pattern_db/schemas"), "core/pattern_db/schemas"),
 ]
 
@@ -110,7 +111,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,
+    icon=str(REPO_ROOT / "assets/icon.ico"),
 )
 
 coll = COLLECT(

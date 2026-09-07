@@ -301,6 +301,13 @@ class App:
         external = _probe(self.host, self.port)
 
         root.title("ride-the-api")
+        if os.name == "nt":
+            icon_path = _bundled_path("assets/icon.ico")
+            if icon_path is not None:
+                try:
+                    root.iconbitmap(default=str(icon_path))
+                except tk.TclError:
+                    pass
         root.geometry("460x300")
         root.minsize(420, 280)
         root.resizable(False, False)
