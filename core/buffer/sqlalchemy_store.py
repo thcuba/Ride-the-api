@@ -236,7 +236,8 @@ class SqlAlchemyBufferStore(BufferStore):
     ) -> None:
         """Sync the durable file-DB MatchBuffer after a flush (RAM mode)."""
         provider = self._durable_stats
-        assert provider is not None
+        if provider is None:
+            raise RuntimeError("durable stats provider not configured (RAM sync unavailable)")
         async with provider(device_id) as session:
             stats = await _get_or_create_stats(session, device_id)
             if delta is None:
@@ -251,7 +252,8 @@ class SqlAlchemyBufferStore(BufferStore):
     async def _sync_durable_delete(self, device_id: str, size: int) -> None:
         """Sync the durable file-DB MatchBufferStats after a delete (RAM mode)."""
         provider = self._durable_stats
-        assert provider is not None
+        if provider is None:
+            raise RuntimeError("durable stats provider not configured (RAM sync unavailable)")
         async with provider(device_id) as session:
             stats = await _get_or_create_stats(session, device_id)
             stats.current_buffer_size_bytes = max(0, (stats.current_buffer_size_bytes or 0) - size)

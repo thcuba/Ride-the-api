@@ -80,7 +80,11 @@ async def memory_session(_device_id: str) -> AsyncGenerator[AsyncSession, None]:
     is a single shared database.
     """
     await _ensure_initialized()
-    assert _factory is not None
+    if _factory is None:
+        # _ensure_initialized guarantees the factory is set on success; this
+        # explicit guard (instead of an assert) survives ``python -O`` and
+        # gives a useful message if the invariant is ever violated.
+        raise RuntimeError("in-memory buffer not initialized (call _ensure_initialized first)")
     session = _factory()
     try:
         yield session
