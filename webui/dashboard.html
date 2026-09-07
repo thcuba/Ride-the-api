@@ -192,7 +192,7 @@
   .tls-bar .tb-btn:hover { color: var(--red); }
   .tls-bar .tb-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .tls-bar .tb-add { display: flex; align-items: center; gap: 4px; }
-  .tls-bar .tb-add label { font-size: 0; }
+  .tls-bar .tb-add label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
   .tls-bar .tb-add input { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; color: var(--text); font-size: 13px; width: 80px; font-family: inherit; }
   .tls-bar .tb-add input:focus { outline: none; border-color: var(--accent); }
   .tls-bar .tb-add input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -327,7 +327,7 @@
       <div class="ram-label" title="Buffer request/response pairs in RAM instead of disk (volatile)">
         <span>RAM Buffer</span>
         <label class="ram-toggle" aria-label="Toggle RAM buffer">
-          <input type="checkbox" id="ram-buffer-toggle" onchange="toggleRamBuffer(this.checked)">
+          <input type="checkbox" id="ram-buffer-toggle" role="switch" aria-checked="false" onchange="toggleRamBuffer(this.checked)">
           <span class="ram-slider"></span>
         </label>
       </div>
@@ -348,7 +348,7 @@
   <span class="tb-add">
     <label for="newPortInput">Add port number</label>
     <input type="number" id="newPortInput" placeholder="Port" min="1" max="65535" aria-required="false" onkeydown="if(event.key==='Enter'){event.preventDefault();addTlsPort();}">
-    <button class="btn btn-ghost" onclick="addTlsPort()" style="padding:4px 10px;font-size:12px;">+ Add</button>
+    <button class="btn btn-ghost" onclick="addTlsPort()" style="padding:4px 10px;font-size:12px;" aria-label="Add TLS port">+ Add</button>
   </span>
   <span class="tb-status" id="tlsStatus">loading…</span>
 </div>
@@ -600,8 +600,8 @@ async function loadDeviceStats(deviceId) {
         </div>
         <div class="tc-row">
           <span class="tc-label" id="passthrough-label-${escapeHtml(deviceId)}">Passthrough to Cloud</span>
-          <label class="tc-toggle" aria-label="Toggle passthrough to cloud" role="switch" aria-checked="true">
-            <input type="checkbox" id="tc-passthrough-${escapeHtml(deviceId)}" checked aria-labelledby="passthrough-label-${escapeHtml(deviceId)}">
+          <label class="tc-toggle" aria-label="Toggle passthrough to cloud">
+            <input type="checkbox" id="tc-passthrough-${escapeHtml(deviceId)}" role="switch" aria-checked="true" checked aria-labelledby="passthrough-label-${escapeHtml(deviceId)}" onchange="this.setAttribute('aria-checked', this.checked)">
             <span class="tc-slider"></span>
           </label>
         </div>
@@ -642,8 +642,8 @@ async function loadDeviceStats(deviceId) {
                     <button class="btn btn-ghost" style="padding:4px 8px;font-size:11px;" onclick="saveAsNewProfile('${escapeJs(deviceId)}')">Save As</button>
                   </div>
                   <div class="llm-row" style="justify-content:flex-end;gap:6px;border:none;padding-top:0;">
-                    <button class="btn btn-ghost" style="padding:2px 8px;font-size:11px;" onclick="editProfile('${escapeJs(deviceId)}')">Edit</button>
-                    <button class="btn btn-ghost" style="padding:2px 8px;font-size:11px;" onclick="deleteProfile('${escapeJs(deviceId)}')" id="delete-profile-btn-${escapeHtml(deviceId)}">Delete</button>
+                    <button class="btn btn-ghost" style="padding:2px 8px;font-size:11px;" onclick="editProfile('${escapeJs(deviceId)}')" aria-label="Edit template profile">Edit</button>
+                    <button class="btn btn-ghost" style="padding:2px 8px;font-size:11px;" onclick="deleteProfile('${escapeJs(deviceId)}')" id="delete-profile-btn-${escapeHtml(deviceId)}" aria-label="Delete template profile">Delete</button>
                   </div>
 
                   <!-- Context notes -->
@@ -741,6 +741,8 @@ async function switchMode(deviceId) {
 
   // ── RAM Buffer toggle ────────────────────────────────────────────────────────
   async function toggleRamBuffer(enabled) {
+    const el = document.getElementById('ram-buffer-toggle');
+    if (el) el.setAttribute('aria-checked', enabled ? 'true' : 'false');
     try {
       const res = await fetch('/api/settings/buffer-backend', {
         method: 'PUT', headers: {'Content-Type': 'application/json'},
@@ -750,7 +752,10 @@ async function switchMode(deviceId) {
       showToast('RAM buffer ' + (enabled ? 'enabled' : 'disabled') + (enabled ? ' (volatile)' : ''), 'success');
     } catch(e) {
       showToast('Failed to toggle RAM buffer', 'error');
-      document.getElementById('ram-buffer-toggle').checked = !enabled;
+      if (el) {
+        el.checked = !enabled;
+        el.setAttribute('aria-checked', (!enabled) ? 'true' : 'false');
+      }
     }
   }
 
@@ -759,7 +764,12 @@ async function switchMode(deviceId) {
       const res = await fetch('/api/settings/buffer-backend');
       if (!res.ok) return;
       const data = await res.json();
-      document.getElementById('ram-buffer-toggle').checked = (data.backend === 'memory');
+      const isMem = (data.backend === 'memory');
+      const el = document.getElementById('ram-buffer-toggle');
+      if (el) {
+        el.checked = isMem;
+        el.setAttribute('aria-checked', isMem ? 'true' : 'false');
+      }
     } catch(e) { /* settings endpoint unavailable — keep toggle off */ }
   }
 
