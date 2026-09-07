@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Ride the API — Local Cloud Replacement</title>
+<link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+<link rel="apple-touch-icon" href="/static/logo.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
@@ -37,6 +39,8 @@
   .header-left { display: flex; flex-direction: column; }
   .header-left h1 { font-size: 28px; font-weight: 800; color: var(--accent); letter-spacing: -.5px; }
   .header-left .subtitle { font-size: 14px; color: var(--text2); margin-top: 2px; }
+    .brand-row { display: flex; align-items: center; gap: 10px; }
+    .brand-row img { border-radius: 8px; }
   .header-right { display: flex; gap: 10px; align-items: center; }
   .btn {
     padding: 8px 18px; border: none; border-radius: 8px; font-family: inherit; font-size: 13px;
@@ -320,9 +324,12 @@
 
 <div class="header">
   <div class="header-left">
-    <h1>Ride the API</h1>
-    <span class="subtitle">Local Cloud Replacement — Device Protocol Learning &amp; Response Dashboard</span>
-  </div>
+      <div class="brand-row">
+        <img src="/static/logo.png" alt="Icona ride-the-api" width="40" height="40">
+        <h1>Ride the API</h1>
+      </div>
+      <span class="subtitle">Local Cloud Replacement — Device Protocol Learning &amp; Response Dashboard</span>
+    </div>
   <div class="header-right">
       <div class="ram-label" title="Buffer request/response pairs in RAM instead of disk (volatile)">
         <span>RAM Buffer</span>

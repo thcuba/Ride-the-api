@@ -10,6 +10,8 @@ AppName=ride-the-api
 ; Keep in sync with `version` in pyproject.toml.
 AppVersion=0.2.0
 AppPublisher=ride-the-api
+SetupIconFile=..\..\assets\icon.ico
+UninstallDisplayIcon={app}\ride-the-api.exe
 DefaultDirName={pf}\ride-the-api
 DefaultGroupName=ride-the-api
 DisableProgramGroupPage=yes

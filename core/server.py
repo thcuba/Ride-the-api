@@ -429,14 +429,6 @@ async def lifespan(app: FastAPI):  # noqa: C901, PLR0912, PLR0915
         except Exception as e:
             logger.error("Failed to initialize protocol servers: %s", e)  # noqa: TRY400
 
-    # Mount static files for Web UI
-    try:
-        static_dir = WEBUI_DIR / "static"
-        if static_dir.exists():
-            app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
-    except Exception as e:
-        logger.warning("Could not mount static files: %s", e)
-
     # Start auto-switch scheduler
     auto_switch_scheduler = AutoSwitchScheduler(db_manager)
     await auto_switch_scheduler.start()
@@ -1970,6 +1962,17 @@ async def patterns_page(device_id: str):  # noqa: ARG001
 register_resilience_routes(app, lambda: db_manager, lambda: orchestrator)
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Static files for Web UI (registered BEFORE the catch-all proxy route so that
+# /static/* is never captured as a {vendor}).
+try:
+    _static_dir = WEBUI_DIR / "static"
+    if _static_dir.exists():
+        app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
+    else:
+        logger.warning("Static dir not found: %s", _static_dir)
+except Exception as e:
+    logger.warning("Could not mount static files: %s", e)
+
 # MAIN PROXY ENDPOINT - Catches all device traffic
 # ═══════════════════════════════════════════════════════════════════════════════
 
