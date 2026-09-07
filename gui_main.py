@@ -254,12 +254,22 @@ def run_headless(data_dir: Path) -> int:
     thread.start()
     while thread.is_alive():
         thread.join(timeout=2.0)
+    return _headless_exit_code(server_failed)
+
+
+def _headless_exit_code(server_failed: threading.Event) -> int:
+    """Decide the process exit code after the server thread has finished.
+
+    A set ``server_failed`` event means ``_run_server`` hit an unhandled
+    exception, so the launcher reports failure. Otherwise the thread exited
+    cleanly and we return success regardless of whether it is still alive
+    (the ``while`` above guarantees it is not).
+    """
     if server_failed.is_set():
         _log("[launcher] Server terminated unexpectedly, check the log for details.")
         return 1
-        if not thread.is_alive():
-            _log("[launcher] Server stopped (thread exited).")
-        return 0
+    _log("[launcher] Server stopped (thread exited).")
+    return 0
 
 
 def _proxy_addr() -> tuple[str, int]:
