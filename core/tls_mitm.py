@@ -263,7 +263,12 @@ class TLSMITMServer:
         request_handler: Callable[[DecryptedRequest], Coroutine] | None = None,
     ) -> None:
         self.host = host
-        self.listen_ports = listen_ports or [443, 8883, 5684, 8443]
+        # Copy so callers' lists are never mutated behind their back, and treat
+        # an empty list as an intentional "start with no listeners" (dynamic
+        # add via add_port must work on a server that starts with zero ports).
+        self.listen_ports = (
+            list(listen_ports) if listen_ports is not None else [443, 8883, 5684, 8443]
+        )
         self.cert_manager = cert_manager or CertManager()
         self.device_certs_dir = Path(device_certs_dir)
         self.device_certs_dir.mkdir(parents=True, exist_ok=True)
@@ -334,23 +339,33 @@ class TLSMITMServer:
 
     # ── Port management (dynamic add/remove) ─────────────────────────────────
 
-    async def add_port(self, port: int) -> bool:
-        """Dynamically add a new listen port at runtime."""
+    async def add_port(self, port: int) -> str | None:
+        """Dynamically add a new listen port at runtime.
+
+        Returns ``None`` on success, otherwise a human-readable reason why the
+        port could not be bound (e.g. the port is already in use).
+        """
         if port in self.listen_ports:
-            return True
+            return None
         try:
             server = await asyncio.start_server(
                 self._handle_connection,
                 host=self.host,
                 port=port,
             )
-            self._servers.append(server)
-            self.listen_ports.append(port)
-            logger.info("TLS MITM: added port %d", port)
-            return True  # noqa: TRY300
         except OSError as e:
+            # Log the full exception server-side, but return a generic reason:
+            # the raw OSError text can contain stack-trace info that must not
+            # be exposed to the client (CodeQL: information exposure).
             logger.warning("TLS MITM: cannot add port %d — %s", port, e)
-            return False
+            return "port already in use or cannot be bound"
+        except Exception as e:  # noqa: BLE001
+            logger.warning("TLS MITM: cannot add port %d — %s", port, e)
+            return "unexpected error while binding port"
+        self._servers.append(server)
+        self.listen_ports.append(port)
+        logger.info("TLS MITM: added port %d", port)
+        return None
 
     async def remove_port(self, port: int) -> bool:
         """Dynamically remove a listen port at runtime."""

@@ -813,6 +813,13 @@ async function loadVendors() {
 async function loadTlsBar() {
   try {
     const res = await fetch('/api/tls/ports');
+    if (!res.ok) {
+      const data = await res.json().catch(() => null);
+      document.getElementById('tlsBadges').innerHTML = '<span class="tb-badge tb-inactive">error</span>';
+      document.getElementById('tlsStatus').textContent =
+        (data && data.error) ? data.error : 'TLS MITM error';
+      return;
+    }
     const data = await res.json();
     const container = document.getElementById('tlsBadges');
     const status = document.getElementById('tlsStatus');
@@ -837,20 +844,38 @@ async function addTlsPort() {
     const res = await fetch('/api/tls/ports', {
       method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({port}),
     });
-    if (!res.ok) { showToast('Failed to add port', 'error'); return; }
+    if (!res.ok) {
+      showToast(await errorFrom(res, `Failed to add port (HTTP ${res.status})`), 'error');
+      return;
+    }
     showToast('Added port ' + port, 'success');
     input.value = '';
     loadTlsBar();
-  } catch(e) { showToast('Failed to add port', 'error'); }
+  } catch(e) { showToast(await errorFrom(e, 'Failed to add port'), 'error'); }
 }
 
 async function removeTlsPort(port) {
   try {
     const res = await fetch(`/api/tls/ports/${port}`, { method: 'DELETE' });
-    if (!res.ok) { showToast('Failed to remove port', 'error'); return; }
+    if (!res.ok) {
+      showToast(await errorFrom(res, `Failed to remove port (HTTP ${res.status})`), 'error');
+      return;
+    }
     showToast('Removed port ' + port, 'success');
     loadTlsBar();
-  } catch(e) { showToast('Failed to remove port', 'error'); }
+  } catch(e) { showToast(await errorFrom(e, 'Failed to remove port'), 'error'); }
+}
+
+// Extract a human-readable message from a failed fetch Response (or an Error).
+async function errorFrom(resOrErr, fallback) {
+  if (resOrErr instanceof Response) {
+    try {
+      const data = await resOrErr.clone().json();
+      if (data && data.error) return data.error;
+    } catch(_) { /* body was not JSON */ }
+    return fallback;
+  }
+  return (resOrErr && resOrErr.message) ? resOrErr.message : fallback;
 }
 
 function downloadCaCert() {
