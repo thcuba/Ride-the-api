@@ -142,7 +142,7 @@ Returns all registered devices.
       "name": "Living Room AC",
       "mode": "learning",
       "auto_switch_enabled": false,
-      "database_url": "sqlite+aiosqlite:///./data/devices/ip-192-168-1-42.db",
+      "database_url": "sqlite+aiosqlite:///./ridebase/devices/ip-192-168-1-42.db",
       "ip_addresses": ["192.168.1.42"],
       "created_at": "2025-06-15T10:30:00Z"
     }
@@ -625,6 +625,12 @@ importing a full clone does **not** silently drop v2-only fields.
 **Note**: The `.ride-pattern.json` format is designed for sharing between
 installations and for backup. Imported patterns are applied to the device
 state and configured virtual variables/sensors.
+
+**Device registration**: Importing patterns for a device that has not yet
+sent traffic **registers it** in the core device registry (vendor and
+`device_type` are taken from the pattern `meta`), so its mode can be set to
+`production` and requests can be served immediately — no need to wait for the
+device to appear via intercepted traffic first.
 
 ---
 

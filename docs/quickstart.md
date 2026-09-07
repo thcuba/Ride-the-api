@@ -84,8 +84,8 @@ For development with SQLite (default), no changes needed:
 
 ```yaml
 core:
-  database_url: "sqlite+aiosqlite:///./data/core.db"
-  device_db_dir: "./data/devices"
+  database_url: "sqlite+aiosqlite:///./ridebase/core.db"
+  device_db_dir: "./ridebase/devices"
 ```
 
 For production, set a PostgreSQL URL:
@@ -210,7 +210,16 @@ You will see:
 curl http://localhost:8911/health
 ```
 
-Expected response: `{"status": "ok"}` (or similar).
+Expected response:
+
+```json
+{
+  "status": "healthy",
+  "service": "local-cloud-replacement-proxy",
+  "version": "0.2.0",
+  "adapters": ["example", "coap_example", "modbus_example", "shelly", "zigbee", "zwave", "matter"]
+}
+```
 
 ### TLS status
 
@@ -223,8 +232,10 @@ Shows the TLS listening ports and active certificates.
 ### Real-time logs
 
 ```bash
-# If started manually — logs go to stdout
-tail -f data/core.log
+# Default config sends JSON logs to stdout (observability.logging.output: "stdout")
+python -m core.server  # logs appear on the terminal
+# With --proxy... or containerized, follow the container logs instead:
+docker logs -f <container-id>
 ```
 
 ---
@@ -236,7 +247,7 @@ tail -f data/core.log
 | Understand the full architecture | `docs/nginx-architecture.md` |
 | Portable pattern database format | `docs/portable-pattern-database.md` |
 | Edit patterns via web UI | `http://localhost:8911/patterns/{device_id}` |
-| Export/import patterns | REST API: `GET/POST /api/patterns/export` |
+| Export/import patterns | REST API: `GET/POST /api/devices/{device_id}/patterns/export|import` |
 | Configure direct protocol servers (MQTT, CoAP, Modbus…) | `protocol_servers` section in `config.yaml` |
 
 ---

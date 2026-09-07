@@ -33,6 +33,7 @@ data/
 *.sqlite3
 logs/
 *.log
+runtime_settings.json
 
 # Certificates
 certs/*.pem

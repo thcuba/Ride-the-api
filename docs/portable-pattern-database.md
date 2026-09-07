@@ -515,6 +515,11 @@ Il v2 mantiene i blocchi costruttivi del v1 a livello radice (`commands` +
 - Importando `.ride-pattern.json` v2 su una seconda installazione, il
   dispositivo risponde a richieste già apprese (e — nei limiti del modello — a
   quelle mai viste via sintesi semantica) senza LLM né cloud.
+- L'import (v1 `PatternDB` o v2 `DeviceModel`) **registra automaticamente il
+  dispositivo** nel registry core (`get_or_create_device`), prendendo
+  `vendor`/`device_type` dal `meta` del pattern. Così un dispositivo appena
+  importato può essere messo in `production` e servire subito, senza dover
+  attendere che compaia tramite traffico intercettato.
 
 ---
 

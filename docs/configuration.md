@@ -30,8 +30,8 @@ Database and per-device context configuration.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `database_url` | `string` | `"sqlite+aiosqlite:///./data/core.db"` | Core database connection URL (SQLite with aiosqlite) |
-| `device_db_dir` | `string` | `"./data/devices"` | Directory for per-device databases |
+| `database_url` | `string` | `"sqlite+aiosqlite:///./ridebase/core.db"` | Core database connection URL (SQLite with aiosqlite) |
+| `device_db_dir` | `string` | `"./ridebase/devices"` | Directory for per-device databases |
 | `device_databases` | `dict[string, string]` | `{}` | Device-name → database path map, to override the default path |
 | `default_context_buffer_size` | `integer` | `524288` | Default context buffer size in bytes (default 512 KB). Possible values from enum `ContextBufferSizes`: `131072` (128 KB), `262144` (256 KB), `524288` (512 KB), `1048576` (1 MB), `2097152` (2 MB), `5242880` (5 MB), `10485760` (10 MB) |
 
@@ -39,10 +39,10 @@ Example:
 
 ```yaml
 core:
-  database_url: "sqlite+aiosqlite:///./data/core.db"
-  device_db_dir: "./data/devices"
+  database_url: "sqlite+aiosqlite:///./ridebase/core.db"
+  device_db_dir: "./ridebase/devices"
   device_databases:
-    termostato_soggiorno: "./data/custom/termostato.db"
+    termostato_soggiorno: "./ridebase/custom/termostato.db"
   default_context_buffer_size: 1048576
 ```
 
@@ -893,8 +893,8 @@ protocol_servers:
 ```yaml
 # config/config.yaml — ride-the-api
 core:
-  database_url: "sqlite+aiosqlite:///./data/core.db"
-  device_db_dir: "./data/devices"
+  database_url: "sqlite+aiosqlite:///./ridebase/core.db"
+  device_db_dir: "./ridebase/devices"
   device_databases: {}
   default_context_buffer_size: 524288
 
