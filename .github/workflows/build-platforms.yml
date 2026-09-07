@@ -3,25 +3,24 @@
 # GitHub-hosted runner (x64 and arm64 are both available natively).
 #
 # Triggers:
-#   - push of a v* tag  -> builds all platforms, attaches assets to the release
-#   - manual workflow_dispatch -> builds all platforms, uploads as artifacts
+#   - publishing a GitHub Release -> builds all platforms, attaches assets to it
+#   - manual workflow_dispatch    -> builds all platforms, uploads as artifacts
 #
 # NOTE on macOS: Intel (macOS 13) hosted runners were retired Dec 4 2025;
 # only arm64 macOS runners remain, so macOS ships arm64 (Apple Silicon) only.
 #
 # Two jobs on purpose:
 #   1. `build` (matrix)  - compile + package each platform, upload artifact.
-#   2. `release`         - single job AFTER all builds; creates the GitHub
-#      Release once and attaches every asset. (Doing the attach inside the
-#      matrix would race: 4 parallel jobs creating the same release.)
+#   2. `release`         - single job AFTER all builds; attaches every asset to
+#      the release that triggered the run. (Doing the attach inside the matrix
+#      would race: 4 parallel jobs uploading to the same release.)
 
 name: Build & Release (multi-platform)
 
 on:
   workflow_dispatch: {}
-  push:
-    tags:
-      - "v*"
+  release:
+    types: [published]
 
 env:
   PYTHON_VERSION: "3.11"
@@ -132,9 +131,9 @@ jobs:
           path: ${{ matrix.asset }}
 
   release:
-    # Runs only on tag pushes, after every build job succeeded.
+    # Runs after every build job succeeded. The release that triggered the run
+    # already exists, so this job only attaches the built assets to it.
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write  # create the GitHub Release and attach assets
