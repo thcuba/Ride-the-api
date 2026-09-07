@@ -131,25 +131,29 @@ jobs:
           path: ${{ matrix.asset }}
 
   release:
-    # Runs after every build job succeeded. The release that triggered the run
-    # already exists, so this job only attaches the built assets to it.
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write  # create the GitHub Release and attach assets
-    steps:
-      - name: Download all platform artifacts
-        uses: actions/download-artifact@v8
-        with:
-          path: assets
-          merge-multiple: true
+      # Runs after every build job succeeded, only when triggered by a published
+      # release. The release already exists, so this job only attaches the built
+      # assets to it. (On workflow_dispatch there is no release to update: the
+      # build job just uploads artifacts.)
+      needs: build
+      if: github.event_name == 'release'
+      runs-on: ubuntu-latest
+      permissions:
+        contents: write  # attach assets to the GitHub Release
+      steps:
+        - name: Download all platform artifacts
+          uses: actions/download-artifact@v8
+          with:
+            path: assets
+            merge-multiple: true
 
-      - name: List assets
-        run: ls -lh assets
+        - name: List assets
+          run: ls -lh assets
 
-      - name: Create/update Release and attach assets
-        uses: softprops/action-gh-release@v3
-        with:
-          files: assets/*
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        - name: Attach assets to the release
+          uses: softprops/action-gh-release@v3
+          with:
+            tag_name: ${{ github.event.release.tag_name }}
+            files: assets/*
+          env:
+            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
