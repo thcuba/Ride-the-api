@@ -139,13 +139,24 @@ async def main() -> None:
             print(f"  request_patterns rows: {n}")
 
         print("== VERIFY .ride-pattern.json export ==")
-        patterns_dir = Path("patterns")
-        files = (
-            list(patterns_dir.glob("*.ride-pattern.json"))
-            if patterns_dir.exists()
-            else []
-        )
+        # The exporter anchors the patterns dir next to the device DBs
+        # (``pipeline._export`` -> device_db_dir.parent / "patterns"), not the
+        # process CWD, so point the check at the real location inside the
+        # (still-alive) TemporaryDirectory.
+        patterns_dir = dbm.device_db_dir.parent / "patterns"
+        files = list(patterns_dir.glob("*.ride-pattern.json"))
+        if not files:
+            raise SystemExit(
+                "FAIL: no .ride-pattern.json exported under "
+                f"{patterns_dir.resolve()} (got 0 files)"
+            )
         print(f"  exported: {[f.name for f in files]} ({len(files)} files)")
+
+        # First flush exports the device meta header and the patterns, so at
+        # this point both must be present for the E2E flow to be sound.
+        meta2 = await dbm.read_device_meta("dev-1")
+        if not meta2:
+            raise SystemExit("FAIL: device_meta not persisted after export")
 
         print("== PRODUCTION self-match against learned patterns ==")
         async with dbm.core_session() as s:
