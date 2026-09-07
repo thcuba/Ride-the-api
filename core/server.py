@@ -591,27 +591,53 @@ async def tls_unidentified():
 @app.post("/api/tls/ports")
 async def tls_add_port(request: Request):
     """Dynamically add a TLS listen port."""
-    if not tls_mitm_server:
-        return JSONResponse(status_code=503, content={"error": "TLS MITM not running"})
     try:
         body = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
+    try:
         port = int(body.get("port", 0))
-        if port < 1 or port > 65535:  # noqa: PLR2004
-            return JSONResponse(status_code=400, content={"error": "Invalid port number"})
-        success = await tls_mitm_server.add_port(port)
-        if success:
-            # Persist to config
+    except (TypeError, ValueError):
+        return JSONResponse(status_code=400, content={"error": "Invalid port number"})
+    if port < 1 or port > 65535:  # noqa: PLR2004
+        return JSONResponse(status_code=400, content={"error": "Invalid port number"})
+
+    # The MITM server only starts at boot when TLS decryption is enabled in
+    # config (off by default). If it is not running yet, start it on demand so
+    # "add port" works immediately (this is the common case on Windows, where
+    # DNS/iptables redirection is not set up so TLS never got enabled).
+    global tls_mitm_server  # noqa: PLW0603
+    if not tls_mitm_server:
+        try:
             config = config_manager.config
-            if port not in config.tls_decrypt.listen_ports:
-                config.tls_decrypt.listen_ports.append(port)
-            return {
-                "status": "ok",
-                "port": port,
-                "listen_ports": tls_mitm_server.listen_ports.copy(),
-            }
-        return JSONResponse(status_code=500, content={"error": "Failed to add port"})
-    except Exception as e:
-        return JSONResponse(status_code=400, content={"error": str(e)})
+            server = get_tls_mitm_server(
+                cert_manager=cert_manager,
+                listen_ports=config.tls_decrypt.listen_ports,
+            )
+            server.request_handler = handle_tls_decrypted_request
+            await server.start()
+            tls_mitm_server = server
+            config.tls_decrypt.enabled = True
+        except Exception as e:  # noqa: BLE001
+            logger.error("TLS MITM: on-demand start failed: %s", e)  # noqa: TRY400
+            return JSONResponse(
+                status_code=503,
+                content={"error": f"TLS MITM could not be started: {e}"},
+            )
+
+    error = await tls_mitm_server.add_port(port)
+    if error is None:
+        # Persist to config
+        config = config_manager.config
+        if port not in config.tls_decrypt.listen_ports:
+            config.tls_decrypt.listen_ports.append(port)
+        return {
+            "status": "ok",
+            "port": port,
+            "listen_ports": tls_mitm_server.listen_ports.copy(),
+        }
+    logger.warning("TLS MITM: add port %d failed: %s", port, error)
+    return JSONResponse(status_code=500, content={"error": f"Failed to add port: {error}"})
 
 
 @app.delete("/api/tls/ports/{port}")
