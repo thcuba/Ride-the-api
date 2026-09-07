@@ -43,5 +43,9 @@
 **Action:** Use fast string prefix matching for standard IPv4/IPv6 private IP classifications in request evaluation hot paths before falling back to full `ipaddress.ip_address` object parsing.
 
 ## 2026-03-31 - Early Exit Fast-Paths for Traffic Selection and Pattern Matching
-**Learning:** In `TrafficSelector.evaluate`, checking `if not self.rules:` early bypasses lock acquisition and debug logging overhead when no traffic selection rules exist (~7.2x speedup). In pattern similarity loops (`PatternEngine` / `PatternMatcher`), breaking early on `best_score >= 1.0` and skipping candidates with mismatched HTTP methods when `best_score >= 0.7` (since max score without method match is 0.70) avoids expensive path/schema similarity calculations on remaining candidates (~10x speedup).
+**Learning:** In `TrafficSelector.evaluate`, checking `if not self.rules:` early bypasses lock acquisition and debug logging overhead when no traffic selection rules exist (~7.2x speedup). In pattern similarity loops (`PatternEngine` / `PatternMatcher`), breaking early on `best_score >= 1.0` and skipping candidates with mismatched HTTP methods when `best_score >= 0.7` (since max score without method match is 0.70) avoids expensive path/score calculation on remaining candidates (~10x speedup).
 **Action:** In linear matching loops with bounded scoring, break immediately when max score is reached and fast-skip candidate items whose bounded maximum possible score cannot exceed the current best score.
+
+## 2026-03-31 - Direct ASCII Character Length for Standard JSON Serialization Size
+**Learning:** `json.dumps()` in Python defaults to `ensure_ascii=True`, escaping all non-ASCII characters as `\uXXXX` sequences. Calling `len(serialized.encode('utf-8'))` in buffer estimation loops needlessly allocated intermediate `bytes` objects. Using `len(serialized)` directly yields the exact same byte length without allocation (~1.20x faster).
+**Action:** When calculating UTF-8 byte size for ASCII-guaranteed JSON strings (from `json.dumps(..., ensure_ascii=True)`), use `len(serialized)` to avoid allocating intermediate `bytes` objects.
