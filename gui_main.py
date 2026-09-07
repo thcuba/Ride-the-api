@@ -177,6 +177,64 @@ def _run_server(on_error) -> None:
             on_error()
 
 
+class ServerController:
+    """Runs the uvicorn server in a daemon thread, with graceful stop."""
+
+    def __init__(self) -> None:
+        self._server = None  # uvicorn.Server once started
+        self._thread: threading.Thread | None = None
+        self.error: threading.Event | None = None
+
+    def start(self) -> None:
+        """Start the server thread (no-op if it is already running)."""
+        if self.running:
+            return
+        self.error = threading.Event()
+        self._server = None
+        self._thread = threading.Thread(
+            target=self._run, daemon=True, name="server"
+        )
+        self._thread.start()
+
+    def _run(self) -> None:
+        try:
+            from core.config import get_config_manager
+            from core.logging_config import setup_logging
+            from core.server import app
+            import uvicorn
+
+            config_manager = get_config_manager()
+            cfg = config_manager.config
+            lg = cfg.observability.logging
+            setup_logging(level=lg.level, fmt=lg.format, output=lg.output)
+            # Pass the app object (not a "core.server:app" string) so the
+            # import path works inside PyInstaller bundles too.
+            uv_config = uvicorn.Config(
+                app,
+                host=cfg.proxy.host,
+                port=cfg.proxy.port,
+                log_level=lg.level.lower(),
+                reload=False,
+            )
+            self._server = uvicorn.Server(uv_config)
+            self._server.run()
+        except SystemExit:
+            raise
+        except Exception:
+            traceback.print_exc()
+            if self.error is not None:
+                self.error.set()
+
+    def stop(self) -> None:
+        """Ask the server to shut down gracefully."""
+        if self._server is not None:
+            self._server.should_exit = True
+
+    @property
+    def running(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
+
 def run_headless(data_dir: Path) -> int:
     """Headless service/daemon mode: no window, logs to ``logs/ride-the-api.log``."""
     log_path = data_dir / "logs" / "ride-the-api.log"
@@ -227,7 +285,7 @@ def _probe(host: str, port: int, timeout: float = 0.4) -> bool:
 
 
 class App:
-    """Tiny tkinter control panel for the server."""
+    """Compact tkinter control panel: status, actions and a small log area."""
 
     def __init__(self, root: tk.Tk, data_dir: Path, args: argparse.Namespace) -> None:
         self.root = root
@@ -239,36 +297,62 @@ class App:
 
         self.host, self.port = _proxy_addr()
         self.url = f"http://127.0.0.1:{self.port}"
-        self.need_start = not _probe(self.host, self.port)
+        self.controller = ServerController()
+        external = _probe(self.host, self.port)
 
         root.title("ride-the-api")
-        root.geometry("720x460")
-        root.minsize(480, 320)
+        root.geometry("460x300")
+        root.minsize(420, 280)
+        root.resizable(False, False)
 
-        top = ttk.Frame(root, padding=(10, 8))
-        top.pack(fill=tk.X)
+        main = ttk.Frame(root, padding=(12, 10))
+        main.pack(fill=tk.BOTH, expand=True)
 
-        self.status = tk.Label(top, text="", font=("Segoe UI", 10))
-        self.status.pack(side=tk.LEFT)
+        # Status row: coloured dot + text
+        status_row = ttk.Frame(main)
+        status_row.pack(fill=tk.X)
+        self.status_dot = tk.Canvas(
+            status_row, width=14, height=14, highlightthickness=0
+        )
+        self.status_dot.pack(side=tk.LEFT, pady=2)
+        self.status = tk.Label(status_row, text="", font=("Segoe UI", 10, "bold"))
+        self.status.pack(side=tk.LEFT, padx=(6, 0))
 
-        dash = ttk.Button(top, text="Apri dashboard", command=self.open_dashboard)
-        dash.pack(side=tk.RIGHT, padx=(6, 0))
+        tk.Label(
+            main, text=f"Proxy: {self.url}", font=("Segoe UI", 9), foreground="#555555"
+        ).pack(anchor="w", pady=(6, 10))
 
-        ttk.Button(top, text="Esci", command=self.do_exit).pack(side=tk.RIGHT)
+        # Actions
+        actions = ttk.Frame(main)
+        actions.pack(fill=tk.X)
+        self.btn_start = ttk.Button(actions, text="Avvia server", command=self.toggle_server)
+        self.btn_start.pack(side=tk.LEFT)
+        ttk.Button(actions, text="Apri dashboard", command=self.open_dashboard).pack(
+            side=tk.LEFT, padx=(8, 0)
+        )
+        ttk.Button(actions, text="Esci", command=self.do_exit).pack(side=tk.RIGHT)
 
-        self.log = scrolledtext.ScrolledText(root, state=tk.DISABLED, wrap=tk.WORD)
-        self.log.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
+        # Small log area: a few lines, fixed height, not a terminal
+        tk.Label(main, text="Log", font=("Segoe UI", 9), foreground="#888888").pack(
+            anchor="w", pady=(12, 2)
+        )
+        self.log = scrolledtext.ScrolledText(
+            main,
+            height=5,
+            state=tk.DISABLED,
+            wrap=tk.WORD,
+            font=("Consolas", 9),
+            relief=tk.SOLID,
+            borderwidth=1,
+        )
+        self.log.pack(fill=tk.BOTH, expand=True)
 
         self._start_log_capture()
-        self._set_state("starting" if self.need_start else "external")
-        if self.need_start:
-            self._thread = threading.Thread(
-                target=_run_server,
-                args=(lambda: self.root.after(0, lambda: self._set_state("error")),),
-                daemon=True,
-                name="server",
-            )
-            self._thread.start()
+        if external:
+            self._set_state("external")
+        else:
+            self._set_state("starting")
+            self.controller.start()
         root.protocol("WM_DELETE_WINDOW", self.do_exit)
         self._poll()
 
@@ -277,22 +361,50 @@ class App:
         sys.stdout = writer
         sys.stderr = writer
 
+    def _set_dot(self, color: str) -> None:
+        self.status_dot.delete("all")
+        self.status_dot.create_oval(2, 2, 12, 12, fill=color, outline="")
+
     def _set_state(self, state: str) -> None:
+        self._state = state
         if state == "starting":
-            text, fg = "Avvio del server...", "#b8860b"
+            text, fg, dot = "Avvio del server...", "#b8860b", "#e6a817"
+            btn_state, btn_text = "disabled", "Avvio..."
+        elif state == "stopping":
+            text, fg, dot = "Arresto del server...", "#b8860b", "#e6a817"
+            btn_state, btn_text = "disabled", "Arresto..."
         elif state == "external":
-            text, fg = "Server gi\u00e0 in esecuzione", "#2e8b57"
+            text, fg, dot = "Server gi\u00e0 in esecuzione", "#2e8b57", "#2e8b57"
+            btn_state, btn_text = "disabled", "Avvia server"
         elif state == "online":
-            text, fg = f"Online su {self.url}", "#2e8b57"
+            text, fg, dot = f"Online su {self.url}", "#2e8b57", "#2e8b57"
+            btn_state, btn_text = "normal", "Arresta server"
+        elif state == "stopped":
+            text, fg, dot = "Server fermo", "#666666", "#bbbbbb"
+            btn_state, btn_text = "normal", "Avvia server"
         elif state == "error":
-            text, fg = "Errore di avvio (vedi log)", "#c0392b"
+            text, fg, dot = "Errore di avvio (vedi log)", "#c0392b", "#c0392b"
+            btn_state, btn_text = "normal", "Avvia server"
         else:
-            text, fg = state, "#333333"
+            text, fg, dot = state, "#333333", "#bbbbbb"
+            btn_state, btn_text = "normal", "Avvia server"
         self.status.config(text=text, foreground=fg)
+        self._set_dot(dot)
+        self.btn_start.config(state=btn_state, text=btn_text)
+
+    def toggle_server(self) -> None:
+        if self.controller.running or self.online:
+            self._set_state("stopping")
+            self.controller.stop()
+        else:
+            self._set_state("starting")
+            self.controller.start()
 
     def open_dashboard(self, background: bool = False) -> None:
         if background:
-            threading.Thread(target=lambda: webbrowser.open(self.url), daemon=True).start()
+            threading.Thread(
+                target=lambda: webbrowser.open(self.url), daemon=True
+            ).start()
         else:
             webbrowser.open(self.url)
 
@@ -306,13 +418,30 @@ class App:
 
     def _poll(self) -> None:
         self._drain_log()
-        if self.need_start and not self.online and _probe(self.host, self.port):
-            self.online = True
-            self._set_state("online")
-            if not self.browser_opened:
-                self.browser_opened = True
-                if not self.args.no_browser:
-                    self.open_dashboard(background=True)
+        is_up = _probe(self.host, self.port)
+
+        if (
+            self.controller.error is not None
+            and self.controller.error.is_set()
+            and self._state not in ("error", "stopping")
+        ):
+            self.online = False
+            self._set_state("error")
+        elif is_up and self._state != "external":
+            if not self.online:
+                self.online = True
+                self._set_state("online")
+                if not self.browser_opened:
+                    self.browser_opened = True
+                    if not self.args.no_browser:
+                        self.open_dashboard(background=True)
+        elif not is_up and self.online:
+            self.online = False
+            if not self.controller.running:
+                self._set_state("stopped")
+
+        if self._state == "stopping" and not self.controller.running and not is_up:
+            self._set_state("stopped")
         self.root.after(250, self._poll)
 
     def _drain_log(self) -> None:
@@ -326,7 +455,7 @@ class App:
     def _append(self, text: str) -> None:
         self.log.config(state=tk.NORMAL)
         self.log.insert(tk.END, text)
-        if int(self.log.index("end-1c").split(".")[0].split("-")[0]) > 2000:
+        if int(self.log.index("end-1c").split(".")[0]) > 500:
             self.log.delete("1.0", "100.0")
         self.log.see(tk.END)
         self.log.config(state=tk.DISABLED)
