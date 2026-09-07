@@ -268,6 +268,16 @@ class DecipherIngest:
         if not result.valid:
             raise ValidationError(result=result)
 
+        # Ensure the device is registered in the core registry so imported
+        # patterns can actually be served: without this, a device that has not
+        # yet sent traffic stays unregistered, its mode cannot be set to
+        # production, and every request is forwarded (device_not_found).
+        await self.db_manager.get_or_create_device(
+            device_id,
+            vendor=pattern_db.meta.vendor or "unknown",
+            device_type=pattern_db.meta.device_type or "unknown",
+        )
+
         count = 0
         async with self.db_manager.device_session(device_id) as session:
             for ep in pattern_db.client.endpoints:

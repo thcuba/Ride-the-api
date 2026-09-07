@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 import pytest_asyncio
 from sqlalchemy import select
 
-from core.database import DatabaseManager, MatchStats, RequestPattern
+from core.database import DatabaseManager, DeviceRegistry, MatchStats, RequestPattern
 from core.pattern_db.decipher_ingest import DecipherIngest
 from core.pattern_db.pattern_engine import PatternEngine
 from core.pattern_db.schemas import (
@@ -17,6 +17,7 @@ from core.pattern_db.schemas import (
     DeviceModel,
     Observation,
     ObservationKind,
+    PatternDB,
     PatternMeta,
     ProtocolInfo,
     ServerResponse,
@@ -319,4 +320,35 @@ async def test_merge_device_model_carries_state_without_protocol(db_manager):
     assert exported.state_variables[0].name == "relay"
     assert len(exported.virtual_sensors) == 1  # noqa: PLR2004
     assert exported.virtual_sensors[0].name == "power"
+
+
+async def test_import_patterns_registers_device(db_manager):
+    """Importing patterns for a brand-new device must register it in the core
+    registry (vendor/device_type from the pattern meta) so its mode can be set
+    to production and requests can be served without waiting for traffic."""
+    ingester = DecipherIngest(db_manager)
+    device_id = "device-import-register"
+
+    # Build via model_dump to avoid pydantic alias friction in the test.
+    pattern_db = PatternDB.model_validate(
+        {
+            "$schema": "https://ride-the-api.dev/pattern-schema/v1",
+            "meta": {"version": 1, "pattern_id": "p1", "vendor": "Shelly",
+                     "device_type": "plug"},
+            "client": {"protocols": ["http"], "endpoints": []},
+            "server": {},
+        }
+    )
+
+    await ingester.import_patterns(device_id, pattern_db)
+
+    async with db_manager.core_session() as session:
+        result = await session.execute(
+            select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
+        )
+        device = result.scalar_one_or_none()
+        assert device is not None
+        assert device.vendor == "Shelly"
+        assert device.device_type == "plug"
+        assert device.mode == "learning"
 

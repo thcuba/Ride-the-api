@@ -142,6 +142,21 @@ docker run -d \
   ride-the-api:latest
 ```
 
+> **Important — data paths in Docker.** The container mounts the host `./data`
+> directory at `/app/data`, but the **default** `config/config.yaml` points the
+> core database and per-device DBs at `./ridebase/` (i.e. `/app/ridebase/`
+> inside the container), which is **not** covered by the `/app/data` volume.
+> For data to persist across container restarts, edit `config/config.yaml` so
+> the `core` section uses the mounted paths:
+>
+> ```yaml
+> core:
+>   database_url: "sqlite+aiosqlite:////app/data/core.db"
+>   device_db_dir: "/app/data/devices"
+> ```
+>
+> and set `tls_decrypt.device_certs_dir` to `/app/data/device_certs`.
+
 ### Health check
 
 The container exposes an automatic health check every 30 seconds at `http://localhost:8911/health`.
