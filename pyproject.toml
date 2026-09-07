@@ -135,3 +135,7 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
+# Allow tests to import root-level modules (gui_main) in addition to the
+# installed packages. Without this, running pytest from a subdirectory or in
+# CI would raise ModuleNotFoundError for root-level scripts.
+pythonpath = ["."]
