@@ -48,6 +48,29 @@ Always run at least the targeted tests for your change, plus the full suite
 before pushing. Windows note: set `PYTHONIOENCODING=utf-8` if you hit encoding
 issues in test output.
 
+### Test environments: GPU, LLM and network are NOT required
+
+The suite is deliberately **self-contained**. It runs on a plain CPU machine
+with no cloud account:
+
+- **No GPU / model inference.** `onnxruntime` is a declared dependency but the
+  `core`/`adapters` code never imports it, so tests do not touch the runtime.
+  The `gpu`/`tflite` extras (see `pyproject.toml`) are reserved for users who
+  want accelerated local inference, not for the test suite.
+- **No live LLM calls.** LLM-related tests (`test_llm_decipher.py`, pipeline,
+  fallback) stub the client / provider with mocks; nothing dials a real
+  model endpoint. Config fixture tests only exercise parsing, not connectivity.
+- **No external network.** Tests that touch sockets (cloud forward,
+  protocol servers, upstream resolver) use loopback (`127.0.0.1`) with ephemeral
+  ports and mock the DNS resolver. Nothing is fetched from the internet;
+  an offline machine can run every test.
+
+Consequently `pip install -e ".[dev]"` gives you everything needed to run
+`pytest` with zero external dependencies or credentials. If you want your local
+env lighter still, you can install only the extras the code paths you touch
+actually need, but there is no separate "light" marker to worry about — the
+default run is already the light run.
+
 ## Linting and typing
 
 ```bash
