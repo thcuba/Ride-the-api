@@ -82,9 +82,7 @@ class HTTP2ServerPlugin(ProtocolServerPlugin):
         device_id = device_id_from_ip("h2", remote_ip)
 
         try:
-            conn = h2.connection.H2Connection(
-                config=h2.config.H2Configuration(client_side=False)
-            )
+            conn = h2.connection.H2Connection(config=h2.config.H2Configuration(client_side=False))
             conn.initiate_connection()
             writer.write(conn.data_to_send())
             await writer.drain()

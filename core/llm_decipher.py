@@ -455,9 +455,7 @@ Response:
 
         # Get recent patterns for this vendor/device_type
         request_meta = getattr(pair.request, "metadata", {}) or {}
-        recent_patterns = self._get_recent_patterns(
-            pair.vendor, request_meta.get("device_type")
-        )
+        recent_patterns = self._get_recent_patterns(pair.vendor, request_meta.get("device_type"))
 
         # Build prompt
         prompt = self._build_prompt(profile, pair, db_schema, recent_patterns)

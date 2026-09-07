@@ -69,7 +69,9 @@ if HAS_PYMODBUS:
             self._tls_enabled = tls_enabled
             self._port = port
 
-        def _notify(self, device_id: int, func_code: int, address: int, values=None, count: int = 1) -> None:
+        def _notify(
+            self, device_id: int, func_code: int, address: int, values=None, count: int = 1
+        ) -> None:
             """Fire a best-effort InterceptedRequest at the pipeline."""
             handler = self._handler
             if handler is None or self._loop is None or self._loop.is_closed():
@@ -91,7 +93,11 @@ if HAS_PYMODBUS:
                 protocol=ProtocolType.MODBUS,
                 method="publish" if operation == "write" else "GET",
                 path=f"/modbus/{func_code}/{address}",
-                query_params={"device_id": str(device_id), "func_code": str(func_code), "address": str(address)},
+                query_params={
+                    "device_id": str(device_id),
+                    "func_code": str(func_code),
+                    "address": str(address),
+                },
                 body=body,
                 transport=TransportMeta(
                     port=self._port,
@@ -105,9 +111,7 @@ if HAS_PYMODBUS:
             )
             try:
                 if asyncio.iscoroutinefunction(handler):
-                    asyncio.run_coroutine_threadsafe(
-                        self._mirror(handler, request), self._loop
-                    )
+                    asyncio.run_coroutine_threadsafe(self._mirror(handler, request), self._loop)
                 else:
                     self._loop.call_soon_threadsafe(handler, request)
             except Exception:  # pragma: no cover - defensive
@@ -120,7 +124,9 @@ if HAS_PYMODBUS:
             except Exception:  # pragma: no cover - defensive
                 logger.debug("Modbus pipeline handler error", exc_info=True)
 
-        async def async_getValues(self, device_id: int, func_code: int, address: int, count: int = 1):
+        async def async_getValues(
+            self, device_id: int, func_code: int, address: int, count: int = 1
+        ):
             self._notify(device_id, func_code, address, count=count)
             return await self._store.async_getValues(device_id, func_code, address, count)
 

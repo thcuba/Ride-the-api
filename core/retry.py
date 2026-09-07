@@ -8,7 +8,6 @@ connects all use the same exponential-backoff strategy instead of hand-rolled
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from tenacity import (
     AsyncRetrying,
@@ -31,7 +30,7 @@ def wait_strategy(
     multiplier: float = 1.0,
     min_wait: float = DEFAULT_MIN_WAIT,
     max_wait: float = DEFAULT_MAX_WAIT,
-) -> Any:
+) -> wait_exponential:
     """Exponential backoff with optional jitter (multiplier=1 -> 1,2,4,8...)."""
     return wait_exponential(multiplier=multiplier, min=min_wait, max=max_wait)
 

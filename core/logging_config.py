@@ -26,15 +26,10 @@ def setup_logging(level: str | int = "INFO", fmt: str = "json", output: str = "s
         fmt: Rendering format; ``json`` (default) or ``console``.
         output: Stream to emit to; ``stdout`` (default) or ``stderr``.
     """
-    global _active_level
-    _active_level = (
-        level if isinstance(level, str) else logging.getLevelName(level)
-    ).upper()
+    global _active_level  # noqa: PLW0603
+    _active_level = (level if isinstance(level, str) else logging.getLevelName(level)).upper()
 
-    if output.lower() == "stderr":
-        stream = sys.stderr
-    else:
-        stream = sys.stdout
+    stream = sys.stderr if output.lower() == "stderr" else sys.stdout
 
     shared_processors: list = [
         structlog.stdlib.add_log_level,

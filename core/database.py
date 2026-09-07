@@ -1,4 +1,4 @@
-﻿"""
+"""
 Core Database Architecture - Device-Specific Protocol Databases
 Core DB + Per-Device DB (SQLite default, PostgreSQL optional)
 """
@@ -43,9 +43,9 @@ from core.pattern_db.schemas import DeviceMeta
 logger = logging.getLogger(__name__)
 
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•  # noqa: E501
 # BASE CLASSES
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•  # noqa: E501
 
 
 class Base(DeclarativeBase):
@@ -91,9 +91,9 @@ def create_configured_engine(db_url: str, *, echo: bool = False) -> AsyncEngine:
     return engine
 
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•  # noqa: E501
 # CORE DATABASE MODELS (shared across all devices)
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•  # noqa: E501
 
 
 class DeviceRegistry(Base):
@@ -172,7 +172,9 @@ class ModelRegistry(Base):
     is_default: Mapped[bool] = mapped_column(default=False, nullable=False)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•  # noqa: E501
+
+
 class LLMProfile(Base):
     """User-saved LLM decipher profiles/templates.
 
@@ -191,18 +193,15 @@ class LLMProfile(Base):
     prompt_template: Mapped[str] = mapped_column(String(16384), nullable=False)
     enabled: Mapped[bool] = mapped_column(default=True, nullable=False)
     is_default: Mapped[bool] = mapped_column(default=False, nullable=False)
-    created_at: Mapped[DateTime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[DateTime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-
     # DEVICE-SPECIFIC DATABASE MODELS (each device gets its own DB with these tables)
 
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•  # noqa: E501
 
 
 class RequestPattern(Base):
@@ -433,18 +432,18 @@ class InterceptedRequest(Base):
 
 class DeviceState(Base):
     """Persisted snapshot of a device's simulated state (single row per device).
-    
+
     Stores the last known ``state_variables`` so that ``{state.xxx}`` values and
     virtual-sensor baselines survive a restart. Written whenever a response's
     field mappings mutate the state store.
     """
-    
+
     __tablename__ = "device_state"
-    
+
     device_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     state: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     updated_at: Mapped[DateTime] = mapped_column(
-    DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
 
@@ -466,10 +465,9 @@ class DeviceMetaRow(Base):
     )
 
 
-
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•  # noqa: E501
 # DATABASE MANAGER
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•  # noqa: E501
 
 
 class DatabaseManager:
@@ -513,9 +511,10 @@ class DatabaseManager:
         """Check if a string looks like an IP address (IPv4 or IPv6)."""
         try:
             ipaddress.ip_address(value)
-            return True
         except ValueError:
             return False
+        else:
+            return True
 
     async def _get_device_db_url(self, device_id: str) -> str | None:
         """Look up a device's custom database URL from the registry."""
@@ -660,6 +659,7 @@ class DatabaseManager:
         sanitized = re.sub(r"[^A-Za-z0-9_.-]", "_", device_id)
         sanitized = sanitized.strip("._")
         return f"{sanitized or 'device'}.db"
+
     async def get_device_session(self, device_id: str) -> AsyncSession:
         """Get an async session for a device database."""
         await self.get_device_engine(device_id)
@@ -889,7 +889,7 @@ class DatabaseManager:
             logger.info(f"Device {device_id} auto-switch {'enabled' if enabled else 'disabled'}")
             return True
 
-    # â”€â”€ Context notes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # â”€â”€ Context notes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€  # noqa: E501
 
     async def update_device_context_notes(self, device_id: str, notes: str) -> bool:
         """Update custom context notes for a device (injected as {context_notes})."""
@@ -913,14 +913,12 @@ class DatabaseManager:
             device = result.scalar_one_or_none()
             return device.llm_context_notes if device else None
 
-    # â”€â”€ LLM Profile CRUD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # â”€â”€ LLM Profile CRUD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€  # noqa: E501
 
     async def list_llm_profiles(self) -> list[dict]:
         """List all user-saved LLM profiles."""
         async with await self.get_core_session() as session:
-            result = await session.execute(
-                select(LLMProfile).order_by(LLMProfile.name)
-            )
+            result = await session.execute(select(LLMProfile).order_by(LLMProfile.name))
             return [
                 {
                     "name": p.name,
@@ -939,9 +937,7 @@ class DatabaseManager:
     async def get_llm_profile(self, name: str) -> dict | None:
         """Get a single LLM profile by name."""
         async with await self.get_core_session() as session:
-            result = await session.execute(
-                select(LLMProfile).where(LLMProfile.name == name)
-            )
+            result = await session.execute(select(LLMProfile).where(LLMProfile.name == name))
             p = result.scalar_one_or_none()
             if not p:
                 return None
@@ -962,9 +958,7 @@ class DatabaseManager:
         """Create a new LLM profile."""
         async with await self.get_core_session() as session:
             existing = await session.execute(
-                select(LLMProfile).where(
-                    LLMProfile.name == data["name"]
-                )
+                select(LLMProfile).where(LLMProfile.name == data["name"])
             )
             if existing.scalar_one_or_none():
                 return False
@@ -985,9 +979,7 @@ class DatabaseManager:
     async def update_llm_profile(self, name: str, data: dict) -> bool:
         """Update an existing LLM profile."""
         async with await self.get_core_session() as session:
-            result = await session.execute(
-                select(LLMProfile).where(LLMProfile.name == name)
-            )
+            result = await session.execute(select(LLMProfile).where(LLMProfile.name == name))
             p = result.scalar_one_or_none()
             if not p:
                 return False
@@ -1011,9 +1003,7 @@ class DatabaseManager:
     async def delete_llm_profile(self, name: str) -> bool:
         """Delete an LLM profile."""
         async with await self.get_core_session() as session:
-            result = await session.execute(
-                select(LLMProfile).where(LLMProfile.name == name)
-            )
+            result = await session.execute(select(LLMProfile).where(LLMProfile.name == name))
             p = result.scalar_one_or_none()
             if not p:
                 return False

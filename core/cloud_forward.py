@@ -142,9 +142,7 @@ class CloudForwarder:
                 timeout=self.connect_timeout,
             )
         except (TimeoutError, OSError) as exc:
-            raise CloudForwardError(
-                f"connect to {hostname} ({ip}:{port}) failed: {exc}"
-            ) from exc
+            raise CloudForwardError(f"connect to {hostname} ({ip}:{port}) failed: {exc}") from exc
 
         conn = h11.Connection(our_role=h11.CLIENT)
         # h11 expects a list of (bytes, bytes) header tuples; Host is managed
@@ -186,15 +184,13 @@ class CloudForwarder:
                 if isinstance(event, h11.Response):
                     status_code = event.status_code
                     resp_headers = {
-                        k.decode("latin-1").lower(): v.decode("latin-1")
-                        for k, v in event.headers
+                        k.decode("latin-1").lower(): v.decode("latin-1") for k, v in event.headers
                     }
                 elif isinstance(event, h11.Data):
                     chunk = event.data
                     if len(resp_body) + len(chunk) > _MAX_RESPONSE_BODY:
                         raise CloudForwardError(
-                            "response body from "
-                            f"{hostname} exceeded {_MAX_RESPONSE_BODY} bytes"
+                            f"response body from {hostname} exceeded {_MAX_RESPONSE_BODY} bytes"
                         )
                     resp_body.extend(chunk)
                 elif isinstance(event, (h11.EndOfMessage, h11.ConnectionClosed)):
@@ -271,11 +267,7 @@ async def forward_intercepted(  # noqa: PLR0913
 
     headers = _norm_headers(request.headers)
     body: bytes | None = None
-    if (
-        request.body is not None
-        and method not in ("GET", "HEAD", "DELETE")
-        and request.body != {}
-    ):
+    if request.body is not None and method not in ("GET", "HEAD", "DELETE") and request.body != {}:
         body = json.dumps(request.body).encode("utf-8")
         if not any(k.lower() == "content-type" for k in headers):
             headers["content-type"] = "application/json"

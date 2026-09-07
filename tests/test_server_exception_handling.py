@@ -10,6 +10,7 @@ Covers:
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -17,8 +18,8 @@ from fastapi.testclient import TestClient
 import core.server as server_mod
 from core.server import _get_request_body, app
 
-
-from pathlib import Path
+_HTTP_BAD_REQUEST = 400
+_HTTP_OK = 200
 
 
 class _FakeDB:
@@ -33,6 +34,7 @@ class _FakeDB:
     async def assign_device_database(
         self, device_id: str, database_url: str | None = None, database_name: str | None = None
     ) -> bool:
+        _ = (device_id, database_url, database_name)  # params consumed (fake DB contract)
         return True
 
 
@@ -51,7 +53,7 @@ def test_malformed_json_body_returns_400(client):
         content="not-json",
         headers={"Content-Type": "application/json"},
     )
-    assert resp.status_code == 400
+    assert resp.status_code == _HTTP_BAD_REQUEST
     assert resp.json() == {"error": "Invalid JSON body"}
 
 
@@ -62,7 +64,7 @@ def test_non_object_json_body_returns_400(client):
         content=json.dumps(["learning"]),
         headers={"Content-Type": "application/json"},
     )
-    assert resp.status_code == 400
+    assert resp.status_code == _HTTP_BAD_REQUEST
     assert resp.json() == {"error": "Invalid JSON body: expected an object"}
 
 
@@ -73,7 +75,7 @@ def test_valid_json_object_still_processes(client):
         content=json.dumps({"mode": "production"}),
         headers={"Content-Type": "application/json"},
     )
-    assert resp.status_code == 200
+    assert resp.status_code == _HTTP_OK
     assert resp.json()["mode"] == "production"
 
 
@@ -112,7 +114,7 @@ def test_assign_device_database_path_traversal_rejected(client):
         "/api/devices/some-device/database",
         json={"database_name": "../../evil_db"},
     )
-    assert resp.status_code == 400
+    assert resp.status_code == _HTTP_BAD_REQUEST
     assert "Invalid database_name" in resp.json()["error"]
 
 
@@ -122,5 +124,5 @@ def test_assign_device_database_valid_name_accepted(client):
         "/api/devices/some-device/database",
         json={"database_name": "valid_db_name"},
     )
-    assert resp.status_code == 200
+    assert resp.status_code == _HTTP_OK
     assert resp.json()["database_name"] == "valid_db_name"

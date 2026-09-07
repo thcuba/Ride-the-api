@@ -521,10 +521,11 @@ class CertManager:
                 encoding=serialization.Encoding.PEM,
                 format=serialization.PublicFormat.SubjectPublicKeyInfo,
             )
-            return key_public == cert_public
         except Exception as e:  # noqa: BLE001 - malformed PEM should reject
             logger.warning("Cert/key match check failed: %s", e)
             return False
+        else:
+            return key_public == cert_public
 
     @staticmethod
     def _safe_filename(hostname: str) -> str:

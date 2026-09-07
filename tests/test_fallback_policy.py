@@ -114,9 +114,7 @@ class TestFallbackChain:
         async def boom():
             raise RuntimeError("boom")
 
-        chain = FallbackChain(
-            {"learned": boom, "cloud": lambda: self._handler(True, "cloud")}
-        )
+        chain = FallbackChain({"learned": boom, "cloud": lambda: self._handler(True, "cloud")})
         outcome = await chain.run()
         assert outcome.step == "cloud"
         assert outcome.value == "cloud"

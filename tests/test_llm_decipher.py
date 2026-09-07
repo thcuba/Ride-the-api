@@ -160,7 +160,9 @@ class TestLLMDecipherService:
     async def test_call_llm_timeout(self, mock_client_class):
         mock_client = MagicMock()
         mock_client_class.return_value = mock_client
-        mock_client.chat.completions.create = AsyncMock(side_effect=Exception("request timeout exceeded"))
+        mock_client.chat.completions.create = AsyncMock(
+            side_effect=Exception("request timeout exceeded")
+        )
 
         service = make_service()
         profile = LLMProfile(
@@ -318,7 +320,7 @@ End."""
 
     def test_set_pattern_loader_none_disables(self):
         service = make_service()
-        service.set_pattern_loader(lambda v, t: [{"x": 1}])
+        service.set_pattern_loader(lambda _v, _t: [{"x": 1}])
         assert service._get_recent_patterns("shelly", "ac") != []
         service.set_pattern_loader(None)
         assert service._get_recent_patterns("shelly", "ac") == []
@@ -339,9 +341,7 @@ End."""
         mock_client = MagicMock()
         mock_client_class.return_value = mock_client
         msg = MagicMock()
-        msg.message.content = (
-            '{"intent": "turn_on", "fields": {"state": "on"}, "confidence": 0.95}'
-        )
+        msg.message.content = '{"intent": "turn_on", "fields": {"state": "on"}, "confidence": 0.95}'
         choice = MagicMock()
         choice.choices = [msg]
         mock_client.chat.completions.create = AsyncMock(return_value=choice)

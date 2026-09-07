@@ -403,9 +403,7 @@ class Command(BaseModel):
     path: str = ""  # HTTP path or CoAP path ("" for topic-only protocols)
     path_pattern: str = ""
     topic: str = ""  # MQTT / WebSocket topic
-    headers: dict[str, list[str]] = Field(
-        default_factory=lambda: {"required": []}
-    )
+    headers: dict[str, list[str]] = Field(default_factory=lambda: {"required": []})
     query_params: list[str] = Field(default_factory=list)
     body_schema: dict[str, Any] | None = None
     confidence: float = 0.5
@@ -476,4 +474,3 @@ class DeviceModel(BaseModel):
                 virtual_sensors=self.virtual_sensors,
             ),
         )
-

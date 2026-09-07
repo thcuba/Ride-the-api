@@ -12,6 +12,7 @@ Guarantees that data on disk is never left in a half-written state:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -65,20 +66,16 @@ def write_text(path: Path | str, data: str, encoding: str = "utf-8") -> None:
     """Atomically write ``data`` to ``path`` via temp file + fsync + replace."""
     dest = _validate_destination(Path(path)).resolve()
     dest.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(
-        dir=str(dest.parent), prefix=f".{dest.name}.", suffix=".tmp"
-    )
+    fd, tmp_name = tempfile.mkstemp(dir=str(dest.parent), prefix=f".{dest.name}.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding=encoding) as f:
             f.write(data)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp_name, dest)
+        Path(tmp_name).replace(dest)
     except BaseException:
-        try:
-            os.unlink(tmp_name)
-        except OSError:
-            pass
+        with contextlib.suppress(OSError):
+            Path(tmp_name).unlink()
         raise
 
 

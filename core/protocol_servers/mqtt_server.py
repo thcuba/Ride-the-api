@@ -17,7 +17,7 @@ import json
 import logging
 import threading
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from adapters.base import InterceptedRequest, ProtocolType
 from core.pattern_db.schemas import ObservationKind, TransportMeta
@@ -102,18 +102,17 @@ class MQTTServerPlugin(ProtocolServerPlugin):
         host = cfg.host if cfg.host not in ("0.0.0.0", "::") else "127.0.0.1"
         self._filters = filters
         self._forward_thread = threading.Thread(
-            target=lambda: client.connect_async(host, cfg.port)
-            or client.loop_forever(),
+            target=lambda: client.connect_async(host, cfg.port) or client.loop_forever(),
             name="mqtt-forwarder",
             daemon=True,
         )
         self._forward_thread.start()
 
-    def _on_connect(self, client, userdata, flags, reason_code, properties) -> None:  # noqa: ANN001
+    def _on_connect(self, client, _userdata, _flags, _reason_code, _properties) -> None:  # noqa: ANN001
         for topic in self._filters:
             client.subscribe(topic)
 
-    def _on_message(self, client, userdata, msg) -> None:  # noqa: ANN001
+    def _on_message(self, _client, _userdata, msg) -> None:  # noqa: ANN001
         if self._loop is None or self._loop.is_closed():
             return
         # Single paho forwarder client; the publishing device's client_id is

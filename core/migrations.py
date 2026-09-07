@@ -66,9 +66,7 @@ async def _m0001_record_baseline(conn) -> None:
     await conn.execute(sa.text("SELECT 1"))
 
 
-MIGRATIONS: Sequence[Migration] = (
-    Migration(1, "baseline", _m0001_record_baseline),
-)
+MIGRATIONS: Sequence[Migration] = (Migration(1, "baseline", _m0001_record_baseline),)
 
 
 class SchemaMigrator:
@@ -98,14 +96,14 @@ class SchemaMigrator:
                 await conn.execute(
                     sa.text(
                         "INSERT INTO _schema_migrations (id, name, applied_at) "
-                                        "VALUES (:id, :name, :applied_at)"
+                        "VALUES (:id, :name, :applied_at)"
                     ),
-                                    {
-                                        "id": migration.id,
-                                        "name": migration.name,
-                                        "applied_at": datetime.now(UTC).isoformat(),
-                                    },
-                                )
+                    {
+                        "id": migration.id,
+                        "name": migration.name,
+                        "applied_at": datetime.now(UTC).isoformat(),
+                    },
+                )
                 applied_ids.add(migration.id)
                 applied_now.append(migration.name)
                 logger.info("Applied migration %s: %s", migration.id, migration.name)

@@ -316,13 +316,13 @@ def is_local_ip(ip: str) -> bool:
     """
     if not ip:
         return False
-    if ip == "::1" or ip == "0:0:0:0:0:0:0:1" or ip.startswith("::1%"):
+    if ip in {"::1", "0:0:0:0:0:0:0:1"} or ip.startswith("::1%"):
         return True
     if ip.startswith(("192.168.", "10.", "127.", "169.254.", "fe80:", "FE80:")):
         return True
     if ip.startswith("172."):
         parts = ip.split(".", 2)
-        if len(parts) >= 2 and parts[1].isdigit() and 16 <= int(parts[1]) <= 31:
+        if len(parts) >= 2 and parts[1].isdigit() and 16 <= int(parts[1]) <= 31:  # noqa: PLR2004
             return True
     with contextlib.suppress(ValueError):
         ip_obj = ipaddress.ip_address(ip)

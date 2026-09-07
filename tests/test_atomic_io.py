@@ -1,9 +1,6 @@
 """Tests for core.atomic_io atomic/crash-safe file I/O helpers."""
-import json
-import os
-from pathlib import Path
 
-import pytest
+import json
 
 from core.atomic_io import append_jsonl, write_json, write_text
 

@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from core.database import DatabaseManager, LLMContextBuffer, RequestPattern, SessionCache
 from core.pipeline import (
@@ -167,14 +167,11 @@ class TestContextBuffer:
         await buffer.flush("device-001")
         # Backdate the flushed row past the TTL (pair_ttl_hours=1 -> cutoff 1h ago).
         async with db_manager.device_session("device-001") as session:
-            from sqlalchemy import update as _update
-
             now = datetime.now(UTC)
             await session.execute(
-                _update(LLMContextBuffer)
+                update(LLMContextBuffer)
                 .where(
-                    (LLMContextBuffer.device_id == "device-001")
-                    & (LLMContextBuffer.sequence == 0)
+                    (LLMContextBuffer.device_id == "device-001") & (LLMContextBuffer.sequence == 0)
                 )
                 .values(flushed=True, flushed_at=now - timedelta(hours=5))
             )
@@ -198,7 +195,7 @@ class TestContextBuffer:
         # Flush so the rows are eligible for cap pruning; only consumed
         # (flushed) rows may be dropped, unflushed training rows are never lost.
         await buffer.flush("device-001")
-        deleted = await buffer.prune("device-001", max_pairs_per_device=2, pair_ttl_hours=168)
+        await buffer.prune("device-001", max_pairs_per_device=2, pair_ttl_hours=168)
         async with db_manager.device_session("device-001") as session:
             result = await session.execute(
                 select(LLMContextBuffer)

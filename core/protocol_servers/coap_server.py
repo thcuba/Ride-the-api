@@ -69,18 +69,18 @@ class CoAPServerPlugin(ProtocolServerPlugin):
             async def render(self, request: Message) -> Message:
                 segs = request.opt.uri_path
                 joined = "/".join(segs) if segs else ""
-                return (
-                    await type(self).plugin.handle_coap_request(request, joined)
-                    or Message(code=aiocoap.NOT_FOUND)
+                return await type(self).plugin.handle_coap_request(request, joined) or Message(
+                    code=aiocoap.NOT_FOUND
                 )
 
         class _WellKnown(aiocoap.resource.Resource):
             plugin = self
 
-            async def render(self, request: Message) -> Message:  # noqa: N805
+            async def render(self, request: Message) -> Message:  # noqa: N805, ARG002
                 payload = b"</>;ct=0,</.well-known/core>;ct=40"
-                return Message(code=aiocoap.CONTENT, payload=payload,
-                               content_format=ContentFormat.LINKFORMAT)
+                return Message(
+                    code=aiocoap.CONTENT, payload=payload, content_format=ContentFormat.LINKFORMAT
+                )
 
         site = aiocoap.resource.Site()
         site.add_resource([".well-known", "core"], _WellKnown())

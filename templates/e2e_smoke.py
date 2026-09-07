@@ -10,6 +10,7 @@ Exercises the real code path against a temp SQLite setup:
 Everything except the single LLM analysis call is real production code.
 Run from the repo root with the venv python (needs project deps).
 """
+
 # This is an interactive smoke-test script: the many top-level prints are
 # intentional output, not debugging leftovers.
 # ruff: noqa: T201
@@ -111,9 +112,7 @@ async def main() -> None:
         orch.pipeline = pipeline
 
         # ---- Buffer: inject the mocked LLM analysis at the flush point -----
-        pipeline._analyze_with_llm = AsyncMock(
-            return_value=json.loads(json.dumps(LLM_ANALYSIS))
-        )
+        pipeline._analyze_with_llm = AsyncMock(return_value=json.loads(json.dumps(LLM_ANALYSIS)))
 
         print("== INGRESS: correlated pairs -> real disk buffer ==")
         flush_flags = []
@@ -124,10 +123,7 @@ async def main() -> None:
 
         print("== FLUSH -> LLM (mocked) -> save patterns + device_meta ==")
         result = await pipeline.flush_and_learn("dev-1")
-        print(
-            f"  flush: success={result.get('success')} "
-            f"patterns={result.get('patterns_count')}"
-        )
+        print(f"  flush: success={result.get('success')} patterns={result.get('patterns_count')}")
 
         print("== VERIFY device_meta header (first flush) ==")
         meta = await dbm.read_device_meta("dev-1")
@@ -147,8 +143,7 @@ async def main() -> None:
         files = list(patterns_dir.glob("*.ride-pattern.json"))
         if not files:
             raise SystemExit(
-                "FAIL: no .ride-pattern.json exported under "
-                f"{patterns_dir.resolve()} (got 0 files)"
+                f"FAIL: no .ride-pattern.json exported under {patterns_dir.resolve()} (got 0 files)"
             )
         print(f"  exported: {[f.name for f in files]} ({len(files)} files)")
 

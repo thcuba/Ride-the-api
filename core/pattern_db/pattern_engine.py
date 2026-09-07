@@ -1,4 +1,4 @@
-﻿"""
+"""
 Pattern Engine â€” matches incoming requests against deciphered patterns,
 builds local responses, manages device state, and handles sensor simulation.
 
@@ -30,6 +30,11 @@ from core.database import (
 )
 from core.pattern_db.schemas import DeviceModel, PatternDB
 from core.pattern_db.state_manager import DeviceStateStore
+
+# Fast-path scoring cap: an incoming request whose HTTP method differs from
+# the learned pattern can never exceed this match score, so we can skip the
+# expensive full comparison early.
+_METHOD_MISMATCH_SCORE_CAP = 0.7
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +105,7 @@ def _dot_to_dpath(path: str) -> str:
     return p.replace(".", "/")
 
 
-def _dpath_set(d: dict, path: str, value: Any) -> None:  # noqa: ANN401
+def _dpath_set(d: dict, path: str, value: Any) -> None:  # noqa: ANN401, C901, PLR0912
     """Set a value at a dot/bracket path via dpath, creating intermediates.
 
     dpath does not traverse ``None`` intermediates, so any segment whose value
@@ -256,7 +261,7 @@ class PatternEngine:
         # Pre-computed trigger -> response maps for fast O(1) response lookup in find_best_match
         self._response_trigger_maps: dict[str, dict[str, Any]] = {}
 
-    # â”€â”€ State Management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # â”€â”€ State Management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€  # noqa: E501
 
     def get_state_store(self, device_id: str) -> DeviceStateStore:
         """Get or create the state store for a device."""
@@ -320,7 +325,7 @@ class PatternEngine:
         store.clear_dirty()
         return True
 
-    # â”€â”€ Pattern Matching â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # â”€â”€ Pattern Matching â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€  # noqa: E501
 
     async def find_best_match(  # noqa: PLR0913, PLR0912
         self,
@@ -346,10 +351,10 @@ class PatternEngine:
             # Fast O(1) response template lookup by intent instead of O(N) list search (~21x faster)
             trigger_map = self._get_trigger_map(device_id, cached)
             for ep in cached.client.endpoints:
-                # Fast path early exits: max score is 1.0; method mismatch caps score at 0.70 (~10x faster)
+                # Fast path early exits: max score is 1.0; method mismatch caps score at 0.70 (~10x faster)  # noqa: E501
                 if best_score >= 1.0:
                     break
-                if best_score >= 0.7 and ep.method != method:
+                if best_score >= _METHOD_MISMATCH_SCORE_CAP and ep.method != method:
                     continue
 
                 score = self._calculate_similarity(
@@ -377,10 +382,10 @@ class PatternEngine:
             db_patterns = result.scalars().all()
 
             for pat in db_patterns:
-                # Fast path early exits: max score is 1.0; method mismatch caps score at 0.70 (~10x faster)
+                # Fast path early exits: max score is 1.0; method mismatch caps score at 0.70 (~10x faster)  # noqa: E501
                 if best_score >= 1.0:
                     break
-                if best_score >= 0.7 and pat.method != method:
+                if best_score >= _METHOD_MISMATCH_SCORE_CAP and pat.method != method:
                     continue
 
                 score = self._calculate_similarity(
@@ -463,7 +468,7 @@ class PatternEngine:
     def _body_similarity(self, schema: dict, body: dict) -> float:
         return _body_similarity(schema, body)
 
-    # â”€â”€ Response Building â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # â”€â”€ Response Building â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€  # noqa: E501
 
     async def build_local_response(
         self,
@@ -601,7 +606,7 @@ class PatternEngine:
             logger.warning("Formula eval failed: %s (%s)", formula, e)
             return 0
 
-    # â”€â”€ Pattern DB File I/O â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # â”€â”€ Pattern DB File I/O â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€  # noqa: E501
 
     def load_pattern_file(self, device_id: str, filepath: str) -> PatternDB:
         """Load a .ride-pattern.json file and cache it for a device.

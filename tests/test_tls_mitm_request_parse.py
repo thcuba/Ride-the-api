@@ -51,10 +51,7 @@ def _parse_via_client(raw: bytes) -> tuple[int, dict[str, str], bytes]:
 class TestParseDecryptedHttpRequest:
     def test_simple_get(self) -> None:
         raw = (
-            b"GET /api/status?x=1 HTTP/1.1\r\n"
-            b"Host: device.local\r\n"
-            b"User-Agent: test-agent\r\n"
-            b"\r\n"
+            b"GET /api/status?x=1 HTTP/1.1\r\nHost: device.local\r\nUser-Agent: test-agent\r\n\r\n"
         )
         parsed = parse_decrypted_http_request(raw)
         assert parsed is not None
@@ -85,11 +82,11 @@ class TestParseDecryptedHttpRequest:
     def test_header_case_normalized_to_lower(self) -> None:
         raw = (
             b"PUT /config HTTP/1.1\r\n"
-                b"Host: device.local\r\n"
-                b"X-Custom-Header: Value\r\n"
-                b"ANOTHER-ONE: 42\r\n"
-                b"\r\n"
-            )
+            b"Host: device.local\r\n"
+            b"X-Custom-Header: Value\r\n"
+            b"ANOTHER-ONE: 42\r\n"
+            b"\r\n"
+        )
         parsed = parse_decrypted_http_request(raw)
         assert parsed is not None
         _, _, _, headers, _ = parsed
@@ -114,12 +111,7 @@ class TestParseDecryptedHttpRequest:
 
     def test_request_split_across_calls(self) -> None:
         """Parsing only succeeds once the whole request (incl. body) is buffered."""
-        first = (
-            b"POST /split HTTP/1.1\r\n"
-            b"Host: device.local\r\n"
-            b"Content-Length: 5\r\n"
-            b"\r\n"
-        )
+        first = b"POST /split HTTP/1.1\r\nHost: device.local\r\nContent-Length: 5\r\n\r\n"
         assert parse_decrypted_http_request(first) is None
         complete = first + b"abcde"
         parsed = parse_decrypted_http_request(complete)
@@ -146,10 +138,7 @@ class TestParseDecryptedHttpRequest:
 
     def test_multiple_requests_same_buffer(self) -> None:
         """Extra pipelined data is simply ignored by the parser."""
-        raw = (
-            b"GET /one HTTP/1.1\r\nHost: x\r\n\r\n"
-            b"GET /two HTTP/1.1\r\nHost: x\r\n\r\n"
-        )
+        raw = b"GET /one HTTP/1.1\r\nHost: x\r\n\r\nGET /two HTTP/1.1\r\nHost: x\r\n\r\n"
         parsed = parse_decrypted_http_request(raw)
         assert parsed is not None
         method, target, _, _, _ = parsed
@@ -195,4 +184,3 @@ class TestSerializeHttpResponse:
         raw = serialize_http_response(200, None, payload)
         _, _, body = _parse_via_client(raw)
         assert body == payload
-

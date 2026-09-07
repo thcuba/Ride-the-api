@@ -59,7 +59,9 @@ class WebSocketServerPlugin(ProtocolServerPlugin):
         self._running = True
         logger.info(
             "WebSocket server listening on %s:%d%s",
-            self.config.host, self.config.port, self.config.path,
+            self.config.host,
+            self.config.port,
+            self.config.path,
         )
 
     async def _run(self) -> None:

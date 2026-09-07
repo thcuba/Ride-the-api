@@ -390,9 +390,7 @@ class DecipherIngest:
                 )
 
                 tmpl_result = await session.execute(
-                    select(ResponseTemplate).where(
-                        ResponseTemplate.pattern_id == pat.pattern_id
-                    )
+                    select(ResponseTemplate).where(ResponseTemplate.pattern_id == pat.pattern_id)
                 )
                 tmpl = tmpl_result.scalar_one_or_none()
                 if tmpl:
@@ -441,12 +439,8 @@ class DecipherIngest:
         state_variables: list = []
         virtual_sensors: list = []
         if meta and (meta.get("state_variables") or meta.get("virtual_sensors")):
-            state_variables = [
-                StateVariable(**sv) for sv in meta.get("state_variables", [])
-            ]
-            virtual_sensors = [
-                VirtualSensor(**vs) for vs in meta.get("virtual_sensors", [])
-            ]
+            state_variables = [StateVariable(**sv) for sv in meta.get("state_variables", [])]
+            virtual_sensors = [VirtualSensor(**vs) for vs in meta.get("virtual_sensors", [])]
         elif applied and applied.server:
             state_variables = list(applied.server.state_variables)
             virtual_sensors = list(applied.server.virtual_sensors)
@@ -488,12 +482,8 @@ class DecipherIngest:
             "identity": model.protocol.identity,
             "ports": model.protocol.ports,
             "confidence": model.protocol.confidence,
-            "state_variables": [
-                sv.model_dump(exclude_none=True) for sv in model.state_variables
-            ],
-            "virtual_sensors": [
-                vs.model_dump(exclude_none=True) for vs in model.virtual_sensors
-            ],
+            "state_variables": [sv.model_dump(exclude_none=True) for sv in model.state_variables],
+            "virtual_sensors": [vs.model_dump(exclude_none=True) for vs in model.virtual_sensors],
         }
         try:
             await self.db_manager.write_device_meta(device_id, header)
@@ -502,8 +492,6 @@ class DecipherIngest:
 
         pattern_db = model.to_pattern_db()
         return await self.import_patterns(device_id, pattern_db)
-
-
 
     async def merge_device_model(self, device_id: str, model: DeviceModel) -> int:  # noqa: C901, PLR0912, PLR0915
         """Idempotently merge a v2 model delta into an existing device DB.
@@ -531,32 +519,18 @@ class DecipherIngest:
         merged = dict(current)
         if model.protocol and model.protocol.protocol:
             merged["vendor"] = model.meta.vendor or current.get("vendor", "unknown")
-            merged["device_type"] = (
-                model.meta.device_type or current.get("device_type", "unknown")
-            )
+            merged["device_type"] = model.meta.device_type or current.get("device_type", "unknown")
             merged["protocols"] = [model.protocol.protocol]
             merged["connection_mode"] = model.protocol.handler or current.get(
                 "connection_mode", "auto"
             )
             merged["model"] = model.protocol.identity or current.get("model", "")
-            merged["transport"] = model.protocol.transport or current.get(
-                "transport", ""
-            )
-            merged["security"] = model.protocol.security or current.get(
-                "security", ""
-            )
-            merged["proprietary"] = model.protocol.proprietary or current.get(
-                "proprietary", False
-            )
-            merged["identity"] = model.protocol.identity or current.get(
-                "identity", ""
-            )
-            merged["ports"] = list(model.protocol.ports) or list(
-                current.get("ports") or []
-            )
-            merged["confidence"] = model.protocol.confidence or current.get(
-                "confidence", 0.0
-            )
+            merged["transport"] = model.protocol.transport or current.get("transport", "")
+            merged["security"] = model.protocol.security or current.get("security", "")
+            merged["proprietary"] = model.protocol.proprietary or current.get("proprietary", False)
+            merged["identity"] = model.protocol.identity or current.get("identity", "")
+            merged["ports"] = list(model.protocol.ports) or list(current.get("ports") or [])
+            merged["confidence"] = model.protocol.confidence or current.get("confidence", 0.0)
         # A delta may also teach new state_variables / virtual_sensors (they
         # have no SQL table, canonical home is the header) independently of the
         # protocol. Merge them so export_device_model recovers them on a later
@@ -613,17 +587,11 @@ class DecipherIngest:
 
                 template_id = f"tpl_{pattern_id}"
                 existing_tpl = await session.execute(
-                    select(ResponseTemplate).where(
-                        ResponseTemplate.template_id == template_id
-                    )
+                    select(ResponseTemplate).where(ResponseTemplate.template_id == template_id)
                 )
                 tpl = existing_tpl.scalar_one_or_none()
                 resp = next(
-                    (
-                        r
-                        for r in (model.responses or [])
-                        if r.triggers and cmd.kind in r.triggers
-                    ),
+                    (r for r in (model.responses or []) if r.triggers and cmd.kind in r.triggers),
                     None,
                 )
                 if tpl is None:
@@ -634,8 +602,7 @@ class DecipherIngest:
                         headers_template=resp.headers_template if resp else {},
                         body_template=resp.body_template if resp else {},
                         field_mappings={
-                            m.source: m.target
-                            for m in (resp.field_mappings if resp else [])
+                            m.source: m.target for m in (resp.field_mappings if resp else [])
                         },
                         expected_variables=[],
                     )
@@ -644,31 +611,20 @@ class DecipherIngest:
                     tpl.status_code = resp.status_code
                     tpl.headers_template = resp.headers_template or {}
                     tpl.body_template = resp.body_template or {}
-                    tpl.field_mappings = {
-                        m.source: m.target for m in resp.field_mappings
-                    }
+                    tpl.field_mappings = {m.source: m.target for m in resp.field_mappings}
                 if resp:
                     tpl.expected_variables = [
-                        m.target
-                        for m in resp.field_mappings
-                        if m.target.startswith("result.")
+                        m.target for m in resp.field_mappings if m.target.startswith("result.")
                     ]
 
                 # interactions: deterministic mapping ids so re-flush converges.
-                for fm in (resp.field_mappings if resp else []) or (
-                    model.interactions or []
-                ):
+                for fm in (resp.field_mappings if resp else []) or (model.interactions or []):
                     request_field = fm.source or fm.mapping or ""
                     if not request_field:
                         continue
-                    mapping_id = (
-                        f"map_{device_id}_{cmd.kind}_"
-                        f"{request_field.replace('.', '_')}"
-                    )
+                    mapping_id = f"map_{device_id}_{cmd.kind}_{request_field.replace('.', '_')}"
                     existing_map = await session.execute(
-                        select(FieldMapping).where(
-                            FieldMapping.mapping_id == mapping_id
-                        )
+                        select(FieldMapping).where(FieldMapping.mapping_id == mapping_id)
                     )
                     mp = existing_map.scalar_one_or_none()
                     if mp is None:
