@@ -12,6 +12,8 @@ Connection: ``test_server_cors.py`` already exercises ``core.server.app`` via
 
 from __future__ import annotations
 
+from http import HTTPStatus
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -37,7 +39,7 @@ def test_health_endpoint_returns_healthy() -> None:
     """GET /health responds 200 with status='healthy'."""
     client = TestClient(app)
     resp = client.get("/health")
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
     body = resp.json()
     assert body["status"] == "healthy"
     assert body["service"] == "local-cloud-replacement-proxy"
