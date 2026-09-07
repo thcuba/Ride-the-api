@@ -470,7 +470,8 @@ class TestLegacyRuleTranslation:
         # Build a config manager whose modification config holds the given
         # rule objects (as pydantic config rules, like after YAML load).
         try:
-            from core.config import ModificationConfig, ModificationRule as ConfigRule
+            from core.config import ModificationConfig  # noqa: F401, PLC0415
+            from core.config import ModificationRule as ConfigRule  # noqa: PLC0415
         except ImportError:
             # pydantic model not importable in isolation; skip those cases
             return engine
@@ -484,15 +485,17 @@ class TestLegacyRuleTranslation:
         return ModificationEngine(config_manager=cm)
 
     def test_legacy_redirect_rule_translated_and_applied(self):
-        engine = self._engine_with_rules([
-            {
-                "name": "legacy-redirect",
-                "match_type": "hostname",
-                "match_value": "google.com",
-                "action": "redirect",
-                "target_value": "http://prod.internal:8080",
-            }
-        ])
+        engine = self._engine_with_rules(
+            [
+                {
+                    "name": "legacy-redirect",
+                    "match_type": "hostname",
+                    "match_value": "google.com",
+                    "action": "redirect",
+                    "target_value": "http://prod.internal:8080",
+                }
+            ]
+        )
         req = make_intercepted_request(vendor="shelly")
         req.path = "/search?q=x"
         req.headers = {"host": "google.com", "content-type": "application/json"}
@@ -503,14 +506,16 @@ class TestLegacyRuleTranslation:
 
     def test_legacy_legacy_rule_does_not_block_unrelated(self):
         # A legacy rule with no match (hostname differs) must not match anything
-        engine = self._engine_with_rules([
-            {
-                "name": "legacy-block",
-                "match_type": "hostname",
-                "match_value": "other.example",
-                "action": "block",
-            }
-        ])
+        engine = self._engine_with_rules(
+            [
+                {
+                    "name": "legacy-block",
+                    "match_type": "hostname",
+                    "match_value": "other.example",
+                    "action": "block",
+                }
+            ]
+        )
         req = make_intercepted_request(vendor="shelly")
         req.headers = {"host": "google.com"}
         modified, was_modified = engine.process_request(req)
@@ -518,7 +523,7 @@ class TestLegacyRuleTranslation:
         assert not getattr(modified, "blocked", False)
 
     def test_native_rule_survives_config_roundtrip(self):
-        from core.config import ModificationConfig, ModificationRule as ConfigRule
+        from core.config import ModificationRule as ConfigRule  # noqa: PLC0415
 
         cfg_rule = ConfigRule(
             name="native-inject",

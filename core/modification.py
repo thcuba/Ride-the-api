@@ -183,7 +183,7 @@ class ModificationRule:
         except (KeyError, TypeError, IndexError):
             return None
 
-    def _set_json_path(self, obj: Any, path: str, value: Any) -> bool:  # noqa: ANN401
+    def _set_json_path(self, obj: Any, path: str, value: Any) -> bool:  # noqa: ANN401, C901, PLR0911, PLR0912
         """Simple JSONPath-like setter via dpath."""
         if not obj or not path or path == "$":
             return False
@@ -401,7 +401,7 @@ class ModificationEngine:
     """
 
     def __init__(self, config_manager=None) -> None:
-        from core.config import get_config_manager  # lazy import to avoid circular dependency
+        from core.config import get_config_manager  # noqa: PLC0415
 
         self.config_manager = config_manager or get_config_manager()
         self._rules: list[ModificationRule] = []
@@ -429,15 +429,11 @@ class ModificationEngine:
             try:
                 action_name = _rule_field(rule_data, "action", "modify")
                 action = (
-                    ModificationAction(action_name)
-                    if isinstance(action_name, str)
-                    else action_name
+                    ModificationAction(action_name) if isinstance(action_name, str) else action_name
                 )
                 action_params = _rule_field(rule_data, "action_params", {})
                 if not action_params:
-                    action_params = self._translate_legacy_action_params(
-                        action, rule_data
-                    )
+                    action_params = self._translate_legacy_action_params(action, rule_data)
                 rule = ModificationRule(
                     name=_rule_field(rule_data, "name", "unnamed"),
                     match_vendor=_rule_field(rule_data, "match_vendor"),

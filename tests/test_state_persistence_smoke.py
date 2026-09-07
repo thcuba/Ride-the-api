@@ -4,6 +4,7 @@ End-to-end check that a ``{state.xxx}``-mutating field mapping writes the
 device state to the ``device_state`` table and that a fresh PatternEngine
 (backed by a re-opened DB) restores that persisted state.
 """
+
 import pytest
 import pytest_asyncio
 
@@ -46,11 +47,11 @@ def make_pattern_db(state_value: int) -> PatternDB:
                     triggers=["SET"],
                     body_template={"echo": "{state.relay}"},
                     field_mappings=[
-                                            FieldMapping(
-                                                source=f"constant.{state_value}",
-                                                target="state.relay",
-                                            ),
-                                        ],
+                        FieldMapping(
+                            source=f"constant.{state_value}",
+                            target="state.relay",
+                        ),
+                    ],
                 )
             ],
         ),

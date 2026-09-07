@@ -89,6 +89,7 @@ async def test_ingest_creates_match_stats_row_on_first_import(db_manager: Databa
         assert (stats.patterns_learned or 0) == 1
         assert (stats.templates_created or 0) == 1
 
+
 # ???????????????????????????????????????????????????????????????????????????????
 # v2 DeviceModel round-trip (A3): export/import must not drop state, virtual
 # sensors, protocol or observation_history.
@@ -104,20 +105,29 @@ async def test_export_device_model_carries_state_and_protocol(db_manager):
     await ingester.import_device_model(
         device_id,
         DeviceModel(
-            meta=PatternMeta(pattern_id=f"{device_id}-patterns", vendor="Shelly",
-                             device_type="plug"),
-            protocol=ProtocolInfo(protocol="mqtt", handler="mqtt", identity="shelly-plug",
-                                  confidence=0.95),
-            commands=[Command(id="c1", kind="set_relay", protocol="mqtt",
-                              topic="shellies/plug/relay")],
-            responses=[ServerResponse(id="r1", triggers=["set_relay"], status_code=200,
-                                      field_mappings=[])],
+            meta=PatternMeta(
+                pattern_id=f"{device_id}-patterns", vendor="Shelly", device_type="plug"
+            ),
+            protocol=ProtocolInfo(
+                protocol="mqtt", handler="mqtt", identity="shelly-plug", confidence=0.95
+            ),
+            commands=[
+                Command(id="c1", kind="set_relay", protocol="mqtt", topic="shellies/plug/relay")
+            ],
+            responses=[
+                ServerResponse(id="r1", triggers=["set_relay"], status_code=200, field_mappings=[])
+            ],
             state_variables=[StateVariable(name="relay", type="boolean", default=False)],
             virtual_sensors=[VirtualSensor(name="power", type="float")],
             observation_history=[
-                Observation(id="o1", device_id=device_id, timestamp=datetime.now(UTC),
-                            protocol="mqtt", kind=ObservationKind.PUBLISH,
-                            content={"relay": True}),
+                Observation(
+                    id="o1",
+                    device_id=device_id,
+                    timestamp=datetime.now(UTC),
+                    protocol="mqtt",
+                    kind=ObservationKind.PUBLISH,
+                    content={"relay": True},
+                ),
             ],
         ),
     )
@@ -132,8 +142,12 @@ async def test_export_device_model_carries_state_and_protocol(db_manager):
         applied=applied,
         observations=[
             Observation(
-                id="o1", device_id=device_id, timestamp=datetime.now(UTC),
-                protocol="mqtt", kind=ObservationKind.PUBLISH, content={"relay": True},
+                id="o1",
+                device_id=device_id,
+                timestamp=datetime.now(UTC),
+                protocol="mqtt",
+                kind=ObservationKind.PUBLISH,
+                content={"relay": True},
             )
         ],
     )
@@ -152,19 +166,25 @@ async def test_v2_pattern_file_loads_on_second_install(db_manager, tmp_path):
     device_id = "device-v2load"
 
     model = DeviceModel(
-        meta=PatternMeta(pattern_id=f"{device_id}-patterns", vendor="Shelly",
-                         device_type="plug"),
+        meta=PatternMeta(pattern_id=f"{device_id}-patterns", vendor="Shelly", device_type="plug"),
         protocol=ProtocolInfo(protocol="http", handler="http", identity="shelly-plug"),
-        commands=[Command(id="c1", kind="status", protocol="http", method="GET",
-                          path="/rpc/Status")],
-        responses=[ServerResponse(id="r1", triggers=["status"], status_code=200,
-                                  field_mappings=[])],
+        commands=[
+            Command(id="c1", kind="status", protocol="http", method="GET", path="/rpc/Status")
+        ],
+        responses=[
+            ServerResponse(id="r1", triggers=["status"], status_code=200, field_mappings=[])
+        ],
         state_variables=[StateVariable(name="relay", type="boolean", default=False)],
         virtual_sensors=[VirtualSensor(name="power", type="float")],
         observation_history=[
-            Observation(id="o1", device_id=device_id, timestamp=datetime.now(UTC),
-                        protocol="http", kind=ObservationKind.REQUEST,
-                        content={"id": 1}),
+            Observation(
+                id="o1",
+                device_id=device_id,
+                timestamp=datetime.now(UTC),
+                protocol="http",
+                kind=ObservationKind.REQUEST,
+                content={"id": 1},
+            ),
         ],
     )
     filepath = str(tmp_path / "device.ride-pattern.json")
@@ -193,8 +213,7 @@ async def test_protocol_info_round_trips_full_fields(db_manager):
     device_id = "device-protoinfo-roundtrip"
 
     model = DeviceModel(
-        meta=PatternMeta(pattern_id=f"{device_id}-patterns", vendor="Shelly",
-                         device_type="plug"),
+        meta=PatternMeta(pattern_id=f"{device_id}-patterns", vendor="Shelly", device_type="plug"),
         protocol=ProtocolInfo(
             protocol="mqtt",
             handler="mqtt",
@@ -205,10 +224,10 @@ async def test_protocol_info_round_trips_full_fields(db_manager):
             ports=[8883],
             confidence=0.93,
         ),
-        commands=[Command(id="c1", kind="set_relay", protocol="mqtt",
-                          topic="shellies/plug/relay")],
-        responses=[ServerResponse(id="r1", triggers=["set_relay"], status_code=200,
-                                  field_mappings=[])],
+        commands=[Command(id="c1", kind="set_relay", protocol="mqtt", topic="shellies/plug/relay")],
+        responses=[
+            ServerResponse(id="r1", triggers=["set_relay"], status_code=200, field_mappings=[])
+        ],
     )
     await ingester.import_device_model(device_id, model)
 
@@ -236,14 +255,20 @@ async def test_merge_device_model_is_idempotent(db_manager):
 
     def build_model(identity: str, confidence: float):
         return DeviceModel(
-            meta=PatternMeta(pattern_id=f"{device_id}-patterns", vendor="Shelly",
-                             device_type="plug"),
-            protocol=ProtocolInfo(protocol="mqtt", handler="mqtt",
-                                  identity=identity, confidence=confidence),
-            commands=[Command(id="c1", kind="set_relay", protocol="mqtt",
-                              topic="shellies/plug/relay")],
-            responses=[ServerResponse(id="tpl_c1", triggers=["set_relay"],
-                                      status_code=200, field_mappings=[])],
+            meta=PatternMeta(
+                pattern_id=f"{device_id}-patterns", vendor="Shelly", device_type="plug"
+            ),
+            protocol=ProtocolInfo(
+                protocol="mqtt", handler="mqtt", identity=identity, confidence=confidence
+            ),
+            commands=[
+                Command(id="c1", kind="set_relay", protocol="mqtt", topic="shellies/plug/relay")
+            ],
+            responses=[
+                ServerResponse(
+                    id="tpl_c1", triggers=["set_relay"], status_code=200, field_mappings=[]
+                )
+            ],
         )
 
     first = await ingester.merge_device_model(device_id, build_model("shelly-plug", 0.9))
@@ -254,11 +279,13 @@ async def test_merge_device_model_is_idempotent(db_manager):
     second = await ingester.merge_device_model(
         device_id,
         DeviceModel(
-            meta=PatternMeta(pattern_id=f"{device_id}-patterns", vendor="Shelly",
-                             device_type="plug"),
+            meta=PatternMeta(
+                pattern_id=f"{device_id}-patterns", vendor="Shelly", device_type="plug"
+            ),
             protocol=ProtocolInfo(protocol="mqtt", handler="mqtt"),
-            commands=[Command(id="c1", kind="set_relay", protocol="mqtt",
-                              topic="shellies/plug/relay")],
+            commands=[
+                Command(id="c1", kind="set_relay", protocol="mqtt", topic="shellies/plug/relay")
+            ],
         ),
     )
     assert second == 1  # noqa: PLR2004
@@ -279,12 +306,11 @@ async def test_merge_device_model_derives_ids_for_deltas(db_manager):
 
     def delta(kind: str, path: str):
         return DeviceModel(
-            meta=PatternMeta(pattern_id=f"{device_id}-patterns", vendor="Shelly",
-                             device_type="plug"),
-            commands=[Command(id="", kind=kind, protocol="http", method="GET",
-                              path=path)],
-            responses=[ServerResponse(id="", triggers=[kind], status_code=200,
-                                      field_mappings=[])],
+            meta=PatternMeta(
+                pattern_id=f"{device_id}-patterns", vendor="Shelly", device_type="plug"
+            ),
+            commands=[Command(id="", kind=kind, protocol="http", method="GET", path=path)],
+            responses=[ServerResponse(id="", triggers=[kind], status_code=200, field_mappings=[])],
         )
 
     await ingester.merge_device_model(device_id, delta("status", "/rpc/Status"))
@@ -308,8 +334,9 @@ async def test_merge_device_model_carries_state_without_protocol(db_manager):
     await ingester.merge_device_model(
         device_id,
         DeviceModel(
-            meta=PatternMeta(pattern_id=f"{device_id}-patterns", vendor="Shelly",
-                             device_type="plug"),
+            meta=PatternMeta(
+                pattern_id=f"{device_id}-patterns", vendor="Shelly", device_type="plug"
+            ),
             state_variables=[StateVariable(name="relay", value=0, confidence=0.8)],
             virtual_sensors=[VirtualSensor(name="power", expr="relay * 5")],
         ),
@@ -333,8 +360,7 @@ async def test_import_patterns_registers_device(db_manager):
     pattern_db = PatternDB.model_validate(
         {
             "$schema": "https://ride-the-api.dev/pattern-schema/v1",
-            "meta": {"version": 1, "pattern_id": "p1", "vendor": "Shelly",
-                     "device_type": "plug"},
+            "meta": {"version": 1, "pattern_id": "p1", "vendor": "Shelly", "device_type": "plug"},
             "client": {"protocols": ["http"], "endpoints": []},
             "server": {},
         }
@@ -351,4 +377,3 @@ async def test_import_patterns_registers_device(db_manager):
         assert device.vendor == "Shelly"
         assert device.device_type == "plug"
         assert device.mode == "learning"
-

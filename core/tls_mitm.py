@@ -26,8 +26,8 @@ from typing import TYPE_CHECKING
 
 import h11
 
-from core.cert_manager import CertManager
 from adapters.base import device_id_from_ip
+from core.cert_manager import CertManager
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
@@ -45,6 +45,7 @@ _VALID_HTTP_STATUSES = {s.value for s in HTTPStatus}
 # Upper bound for a single decrypted HTTP request (headers + body). Prevents a
 # compromised device from exhausting memory via an unbounded request body.
 MAX_REQUEST_SIZE = 10 * 1024 * 1024  # 10 MiB
+
 
 def parse_decrypted_http_request(data: bytes) -> tuple[str, str, str, dict[str, str], bytes] | None:
     """Parse a complete HTTP/1.1 request using the h11 state machine.
@@ -86,6 +87,7 @@ def parse_decrypted_http_request(data: bytes) -> tuple[str, str, str, dict[str, 
         return None
     return method, target, http_version, headers, bytes(body)
 
+
 def serialize_http_response(
     status_code: int,
     headers: dict[str, str] | None,
@@ -120,7 +122,6 @@ def serialize_http_response(
         raw += conn.send(h11.Data(data=body))
     raw += conn.send(h11.EndOfMessage())
     return raw
-
 
 
 @dataclass
@@ -784,7 +785,7 @@ class TLSMITMServer:
                 info.port = dst_port
             else:
                 self.device_ports[client_ip] = DevicePortInfo(
-                                    device_id=device_id_from_ip("ip", client_ip),
+                    device_id=device_id_from_ip("ip", client_ip),
                     ip=client_ip,
                     port=dst_port,
                     first_seen=now,
@@ -818,7 +819,7 @@ class TLSMITMServer:
                 "last_seen": info.last_seen.isoformat(),
             }
             for info in self.device_ports.values()
-                        if info.device_id.startswith("ip-")
+            if info.device_id.startswith("ip-")
         ]
 
 

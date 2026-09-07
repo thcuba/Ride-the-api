@@ -3,8 +3,20 @@
 import asyncio
 
 import pytest
+from tenacity import RetryError
 
 from core.retry import make_retryer, make_sync_retryer
+
+
+async def _exhaust(retryer, target) -> None:
+    """Drive ``retryer`` attempts, running ``target()`` inside each attempt.
+
+    Used by tests that expect a terminal exception to propagate out of
+    tenacity's async retry generator.
+    """
+    async for attempt in retryer:
+        with attempt:
+            await target()
 
 
 class TestMakeRetryer:
@@ -15,7 +27,7 @@ class TestMakeRetryer:
         async def flaky():
             nonlocal calls
             calls += 1
-            if calls < 3:
+            if calls < 3:  # noqa: PLR2004
                 raise ConnectionError("boom")
             return "ok"
 
@@ -28,12 +40,10 @@ class TestMakeRetryer:
                     return  # unreachable
         except Exception:
             pass
-        assert calls == 3
+        assert calls == 3  # noqa: PLR2004
 
     @pytest.mark.asyncio
     async def test_gives_up_after_max_attempts(self):
-        from tenacity import RetryError
-
         calls = 0
 
         async def always_fails():
@@ -43,9 +53,7 @@ class TestMakeRetryer:
 
         retryer = make_retryer(max_attempts=3, retry_on=(ConnectionError,), min_wait=0.01)
         with pytest.raises(RetryError):
-            async for attempt in retryer:
-                with attempt:
-                    await always_fails()
+            await _exhaust(retryer, always_fails)
         assert calls == 3  # noqa: PLR2004
 
     @pytest.mark.asyncio
@@ -58,16 +66,12 @@ class TestMakeRetryer:
             raise ValueError("not retried")
 
         retryer = make_retryer(max_attempts=3, retry_on=(ConnectionError,), min_wait=0.01)
-        with pytest.raises(ValueError):
-            async for attempt in retryer:
-                with attempt:
-                    await raises_value()
+        with pytest.raises(ValueError, match="not retried"):
+            await _exhaust(retryer, raises_value)
         assert calls == 1  # noqa: PLR2004
 
     @pytest.mark.asyncio
     async def test_single_attempt_is_no_retry(self):
-        from tenacity import RetryError
-
         calls = 0
 
         async def fails():
@@ -77,9 +81,7 @@ class TestMakeRetryer:
 
         retryer = make_retryer(max_attempts=1, retry_on=(RuntimeError,), min_wait=0.01)
         with pytest.raises(RetryError):
-            async for attempt in retryer:
-                with attempt:
-                    await fails()
+            await _exhaust(retryer, fails)
         assert calls == 1  # noqa: PLR2004
 
     def test_make_sync_retryer_config(self):

@@ -60,9 +60,7 @@ class FakeEchoServer:
                 content_length = int(value.strip())
 
         body = (
-            await asyncio.wait_for(reader.readexactly(content_length), 5)
-            if content_length
-            else b""
+            await asyncio.wait_for(reader.readexactly(content_length), 5) if content_length else b""
         )
 
         status = 200  # noqa: PLR2004

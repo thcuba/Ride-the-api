@@ -16,14 +16,11 @@ import json
 import logging
 import threading
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from adapters.base import InterceptedRequest, ProtocolType
 from core.pattern_db.schemas import ObservationKind, TransportMeta
 from core.protocol_servers import ProtocolServerPlugin
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
 
 try:
     import paho.mqtt.client as mqtt
@@ -67,7 +64,8 @@ class ZWaveBridgePlugin(ProtocolServerPlugin):
         self._running = True
         logger.info(
             "Z-Wave bridge enabled (type=%s, host=%s)",
-            self.config.connection_type, self.config.host,
+            self.config.connection_type,
+            self.config.host,
         )
 
     async def _start_ws(self) -> None:
@@ -107,27 +105,27 @@ class ZWaveBridgePlugin(ProtocolServerPlugin):
         client.on_message = self._on_message
         client.connect_async(self.config.host, self.config.port)
         self._client = client
-        self._thread = threading.Thread(target=client.loop_forever, name="zwave-bridge", daemon=True)
+        self._thread = threading.Thread(
+            target=client.loop_forever, name="zwave-bridge", daemon=True
+        )
         self._thread.start()
 
-    def _on_connect(self, client, userdata, flags, reason_code, properties) -> None:  # noqa: ANN001
+    def _on_connect(self, client, _userdata, _flags, _reason_code, _properties) -> None:  # noqa: ANN001
         self._connected = True
         client.subscribe("#")
 
-    def _on_message(self, client, userdata, msg) -> None:  # noqa: ANN001
+    def _on_message(self, _client, _userdata, msg) -> None:  # noqa: ANN001
         if self._loop is None or self._loop.is_closed():
             return
         try:
             body = json.loads((msg.payload or b"").decode("utf-8"))
         except (ValueError, UnicodeDecodeError):
             body = {"raw": (msg.payload or b"").hex()}
-        asyncio.run_coroutine_threadsafe(
-            self._route_to_pipeline(msg.topic, body), self._loop
-        )
+        asyncio.run_coroutine_threadsafe(self._route_to_pipeline(msg.topic, body), self._loop)
 
     async def _route_to_pipeline(self, topic: str, body) -> None:  # noqa: ANN001
-        device = topic.split('/')[1] if len(topic.split('/')) > 1 else 'dev'
-        device = device or 'dev'
+        device = topic.split("/")[1] if len(topic.split("/")) > 1 else "dev"
+        device = device or "dev"
         request = InterceptedRequest(
             device_id=f"zwave-{device}",
             timestamp=datetime.now(UTC).timestamp(),

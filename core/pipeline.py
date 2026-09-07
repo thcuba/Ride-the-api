@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
@@ -272,10 +273,10 @@ class PatternMatcher:
         best_template = None
 
         for pattern in patterns:
-            # Fast path early exits: max score is 1.0; method mismatch caps score at 0.70 (~10x faster)
+            # Fast path early exits: max score is 1.0; method mismatch caps score at 0.70 (~10x faster)  # noqa: E501
             if best_score >= 1.0:
                 break
-            if best_score >= 0.7 and pattern.method != method:
+            if best_score >= 0.7 and pattern.method != method:  # noqa: PLR2004
                 continue
 
             score = self._calculate_similarity(pattern, method, path, headers, body, query_params)
@@ -513,7 +514,7 @@ class MatchRateTracker:
 
 
 class LearningPipeline:
-    """Orchestrates the learning flow: correlate ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ buffer ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ LLM ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ save patterns."""
+    """Orchestrates the learning flow: correlate buffer, read LLM, save patterns."""
 
     def __init__(  # noqa: PLR0913
         self,
@@ -540,7 +541,7 @@ class LearningPipeline:
         unrelated later response. Defaults to 7 days.
         """
         try:
-            from core.config import get_config
+            from core.config import get_config  # noqa: PLC0415
 
             cfg = get_config()
             ttl_hours = cfg.correlation.pair_ttl_hours
@@ -602,7 +603,6 @@ class LearningPipeline:
             session.add(cache_entry)
 
         return corr_key
-
 
     async def match_response(  # noqa: PLR0913
         self,
@@ -688,7 +688,6 @@ class LearningPipeline:
                         cache_entry.response_body = body
                         cache_entry.response_latency_ms = 0.0
                         break
-
 
         if not matched:
             return None
@@ -957,12 +956,12 @@ class LearningPipeline:
             # request-derived data directly in the path expression.
             safe_device_key = hashlib.sha256(device_id.encode("utf-8")).hexdigest()
             if not _SAFE_FILENAME_RE.fullmatch(safe_device_key):
-                raise ValueError(f"Unsafe pattern path for device {device_id!r}")
+                raise ValueError(f"Unsafe pattern path for device {device_id!r}")  # noqa: TRY301
             # Confine the write target explicitly under the patterns base dir.
             base = patterns_dir.resolve()
             filepath = (base / f"{safe_device_key}.ride-pattern.json").resolve()
             if base != filepath and base not in filepath.parents:
-                raise ValueError(f"Unsafe pattern path for device {device_id!r}")
+                raise ValueError(f"Unsafe pattern path for device {device_id!r}")  # noqa: TRY301
             # Write the portable v2 DeviceModel when the device has a learned
             # protocol header, so the on-disk .ride-pattern.json is a complete
             # clone (goal #11). Fall back to the v1 PatternDB for legacy
@@ -1060,15 +1059,15 @@ class LearningPipeline:
                 "\n\nThis is the FIRST contact with the device: identify its "
                 'protocol in mode="auto" (initial device/protocol '
                 "identification, not a protocol message). Based on the pairs "
-                "above, also answer in JSON with an object \"protocol_info\": "
+                'above, also answer in JSON with an object "protocol_info": '
                 '{"transport": "tcp|udp|websocket", "protocol": "mqtt|http|'
                 'modbus|coap|websocket|proprietary|...", "proprietary": '
-                "true|false, \"security\": \"none|tls|mqtts|dtls|...\", "
+                'true|false, "security": "none|tls|mqtts|dtls|...", '
                 '"handler": "the protocol server / MITM handler to use", '
                 '"identity": "vendor/model identity if any", "ports": [list '
                 'of ports], "confidence": 0.0..1.0}. Also include "protocols": '
-                "[list of protocols the device speaks, e.g. [\"mqtt\"], "
-                '[\"http\"], [\"modbus\"], [\"coap\"], [\"tls\"]], '
+                '[list of protocols the device speaks, e.g. ["mqtt"], '
+                '["http"], ["modbus"], ["coap"], ["tls"]], '
                 '"connection_mode": one of auto | tls | http | mqtt | coap | '
                 "modbus (the ingress decision for this device). "
                 'Use "http" for plain HTTP(S) traffic.'
@@ -1078,9 +1077,7 @@ class LearningPipeline:
         # (commands/responses/interactions/?), which is then merged
         # idempotently into the DeviceModel (C1) instead of re-deriving SQL.
         elif context.get("current_model"):
-            current_model_json = json.dumps(
-                context["current_model"], indent=2, default=str
-            )
+            current_model_json = json.dumps(context["current_model"], indent=2, default=str)
             prompt += (
                 "\n\nThis device has ALREADY been learned (a DeviceModel "
                 "exists). The device model is:\n"
@@ -1145,23 +1142,14 @@ class LearningPipeline:
                 # merge_device_model does, so re-flush maps to the same row.
                 for cmd in pruned.get("commands", []):
                     if not cmd.get("id"):
-                        path = (
-                            cmd.get("path")
-                            or cmd.get("path_pattern")
-                            or cmd.get("topic")
-                            or ""
-                        )
+                        path = cmd.get("path") or cmd.get("path_pattern") or cmd.get("topic") or ""
                         digest = (
-                            hashlib.md5(path.encode("utf-8")).hexdigest()[:8]
-                            if path
-                            else "none"
+                            hashlib.md5(path.encode("utf-8")).hexdigest()[:8] if path else "none"
                         )
                         cmd["id"] = f"{device_id}_{cmd.get('kind', 'cmd')}_{digest}"
                 for resp in pruned.get("responses", []):
                     if not resp.get("id"):
-                        tpl_prefix = (
-                            f"tpl_{device_id}_{resp.get('triggers', ['resp'])[0]}"
-                        )
+                        tpl_prefix = f"tpl_{device_id}_{resp.get('triggers', ['resp'])[0]}"
                         resp["id"] = tpl_prefix  # matched by template_id in merge
                 model = DeviceModel.model_validate(pruned)
                 count = await ingester.merge_device_model(device_id, model)
@@ -1466,13 +1454,12 @@ class LearningOrchestrator:
         device is pruned to its cap so the store cannot grow without bound.
         """
         try:
-            from core.config import get_config
+            from core.config import get_config  # noqa: PLC0415
 
             cfg = get_config()
             corr = cfg.correlation
         except Exception:
             logger.debug("Prune: config unavailable; using defaults")
-            from types import SimpleNamespace
 
             corr = SimpleNamespace(store_pairs=True, max_pairs_per_device=10000, pair_ttl_hours=168)
 
@@ -1488,7 +1475,9 @@ class LearningOrchestrator:
             dev_id = device["device_id"]
             try:
                 buffer = await self.ensure_buffer(dev_id)
-                deleted = await buffer.prune(dev_id, max_pairs_per_device=max_pairs, pair_ttl_hours=ttl_hours)
+                deleted = await buffer.prune(
+                    dev_id, max_pairs_per_device=max_pairs, pair_ttl_hours=ttl_hours
+                )
                 total += deleted
             except Exception as e:  # pragma: no cover - defensive
                 logger.warning("Prune failed for device %s: %s", dev_id, e)
@@ -1726,7 +1715,7 @@ class LearningOrchestrator:
                 "buffer_flushed": needs_flush,
             }
         # Production/hybrid mode: learn from the miss. The CLOUD_MISS is NOT
-        # recorded again here ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â it was already counted once when the request
+        # recorded again here ÃƒÆ'Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â it was already counted once when the request  # noqa: E501
         # was forwarded (_handle_production/_handle_hybrid record it at
         # request time). Recording it again on the response would double-count
         # total_requests/cloud_misses and understate the real match rate.

@@ -14,6 +14,8 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field
 from watchfiles import Change, watch
 
+from core.modification import ModificationAction
+
 
 class ContextBufferSizes(int, Enum):
     KB_128 = 131072
@@ -237,9 +239,6 @@ class LLMDecipherConfig(BaseModel):
     enabled: bool = True
     default_profile: str = "default"
     profiles: dict[str, LLMDecipherProfile] = Field(default_factory=dict)
-
-
-from core.modification import ModificationAction
 
 
 class ModificationRule(BaseModel):
@@ -545,6 +544,7 @@ class ConfigManager:
             except Exception:
                 # Log but don't crash
                 logging.getLogger(__name__).exception("Config callback error")
+
     def start_watching(self) -> None:
         """Start watching config file for changes."""
         if self._watch_thread and self._watch_thread.is_alive():

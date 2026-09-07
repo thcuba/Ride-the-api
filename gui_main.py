@@ -36,6 +36,7 @@ A default ``config/config.yaml`` is seeded from the bundle on first run.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import multiprocessing
 import os
 import queue
@@ -64,7 +65,7 @@ def _log(msg: str) -> None:
     stream = getattr(sys, "stdout", None)
     if stream is None:
         try:
-            stream = open(os.devnull, "w")  # noqa: SIM115
+            stream = open(os.devnull, "w")  # noqa: SIM115, PTH123
         except OSError:
             return
     try:
@@ -166,7 +167,7 @@ class LogWriter:
 
 def _run_server(on_error) -> None:
     try:
-        from core.server import main as server_main
+        from core.server import main as server_main  # noqa: PLC0415
 
         server_main()
     except SystemExit:
@@ -191,17 +192,16 @@ class ServerController:
             return
         self.error = threading.Event()
         self._server = None
-        self._thread = threading.Thread(
-            target=self._run, daemon=True, name="server"
-        )
+        self._thread = threading.Thread(target=self._run, daemon=True, name="server")
         self._thread.start()
 
     def _run(self) -> None:
         try:
-            from core.config import get_config_manager
-            from core.logging_config import setup_logging
-            from core.server import app
-            import uvicorn
+            import uvicorn  # noqa: PLC0415
+
+            from core.config import get_config_manager  # noqa: PLC0415
+            from core.logging_config import setup_logging  # noqa: PLC0415
+            from core.server import app  # noqa: PLC0415
 
             config_manager = get_config_manager()
             cfg = config_manager.config
@@ -247,7 +247,7 @@ def run_headless(data_dir: Path) -> int:
     server_failed = threading.Event()
     thread = threading.Thread(
         target=_run_server,
-        args=(lambda: server_failed.set(),),
+        args=(lambda: server_failed.set(),),  # noqa: PLW0108
         daemon=True,
         name="server",
     )
@@ -274,12 +274,13 @@ def _headless_exit_code(server_failed: threading.Event) -> int:
 
 def _proxy_addr() -> tuple[str, int]:
     try:
-        from core.config import get_config
+        from core.config import get_config  # noqa: PLC0415
 
         cfg = get_config()
-        return cfg.proxy.host, cfg.proxy.port
     except Exception:
         return "0.0.0.0", DEFAULT_PORT
+    else:
+        return cfg.proxy.host, cfg.proxy.port
 
 
 def _probe(host: str, port: int, timeout: float = 0.4) -> bool:
@@ -314,10 +315,8 @@ class App:
         if os.name == "nt":
             icon_path = _bundled_path("assets/icon.ico")
             if icon_path is not None:
-                try:
+                with contextlib.suppress(tk.TclError):
                     root.iconbitmap(default=str(icon_path))
-                except tk.TclError:
-                    pass
         root.geometry("460x300")
         root.minsize(420, 280)
         root.resizable(False, False)
@@ -328,16 +327,14 @@ class App:
         # Status row: coloured dot + text
         status_row = ttk.Frame(main)
         status_row.pack(fill=tk.X)
-        self.status_dot = tk.Canvas(
-            status_row, width=14, height=14, highlightthickness=0
-        )
+        self.status_dot = tk.Canvas(status_row, width=14, height=14, highlightthickness=0)
         self.status_dot.pack(side=tk.LEFT, pady=2)
         self.status = tk.Label(status_row, text="", font=("Segoe UI", 10, "bold"))
         self.status.pack(side=tk.LEFT, padx=(6, 0))
 
-        tk.Label(
-            main, text=f"Proxy: {self.url}", font=("Segoe UI", 9), foreground="#555555"
-        ).pack(anchor="w", pady=(6, 10))
+        tk.Label(main, text=f"Proxy: {self.url}", font=("Segoe UI", 9), foreground="#555555").pack(
+            anchor="w", pady=(6, 10)
+        )
 
         # Actions
         actions = ttk.Frame(main)
@@ -419,9 +416,7 @@ class App:
 
     def open_dashboard(self, background: bool = False) -> None:
         if background:
-            threading.Thread(
-                target=lambda: webbrowser.open(self.url), daemon=True
-            ).start()
+            threading.Thread(target=lambda: webbrowser.open(self.url), daemon=True).start()
         else:
             webbrowser.open(self.url)
 
@@ -472,7 +467,7 @@ class App:
     def _append(self, text: str) -> None:
         self.log.config(state=tk.NORMAL)
         self.log.insert(tk.END, text)
-        if int(self.log.index("end-1c").split(".")[0]) > 500:
+        if int(self.log.index("end-1c").split(".")[0]) > 500:  # noqa: PLR2004
             self.log.delete("1.0", "100.0")
         self.log.see(tk.END)
         self.log.config(state=tk.DISABLED)

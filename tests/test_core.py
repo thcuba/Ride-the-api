@@ -14,6 +14,7 @@ from sqlalchemy import select
 
 from adapters.base import InterceptedRequest, ProtocolType, device_id_from_ip
 from adapters.example import ExampleProtocolAdapter
+from core.config import Config, ConnectionType, CoreConfig, IpProfileConfig
 from core.database import (
     DatabaseManager,
     DeviceMetaRow,
@@ -253,8 +254,6 @@ class TestCoreDatabase:
         """Per-IP profile applies the connection type to a device at ingress."""
         await db_manager.get_or_create_device("profile_dev", "example", "ac", "Profile Dev")
 
-        from core.config import Config, ConnectionType, CoreConfig, IpProfileConfig
-
         fake_config = Config(
             core=CoreConfig(
                 ip_profiles={
@@ -321,10 +320,14 @@ class TestCoreDatabase:
         # Single row in the device_meta table after the upsert.
         async with db_manager.device_session("meta_upd") as session:
             rows = (
-                await session.execute(
-                    select(DeviceMetaRow).where(DeviceMetaRow.device_id == "meta_upd")
+                (
+                    await session.execute(
+                        select(DeviceMetaRow).where(DeviceMetaRow.device_id == "meta_upd")
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             assert len(rows) == 1
 
     async def test_update_llm_config(self, db_manager):
@@ -445,9 +448,7 @@ class TestDeviceMetaFirstFlush:
         dbm = db_manager
         await dbm.get_or_create_device("fs_dev", "example", "ac", "FS")
         # First flush writes the header.
-        await dbm.write_device_meta(
-            "fs_dev", {"protocols": ["coap"], "connection_mode": "coap"}
-        )
+        await dbm.write_device_meta("fs_dev", {"protocols": ["coap"], "connection_mode": "coap"})
         # Second flush sees it already present => not None => skipped.
         assert await dbm.read_device_meta("fs_dev") is not None
         meta = await dbm.read_device_meta("fs_dev")
@@ -472,6 +473,7 @@ class TestDeviceMetaFirstFlush:
             profile, {"pairs": [], "vendor": "x", "device_type": "y", "device_id": "z"}
         )
         assert "connection_mode" not in prompt2
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # PIPELINE TESTS

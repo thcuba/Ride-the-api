@@ -68,32 +68,37 @@ class ZigbeeBridgePlugin(ProtocolServerPlugin):
         client.on_connect = self._on_connect
         client.on_message = self._on_message
         client.connect_async(cfg.mqtt_host, cfg.mqtt_port)
-        self._thread = threading.Thread(target=client.loop_forever, name="zigbee-bridge", daemon=True)
+        self._thread = threading.Thread(
+            target=client.loop_forever, name="zigbee-bridge", daemon=True
+        )
         self._client = client
         self._thread.start()
         self._running = True
         logger.info(
             "Zigbee bridge connecting to Zigbee2MQTT at %s:%d",
-            cfg.mqtt_host, cfg.mqtt_port,
+            cfg.mqtt_host,
+            cfg.mqtt_port,
         )
 
-    def _on_connect(self, client, userdata, flags, reason_code, properties) -> None:  # noqa: ANN001
+    def _on_connect(self, client, _userdata, _flags, _reason_code, _properties) -> None:  # noqa: ANN001
         self._connected = True
         client.subscribe(f"{self._prefix}/#")
         logger.info("Zigbee bridge connected")
 
-    def _on_message(self, client, userdata, msg) -> None:  # noqa: ANN001
+    def _on_message(self, _client, _userdata, msg) -> None:  # noqa: ANN001
         if self._loop is None or self._loop.is_closed():
             return
-        asyncio.run_coroutine_threadsafe(self._route_to_pipeline(msg.topic, msg.payload or b""), self._loop)
+        asyncio.run_coroutine_threadsafe(
+            self._route_to_pipeline(msg.topic, msg.payload or b""), self._loop
+        )
 
     async def _route_to_pipeline(self, topic: str, payload: bytes) -> None:
         try:
             body = json.loads(payload.decode("utf-8"))
         except (ValueError, UnicodeDecodeError):
             body = {"raw": payload.hex()}
-        device = topic.split('/')[1] if len(topic.split('/')) > 1 else 'dev'
-        device = device or 'dev'
+        device = topic.split("/")[1] if len(topic.split("/")) > 1 else "dev"
+        device = device or "dev"
         request = InterceptedRequest(
             device_id=f"zigbee-{device}",
             timestamp=datetime.now(UTC).timestamp(),
@@ -139,7 +144,12 @@ class ZigbeeBridgePlugin(ProtocolServerPlugin):
             "topic_prefix": self.config.topic_prefix,
         }
 
-    async def send_command(self, device_friendly_name: str, command: str, value: Any) -> bool:
+    async def send_command(
+        self,
+        device_friendly_name: str,
+        command: str,
+        value: dict | list | str | int | float | bool | None,
+    ) -> bool:
         """Send a command to a Zigbee device via Zigbee2MQTT."""
         if not self._client:
             return False

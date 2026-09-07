@@ -77,9 +77,7 @@ def test_protocol_info_auto_identification() -> None:
 
 def test_device_model_roundtrip_carries_learned_knowledge() -> None:
     dm = DeviceModel(
-        meta=PatternMeta(
-            pattern_id="ip-1-2-3-4-patterns", vendor="shelly", device_type="plug"
-        ),
+        meta=PatternMeta(pattern_id="ip-1-2-3-4-patterns", vendor="shelly", device_type="plug"),
         protocol=ProtocolInfo(protocol="mqtt", handler="mqtt", confidence=0.9),
         commands=[
             Command(
@@ -108,17 +106,13 @@ def test_device_model_validates_against_v2_schema() -> None:
 
 def test_v1_pattern_db_still_parses() -> None:
     """Backward compatibility: the v1 PatternDB root is untouched by v2 addition."""
-    pdb = PatternDB(
-        meta=PatternMeta(pattern_id="x-patterns", vendor="v", device_type="d")
-    )
+    pdb = PatternDB(meta=PatternMeta(pattern_id="x-patterns", vendor="v", device_type="d"))
     assert pdb.meta.pattern_id == "x-patterns"
 
 
 def test_v1_pattern_db_validates_against_v1_schema() -> None:
     """v1 data still passes the v1 JSON schema validation helper."""
-    pdb = PatternDB(
-        meta=PatternMeta(pattern_id="x-patterns", vendor="v", device_type="d")
-    )
+    pdb = PatternDB(meta=PatternMeta(pattern_id="x-patterns", vendor="v", device_type="d"))
     result = validate_pattern(pdb.model_dump(by_alias=True, exclude_none=True))
     assert result.valid
 

@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import asyncio  # noqa: TC003
 import base64
-import ipaddress
 import json
 import logging
 import uuid
@@ -50,6 +49,7 @@ from core.database import (
 from core.llm_decipher import LLMDecipherService, get_llm_decipher
 from core.logging_config import setup_logging
 from core.modification import get_modification_engine
+from core.paths import resource_path
 from core.pattern_db import buffer_manager, decipher_ingest
 from core.pattern_db.schemas import CaptureDB, DeviceModel, PatternDB
 from core.pattern_db.validator import (
@@ -81,7 +81,6 @@ from core.tls_mitm import (
     get_tls_mitm_server,
 )
 from core.traffic_selector import TrafficRequestInfo, get_traffic_selector, is_local_ip
-from core.paths import resource_path
 
 # Path to webui directory (bundle-aware: works in source and PyInstaller builds)
 WEBUI_DIR = resource_path("webui")
@@ -235,9 +234,7 @@ async def handle_protocol_request(request: InterceptedRequest) -> dict | None:
         if hasattr(request.protocol, "value")
         else str(request.protocol or "http")
     )
-    method = request.method or (
-        "publish" if request.topic else "GET"
-    )
+    method = request.method or ("publish" if request.topic else "GET")
     path = request.path or (f"/{request.topic.lstrip('/')}" if request.topic else "/")
 
     try:
@@ -287,7 +284,7 @@ async def handle_protocol_request(request: InterceptedRequest) -> dict | None:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):  # noqa: C901, PLR0912, PLR0915
+async def lifespan(_app: FastAPI):  # noqa: C901, PLR0912, PLR0915
     """Application lifespan handler."""
     global db_manager, adapter_registry  # noqa: PLW0603
     global orchestrator, llm_decipher_service  # noqa: PLW0603
@@ -525,7 +522,7 @@ async def tls_download_ca():
             headers={"Content-Disposition": "attachment; filename=ride-the-api-ca.pem"},
         )
     except Exception as e:
-        logger.error("Handler error (500): %s", e)
+        logger.exception("Handler error (500)")
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -754,7 +751,7 @@ async def tls_list_certs():
         imported = cert_manager.list_imported_certs()
         return {"certs": imported}  # noqa: TRY300
     except Exception as e:
-        logger.error("Handler error (500): %s", e)
+        logger.exception("Handler error (500)")
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -771,7 +768,7 @@ async def tls_get_cert_info(hostname: str):
             )
         return {"cert": info}  # noqa: TRY300
     except Exception as e:
-        logger.error("Handler error (500): %s", e)
+        logger.exception("Handler error (500)")
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -874,7 +871,7 @@ async def tls_download_root_ca():
             headers={"Content-Disposition": "attachment; filename=ride-the-api-ca.pem"},
         )
     except Exception as e:
-        logger.error("Handler error (500): %s", e)
+        logger.exception("Handler error (500)")
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -1314,13 +1311,11 @@ async def export_patterns(device_id: str):
         if header and (header.get("protocols") or header.get("transport")):
             # Emit the portable v2 DeviceModel when the device has a learned
             # protocol header, matching the documented behavior (goal #11).
-            device_model = await ingester.export_device_model(
-                device_id, vendor, device_type
-            )
+            device_model = await ingester.export_device_model(device_id, vendor, device_type)
             return device_model.model_dump(by_alias=True, exclude_none=True)
         return pattern_db.model_dump(by_alias=True, exclude_none=True)
     except Exception as e:
-        logger.error("Handler error (500): %s", e)
+        logger.exception("Handler error (500)")
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -1630,7 +1625,7 @@ async def list_buffer_entries(device_id: str):
             "total_size_bytes": total_size,
         }
     except Exception as e:
-        logger.error("Handler error (500): %s", e)
+        logger.exception("Handler error (500)")
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -1648,7 +1643,7 @@ async def delete_buffer_entry(device_id: str, entry_id: int):
             return JSONResponse(status_code=404, content={"error": "Entry not found"})
         return {"device_id": device_id, "entry_id": entry_id, "status": "deleted"}  # noqa: TRY300
     except Exception as e:
-        logger.error("Handler error (500): %s", e)
+        logger.exception("Handler error (500)")
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -1890,7 +1885,7 @@ async def export_buffer(device_id: str):
         capture = await manager.export_capture(device_id, vendor, device_type)
         return capture.model_dump(by_alias=True, exclude_none=True)
     except Exception as e:
-        logger.error("Handler error (500): %s", e)
+        logger.exception("Handler error (500)")
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -2157,9 +2152,7 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-def _apply_response_modifications(
-    intercepted: InterceptedRequest, response: dict
-) -> dict:
+def _apply_response_modifications(intercepted: InterceptedRequest, response: dict) -> dict:
     """Apply on-the-fly response modification rules, normalising to a wrapper.
 
     ``get_modification_engine().process_response`` returns either the wrapper
