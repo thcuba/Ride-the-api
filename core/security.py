@@ -81,11 +81,9 @@ class ControlPlaneAuthMiddleware(BaseHTTPMiddleware):
             self._logged = True
             logger.warning(
                 "Control-plane auth enabled. No API keys configured in config.yaml; "
-                "generated ephemeral keys for this run. "
-                "ADMIN key: %s  READ-ONLY key: %s  "
-                "(set security.admin_api_key / security.readonly_api_key to make them stable)",
-                admin,
-                readonly,
+                "generated ephemeral keys for this run (not logged). Set "
+                "security.admin_api_key / security.readonly_api_key in config.yaml "
+                "to access the control plane."
             )
         return admin, readonly
 

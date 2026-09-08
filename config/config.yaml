@@ -59,8 +59,9 @@ proxy:
 #   - read-only methods (GET/HEAD) accept the read-only key or the admin key
 #   - all other methods (POST/PUT/DELETE/...) require the admin key
 # Keys are sent via the "X-API-Key" header or "Authorization: Bearer <key>".
-# If a key is left empty, a random ephemeral key is generated at startup and
-# printed to the log — set explicit keys here to make them stable.
+# If a key is left empty, a random ephemeral key is generated at startup
+# (never logged) and the control plane stays locked until explicit keys are
+# set here.
 security:
   auth_enabled: true
   admin_api_key: ""          # e.g. "change-me-admin"

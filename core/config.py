@@ -108,8 +108,8 @@ class SecurityConfig(BaseModel):
     or the admin key; all other methods require the admin key. Keys are sent
     via the ``X-API-Key`` header or ``Authorization: Bearer <key>``.
 
-    If a key is left empty, a random ephemeral key is generated at startup and
-    printed to the log — set explicit keys in ``config.yaml`` to make them
+    If a key is left empty, a random ephemeral key is generated at startup
+    (never logged) — set explicit keys in ``config.yaml`` to make them
     stable across restarts.
     """
 
