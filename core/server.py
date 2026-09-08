@@ -75,7 +75,7 @@ from core.resilience import (
     AutoSwitchScheduler,
     register_resilience_routes,
 )
-from core.security import ControlPlaneAuthMiddleware
+from core.security import ControlPlaneAuthMiddleware, MaxBodySizeMiddleware
 from core.tls_mitm import (
     DecryptedRequest,
     TLSMITMServer,
@@ -465,15 +465,16 @@ async def lifespan(_app: FastAPI):  # noqa: C901, PLR0912, PLR0915
         except Exception as e:
             logger.error("Error stopping TLS MITM server: %s", e)  # noqa: TRY400
 
-        # Prune stale correlation rows so the training store never grows unbounded
-        if orchestrator:
-            try:
-                await orchestrator.prune_stores()
-            except Exception as e:
-                logger.error("Error pruning correlation stores: %s", e)  # noqa: TRY400
+    # Prune stale correlation rows so the training store never grows unbounded.
+    # Runs regardless of TLS interception so pruning cannot be skipped.
+    if orchestrator:
+        try:
+            await orchestrator.prune_stores()
+        except Exception as e:
+            logger.error("Error pruning correlation stores: %s", e)  # noqa: TRY400
 
-        if llm_decipher_service:
-            await llm_decipher_service.close()
+    if llm_decipher_service:
+        await llm_decipher_service.close()
     if db_manager:
         await db_manager.close()
         await dispose_memory_db()
@@ -499,6 +500,13 @@ app.add_middleware(
 app.add_middleware(
     ControlPlaneAuthMiddleware,
     get_security_config=lambda: config_manager.config.security,
+)
+# Control-plane body limits (F-09): reject /api/* request bodies larger than
+# proxy.max_request_size. The catch-all data-plane route stays exempt because
+# it legitimately proxies oversized device payloads to the cloud.
+app.add_middleware(
+    MaxBodySizeMiddleware,
+    max_size=config_manager.config.proxy.max_request_size,
 )
 
 
@@ -1913,7 +1921,16 @@ async def import_buffer(device_id: str, request: Request):
                 content={"error": "Capture validation failed", "details": result.to_dict()},
             )
         capture = CaptureDB.model_validate(body)
-        count = await manager.import_capture(capture)
+        # F-08: the payload's (obfuscated) device id must not steer the import
+        # into a different device's buffer; force the authorized URL device.
+        if capture.device_info.device_id not in ("obfuscated", device_id):
+            logger.warning(
+                "Capture import device_id mismatch (payload=%r, url=%r); "
+                "overriding to url device_id",
+                capture.device_info.device_id,
+                device_id,
+            )
+        count = await manager.import_capture(capture, target_device_id=device_id)
         return {"imported": count, "device_id": device_id, "warnings": result.warnings}  # noqa: TRY300
     except ValidationError as e:
         return JSONResponse(

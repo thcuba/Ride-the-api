@@ -33,11 +33,11 @@ services:
     container_name: ride-the-api
     restart: unless-stopped
     ports:
-      - "8080:8080"    # Health / dashboard (optional, remove to hide)
+      - "8080:8911"    # Health / dashboard (optional, remove to hide)
     volumes:
       - ../config:/app/config:ro
       - ../data:/app/data
-      - ../certs:/app/certs:ro
+      - ../certs:/app/certs   # writable: the app generates/rotates the CA here
       - ../models:/app/models:ro
       - ../logs:/app/logs
     environment:

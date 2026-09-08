@@ -384,3 +384,36 @@ class TestLearningPipeline:
             rows = (await session.execute(select(SessionCache))).scalars().all()
         # At least the request row is now correlated (B3 fix).
         assert any(r.correlated for r in rows)
+
+    @pytest.mark.asyncio
+    async def test_match_response_db_claim_is_single_use(self, db_manager):
+        """F-05: a DB row is consumed atomically, so a second response cannot
+        re-match the same already-correlated request."""
+        llm = MagicMock()
+        buffer = ContextBuffer(db_manager)
+        matcher = PatternMatcher(db_manager)
+        tracker = MatchRateTracker(db_manager)
+        pipeline = LearningPipeline(db_manager, llm, buffer, matcher, tracker)
+
+        await pipeline.register_request(
+            "device-001",
+            "shelly",
+            "http",
+            "POST",
+            "/rpc/y",
+            {},
+            {},
+            {},
+        )
+        pipeline._correlation_cache.clear()  # simulate restart -> DB fallback
+
+        first = await pipeline.match_response(
+            "device-001", "shelly", "http", 200, {}, {"status": "ok"}
+        )
+        assert first is not None
+
+        # A second, unrelated response must NOT consume the same row again.
+        second = await pipeline.match_response(
+            "device-001", "shelly", "http", 200, {}, {"status": "again"}
+        )
+        assert second is None

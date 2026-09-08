@@ -121,19 +121,29 @@ class BufferManager:
             ],
         )
 
-    async def import_capture(self, capture: CaptureDB) -> int:
-        """Import a CaptureDB into the buffer. Returns number of pairs imported."""
-        # Validate against the portable JSON Schema before importing
-        result = validate_capture(capture.model_dump(by_alias=True, exclude_none=True))
+    async def import_capture(
+        self, capture: CaptureDB, target_device_id: str | None = None
+    ) -> int:
+        """Import a CaptureDB into the buffer. Returns number of pairs imported.
+
+        ``target_device_id`` overrides the (obfuscated) payload device id so a
+        portable import always lands in the device the caller authorized.
+        """
+        # Validate against the portable JSON Schema before importing. Use
+        # mode="json" so datetimes serialize to strings the schema accepts.
+        result = validate_capture(
+            capture.model_dump(mode="json", by_alias=True, exclude_none=True)
+        )
         if not result.valid:
             raise ValidationError(result=result)
 
+        device_id = target_device_id or capture.device_info.device_id
         count = 0
         for session_data in capture.sessions:
             for pair in session_data.pairs:
                 pair_dict = {
                     "pair_id": pair.pair_id,
-                    "device_id": capture.device_info.device_id,
+                    "device_id": device_id,
                     "vendor": capture.meta.vendor,
                     "protocol": pair.protocol,
                     "method": pair.method,
@@ -147,7 +157,7 @@ class BufferManager:
                     "latency_ms": pair.response.latency_ms if pair.response else 0.0,
                     "timestamp": pair.timestamp.isoformat(),
                 }
-                await self.add_pair(capture.device_info.device_id, pair_dict)
+                await self.add_pair(device_id, pair_dict)
                 count += 1
         return count
 

@@ -54,6 +54,9 @@ class ProviderCircuitBreaker:
         self._failures: dict[str, int] = {}
         self._opened_at: dict[str, float] = {}
         self._half_open: dict[str, bool] = {}
+        # True while the single cooldown probe for a name is in flight, so
+        # concurrent callers cannot all treat the provider as fully healthy.
+        self._probe_in_flight: dict[str, bool] = {}
 
     # -- recording ---------------------------------------------------------
 
@@ -62,6 +65,7 @@ class ProviderCircuitBreaker:
         self._failures.pop(name, None)
         self._opened_at.pop(name, None)
         self._half_open.pop(name, None)
+        self._probe_in_flight.pop(name, None)
 
     def record_failure(self, name: str) -> None:
         """Increment the failure counter; trip the circuit when exceeded."""
@@ -71,6 +75,7 @@ class ProviderCircuitBreaker:
             # If we were half-open (a probe failed), re-open the circuit.
             self._opened_at[name] = time.monotonic()
             self._half_open[name] = False
+            self._probe_in_flight.pop(name, None)
             logger.warning(
                 "Circuit opened for provider %r after %d consecutive failures",
                 name,
@@ -82,8 +87,9 @@ class ProviderCircuitBreaker:
     def is_open(self, name: str) -> bool:
         """Return True while the provider is excluded (not allowing calls)."""
         if self._half_open.get(name):
-            # A probe is currently allowed; a subsequent failure re-opens.
-            return False
+            # Half-open: exactly one probe is permitted. While that probe is in
+            # flight every other caller sees the circuit as open (F-16).
+            return self._probe_in_flight.get(name, False)
         opened_at = self._opened_at.get(name)
         if opened_at is None:
             return False
@@ -98,12 +104,20 @@ class ProviderCircuitBreaker:
         return name not in self._failures and name not in self._opened_at
 
     def allow(self, name: str) -> bool:
-        """Whether a call to ``name`` is permitted right now."""
-        return not self.is_open(name)
+        """Whether a call to ``name`` is permitted right now.
+
+        When the circuit is half-open this claims the single probe slot, so
+        only one caller may test the provider at a time.
+        """
+        if self.is_open(name):
+            return False
+        if self._half_open.get(name):
+            self._probe_in_flight[name] = True
+        return True
 
     def state(self, name: str) -> str:
         """Return ``"closed"``, ``"open"`` or ``"half_open"`` for ``name``."""
-        if self._half_open.get(name):
+        if self._half_open.get(name) or self._probe_in_flight.get(name):
             return "half_open"
         if self.is_open(name):
             return "open"

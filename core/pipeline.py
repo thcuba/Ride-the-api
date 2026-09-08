@@ -710,6 +710,29 @@ class LearningPipeline:
                     # before this column existed. Default to "" so legacy rows
                     # still flow through the fallback instead of crashing.
                     if getattr(cache_entry, "protocol", None) == protocol:
+                        # F-05: claim the row atomically so two concurrent
+                        # responses cannot both consume the same pending
+                        # request (select-then-mutate was racy).
+                        claim = await session.execute(
+                            update(SessionCache)
+                            .where(
+                                and_(
+                                    SessionCache.correlation_key == cache_entry.correlation_key,
+                                    SessionCache.correlated == False,  # noqa: E712
+                                )
+                            )
+                            .values(
+                                correlated=True,
+                                correlated_at=datetime.now(UTC),
+                                response_status=status_code,
+                                response_headers=headers,
+                                response_body=body,
+                                response_latency_ms=0.0,
+                            )
+                        )
+                        if claim.rowcount == 0:
+                            # Another coroutine already claimed this row.
+                            continue
                         matched = {
                             "correlation_key": cache_entry.correlation_key,
                             "device_id": device_id,
@@ -722,12 +745,6 @@ class LearningPipeline:
                             "query_params": cache_entry.query_params,
                             "timestamp": cache_entry.created_at,
                         }
-                        cache_entry.correlated = True
-                        cache_entry.correlated_at = datetime.now(UTC)
-                        cache_entry.response_status = status_code
-                        cache_entry.response_headers = headers
-                        cache_entry.response_body = body
-                        cache_entry.response_latency_ms = 0.0
                         break
 
         if not matched:
