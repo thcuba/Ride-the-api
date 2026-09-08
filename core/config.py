@@ -100,6 +100,24 @@ class ProxyConfig(BaseModel):
     fallback: FallbackConfig = Field(default_factory=FallbackConfig)
 
 
+class SecurityConfig(BaseModel):
+    """Control-plane authentication and hardening.
+
+    When ``auth_enabled`` is true (default), every ``/api/*`` route requires
+    an API key. Read-only methods (GET/HEAD) accept either the read-only key
+    or the admin key; all other methods require the admin key. Keys are sent
+    via the ``X-API-Key`` header or ``Authorization: Bearer <key>``.
+
+    If a key is left empty, a random ephemeral key is generated at startup and
+    printed to the log — set explicit keys in ``config.yaml`` to make them
+    stable across restarts.
+    """
+
+    auth_enabled: bool = True
+    admin_api_key: str = ""
+    readonly_api_key: str = ""
+
+
 class CloudConfig(BaseModel):
     api_endpoint: str = ""
     mqtt_endpoint: str = ""
@@ -467,6 +485,7 @@ class Config(BaseModel):
     core: CoreConfig = Field(default_factory=CoreConfig)
     buffer: BufferConfig = Field(default_factory=BufferConfig)
     proxy: ProxyConfig = Field(default_factory=ProxyConfig)
+    security: SecurityConfig = Field(default_factory=SecurityConfig)
     vendors: dict[str, VendorConfig] = Field(default_factory=dict)
     models: ModelsConfig = Field(default_factory=ModelsConfig)
     control: ControlConfig = Field(default_factory=ControlConfig)

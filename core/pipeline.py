@@ -34,6 +34,7 @@ from core.database import (
     get_db_manager,
 )
 from core.llm_decipher import LLMDecipherService, LLMProfile, _parse_llm_json
+from core.redaction import redact_body, redact_headers, redact_query
 from core.pattern_db import decipher_ingest
 from core.pattern_db.pattern_engine import (
     PatternEngine,
@@ -48,6 +49,34 @@ if TYPE_CHECKING:
     from core.buffer.store import BufferStore
 
 logger = logging.getLogger(__name__)
+
+
+def _redact_pairs_for_prompt(pairs: list) -> list:
+    """Return a copy of capture pairs with sensitive fields redacted.
+
+    Used as defense-in-depth before building an LLM prompt, so pairs loaded
+    from persistent storage or user imports (which predate capture-time
+    redaction) are also scrubbed before being sent to a possibly-external LLM.
+    """
+    if not isinstance(pairs, list):
+        return pairs
+    result = []
+    for pair in pairs:
+        if not isinstance(pair, dict):
+            result.append(pair)
+            continue
+        clone = dict(pair)
+        for field, redact in (
+            ("request_headers", redact_headers),
+            ("response_headers", redact_headers),
+            ("request_query", redact_query),
+            ("request_body", redact_body),
+            ("response_body", redact_body),
+        ):
+            if field in clone:
+                clone[field] = redact(clone[field])
+        result.append(clone)
+    return result
 
 # Whitelisted protocol tokens that a device can be attributed with. Anything the
 # LLM reports outside this set is dropped so arbitrary/untrusted strings cannot
@@ -570,6 +599,14 @@ class LearningPipeline:
 
         Returns: correlation_key for later matching with response.
         """
+        # Credential redaction before persistence/prompt (F-02): strip
+        # Authorization/cookie/token headers, sensitive query params and secret
+        # body fields from the capture. The live device-cloud forwarding path
+        # uses the original request object directly; this copy is capture-only.
+        headers = redact_headers(headers)
+        query_params = redact_query(query_params)
+        body = redact_body(body)
+
         corr_key = f"{device_id}:{method}:{path}:{uuid4().hex[:8]}"
 
         entry = {
@@ -614,6 +651,10 @@ class LearningPipeline:
         body: Any,  # noqa: ANN401
     ) -> CorrelatedPair | None:
         """Match an incoming response to a pending request. Returns correlated pair."""
+        # Credential redaction (F-02): never persist raw response secrets.
+        headers = redact_headers(headers)
+        body = redact_body(body)
+
         # Try memory cache first
         pending = self._correlation_cache.get(device_id, deque())
         matched = None
@@ -1036,7 +1077,11 @@ class LearningPipeline:
 
     def _build_learning_prompt(self, profile, context: dict) -> str:
         """Build prompt for LLM batch analysis."""
-        pairs_json = json.dumps(context["pairs"], indent=2, default=str)
+        # Defense-in-depth (F-02): pairs may come from persistent storage or
+        # imports that predate capture-time redaction, so re-redact before the
+        # payload ever reaches the LLM.
+        pairs = _redact_pairs_for_prompt(context.get("pairs"))
+        pairs_json = json.dumps(pairs, indent=2, default=str)
         prompt = profile.prompt_template
         replacements = {
             "{vendor}": context.get("vendor", "unknown"),

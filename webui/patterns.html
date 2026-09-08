@@ -78,6 +78,31 @@
   <div class="toast-container" id="toasts" role="status" aria-live="polite" aria-atomic="true"></div>
 
 <script>
+// ── Control-plane auth ─────────────────────────────────────────────────────
+(function () {
+  const KEY_STORAGE = 'rideApiKey';
+  let apiKey = localStorage.getItem(KEY_STORAGE) || '';
+  const origFetch = window.fetch.bind(window);
+  window.fetch = function (input, init) {
+    init = init || {};
+    let url = input;
+    if (typeof input === 'object' && input && typeof input.url === 'string') url = input.url;
+    if (typeof url === 'string' && url.startsWith('/api/') && apiKey) {
+      const headers = new Headers(init.headers || (input && input.headers) || {});
+      if (!headers.has('X-API-Key')) headers.set('X-API-Key', apiKey);
+      init.headers = headers;
+    }
+    return origFetch(input, init).then(function (resp) {
+      if (resp.status === 401 && !sessionStorage.getItem('ride-401-shown')) {
+        sessionStorage.setItem('ride-401-shown', '1');
+        const typed = window.prompt('Enter the control-plane API key:');
+        if (typed) { apiKey = typed.trim(); localStorage.setItem(KEY_STORAGE, apiKey); location.reload(); }
+      }
+      return resp;
+    });
+  };
+})();
+
 (function(){
   const deviceId = window.location.pathname.split('/').slice(-1)[0] || '';
   const cardsEl = document.getElementById('cards');

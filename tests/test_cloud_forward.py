@@ -222,9 +222,12 @@ async def test_forward_uses_cached_default_context():
 async def test_forward_intercepted_success(echo_server):
     port = await echo_server.start()
     req = _request(method="POST", path="/rpc/Switch.Set", body={"on": True})
-    with patch(
-        "core.cloud_forward.resolve_upstream",
-        AsyncMock(return_value=["127.0.0.1", "192.0.2.1"]),
+    with (
+        patch(
+            "core.cloud_forward.resolve_upstream",
+            AsyncMock(return_value=["127.0.0.1"]),
+        ),
+        patch("core.cloud_forward.is_blocked_ip", return_value=False),
     ):
         result: CommandResult = await forward_intercepted(
             req, hostname="cloud.example.com", port=port, use_tls=False
@@ -259,9 +262,12 @@ async def test_forward_intercepted_dns_empty():
 @pytest.mark.asyncio
 async def test_forward_intercepted_all_ips_fail():
     req = _request()
-    with patch(
-        "core.cloud_forward.resolve_upstream",
-        AsyncMock(return_value=["192.0.2.1", "198.51.100.1"]),
+    with (
+        patch(
+            "core.cloud_forward.resolve_upstream",
+            AsyncMock(return_value=["203.0.113.10", "203.0.113.20"]),
+        ),
+        patch("core.cloud_forward.is_blocked_ip", return_value=False),
     ):
         result = await forward_intercepted(
             req, hostname="cloud.example.com", port=1, use_tls=False, connect_timeout=0.1
@@ -269,3 +275,44 @@ async def test_forward_intercepted_all_ips_fail():
     assert result.success is False
     assert result.forwarded is True
     assert "Cloud forward failed" in (result.error or "")
+
+# --------------------
+# SSRF guard (F-07)
+# --------------------
+
+
+@pytest.mark.asyncio
+async def test_forward_intercepted_blocks_loopback_private():
+    """The SSRF guard refuses to connect to loopback/private/link-local IPs."""
+    req = _request()
+    with patch(
+        "core.cloud_forward.resolve_upstream",
+        AsyncMock(return_value=["127.0.0.1", "10.0.0.5", "192.168.1.1", "169.254.1.1"]),
+    ):
+        result = await forward_intercepted(
+            req, hostname="cloud.example.com", port=443, use_tls=False
+        )
+    assert result.success is False
+    assert result.forwarded is True
+    assert "refusing to connect" in (result.error or "")
+
+
+@pytest.mark.asyncio
+async def test_forward_intercepted_skips_blocked_uses_public(
+    echo_server,
+):
+    "Blocked addresses are skipped in favor of a remaining public address."
+    port = await echo_server.start()
+    req = _request()
+    with (
+        patch(
+            "core.cloud_forward.resolve_upstream",
+            AsyncMock(return_value=["192.168.1.50", "127.0.0.1"]),
+        ),
+        patch("core.cloud_forward.is_blocked_ip", side_effect=lambda ip: ip == "192.168.1.50"),
+    ):
+        result = await forward_intercepted(
+            req, hostname="cloud.example.com", port=port, use_tls=False
+        )
+    assert result.success is True
+    assert result.forwarded is True

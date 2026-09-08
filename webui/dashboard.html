@@ -343,6 +343,10 @@
       <span class="subtitle">Local Cloud Replacement — Device Protocol Learning &amp; Response Dashboard</span>
     </div>
   <div class="header-right">
+      <input type="password" id="apiKeyInput" placeholder="API key" autocomplete="off"
+             title="Control-plane API key (X-API-Key). Stored in this browser only."
+             style="padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:12px;width:150px;"
+             onchange="setApiKey(this.value)">
       <div class="ram-label" title="Buffer request/response pairs in RAM instead of disk (volatile)">
         <span>RAM Buffer</span>
         <label class="ram-toggle" aria-label="Toggle RAM buffer">
@@ -414,6 +418,49 @@
 <div id="details" class="invisible" role="dialog" aria-labelledby="details-title" aria-modal="true"></div>
 
 <script>
+// ── Control-plane auth ─────────────────────────────────────────────────────
+// Attach the API key (X-API-Key) to every same-origin /api/* request. The key
+// lives in localStorage so it survives reloads, and a 401 triggers a prompt.
+(function () {
+  const KEY_STORAGE = 'rideApiKey';
+  let apiKey = localStorage.getItem(KEY_STORAGE) || '';
+  const keyInput = () => document.getElementById('apiKeyInput');
+
+  function setApiKey(key) {
+    apiKey = (key || '').trim();
+    if (apiKey) localStorage.setItem(KEY_STORAGE, apiKey);
+    else localStorage.removeItem(KEY_STORAGE);
+    if (keyInput()) { keyInput().value = apiKey; }
+  }
+  window.setApiKey = setApiKey;
+
+  const origFetch = window.fetch.bind(window);
+  window.fetch = function (input, init) {
+    init = init || {};
+    let url = input;
+    if (typeof input === 'object' && input && typeof input.url === 'string') {
+      url = input.url;
+    }
+    if (typeof url === 'string' && url.startsWith('/api/') && apiKey) {
+      const headers = new Headers(init.headers || (input && input.headers) || {});
+      if (!headers.has('X-API-Key')) headers.set('X-API-Key', apiKey);
+      init.headers = headers;
+    }
+    return origFetch(input, init).then(function (resp) {
+      if (resp.status === 401 && !sessionStorage.getItem('ride-401-shown')) {
+        sessionStorage.setItem('ride-401-shown', '1');
+        const typed = window.prompt('Enter the control-plane API key:');
+        if (typed) { setApiKey(typed); location.reload(); }
+      }
+      return resp;
+    });
+  };
+
+  document.addEventListener('DOMContentLoaded', function () {
+    if (keyInput()) keyInput().value = apiKey || '';
+  });
+})();
+
 let lastActiveElement = null;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

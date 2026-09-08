@@ -40,7 +40,13 @@ class _FakeDB:
 
 @pytest.fixture
 def client(monkeypatch):
-    """TestClient with a fake db_manager so routes get past the 503 guard."""
+    """TestClient with a fake db_manager so routes get past the 503 guard.
+
+    Control-plane auth is disabled for these exception-handling tests (they
+    exercise request parsing, not authentication); dedicated auth tests live
+    in test_security_middleware.py.
+    """
+    server_mod.config_manager.config.security.auth_enabled = False
     monkeypatch.setattr(server_mod, "db_manager", _FakeDB())
     monkeypatch.setattr(server_mod, "orchestrator", object())
     return TestClient(app)

@@ -14,6 +14,7 @@ DNS servers are configured in ``config.yaml`` under ``dns.dns_servers``
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
 from typing import TYPE_CHECKING
 
@@ -51,6 +52,37 @@ def _addr_family(address: str) -> int:
     allocations on DNS resolution cache hits (~87x faster).
     """
     return 6 if ":" in address else 4
+
+
+def is_blocked_ip(ip_str: str) -> bool:
+    """Return True if ``ip_str`` must never be contacted (SSRF guard).
+
+    Blocks loopback, private (RFC1918), link-local, unique-local, unspecified,
+    multicast, reserved and IPv4-mapped ranges so a cloud hostname (or a
+    client-controlled ``Host`` header) can never redirect the proxy to
+    internal services, the local machine or cloud metadata endpoints.
+    """
+    try:
+        addr = ipaddress.ip_address(ip_str.split("%", 1)[0])
+    except ValueError:
+        # Not a valid IP literal — refuse to connect.
+        return True
+    if (
+        addr.is_loopback
+        or addr.is_private
+        or addr.is_link_local
+        or addr.is_unspecified
+        or addr.is_multicast
+        or addr.is_reserved
+        or addr.is_global is False
+    ):
+        return True
+    return False
+
+
+def filter_safe_ips(ips: list[str]) -> list[str]:
+    """Return only the addresses in ``ips`` that are safe to contact."""
+    return [ip for ip in ips if not is_blocked_ip(ip)]
 
 
 def _apply_config(config: Config) -> None:
@@ -162,6 +194,21 @@ async def resolve_upstream(  # noqa: C901, PLR0912
                     seen.add(ip)
         except Exception as exc:
             logger.error("System resolver fallback also failed for %s: %s", hostname, exc)  # noqa: TRY400
+
+    # ── SSRF guard ───────────────────────────────────────────────────────────
+    # Drop any address that resolves to loopback/private/link-local/metadata
+    # space, regardless of which resolution path produced it. This is the
+    # single choke point so every caller (forwarding, adapters, protocol
+    # servers) inherits the protection.
+    blocked = [ip for ip in addresses if is_blocked_ip(ip)]
+    if blocked:
+        logger.warning(
+            "Dropping %d unsafe address(es) for %s: %s",
+            len(blocked),
+            hostname,
+            blocked,
+        )
+    addresses = [ip for ip in addresses if not is_blocked_ip(ip)]
 
     # Update cache (TTLCache manages expiration)
     if addresses:

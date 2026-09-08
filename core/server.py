@@ -75,6 +75,7 @@ from core.resilience import (
     AutoSwitchScheduler,
     register_resilience_routes,
 )
+from core.security import ControlPlaneAuthMiddleware
 from core.tls_mitm import (
     DecryptedRequest,
     TLSMITMServer,
@@ -492,6 +493,12 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+)
+# Control-plane authentication: every /api/* route requires an API key
+# (admin key for writes, admin or read-only key for reads). See core/security.py.
+app.add_middleware(
+    ControlPlaneAuthMiddleware,
+    get_security_config=lambda: config_manager.config.security,
 )
 
 
