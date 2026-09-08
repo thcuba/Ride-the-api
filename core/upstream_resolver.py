@@ -19,7 +19,6 @@ from typing import TYPE_CHECKING
 
 import dns.asyncresolver
 import dns.exception
-import dns.resolver
 from cachetools import TTLCache
 
 if TYPE_CHECKING:
@@ -64,11 +63,17 @@ def _apply_config(config: Config) -> None:
         _last_dns_servers_v6 = list(dns_cfg.dns_servers_v6)
 
 
-def _build_resolver() -> dns.asyncresolver.AsyncResolver:
-    """Build an AsyncResolver configured to use the configured upstream DNS servers."""
-    resolver = dns.asyncresolver.AsyncResolver(configure=False)
-    resolver.nameservers = _last_dns_servers
-    resolver.nameservers_v6 = _last_dns_servers_v6
+def _build_resolver() -> dns.asyncresolver.Resolver:
+    """Build an async resolver configured with the upstream DNS servers.
+
+    In dnspython >= 2.6 the legacy ``AsyncResolver`` was removed and a single
+    IPv4+IPv6 ``nameservers`` list replaced the separate ``nameservers_v6``
+    attribute, so IPv4 and IPv6 servers are merged into one list.
+    """
+    resolver = dns.asyncresolver.Resolver(configure=False)
+    nameservers = list(_last_dns_servers)
+    nameservers.extend(_last_dns_servers_v6)
+    resolver.nameservers = nameservers
     resolver.timeout = 5.0
     resolver.lifetime = 10.0
     return resolver
@@ -115,10 +120,9 @@ async def resolve_upstream(  # noqa: C901, PLR0912
     addresses: list[str] = []
 
     logger.debug(
-        "Resolving %s via upstream DNS (%s / %s) ...",
+        "Resolving %s via upstream DNS (%s) ...",
         hostname,
         resolver.nameservers,
-        resolver.nameservers_v6,
     )
 
     try:

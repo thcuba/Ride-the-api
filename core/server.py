@@ -1973,7 +1973,9 @@ except Exception as e:
 
 
 @app.api_route(
-    "/{vendor}/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
+    "/{vendor}/{path:path}",
+    methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
+    include_in_schema=False,
 )
 async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noqa: C901, PLR0911
     """Main proxy endpoint for device API requests.
