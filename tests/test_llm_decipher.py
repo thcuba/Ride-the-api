@@ -365,3 +365,66 @@ End."""
         )
         assert result["success"] is True
         assert result["analysis"]["intent"] == "turn_on"
+
+
+def _profile_cfg(base_url="http://a/v1", api_key="k"):
+    return MockConfig(
+        base_url=base_url,
+        api_key=api_key,
+        model_id="m",
+        prompt_template="",
+        enabled=True,
+        timeout=30,
+        max_retries=2,
+    )
+
+
+def _service_with_profiles():
+    cm = MockConfigManager()
+    cm.config = MockConfig(
+        llm_decipher=MockConfig(
+            default_profile="default",
+            profiles={"default": _profile_cfg()},
+        )
+    )
+    return LLMDecipherService(config_manager=cm), cm
+
+
+class TestHotReload:
+    def test_callback_registered_once(self):
+        """F-11: repeated reloads must not stack duplicate config callbacks."""
+        service, cm = _service_with_profiles()
+        assert len(cm.callbacks) == 1
+        for _ in range(3):
+            service._on_config_change(cm.config)
+        assert len(cm.callbacks) == 1
+
+    @pytest.mark.asyncio
+    @patch("core.llm_decipher.AsyncOpenAI")
+    async def test_client_recreated_on_connection_change(self, mock_client_class):
+        """F-11: changing base_url/credentials invalidates the cached client."""
+        service, cm = _service_with_profiles()
+        profile = service._profiles["default"]
+        client1 = service._get_client(profile)
+        assert client1 is mock_client_class.return_value
+        assert mock_client_class.call_count == 1
+
+        # Change the endpoint and hot-reload.
+        cm.config.llm_decipher.profiles["default"].base_url = "http://b/v1"
+        service._on_config_change(cm.config)
+
+        client2 = service._get_client(service._profiles["default"])
+        # AsyncOpenAI is a MagicMock whose return_value is cached, so identity
+        # is not a reliable signal; the call count proves recreation.
+        assert mock_client_class.call_count == 2
+        assert client2 is mock_client_class.return_value
+
+    @pytest.mark.asyncio
+    @patch("core.llm_decipher.AsyncOpenAI")
+    async def test_removed_profile_drops_out(self, mock_client_class):
+        """F-11: a profile deleted from config disappears after reload."""
+        service, cm = _service_with_profiles()
+        assert "default" in service._profiles
+        cm.config.llm_decipher.profiles = {}
+        service._on_config_change(cm.config)
+        assert service._profiles == {}

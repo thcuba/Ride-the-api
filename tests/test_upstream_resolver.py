@@ -338,3 +338,72 @@ def test_addr_family_detection():
     assert _addr_family("2001:4860:4860::8888") == 6  # noqa: PLR2004
     assert _addr_family("fe80::1%eth0") == 6  # noqa: PLR2004
     assert _addr_family("example.com") == 4  # noqa: PLR2004
+
+# ============================================================================
+# SSRF GUARD TESTS
+# ============================================================================
+
+
+def test_is_blocked_ip_loopback_and_private():
+    """Loopback, RFC1918, link-local and reserved ranges are blocked."""
+    from core.upstream_resolver import is_blocked_ip
+
+    blocked = [
+        "127.0.0.1",
+        "127.0.0.53",
+        "10.0.0.1",
+        "172.16.0.1",
+        "192.168.1.1",
+        "169.254.169.254",
+        "0.0.0.0",
+        "255.255.255.255",
+        "224.0.0.1",
+        "100.64.0.1",
+        "::1",
+        "fe80::1",
+        "fc00::1",
+        "fd12:3456:789a::1",
+        "::ffff:127.0.0.1",
+        "::ffff:192.168.1.1",
+    ]
+    for addr in blocked:
+        assert is_blocked_ip(addr), f"expected {addr} to be blocked"
+
+
+def test_is_blocked_ip_allows_public():
+    """Globally routable addresses are not blocked."""
+    from core.upstream_resolver import is_blocked_ip
+
+    allowed = [
+        "93.184.216.34",
+        "8.8.8.8",
+        "1.1.1.1",
+        "2606:2800:220:1:248:1893:25c8:1946",
+    ]
+    for addr in allowed:
+        assert not is_blocked_ip(addr), f"expected {addr} to be allowed"
+
+
+def test_filter_safe_ips_drops_private_keeps_public():
+    """filter_safe_ips drops blocked addresses and keeps public ones."""
+    from core.upstream_resolver import filter_safe_ips
+
+    safe = filter_safe_ips(
+        ["93.184.216.34", "127.0.0.1", "1.1.1.1", "10.0.0.5", "8.8.8.8"]
+    )
+    assert safe == ["93.184.216.34", "1.1.1.1", "8.8.8.8"]
+
+
+def test_filter_safe_ips_empty_when_all_blocked():
+    """filter_safe_ips returns an empty list when every address is blocked."""
+    from core.upstream_resolver import filter_safe_ips
+
+    assert filter_safe_ips(["127.0.0.1", "192.168.0.1"]) == []
+
+
+def test_filter_safe_ips_ignores_non_ip_values():
+    """Non-IP strings (unresolved literals) are fail-closed: dropped."""
+    from core.upstream_resolver import filter_safe_ips
+
+    assert filter_safe_ips(["api.example.com", "127.0.0.1"]) == []
+

@@ -5,6 +5,7 @@ Handles: correlation, buffer management, LLM deciphering, pattern matching, and 
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -34,6 +35,7 @@ from core.database import (
     get_db_manager,
 )
 from core.llm_decipher import LLMDecipherService, LLMProfile, _parse_llm_json
+from core.redaction import redact_body, redact_headers, redact_query
 from core.pattern_db import decipher_ingest
 from core.pattern_db.pattern_engine import (
     PatternEngine,
@@ -48,6 +50,34 @@ if TYPE_CHECKING:
     from core.buffer.store import BufferStore
 
 logger = logging.getLogger(__name__)
+
+
+def _redact_pairs_for_prompt(pairs: list) -> list:
+    """Return a copy of capture pairs with sensitive fields redacted.
+
+    Used as defense-in-depth before building an LLM prompt, so pairs loaded
+    from persistent storage or user imports (which predate capture-time
+    redaction) are also scrubbed before being sent to a possibly-external LLM.
+    """
+    if not isinstance(pairs, list):
+        return pairs
+    result = []
+    for pair in pairs:
+        if not isinstance(pair, dict):
+            result.append(pair)
+            continue
+        clone = dict(pair)
+        for field, redact in (
+            ("request_headers", redact_headers),
+            ("response_headers", redact_headers),
+            ("request_query", redact_query),
+            ("request_body", redact_body),
+            ("response_body", redact_body),
+        ):
+            if field in clone:
+                clone[field] = redact(clone[field])
+        result.append(clone)
+    return result
 
 # Whitelisted protocol tokens that a device can be attributed with. Anything the
 # LLM reports outside this set is dropped so arbitrary/untrusted strings cannot
@@ -427,57 +457,63 @@ class MatchRateTracker:
     def __init__(self, db_manager: DatabaseManager) -> None:
         self.db_manager = db_manager
         self._rolling_window = 1000
+        # F-12: per-device locks serialize MatchStats updates.
+        self._locks: dict[str, asyncio.Lock] = {}
 
     async def record_result(self, device_id: str, match_result: MatchResult):
         """Record a match result and update stats."""
-        async with self.db_manager.device_session(device_id) as session:
-            result_obj = await session.execute(
-                select(MatchStats).where(MatchStats.device_id == device_id)
-            )
-            stats = result_obj.scalar_one_or_none()
-            if not stats:
-                stats = MatchStats(
-                    device_id=device_id,
-                    total_requests=0,
-                    local_hits=0,
-                    cloud_misses=0,
-                    errors=0,
-                    match_rate_pct=0.0,
-                    patterns_learned=0,
-                    templates_created=0,
-                    buffer_flushes=0,
-                    current_buffer_size_bytes=0,
+        # F-12: serialize per-device updates so concurrent requests cannot
+        # lose increments on the shared MatchStats row.
+        lock = self._locks.setdefault(device_id, asyncio.Lock())
+        async with lock:
+            async with self.db_manager.device_session(device_id) as session:
+                result_obj = await session.execute(
+                    select(MatchStats).where(MatchStats.device_id == device_id)
                 )
-                session.add(stats)
-                await session.flush()
+                stats = result_obj.scalar_one_or_none()
+                if not stats:
+                    stats = MatchStats(
+                        device_id=device_id,
+                        total_requests=0,
+                        local_hits=0,
+                        cloud_misses=0,
+                        errors=0,
+                        match_rate_pct=0.0,
+                        patterns_learned=0,
+                        templates_created=0,
+                        buffer_flushes=0,
+                        current_buffer_size_bytes=0,
+                    )
+                    session.add(stats)
+                    await session.flush()
 
-            stats.total_requests += 1
+                stats.total_requests += 1
 
-            if match_result == MatchResult.LOCAL_HIT:
-                stats.local_hits += 1
-            elif match_result == MatchResult.CLOUD_MISS:
-                stats.cloud_misses += 1
-            else:
-                stats.errors += 1
+                if match_result == MatchResult.LOCAL_HIT:
+                    stats.local_hits += 1
+                elif match_result == MatchResult.CLOUD_MISS:
+                    stats.cloud_misses += 1
+                else:
+                    stats.errors += 1
 
-            # Recalculate match rate
-            total_attempted = stats.local_hits + stats.cloud_misses
-            stats.match_rate_pct = round(
-                (stats.local_hits / total_attempted * 100) if total_attempted > 0 else 0.0,
-                2,
-            )
+                # Recalculate match rate
+                total_attempted = stats.local_hits + stats.cloud_misses
+                stats.match_rate_pct = round(
+                    (stats.local_hits / total_attempted * 100) if total_attempted > 0 else 0.0,
+                    2,
+                )
 
-            # Rolling window
-            recent = list(stats.recent_results or [])
-            recent.append(
-                {
-                    "result": match_result.value,
-                    "timestamp": datetime.now(UTC).isoformat(),
-                }
-            )
-            if len(recent) > self._rolling_window:
-                recent = recent[-self._rolling_window :]
-            stats.recent_results = recent
+                # Rolling window
+                recent = list(stats.recent_results or [])
+                recent.append(
+                    {
+                        "result": match_result.value,
+                        "timestamp": datetime.now(UTC).isoformat(),
+                    }
+                )
+                if len(recent) > self._rolling_window:
+                    recent = recent[-self._rolling_window :]
+                stats.recent_results = recent
 
     async def get_stats(self, device_id: str) -> dict:
         """Get current match stats for a device."""
@@ -570,6 +606,14 @@ class LearningPipeline:
 
         Returns: correlation_key for later matching with response.
         """
+        # Credential redaction before persistence/prompt (F-02): strip
+        # Authorization/cookie/token headers, sensitive query params and secret
+        # body fields from the capture. The live device-cloud forwarding path
+        # uses the original request object directly; this copy is capture-only.
+        headers = redact_headers(headers)
+        query_params = redact_query(query_params)
+        body = redact_body(body)
+
         corr_key = f"{device_id}:{method}:{path}:{uuid4().hex[:8]}"
 
         entry = {
@@ -614,6 +658,10 @@ class LearningPipeline:
         body: Any,  # noqa: ANN401
     ) -> CorrelatedPair | None:
         """Match an incoming response to a pending request. Returns correlated pair."""
+        # Credential redaction (F-02): never persist raw response secrets.
+        headers = redact_headers(headers)
+        body = redact_body(body)
+
         # Try memory cache first
         pending = self._correlation_cache.get(device_id, deque())
         matched = None
@@ -669,6 +717,29 @@ class LearningPipeline:
                     # before this column existed. Default to "" so legacy rows
                     # still flow through the fallback instead of crashing.
                     if getattr(cache_entry, "protocol", None) == protocol:
+                        # F-05: claim the row atomically so two concurrent
+                        # responses cannot both consume the same pending
+                        # request (select-then-mutate was racy).
+                        claim = await session.execute(
+                            update(SessionCache)
+                            .where(
+                                and_(
+                                    SessionCache.correlation_key == cache_entry.correlation_key,
+                                    SessionCache.correlated == False,  # noqa: E712
+                                )
+                            )
+                            .values(
+                                correlated=True,
+                                correlated_at=datetime.now(UTC),
+                                response_status=status_code,
+                                response_headers=headers,
+                                response_body=body,
+                                response_latency_ms=0.0,
+                            )
+                        )
+                        if claim.rowcount == 0:
+                            # Another coroutine already claimed this row.
+                            continue
                         matched = {
                             "correlation_key": cache_entry.correlation_key,
                             "device_id": device_id,
@@ -681,12 +752,6 @@ class LearningPipeline:
                             "query_params": cache_entry.query_params,
                             "timestamp": cache_entry.created_at,
                         }
-                        cache_entry.correlated = True
-                        cache_entry.correlated_at = datetime.now(UTC)
-                        cache_entry.response_status = status_code
-                        cache_entry.response_headers = headers
-                        cache_entry.response_body = body
-                        cache_entry.response_latency_ms = 0.0
                         break
 
         if not matched:
@@ -1036,7 +1101,11 @@ class LearningPipeline:
 
     def _build_learning_prompt(self, profile, context: dict) -> str:
         """Build prompt for LLM batch analysis."""
-        pairs_json = json.dumps(context["pairs"], indent=2, default=str)
+        # Defense-in-depth (F-02): pairs may come from persistent storage or
+        # imports that predate capture-time redaction, so re-redact before the
+        # payload ever reaches the LLM.
+        pairs = _redact_pairs_for_prompt(context.get("pairs"))
+        pairs_json = json.dumps(pairs, indent=2, default=str)
         prompt = profile.prompt_template
         replacements = {
             "{vendor}": context.get("vendor", "unknown"),

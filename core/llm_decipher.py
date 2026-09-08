@@ -165,6 +165,8 @@ class LLMDecipherService:
         self._profiles: dict[str, LLMProfile] = {}
         self._default_profile = "default"
         self._clients: dict[str, AsyncOpenAI] = {}
+        # Connection fingerprint per profile; a change invalidates its client.
+        self._client_fingerprints: dict[str, tuple] = {}
         self._cache_ttl = _CACHE_TTL  # 1 hour
         self._cache: TTLCache = TTLCache(maxsize=_CACHE_MAX_SIZE, ttl=self._cache_ttl)
         # Circuit breaker between provider profiles: a repeatedly failing
@@ -176,6 +178,8 @@ class LLMDecipherService:
         self._pattern_loader = None
 
         self._load_config()
+        # Register exactly once so repeated reloads cannot stack callbacks (F-11).
+        self.config_manager.register_callback(self._on_config_change)
 
     def _load_config(self):
         """Load LLM deciphering configuration."""
@@ -188,8 +192,9 @@ class LLMDecipherService:
 
         self._default_profile = getattr(self._config, "default_profile", "default")
 
-        # Load profiles
+        # Load profiles (fully replace so removed profiles drop out on reload).
         profiles_config = getattr(self._config, "profiles", {})
+        new_profiles: dict[str, LLMProfile] = {}
         for name, profile_config in profiles_config.items():
             profile = LLMProfile(
                 name=name,
@@ -201,12 +206,31 @@ class LLMDecipherService:
                 timeout=getattr(profile_config, "timeout", 30),
                 max_retries=getattr(profile_config, "max_retries", 2),
             )
-            self._profiles[name] = profile
+            new_profiles[name] = profile
 
-        # Register for config changes
-        self.config_manager.register_callback(self._on_config_change)
+        # Drop cached clients whose connection parameters changed so the next
+        # call recreates them (real hot reload of endpoint/credentials).
+        for name, profile in new_profiles.items():
+            fingerprint = self._client_fingerprint(profile)
+            if name in self._clients and self._client_fingerprints.get(name) != fingerprint:
+                logger.info("LLM profile %r connection changed, recreating client", name)
+                self._clients.pop(name)
+        self._client_fingerprints = {
+            name: self._client_fingerprint(p) for name, p in new_profiles.items()
+        }
+
+        self._profiles = new_profiles
 
         logger.info(f"Loaded {len(self._profiles)} LLM profiles: {list(self._profiles.keys())}")
+
+    def _client_fingerprint(self, profile: LLMProfile) -> tuple:
+        """Connection-relevant params; changing these needs a fresh client."""
+        return (
+            profile.base_url.rstrip("/"),
+            profile.api_key.get_secret_value(),
+            profile.timeout,
+            profile.max_retries,
+        )
 
     def _on_config_change(self, _new_config):
         """Reload config on change."""

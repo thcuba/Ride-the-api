@@ -50,7 +50,23 @@ core:
 proxy:
   host: "0.0.0.0"
   port: 8911
-  
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CONTROL-PLANE SECURITY
+# ═══════════════════════════════════════════════════════════════════════════════
+# The FastAPI server doubles as the administrative control plane (/api/*).
+# When auth_enabled is true (default) every /api/* route requires an API key:
+#   - read-only methods (GET/HEAD) accept the read-only key or the admin key
+#   - all other methods (POST/PUT/DELETE/...) require the admin key
+# Keys are sent via the "X-API-Key" header or "Authorization: Bearer <key>".
+# If a key is left empty, a random ephemeral key is generated at startup
+# (never logged) and the control plane stays locked until explicit keys are
+# set here.
+security:
+  auth_enabled: true
+  admin_api_key: ""          # e.g. "change-me-admin"
+  readonly_api_key: ""       # e.g. "change-me-readonly"
+
   # TLS Configuration (for HTTPS interception)
   tls:
     enabled: true

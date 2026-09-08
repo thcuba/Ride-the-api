@@ -239,3 +239,99 @@ class TestBackendPersistence:
         loaded = initialize_buffer_backend()
         assert loaded == "memory"
         assert get_buffer_backend() == "memory"
+
+
+class TestImportCapture:
+    @pytest.mark.asyncio
+    async def test_import_target_device_overrides_payload(self, db_manager):
+        """F-08: target_device_id forces the destination device DB."""
+        from core.pattern_db.schemas import (
+            CaptureDB,
+            CaptureDeviceInfo,
+            CaptureMeta,
+            CaptureSession,
+            RawPairWithResponse,
+            RawResponse,
+        )
+
+        now = datetime.now(UTC)
+        capture = CaptureDB(
+            meta=CaptureMeta(
+                capture_id="c1",
+                vendor="shelly",
+                device_type="ac",
+                capture_date=now,
+            ),
+            device_info=CaptureDeviceInfo(device_id="payload-device"),
+            sessions=[
+                CaptureSession(
+                    session_id="s1",
+                    timestamp_start=now,
+                    pairs=[
+                        RawPairWithResponse(
+                            pair_id="p1",
+                            timestamp=now,
+                            protocol="http",
+                            method="POST",
+                            path="/rpc/x",
+                            body={"a": 1},
+                            response=RawResponse(status_code=200, body={"ok": True}),
+                        )
+                    ],
+                )
+            ],
+        )
+
+        manager = BufferManager(db_manager)
+        count = await manager.import_capture(capture, target_device_id="target-device")
+        assert count == 1
+
+        pairs = await manager.get_buffer_pairs("target-device")
+        assert len(pairs) == 1
+        assert pairs[0]["pair"]["device_id"] == "target-device"
+        # The payload's device id must not receive the imported pairs.
+        assert await manager.get_buffer_pairs("payload-device") == []
+
+    @pytest.mark.asyncio
+    async def test_import_without_target_uses_payload_device(self, db_manager):
+        """F-08: without a target, the payload device id is used (back-compat)."""
+        from core.pattern_db.schemas import (
+            CaptureDB,
+            CaptureDeviceInfo,
+            CaptureMeta,
+            CaptureSession,
+            RawPairWithResponse,
+        )
+
+        now = datetime.now(UTC)
+        capture = CaptureDB(
+            meta=CaptureMeta(
+                capture_id="c2",
+                vendor="shelly",
+                device_type="ac",
+                capture_date=now,
+            ),
+            device_info=CaptureDeviceInfo(device_id="payload-device"),
+            sessions=[
+                CaptureSession(
+                    session_id="s1",
+                    timestamp_start=now,
+                    pairs=[
+                        RawPairWithResponse(
+                            pair_id="p2",
+                            timestamp=now,
+                            protocol="http",
+                            method="GET",
+                            path="/status",
+                        )
+                    ],
+                )
+            ],
+        )
+
+        manager = BufferManager(db_manager)
+        count = await manager.import_capture(capture)
+        assert count == 1
+        pairs = await manager.get_buffer_pairs("payload-device")
+        assert len(pairs) == 1
+        assert pairs[0]["pair"]["device_id"] == "payload-device"

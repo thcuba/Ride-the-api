@@ -69,6 +69,22 @@ class TestProviderCircuitBreaker:
             mono.return_value = 100.0
             assert breaker.state("provider-a") == "open"
 
+    def test_half_open_single_probe(self):
+        """F-16: only one caller may probe a half-open provider."""
+        breaker = make_breaker(threshold=1, cooldown=0.05)
+        breaker.record_failure("provider-a")
+        breaker._opened_at["provider-a"] -= 1.0
+        # First caller claims the single probe slot.
+        assert breaker.allow("provider-a") is True
+        assert breaker.state("provider-a") == "half_open"
+        # Concurrent callers are excluded while the probe is in flight.
+        assert breaker.allow("provider-a") is False
+        assert breaker.is_open("provider-a") is True
+        # Probe succeeds -> circuit closes and everyone is allowed again.
+        breaker.record_success("provider-a")
+        assert breaker.allow("provider-a") is True
+        assert breaker.state("provider-a") == "closed"
+
     def test_healthy_names_and_snapshot(self):
         breaker = make_breaker(threshold=1, cooldown=3600.0)
         breaker.record_failure("provider-b")

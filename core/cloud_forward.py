@@ -34,7 +34,7 @@ from urllib.parse import urlencode
 import h11
 
 from adapters.base import CommandResult, InterceptedRequest
-from core.upstream_resolver import resolve_upstream
+from core.upstream_resolver import is_blocked_ip, resolve_upstream
 
 logger = logging.getLogger(__name__)
 
@@ -258,6 +258,19 @@ async def forward_intercepted(  # noqa: PLR0913
             error=f"Cloud: no address found for {hostname}",
             forwarded=True,
         )
+
+    # SSRF guard (defense in-depth): never connect to an address the resolver
+    # may have missed (e.g. a literal IP in the Host header that bypassed DNS).
+    # Skip any loopback/private/link-local/metadata address.
+    safe_ips = [ip for ip in ips if not is_blocked_ip(ip)]
+    if not safe_ips:
+        logger.warning("Cloud forward to %s blocked: all addresses are private/loopback", hostname)
+        return CommandResult(
+            success=False,
+            error=f"Cloud: refusing to connect to private/loopback address for {hostname}",
+            forwarded=True,
+        )
+    ips = safe_ips
 
     method = (request.method or "GET").upper()
     path = request.path or "/"

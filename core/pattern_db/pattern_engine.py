@@ -8,6 +8,7 @@ with state management and .ride-pattern.json import/export.
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import json
 import logging
@@ -283,6 +284,8 @@ class PatternEngine:
         self._cached_patterns: dict[str, PatternDB] = {}
         # Pre-computed trigger -> response maps for fast O(1) response lookup in find_best_match
         self._response_trigger_maps: dict[str, dict[str, Any]] = {}
+        # F-12: per-device locks serialize state load/persist.
+        self._locks: dict[str, asyncio.Lock] = {}
 
     # â”€â”€ State Management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€  # noqa: E501
 
@@ -316,14 +319,16 @@ class PatternEngine:
     async def load_state(self, device_id: str) -> None:
         """Restore a device's persisted state variables into its store."""
         store = self.get_state_store(device_id)
-        async with self.db_manager.device_session(device_id) as session:
-            result = await session.execute(
-                select(DeviceState).where(DeviceState.device_id == device_id)
-            )
-            row = result.scalar_one_or_none()
-        if row is not None and row.state:
-            store.restore({"variables": row.state})
-        store.clear_dirty()
+        lock = self._locks.setdefault(device_id, asyncio.Lock())
+        async with lock:
+            async with self.db_manager.device_session(device_id) as session:
+                result = await session.execute(
+                    select(DeviceState).where(DeviceState.device_id == device_id)
+                )
+                row = result.scalar_one_or_none()
+            if row is not None and row.state:
+                store.restore({"variables": row.state})
+            store.clear_dirty()
 
     async def persist_state(self, device_id: str) -> bool:
         """Persist a device's state variables if they changed since last save.
@@ -336,15 +341,17 @@ class PatternEngine:
         if not store.is_dirty:
             return False
         variables = store.snapshot()["variables"]
-        async with self.db_manager.device_session(device_id) as session:
-            result = await session.execute(
-                select(DeviceState).where(DeviceState.device_id == device_id)
-            )
-            row = result.scalar_one_or_none()
-            if row is None:
-                session.add(DeviceState(device_id=device_id, state=variables))
-            else:
-                row.state = variables
+        lock = self._locks.setdefault(device_id, asyncio.Lock())
+        async with lock:
+            async with self.db_manager.device_session(device_id) as session:
+                result = await session.execute(
+                    select(DeviceState).where(DeviceState.device_id == device_id)
+                )
+                row = result.scalar_one_or_none()
+                if row is None:
+                    session.add(DeviceState(device_id=device_id, state=variables))
+                else:
+                    row.state = variables
         store.clear_dirty()
         return True
 
