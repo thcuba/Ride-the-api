@@ -101,6 +101,28 @@ class TestDeviceRegistry:
                 select(DeviceRegistry).where(DeviceRegistry.device_id == "device-001")
             )
             assert result.scalars().all() is not None
+    @pytest.mark.asyncio
+    async def test_get_or_create_device_concurrent_no_duplicates(self, db_manager):
+        """F-12: concurrent creation must not duplicate registry rows."""
+        import asyncio
+
+        await asyncio.gather(
+            *[
+                db_manager.get_or_create_device(
+                    device_id="device-race",
+                    vendor="shelly",
+                    device_type="plug",
+                    name="Race Plug",
+                )
+                for _ in range(10)
+            ]
+        )
+        async with await db_manager.get_core_session() as session:
+            result = await session.execute(
+                select(DeviceRegistry).where(DeviceRegistry.device_id == "device-race")
+            )
+            rows = result.scalars().all()
+            assert len(rows) == 1
 
     @pytest.mark.asyncio
     async def test_list_devices(self, db_manager):

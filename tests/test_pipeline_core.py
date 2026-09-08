@@ -285,6 +285,24 @@ class TestMatchRateTracker:
     async def test_record_result_error(self, db_manager):
         tracker = MatchRateTracker(db_manager)
         await tracker.record_result("device-003", MatchResult.ERROR)
+    @pytest.mark.asyncio
+    async def test_record_result_concurrent_no_lost_updates(self, db_manager):
+        """F-12: concurrent record_result calls must not lose increments."""
+        import asyncio
+
+        tracker = MatchRateTracker(db_manager)
+        device_id = "device-race"
+        n = 25
+        await asyncio.gather(
+            *[
+                tracker.record_result(device_id, MatchResult.LOCAL_HIT)
+                for _ in range(n)
+            ]
+        )
+        stats = await tracker.get_stats(device_id)
+        assert stats["total_requests"] == n
+        assert stats["local_hits"] == n
+        assert stats["cloud_misses"] == 0
 
 
 class TestLearningPipeline:

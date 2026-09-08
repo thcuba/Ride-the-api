@@ -491,6 +491,8 @@ class DatabaseManager:
         self._device_sessions: dict[str, async_sessionmaker[AsyncSession]] = {}
         self._device_db_urls = device_db_urls or {}
         self._engine_locks: dict[str, asyncio.Lock] = {}
+        # F-12: per-device locks serialize registry/device-DB creation.
+        self._device_locks: dict[str, asyncio.Lock] = {}
         self._ip_lookup_cache: dict[str, str] | None = None
 
     async def initialize(self) -> None:
@@ -675,33 +677,37 @@ class DatabaseManager:
         self, device_id: str, vendor: str, device_type: str = "unknown", name: str = ""
     ) -> None:
         """Ensure a device exists in the registry and create its DB."""
-        async with await self.get_core_session() as session:
-            result = await session.execute(
-                select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
-            )
-            device = result.scalar_one_or_none()
-            if not device:
-                # Inherit global learning defaults into the per-device config
-                try:
-                    learning = get_config().learning
-                    device_config = {
-                        "production_no_fallback": learning.production_no_fallback,
-                    }
-                except Exception:
-                    device_config = {}
-                device = DeviceRegistry(
-                    device_id=device_id,
-                    vendor=vendor,
-                    device_type=device_type,
-                    name=name or device_id,
-                    mode="learning",
-                    config=device_config,
+        # F-12: serialize per-device creation so concurrent callers cannot both
+        # insert a registry row (and race on the device DB) for the same id.
+        lock = self._device_locks.setdefault(device_id, asyncio.Lock())
+        async with lock:
+            async with await self.get_core_session() as session:
+                result = await session.execute(
+                    select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
                 )
-                session.add(device)
-                await session.commit()
-                # A new device may bring IPs; force the reverse index rebuild.
-                self.invalidate_ip_lookup_cache()
-                logger.info(f"Registered new device: {device_id} ({vendor})")
+                device = result.scalar_one_or_none()
+                if not device:
+                    # Inherit global learning defaults into the per-device config
+                    try:
+                        learning = get_config().learning
+                        device_config = {
+                            "production_no_fallback": learning.production_no_fallback,
+                        }
+                    except Exception:
+                        device_config = {}
+                    device = DeviceRegistry(
+                        device_id=device_id,
+                        vendor=vendor,
+                        device_type=device_type,
+                        name=name or device_id,
+                        mode="learning",
+                        config=device_config,
+                    )
+                    session.add(device)
+                    await session.commit()
+                    # A new device may bring IPs; force the reverse index rebuild.
+                    self.invalidate_ip_lookup_cache()
+                    logger.info(f"Registered new device: {device_id} ({vendor})")
         await self.get_device_engine(device_id)
 
     async def apply_ip_profile(self, device_id: str, ip: str) -> str:

@@ -5,6 +5,7 @@ Handles: correlation, buffer management, LLM deciphering, pattern matching, and 
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -456,57 +457,63 @@ class MatchRateTracker:
     def __init__(self, db_manager: DatabaseManager) -> None:
         self.db_manager = db_manager
         self._rolling_window = 1000
+        # F-12: per-device locks serialize MatchStats updates.
+        self._locks: dict[str, asyncio.Lock] = {}
 
     async def record_result(self, device_id: str, match_result: MatchResult):
         """Record a match result and update stats."""
-        async with self.db_manager.device_session(device_id) as session:
-            result_obj = await session.execute(
-                select(MatchStats).where(MatchStats.device_id == device_id)
-            )
-            stats = result_obj.scalar_one_or_none()
-            if not stats:
-                stats = MatchStats(
-                    device_id=device_id,
-                    total_requests=0,
-                    local_hits=0,
-                    cloud_misses=0,
-                    errors=0,
-                    match_rate_pct=0.0,
-                    patterns_learned=0,
-                    templates_created=0,
-                    buffer_flushes=0,
-                    current_buffer_size_bytes=0,
+        # F-12: serialize per-device updates so concurrent requests cannot
+        # lose increments on the shared MatchStats row.
+        lock = self._locks.setdefault(device_id, asyncio.Lock())
+        async with lock:
+            async with self.db_manager.device_session(device_id) as session:
+                result_obj = await session.execute(
+                    select(MatchStats).where(MatchStats.device_id == device_id)
                 )
-                session.add(stats)
-                await session.flush()
+                stats = result_obj.scalar_one_or_none()
+                if not stats:
+                    stats = MatchStats(
+                        device_id=device_id,
+                        total_requests=0,
+                        local_hits=0,
+                        cloud_misses=0,
+                        errors=0,
+                        match_rate_pct=0.0,
+                        patterns_learned=0,
+                        templates_created=0,
+                        buffer_flushes=0,
+                        current_buffer_size_bytes=0,
+                    )
+                    session.add(stats)
+                    await session.flush()
 
-            stats.total_requests += 1
+                stats.total_requests += 1
 
-            if match_result == MatchResult.LOCAL_HIT:
-                stats.local_hits += 1
-            elif match_result == MatchResult.CLOUD_MISS:
-                stats.cloud_misses += 1
-            else:
-                stats.errors += 1
+                if match_result == MatchResult.LOCAL_HIT:
+                    stats.local_hits += 1
+                elif match_result == MatchResult.CLOUD_MISS:
+                    stats.cloud_misses += 1
+                else:
+                    stats.errors += 1
 
-            # Recalculate match rate
-            total_attempted = stats.local_hits + stats.cloud_misses
-            stats.match_rate_pct = round(
-                (stats.local_hits / total_attempted * 100) if total_attempted > 0 else 0.0,
-                2,
-            )
+                # Recalculate match rate
+                total_attempted = stats.local_hits + stats.cloud_misses
+                stats.match_rate_pct = round(
+                    (stats.local_hits / total_attempted * 100) if total_attempted > 0 else 0.0,
+                    2,
+                )
 
-            # Rolling window
-            recent = list(stats.recent_results or [])
-            recent.append(
-                {
-                    "result": match_result.value,
-                    "timestamp": datetime.now(UTC).isoformat(),
-                }
-            )
-            if len(recent) > self._rolling_window:
-                recent = recent[-self._rolling_window :]
-            stats.recent_results = recent
+                # Rolling window
+                recent = list(stats.recent_results or [])
+                recent.append(
+                    {
+                        "result": match_result.value,
+                        "timestamp": datetime.now(UTC).isoformat(),
+                    }
+                )
+                if len(recent) > self._rolling_window:
+                    recent = recent[-self._rolling_window :]
+                stats.recent_results = recent
 
     async def get_stats(self, device_id: str) -> dict:
         """Get current match stats for a device."""
