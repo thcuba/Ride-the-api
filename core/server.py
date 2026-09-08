@@ -330,8 +330,8 @@ async def lifespan(_app: FastAPI):  # noqa: C901, PLR0912, PLR0915
             cert_manager = get_cert_manager()
             cert_path = cert_manager.ensure_ca()
             logger.info("TLS CA certificate ready at %s", cert_path)
-        except Exception as e:
-            logger.error("Failed to initialize TLS cert manager: %s", e)  # noqa: TRY400
+        except Exception:
+            logger.exception("Failed to initialize TLS cert manager")
 
     # Start TLS MITM server if enabled
     if config.tls_decrypt.enabled and cert_manager:
@@ -348,8 +348,8 @@ async def lifespan(_app: FastAPI):  # noqa: C901, PLR0912, PLR0915
             tls_mitm_server.request_handler = handle_tls_decrypted_request
             await tls_mitm_server.start()
             logger.info("TLS MITM server listening on ports %s", config.tls_decrypt.listen_ports)
-        except Exception as e:
-            logger.error("Failed to start TLS MITM server: %s, TLS interception disabled", e)  # noqa: TRY400
+        except Exception:
+            logger.exception("Failed to start TLS MITM server, TLS interception disabled")
     else:
         logger.info("TLS decryption is disabled (enable in config.yaml)")
 

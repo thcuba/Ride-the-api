@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import logging
 import multiprocessing
 import os
 import queue
@@ -44,9 +45,10 @@ import shutil
 import socket
 import sys
 import threading
-import traceback
 import webbrowser
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 try:
     import tkinter as tk
@@ -173,7 +175,7 @@ def _run_server(on_error) -> None:
     except SystemExit:
         raise
     except Exception:
-        traceback.print_exc()
+        logger.exception("Server thread failed unexpectedly")
         if on_error is not None:
             on_error()
 
@@ -221,7 +223,7 @@ class ServerController:
         except SystemExit:
             raise
         except Exception:
-            traceback.print_exc()
+            logger.exception("Uvicorn server failed to start")
             if self.error is not None:
                 self.error.set()
 
@@ -490,7 +492,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         data_dir = prepare_runtime()
     except Exception:
-        traceback.print_exc()
+        logger.exception("Failed to prepare runtime")
         return 1
     os.chdir(data_dir)
 
