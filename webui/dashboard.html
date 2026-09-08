@@ -178,6 +178,18 @@
     .chart .bar { transition: none; }
   }
 
+  /* ── Device Filter Bar ───────────────────────────────────────────────── */
+  .device-filter-bar { margin-bottom: 16px; position: relative; display: flex; align-items: center; max-width: 360px; }
+  .device-filter-bar input {
+    width: 100%; padding: 8px 12px 8px 34px; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; color: var(--text); font-family: inherit; font-size: 13px; transition: border-color .2s;
+  }
+  .device-filter-bar input:focus { outline: none; border-color: var(--accent); }
+  .device-filter-bar input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .device-filter-bar .search-icon {
+    position: absolute; left: 10px; color: var(--text2); pointer-events: none; width: 16px; height: 16px;
+  }
+
   /* ── Misc ──────────────────────────────────────────────────────────────── */
   .empty { color: var(--text2); text-align: center; padding: 60px 20px; grid-column: 1 / -1; }
   .empty-icon { font-size: 48px; margin-bottom: 12px; opacity: .3; }
@@ -385,6 +397,10 @@
 </div>
 
 <div id="main-content">
+  <div class="device-filter-bar">
+    <svg class="search-icon icon-svg-sm" aria-hidden="true" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+    <input type="search" id="deviceSearchInput" placeholder="Filter devices by name, ID, vendor..." aria-label="Filter devices" oninput="filterDevices()">
+  </div>
   <div id="devices" class="grid" role="region" aria-label="Registered devices">
     <div class="empty">
       <div class="empty-icon">
@@ -494,6 +510,7 @@ async function loadDevices() {
         </div>
       </div>`;
     }).join('');
+    filterDevices();
   } catch(e) {
     document.getElementById('devices').innerHTML = '<div class="empty"><div class="empty-icon">' +
       '<svg class="icon-svg" aria-hidden="true" viewBox="0 0 24 24" style="width:48px;height:48px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>' +
@@ -501,6 +518,33 @@ async function loadDevices() {
     showToast('Failed to load devices', 'error');
   } finally {
     if (btn) { btn.disabled = false; btn.classList.remove('btn-spinning'); }
+  }
+}
+
+// ── Real-time device filter ──────────────────────────────────────────────────
+function filterDevices() {
+  const query = (document.getElementById('deviceSearchInput')?.value || '').trim().toLowerCase();
+  const cards = document.querySelectorAll('#devices .device-card');
+  let visibleCount = 0;
+  cards.forEach(card => {
+    const text = card.textContent.toLowerCase();
+    const matches = !query || text.includes(query);
+    card.style.display = matches ? '' : 'none';
+    if (matches) visibleCount++;
+  });
+  let emptyMsg = document.getElementById('noMatchingDevices');
+  if (cards.length > 0 && visibleCount === 0) {
+    if (!emptyMsg) {
+      emptyMsg = document.createElement('div');
+      emptyMsg.id = 'noMatchingDevices';
+      emptyMsg.className = 'empty';
+      emptyMsg.innerHTML = '<div class="empty-icon"><svg class="icon-svg" aria-hidden="true" viewBox="0 0 24 24" style="width:48px;height:48px;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></div><div class="empty-text">No matching devices found</div><div class="empty-sub">Try searching with a different name, ID, or vendor.</div>';
+      document.getElementById('devices').appendChild(emptyMsg);
+    } else {
+      emptyMsg.style.display = '';
+    }
+  } else if (emptyMsg) {
+    emptyMsg.style.display = 'none';
   }
 }
 
