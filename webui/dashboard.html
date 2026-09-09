@@ -344,9 +344,10 @@
     </div>
   <div class="header-right">
       <input type="password" id="apiKeyInput" placeholder="API key" autocomplete="off"
+             aria-label="Control-plane API key"
              title="Control-plane API key (X-API-Key). Stored in this browser only."
              style="padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:12px;width:150px;"
-             onchange="setApiKey(this.value)">
+             onchange="setApiKey(this.value, true)">
       <div class="ram-label" title="Buffer request/response pairs in RAM instead of disk (volatile)">
         <span>RAM Buffer</span>
         <label class="ram-toggle" aria-label="Toggle RAM buffer">
@@ -426,11 +427,14 @@
   let apiKey = localStorage.getItem(KEY_STORAGE) || '';
   const keyInput = () => document.getElementById('apiKeyInput');
 
-  function setApiKey(key) {
+  function setApiKey(key, notify) {
     apiKey = (key || '').trim();
     if (apiKey) localStorage.setItem(KEY_STORAGE, apiKey);
     else localStorage.removeItem(KEY_STORAGE);
     if (keyInput()) { keyInput().value = apiKey; }
+    if (notify && typeof showToast === 'function') {
+      showToast(apiKey ? 'API key saved' : 'API key cleared', 'info');
+    }
   }
   window.setApiKey = setApiKey;
 
