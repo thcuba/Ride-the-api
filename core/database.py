@@ -723,6 +723,13 @@ class DatabaseManager:
         except Exception:  # noqa: BLE001 - config not ready
             profile = None
 
+        # Fast path: no per-IP profile is configured for this address, so there
+        # is nothing to apply. Skip the core-DB read + commit entirely — this is
+        # the common case (default config has no ``ip_profiles``) and removes a
+        # DB round-trip and fsync from every intercepted request.
+        if profile is None:
+            return "auto"
+
         async with await self.get_core_session() as session:
             result = await session.execute(
                 select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
@@ -738,13 +745,10 @@ class DatabaseManager:
             device.extra_attributes = extra
             await session.commit()
 
-        if profile is not None and profile.database:
+        if profile.database:
             await self.assign_device_database(device_id, database_url=profile.database)
 
-        connection_str = "auto"
-        if profile is not None:
-            connection_str = profile.connection.value
-        return connection_str
+        return profile.connection.value
 
     async def get_device_connection(self, device_id: str) -> str:
         """Return the stored connection type for a device (default ``auto``)."""
