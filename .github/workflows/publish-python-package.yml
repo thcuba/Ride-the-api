@@ -29,7 +29,8 @@ jobs:
       
       - name: Publish to GitHub Packages
         run: |
-          python -m twine upload --repository github dist/*
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+          python -m twine upload \
+            --repository-url https://npm.pkg.github.com/ \
+            --username github \
+            --password ${{ secrets.GITHUB_TOKEN }} \
+            dist/*
