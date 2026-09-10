@@ -1646,10 +1646,11 @@ async def update_llm_settings(request: Request):
     try:
         settings = llm_decipher_service.update_settings(body)
     except ValueError as e:
-        return JSONResponse(status_code=400, content={"error": str(e)})
-    except Exception as e:  # noqa: BLE001
+        logger.warning("Invalid LLM settings update: %s", e)
+        return JSONResponse(status_code=400, content={"error": "Invalid LLM settings"})
+    except Exception:  # noqa: BLE001
         logger.exception("Failed to update LLM settings")
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        return JSONResponse(status_code=500, content={"error": "Failed to update LLM settings"})
     return settings
 
 
@@ -1684,10 +1685,11 @@ async def create_llm_profile(request: Request):
     try:
         updated = llm_decipher_service.update_settings(settings)
     except ValueError as e:
-        return JSONResponse(status_code=400, content={"error": str(e)})
-    except Exception as e:  # noqa: BLE001
+        logger.warning("Invalid LLM profile: %s", e)
+        return JSONResponse(status_code=400, content={"error": "Invalid LLM profile"})
+    except Exception:  # noqa: BLE001
         logger.exception("Failed to create LLM profile")
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        return JSONResponse(status_code=500, content={"error": "Failed to create LLM profile"})
     return {"name": name, "status": "saved", "settings": updated}
 
 
@@ -1708,10 +1710,11 @@ async def delete_llm_profile(name: str):
     try:
         updated = llm_decipher_service.update_settings(settings)
     except ValueError as e:
-        return JSONResponse(status_code=400, content={"error": str(e)})
-    except Exception as e:  # noqa: BLE001
+        logger.warning("Invalid LLM settings on delete: %s", e)
+        return JSONResponse(status_code=400, content={"error": "Invalid LLM settings"})
+    except Exception:  # noqa: BLE001
         logger.exception("Failed to delete LLM profile")
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        return JSONResponse(status_code=500, content={"error": "Failed to delete LLM profile"})
     return {"name": name, "status": "deleted", "settings": updated}
 
 
