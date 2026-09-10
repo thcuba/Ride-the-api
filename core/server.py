@@ -1618,6 +1618,104 @@ async def list_llm_profiles():
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# LLM SETTINGS (dashboard-managed: which LLM to use + its configuration)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@app.get("/api/llm/settings")
+async def get_llm_settings():
+    """Return the effective LLM settings (enabled, default profile, profiles)."""
+    if not llm_decipher_service:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    return llm_decipher_service.get_settings()
+
+
+@app.put("/api/llm/settings")
+async def update_llm_settings(request: Request):
+    """Update the LLM settings (enabled, default profile, profiles) and persist."""
+    if not llm_decipher_service:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
+    if not isinstance(body, dict):
+        return JSONResponse(
+            status_code=400, content={"error": "Invalid JSON body: expected an object"}
+        )
+    try:
+        settings = llm_decipher_service.update_settings(body)
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+    except Exception as e:  # noqa: BLE001
+        logger.exception("Failed to update LLM settings")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+    return settings
+
+
+@app.post("/api/llm/settings/profiles")
+async def create_llm_profile(request: Request):
+    """Create or update a single LLM profile and persist the settings."""
+    if not llm_decipher_service:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
+    if not isinstance(body, dict):
+        return JSONResponse(
+            status_code=400, content={"error": "Invalid JSON body: expected an object"}
+        )
+    name = body.get("name")
+    if not name:
+        return JSONResponse(status_code=400, content={"error": "name is required"})
+
+    settings = llm_decipher_service.get_settings()
+    profiles = settings["profiles"]
+    profiles[name] = {
+        "base_url": body.get("base_url", "https://api.openai.com/v1"),
+        "api_key": body.get("api_key", ""),
+        "model_id": body.get("model_id", "gpt-4o-mini"),
+        "prompt_template": body.get("prompt_template", ""),
+        "enabled": body.get("enabled", True),
+        "timeout": body.get("timeout", 30),
+        "max_retries": body.get("max_retries", 2),
+    }
+    try:
+        updated = llm_decipher_service.update_settings(settings)
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+    except Exception as e:  # noqa: BLE001
+        logger.exception("Failed to create LLM profile")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+    return {"name": name, "status": "saved", "settings": updated}
+
+
+@app.delete("/api/llm/settings/profiles/{name}")
+async def delete_llm_profile(name: str):
+    """Delete an LLM profile and persist the settings."""
+    if not llm_decipher_service:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    settings = llm_decipher_service.get_settings()
+    profiles = settings["profiles"]
+    if name not in profiles:
+        return JSONResponse(status_code=404, content={"error": "Profile not found"})
+    del profiles[name]
+    # If the deleted profile was the default, fall back to the first remaining
+    # profile, or clear it when no profiles are left.
+    if settings["default_profile"] == name:
+        settings["default_profile"] = next(iter(profiles), "")
+    try:
+        updated = llm_decipher_service.update_settings(settings)
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+    except Exception as e:  # noqa: BLE001
+        logger.exception("Failed to delete LLM profile")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+    return {"name": name, "status": "deleted", "settings": updated}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # LLM CONTEXT & BUFFER ENDPOINTS
 # ═══════════════════════════════════════════════════════════════════════════════
 

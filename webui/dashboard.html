@@ -327,6 +327,26 @@
   .profile-modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
   .btn-danger { background: var(--red); color: #fff; }
   .btn-danger:hover { opacity: .8; }
+
+  /* ── LLM Settings modal profile cards ─────────────────────────────────── */
+  .llm-profile-card {
+    background: var(--surface2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px; display: flex; flex-direction: column; gap: 8px;
+  }
+  .llm-profile-card .lpc-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .llm-profile-card .lpc-head .lpc-name { font-size: 13px; font-weight: 700; }
+  .llm-profile-card .lpc-head .lpc-actions { display: flex; gap: 6px; }
+  .llm-profile-card .lpc-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .llm-profile-card .lpc-fields .lpc-field { display: flex; flex-direction: column; gap: 2px; }
+  .llm-profile-card .lpc-fields .lpc-field.full { grid-column: 1 / -1; }
+  .llm-profile-card .lpc-fields label { font-size: 11px; color: var(--text2); }
+  .llm-profile-card .lpc-fields input, .llm-profile-card .lpc-fields textarea {
+    width: 100%; background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px 8px; color: var(--text); font-family: inherit; font-size: 12px;
+  }
+  .llm-profile-card .lpc-fields textarea { min-height: 60px; font-family: 'Courier New', monospace; resize: vertical; }
+  .llm-profile-card .lpc-fields input:focus, .llm-profile-card .lpc-fields textarea:focus { outline: none; border-color: var(--accent); }
+  .llm-profile-card .lpc-enable { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text2); }
 </style>
 </head>
 <body>
@@ -355,6 +375,10 @@
           <span class="ram-slider"></span>
         </label>
       </div>
+      <button class="btn btn-ghost" id="llmSettingsBtn" onclick="openLLMSettings()" aria-label="Configure LLM settings">
+      <svg class="icon-svg" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+      <span>LLM Settings</span>
+    </button>
       <button class="btn btn-ghost" id="refreshBtn" onclick="loadDevices()" aria-label="Refresh device list">
       <svg class="icon-svg" aria-hidden="true" viewBox="0 0 24 24"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
       <span>Refresh</span>
@@ -417,6 +441,39 @@
 </div>
 
 <div id="details" class="invisible" role="dialog" aria-labelledby="details-title" aria-modal="true"></div>
+
+<!-- LLM Settings modal -->
+<div class="profile-modal" id="llm-settings-modal" role="dialog" aria-modal="true" aria-labelledby="llm-settings-title" style="display:none;">
+  <div class="profile-modal-content" style="max-width:720px;">
+    <h3 id="llm-settings-title">&#x1F916; LLM Settings</h3>
+
+    <div class="pm-row">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+        <input type="checkbox" id="llm-enabled-toggle" role="switch" aria-checked="true" onchange="this.setAttribute('aria-checked', this.checked)">
+        Enable LLM deciphering
+      </label>
+    </div>
+
+    <div class="pm-row">
+      <label for="llm-default-profile">Default LLM profile</label>
+      <select id="llm-default-profile" onchange="onLLMDefaultChange()"></select>
+    </div>
+
+    <div class="pm-row">
+      <label>Profiles</label>
+      <div id="llm-profiles-list" style="display:flex;flex-direction:column;gap:8px;max-height:320px;overflow-y:auto;"></div>
+    </div>
+
+    <div class="pm-row" style="display:flex;gap:8px;justify-content:flex-end;">
+      <button class="btn btn-ghost" onclick="addLLMProfile()">+ Add Profile</button>
+    </div>
+
+    <div class="profile-modal-actions">
+      <button class="btn btn-ghost" onclick="closeLLMSettings()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveLLMSettings()">&#x2714; Save</button>
+    </div>
+  </div>
+</div>
 
 <script>
 // ── Control-plane auth ─────────────────────────────────────────────────────
@@ -1090,6 +1147,218 @@ async function deleteProfile(deviceId) {
     showToast('Profile deleted', 'success');
     loadLLMProfiles(deviceId);
   } catch(e) { showToast('Failed to delete profile', 'error'); }
+}
+
+// ── LLM Settings (global: which LLM to use + its configuration) ──────────────
+
+function openLLMSettings() {
+  const modal = document.getElementById('llm-settings-modal');
+  if (modal) modal.style.display = 'flex';
+  loadLLMSettings();
+}
+
+function closeLLMSettings() {
+  const modal = document.getElementById('llm-settings-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+async function loadLLMSettings() {
+  try {
+    const res = await fetch('/api/llm/settings');
+    if (!res.ok) {
+      const err = await res.json();
+      return showToast(err.error || 'Failed to load LLM settings', 'error');
+    }
+    const settings = await res.json();
+    renderLLMSettings(settings);
+  } catch(e) { showToast('Failed to load LLM settings: ' + e.message, 'error'); }
+}
+
+function renderLLMSettings(settings) {
+  const enabledToggle = document.getElementById('llm-enabled-toggle');
+  if (enabledToggle) {
+    enabledToggle.checked = !!settings.enabled;
+    enabledToggle.setAttribute('aria-checked', !!settings.enabled);
+  }
+  const defaultSel = document.getElementById('llm-default-profile');
+  if (defaultSel) {
+    defaultSel.innerHTML = '';
+    Object.keys(settings.profiles || {}).forEach(name => {
+      const opt = document.createElement('option');
+      opt.value = name; opt.textContent = name;
+      defaultSel.appendChild(opt);
+    });
+    defaultSel.value = settings.default_profile || Object.keys(settings.profiles || {})[0] || '';
+  }
+  renderLLMProfileCards(settings);
+}
+
+function renderLLMProfileCards(settings) {
+  const list = document.getElementById('llm-profiles-list');
+  if (!list) return;
+  list.innerHTML = '';
+  const profiles = settings.profiles || {};
+  Object.keys(profiles).forEach(name => {
+    const p = profiles[name];
+    const card = document.createElement('div');
+    card.className = 'llm-profile-card';
+    card.dataset.name = name;
+    card.innerHTML = `
+      <div class="lpc-head">
+        <span class="lpc-name">${escapeHtml(name)}</span>
+        <div class="lpc-actions">
+          <label class="lpc-enable">
+            <input type="checkbox" class="lpc-enabled" ${p.enabled ? 'checked' : ''}> Enabled
+          </label>
+          <button class="btn btn-danger" style="padding:2px 8px;font-size:11px;" onclick="deleteLLMProfile('${escapeJs(name)}')">Delete</button>
+        </div>
+      </div>
+      <div class="lpc-fields">
+        <div class="lpc-field">
+          <label>Base URL</label>
+          <input type="text" class="lpc-base-url" value="${escapeHtml(p.base_url || '')}">
+        </div>
+        <div class="lpc-field">
+          <label>Model ID</label>
+          <input type="text" class="lpc-model-id" value="${escapeHtml(p.model_id || '')}">
+        </div>
+        <div class="lpc-field full">
+          <label>API Key</label>
+          <input type="password" class="lpc-api-key" value="${escapeHtml(p.api_key || '')}" autocomplete="off">
+        </div>
+        <div class="lpc-field">
+          <label>Timeout (s)</label>
+          <input type="number" class="lpc-timeout" value="${escapeHtml(p.timeout ?? 30)}" min="1">
+        </div>
+        <div class="lpc-field">
+          <label>Max Retries</label>
+          <input type="number" class="lpc-max-retries" value="${escapeHtml(p.max_retries ?? 2)}" min="0">
+        </div>
+        <div class="lpc-field full">
+          <label>Prompt Template</label>
+          <textarea class="lpc-prompt-template">${escapeHtml(p.prompt_template || '')}</textarea>
+        </div>
+      </div>`;
+    list.appendChild(card);
+  });
+}
+
+function onLLMDefaultChange() {
+  // No-op hook; the default profile is read at save time.
+}
+
+function addLLMProfile() {
+  const list = document.getElementById('llm-profiles-list');
+  if (!list) return;
+  const name = prompt('New profile name:');
+  if (!name || !name.trim()) return;
+  const card = document.createElement('div');
+  card.className = 'llm-profile-card';
+  card.dataset.name = name.trim();
+  card.innerHTML = `
+    <div class="lpc-head">
+      <span class="lpc-name">${escapeHtml(name.trim())}</span>
+      <div class="lpc-actions">
+        <label class="lpc-enable">
+          <input type="checkbox" class="lpc-enabled" checked> Enabled
+        </label>
+        <button class="btn btn-danger" style="padding:2px 8px;font-size:11px;" onclick="deleteLLMProfile('${escapeJs(name.trim())}')">Delete</button>
+      </div>
+    </div>
+    <div class="lpc-fields">
+      <div class="lpc-field">
+        <label>Base URL</label>
+        <input type="text" class="lpc-base-url" value="https://api.openai.com/v1">
+      </div>
+      <div class="lpc-field">
+        <label>Model ID</label>
+        <input type="text" class="lpc-model-id" value="gpt-4o-mini">
+      </div>
+      <div class="lpc-field full">
+        <label>API Key</label>
+        <input type="password" class="lpc-api-key" autocomplete="off">
+      </div>
+      <div class="lpc-field">
+        <label>Timeout (s)</label>
+        <input type="number" class="lpc-timeout" value="30" min="1">
+      </div>
+      <div class="lpc-field">
+        <label>Max Retries</label>
+        <input type="number" class="lpc-max-retries" value="2" min="0">
+      </div>
+      <div class="lpc-field full">
+        <label>Prompt Template</label>
+        <textarea class="lpc-prompt-template"></textarea>
+      </div>
+    </div>`;
+  list.appendChild(card);
+  // Make the new profile selectable as default.
+  const defaultSel = document.getElementById('llm-default-profile');
+  if (defaultSel) {
+    const opt = document.createElement('option');
+    opt.value = name.trim(); opt.textContent = name.trim();
+    defaultSel.appendChild(opt);
+  }
+}
+
+function deleteLLMProfile(name) {
+  if (!confirm('Delete LLM profile "' + name + '"?')) return;
+  const list = document.getElementById('llm-profiles-list');
+  if (!list) return;
+  const card = list.querySelector('.llm-profile-card[data-name="' + name + '"]');
+  if (card) card.remove();
+  const defaultSel = document.getElementById('llm-default-profile');
+  if (defaultSel) {
+    const opt = [...defaultSel.options].find(o => o.value === name);
+    if (opt) opt.remove();
+    if (defaultSel.value === name) defaultSel.value = defaultSel.options[0] ? defaultSel.options[0].value : '';
+  }
+}
+
+function collectLLMSettings() {
+  const enabled = document.getElementById('llm-enabled-toggle').checked;
+  const defaultProfile = document.getElementById('llm-default-profile').value;
+  const profiles = {};
+  const list = document.getElementById('llm-profiles-list');
+  if (list) {
+    list.querySelectorAll('.llm-profile-card').forEach(card => {
+      const name = card.dataset.name;
+      profiles[name] = {
+        base_url: card.querySelector('.lpc-base-url').value,
+        api_key: card.querySelector('.lpc-api-key').value,
+        model_id: card.querySelector('.lpc-model-id').value,
+        prompt_template: card.querySelector('.lpc-prompt-template').value,
+        enabled: card.querySelector('.lpc-enabled').checked,
+        timeout: parseInt(card.querySelector('.lpc-timeout').value, 10) || 30,
+        max_retries: parseInt(card.querySelector('.lpc-max-retries').value, 10) || 2,
+      };
+    });
+  }
+  return { enabled, default_profile: defaultProfile, profiles };
+}
+
+async function saveLLMSettings() {
+  const settings = collectLLMSettings();
+  if (!settings.default_profile || !settings.profiles[settings.default_profile]) {
+    return showToast('A valid default profile is required', 'error');
+  }
+  try {
+    const res = await fetch('/api/llm/settings', {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(settings),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      return showToast(err.error || 'Failed to save LLM settings', 'error');
+    }
+    showToast('LLM settings saved', 'success');
+    closeLLMSettings();
+    // Refresh the per-device profile dropdowns so they reflect the new set.
+    document.querySelectorAll('[id^="profile-select-"]').forEach(sel => {
+      const id = sel.id.replace('profile-select-', '');
+      loadLLMProfiles(id);
+    });
+  } catch(e) { showToast('Failed to save LLM settings: ' + e.message, 'error'); }
 }
 
 async function loadContextNotes(deviceId) {

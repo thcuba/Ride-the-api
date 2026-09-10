@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field, SecretStr, ValidationError, field_validat
 
 from core.config import get_config_manager
 from core.fallback_policy import FallbackChain, ProviderCircuitBreaker
+from core.llm_settings import load_llm_settings, save_llm_settings
 from core.retry import make_retryer
 
 logger = logging.getLogger(__name__)
@@ -164,6 +165,7 @@ class LLMDecipherService:
         self._config = None
         self._profiles: dict[str, LLMProfile] = {}
         self._default_profile = "default"
+        self._enabled = True
         self._clients: dict[str, AsyncOpenAI] = {}
         # Connection fingerprint per profile; a change invalidates its client.
         self._client_fingerprints: dict[str, tuple] = {}
@@ -191,6 +193,7 @@ class LLMDecipherService:
             return
 
         self._default_profile = getattr(self._config, "default_profile", "default")
+        self._enabled = bool(getattr(self._config, "enabled", True))
 
         # Load profiles (fully replace so removed profiles drop out on reload).
         profiles_config = getattr(self._config, "profiles", {})
@@ -207,6 +210,36 @@ class LLMDecipherService:
                 max_retries=getattr(profile_config, "max_retries", 2),
             )
             new_profiles[name] = profile
+
+        # Apply dashboard-managed runtime overrides on top of config.yaml.
+        # These win over the file defaults so an operator can change the LLM
+        # (and its configuration) from the dashboard without editing YAML.
+        # When the runtime file carries a ``profiles`` key it is the source of
+        # truth for the profile set, so it *replaces* the config.yaml profiles
+        # (a profile deleted in the dashboard must actually disappear).
+        overrides = load_llm_settings()
+        if overrides:
+            if "enabled" in overrides:
+                self._enabled = bool(overrides["enabled"])
+            if "default_profile" in overrides:
+                self._default_profile = overrides["default_profile"]
+            if "profiles" in overrides:
+                runtime_profiles = overrides.get("profiles")
+                if isinstance(runtime_profiles, dict):
+                    new_profiles = {}
+                    for name, pcfg in runtime_profiles.items():
+                        if not isinstance(pcfg, dict):
+                            continue
+                        new_profiles[name] = LLMProfile(
+                            name=name,
+                            base_url=pcfg.get("base_url", "https://api.openai.com/v1"),
+                            api_key=pcfg.get("api_key", ""),
+                            model_id=pcfg.get("model_id", "gpt-4o-mini"),
+                            prompt_template=pcfg.get("prompt_template", ""),
+                            enabled=pcfg.get("enabled", True),
+                            timeout=pcfg.get("timeout", 30),
+                            max_retries=pcfg.get("max_retries", 2),
+                        )
 
         # Drop cached clients whose connection parameters changed so the next
         # call recreates them (real hot reload of endpoint/credentials).
@@ -261,7 +294,88 @@ class LLMDecipherService:
 
     def list_profiles(self) -> list[str]:
         """List available profile names."""
+        if not self._enabled:
+            return []
         return [name for name, p in self._profiles.items() if p.enabled]
+
+    def is_enabled(self) -> bool:
+        """Whether LLM deciphering is globally enabled."""
+        return self._enabled
+
+    def get_settings(self) -> dict:
+        """Return the effective LLM settings (enabled, default profile, profiles).
+
+        This is the dashboard-facing view: the runtime overrides merged with the
+        ``config.yaml`` defaults. API keys are returned as-is so the operator can
+        see and edit them; the value is masked only at the point of display.
+        """
+        profiles = {}
+        for name, p in self._profiles.items():
+            profiles[name] = {
+                "base_url": p.base_url,
+                "api_key": p.api_key.get_secret_value(),
+                "model_id": p.model_id,
+                "prompt_template": p.prompt_template,
+                "enabled": p.enabled,
+                "timeout": p.timeout,
+                "max_retries": p.max_retries,
+            }
+        return {
+            "enabled": self._enabled,
+            "default_profile": self._default_profile,
+            "profiles": profiles,
+        }
+
+    def update_settings(self, settings: dict) -> dict:
+        """Apply dashboard-provided LLM settings and persist them.
+
+        ``settings`` is the full effective state (``enabled``,
+        ``default_profile``, ``profiles``). It is validated, persisted to the
+        runtime settings file, and the in-memory profiles are reloaded so the
+        change takes effect immediately (no file-watch delay).
+        """
+        if not isinstance(settings, dict):
+            raise ValueError("settings must be an object")
+
+        enabled = bool(settings.get("enabled", self._enabled))
+        default_profile = settings.get("default_profile", self._default_profile)
+        profiles = settings.get("profiles", {})
+
+        if not isinstance(profiles, dict):
+            raise ValueError("profiles must be an object")
+
+        # Validate each profile before persisting anything.
+        validated: dict[str, dict] = {}
+        for name, pcfg in profiles.items():
+            if not isinstance(pcfg, dict):
+                raise ValueError(f"profile '{name}' must be an object")
+            validated[name] = {
+                "base_url": str(pcfg.get("base_url", "https://api.openai.com/v1")),
+                "api_key": str(pcfg.get("api_key", "")),
+                "model_id": str(pcfg.get("model_id", "gpt-4o-mini")),
+                "prompt_template": str(pcfg.get("prompt_template", "")),
+                "enabled": bool(pcfg.get("enabled", True)),
+                "timeout": int(pcfg.get("timeout", 30)),
+                "max_retries": int(pcfg.get("max_retries", 2)),
+            }
+
+        if default_profile and default_profile not in validated:
+            raise ValueError(f"default_profile '{default_profile}' is not a known profile")
+
+        payload = {
+            "enabled": enabled,
+            "default_profile": default_profile,
+            "profiles": validated,
+        }
+        save_llm_settings(payload)
+
+        # Reload in-memory state so the change is live immediately.
+        self._load_config()
+        return self.get_settings()
+
+    def reload(self) -> None:
+        """Re-read config.yaml and runtime overrides (used after external edits)."""
+        self._load_config()
 
     def available_profiles(self, preferred: str | None = None) -> list[str]:
         """Return enabled profile names ordered for rotation.
@@ -271,6 +385,8 @@ class LLMDecipherService:
         follow in declaration order, so a degraded provider never blocks the
         whole path.
         """
+        if not self._enabled:
+            return []
         enabled = [n for n, p in self._profiles.items() if p.enabled]
         if not enabled:
             return []
