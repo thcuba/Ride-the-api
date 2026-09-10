@@ -8,7 +8,9 @@
 # config/config.yaml and the relative ./data ./certs paths regardless of where
 # the exe lives.
 param(
-    [switch]$Uninstall
+    [switch]$Uninstall,
+    [switch]$AutoStart,
+    [switch]$ManualStart
 )
 
 $ErrorActionPreference = "Stop"
@@ -61,13 +63,28 @@ New-Item -ItemType Directory -Force -Path (Join-Path $DataDir "logs")   | Out-Nu
 
 $nssm = Get-Nssm
 
+# On upgrade the service from the previous installation is still registered.
+# Stop and remove it first so `nssm install` below registers a clean service
+# pointing at the freshly installed binaries.
+$existing = Get-Service $ServiceName -ErrorAction SilentlyContinue
+if ($existing) {
+    Write-Host "==> Service '$ServiceName' already exists; stopping and removing it"
+    & $nssm stop $ServiceName 2>$null
+    & $nssm remove $ServiceName confirm 2>$null
+}
+
 Write-Host "==> Installing service '$ServiceName'"
 & $nssm install $ServiceName $ExePath
 & $nssm set $ServiceName AppParameters "--service"
 & $nssm set $ServiceName AppDirectory $DataDir
 & $nssm set $ServiceName AppEnvironmentExtra "RIDE_THE_API_DATA=$DataDir"
 & $nssm set $ServiceName Description "ride-the-api: local cloud replacement proxy"
-& $nssm set $ServiceName Start SERVICE_AUTO_START
+# Start type decided at install time: auto-start with Windows or manual.
+if ($ManualStart) {
+    & $nssm set $ServiceName Start SERVICE_DEMAND_START
+} else {
+    & $nssm set $ServiceName Start SERVICE_AUTO_START
+}
 & $nssm set $ServiceName AppRotateFiles 1
 & $nssm set $ServiceName AppStderrFile "$DataDir\logs\service-stderr.log"
 & $nssm set $ServiceName AppStdoutFile "$DataDir\logs\service-stdout.log"

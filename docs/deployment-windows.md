@@ -7,8 +7,9 @@ and how to build the Windows installer. It is complementary to
 > **Scope of the Windows build**: the exact same project
 > (`core/server.py`, API on `:8911`, TLS-MITM listeners on the configured
 > ports) packaged with **PyInstaller** (onedir) and distributed as an
-> **Inno Setup installer** that registers the server as an auto-start
-> **Windows service** (NSSM).
+> **Inno Setup installer** that registers the server as a **Windows service**
+> (NSSM). At install time the user chooses whether the service starts
+> automatically with Windows or is started manually.
 
 ---
 
@@ -18,8 +19,10 @@ and how to build the Windows installer. It is complementary to
 - A **tkinter control panel** (the exe entry point is `gui_main.py`): server
   status, an "Open dashboard" button and a live log view. No console window.
   Configuration still happens in the browser dashboard.
-- A Windows service `ride-the-api` set to **auto-start** (via NSSM), running
-  headless (`--service`) with working directory `%ProgramData%\ride-the-api`.
+- A Windows service `ride-the-api` (via NSSM), running headless (`--service`)
+  with working directory `%ProgramData%\ride-the-api`. During installation you
+  choose whether it starts **automatically with Windows** or is started
+  manually.
 - Logs written to the data dir (`logs/ride-the-api.log`, service mode) or
   `logs\service-*.log` (NSSM redirection).
 
@@ -83,10 +86,15 @@ Output: `dist\installer\ride-the-api-setup.exe`.
 Run `ride-the-api-setup.exe` as **Administrator** (the service registration and
 `%ProgramData%` seeding need elevation). The installer:
 
-1. Installs the app into `%ProgramFiles%\ride-the-api`.
-2. Runs `packaging\install_service.ps1` (bundled NSSM) which registers and
-   starts the `ride-the-api` service (`--service`, headless).
-3. Opens the dashboard at <http://localhost:8911>.
+1. **Upgrade handling**: if a previous installation is detected, the old
+   `ride-the-api` service is stopped and any running `ride-the-api.exe`
+   process is terminated so the new version's files can be overwritten.
+2. Installs the app into `%ProgramFiles%\ride-the-api`.
+3. Runs `packaging\install_service.ps1` (bundled NSSM) which registers and
+   starts the `ride-the-api` service (`--service`, headless). A checkbox on
+   the "Select Tasks" page lets you choose whether the service starts
+   automatically with Windows (default) or is started manually.
+4. Opens the dashboard at <http://localhost:8911>.
 
 To use the **control panel** instead of (or in addition to) the service, launch
 `ride-the-api.exe` (Start Menu → "ride-the-api"). If the service is already
