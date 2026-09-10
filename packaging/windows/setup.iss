@@ -28,7 +28,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 
 ; Let the user decide whether the service starts automatically with Windows.
 [Tasks]
-Name: "autostart"; Description: "Avvia ride-the-api automaticamente all'avvio di Windows"; GroupDescription: "Avvio automatico:"; Flags: checked
+Name: "autostart"; Description: "Avvia ride-the-api automaticamente all'avvio di Windows"; GroupDescription: "Avvio automatico:"
 
 ; Bundle the PowerShell script used to register the service.
 [Files]
