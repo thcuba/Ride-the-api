@@ -718,23 +718,24 @@ async function loadDeviceStats(deviceId) {
       ${spark}
       <div class="mode-area">
         <label for="mode-select-${escapeHtml(deviceId)}">Mode:</label>
-        <select id="mode-select-${escapeHtml(deviceId)}">
-          <option value="learning" ${s.mode === 'learning' ? 'selected' : ''}>Cloud — Learn All</option>
-          <option value="production" ${s.mode === 'production' ? 'selected' : ''}>Local — Serve All</option>
-          <option value="hybrid" ${s.mode === 'hybrid' ? 'selected' : ''}>Hybrid — Local then Cloud</option>
+        <select id="mode-select-${escapeHtml(deviceId)}" title="Select traffic routing mode for this device" aria-label="Device mode selector">
+          <option value="learning" ${s.mode === 'learning' ? 'selected' : ''} title="Forward all requests to cloud and record response patterns">Cloud — Learn All</option>
+          <option value="production" ${s.mode === 'production' ? 'selected' : ''} title="Serve all matched requests locally without cloud forwarding">Local — Serve All</option>
+          <option value="hybrid" ${s.mode === 'hybrid' ? 'selected' : ''} title="Serve local matches first, fallback to cloud for misses">Hybrid — Local then Cloud</option>
         </select>
-        <button class="btn btn-primary" onclick="switchMode('${escapeJs(deviceId)}')">Apply</button>
+        <button class="btn btn-primary" onclick="switchMode('${escapeJs(deviceId)}')" title="Apply selected routing mode" aria-label="Apply mode change">Apply</button>
       </div>
 
               <!-- Auto-Switch to Production toggle -->
               <div class="mode-area" style="margin-top: 8px;">
-                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;" title="Automatically switch device mode to Production once match rate reaches 99%">
                   <input type="checkbox" id="auto-switch-${escapeHtml(deviceId)}"
                          ${s.auto_switch_enabled ? 'checked' : ''}
+                         aria-label="Auto-switch to production when match rate reaches 99%"
                          onchange="toggleAutoSwitch('${escapeJs(deviceId)}', this.checked)">
                   <span>Auto-Switch to Production (99% match rate)</span>
                 </label>
-                <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">
+                <div style="font-size:12px;color:var(--text2);margin-top:4px;">
                   Current match rate: ${s.match_rate_pct != null ? s.match_rate_pct.toFixed(1) + '%' : 'N/A'}
                   &middot; Threshold: 99.0%
                 </div>
