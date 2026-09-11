@@ -124,8 +124,11 @@ def _select_handler_adapter(
     - Otherwise, fall back to the first adapter that supports the *resolved*
       protocol (from ``ip_profiles`` → ``device_meta`` → ingress default). This
       is the new ingress consumption of ``connection_mode``/``ProtocolInfo``:
-      a device whose protocol was decided at first flush gets routed to the
-      matching handler even when its vendor is generic/unknown.
+      a device whose protocol was decided at first flush gets its **adapter**
+      resolved from that hierarchy, so it is handled by the matching adapter
+      even when its vendor is generic/unknown. The resolved protocol is used
+      only for adapter selection, **not** for request routing (inside
+      ``handle_request`` the ``protocol`` argument is unused).
     """
     if not adapter_registry:
         return None

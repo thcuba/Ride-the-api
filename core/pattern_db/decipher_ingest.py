@@ -466,9 +466,10 @@ class DecipherIngest:
 
         Writes the v1 SQL tables (RequestPattern / ResponseTemplate /
         FieldMapping) via :meth:`DeviceModel.to_pattern_db`, and persists the
-        identification header (protocol) into DeviceMeta so routing can consume
-        it. ``observation_history`` is preserved in the model object (and any
-        re-export) but is handed to the buffer/observation layer, not SQL.
+        identification header (protocol) into DeviceMeta so the ingress adapter
+        selection can consume it. ``observation_history`` is preserved in the
+        model object (and any re-export) but is handed to the buffer/observation
+        layer, not SQL.
         """
         header = {
             "protocols": [model.protocol.protocol] if model.protocol.protocol else [],
