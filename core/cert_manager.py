@@ -29,7 +29,12 @@ logger = logging.getLogger(__name__)
 
 
 class CertManager:
-    """Manages CA and per-hostname leaf certificates for TLS interception."""
+    """Manages CA and per-hostname leaf certificates for TLS interception.
+
+    Security Note: All generated and imported private key files are created
+    with restricted permissions (0600, owner read/write only) to prevent
+    unauthorized local reading of sensitive key material.
+    """
 
     def __init__(  # noqa: PLR0913
         self,
