@@ -128,6 +128,7 @@ class CoAPServerPlugin(ProtocolServerPlugin):
             device_id=f"coap-{remote_ip}",
             timestamp=datetime.now(UTC).timestamp(),
             protocol=ProtocolType.COAP,
+            client_ip=remote_ip,
             method=coap_method,
             path=f"/{path}",
             headers={},

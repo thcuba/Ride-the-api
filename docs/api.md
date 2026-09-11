@@ -25,6 +25,7 @@
   - [Database Assignment](#database-assignment-post-apidevicesdevice_iddatabase)
   - [IP Resolution](#ip-resolution-get-apidevicesby-ipip_address)
   - [IP Registration](#ip-registration-post-apidevicesdevice_idip)
+  - [Bypass mode](#bypass-mode-get-apiip-profilesip_addressbypass)
 - [Buffer](#buffer)
   - [List Buffer](#list-buffer-get-apidevicesdevice_idbuffer)
   - [Delete Buffer Entry](#delete-buffer-entry-delete-apidevicesdevice_idbufferentry_id)
@@ -357,6 +358,39 @@ Looks up a device by IP address.
   "device_id": "ip-192-168-1-42",
   "ip_address": "192.168.1.42"
 }
+```
+
+---
+
+### Bypass mode: `GET /api/ip-profiles/{ip_address}/bypass`
+
+Returns the per-IP bypass mode (from `ip_profiles` config, default `false`).
+
+**Response `200 OK`**
+
+```json
+{
+  "ip_address": "192.168.1.42",
+  "bypass": false
+}
+```
+
+### Bypass mode: `PUT /api/ip-profiles/{ip_address}/bypass`
+
+Enables/disables bypass for an IP, persisting to the config file. A bypassed IP
+still transits the gateway but is forwarded straight to the real cloud with no
+analysis (no buffer/LLM/local match).
+
+**Request body**
+
+```json
+{ "bypass": true }
+```
+
+**Response `200 OK`**
+
+```json
+{ "ip_address": "192.168.1.42", "bypass": true }
 ```
 
 ---

@@ -761,6 +761,22 @@ class DatabaseManager:
                 return "auto"
             return (device.extra_attributes or {}).get("connection", "auto")
 
+    async def is_ips_bypassed(self, ip: str) -> bool:
+        """Return True if the IP is in per-IP bypass mode.
+
+        A bypassed device still transits the gateway (its traffic is seen) but
+        is forwarded straight to the cloud without buffer/LLM/local match.
+
+        Source of truth: ``ip_profiles[ip].bypass`` in the config file (the
+        per-IP override can be edited there or via the dashboard/API toggle that
+        persists back to config).
+        """
+        try:
+            profile = get_config().core.ip_profiles.get(ip)
+        except Exception:  # noqa: BLE001 - config not ready
+            profile = None
+        return bool(profile and profile.bypass)
+
     async def read_device_meta(self, device_id: str) -> dict | None:
         """Return the persisted device header (``device_meta``) or ``None``.
 

@@ -1823,6 +1823,12 @@ class LearningOrchestrator:
                 stats["resolved_protocol"] = await self.db_manager.resolve_device_protocol(
                     device_id
                 )
+                ips = list(device.ip_addresses or [])
+                stats["ip_addresses"] = ips
+                stats["primary_ip"] = ips[0] if ips else None
+                # Bypass state (per-IP: from any profile IP, else config default).
+                bypass_flags = [await self.db_manager.is_ips_bypassed(ip) for ip in ips]
+                stats["bypass"] = any(bypass_flags)
         return stats
 
 

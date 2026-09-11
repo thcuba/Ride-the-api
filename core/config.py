@@ -16,6 +16,8 @@ from watchfiles import Change, watch
 
 from core.modification import ModificationAction
 
+logger = logging.getLogger(__name__)
+
 
 class ContextBufferSizes(int, Enum):
     KB_128 = 131072
@@ -64,6 +66,7 @@ class IpProfileConfig(BaseModel):
 
     database: str | None = None  # URL override; None -> default per-device DB
     connection: ConnectionType = ConnectionType.AUTO
+    bypass: bool = False  # True -> forward this IP to the cloud without analysis
 
 
 class BufferConfig(BaseModel):
@@ -525,6 +528,38 @@ class ConfigManager:
             self._config = config
 
         return config
+
+    def set_ip_profile_bypass(self, ip: str, bypass: bool) -> bool:
+        """Set/clear ``ip_profiles[ip].bypass`` and persist to the config file.
+
+        Mutates the in-memory config, writes the file atomically and leaves the
+        hot-reload watcher to refresh other consumers. Returns True on success.
+        """
+        cfg = self.config
+        with self._lock:
+            profile = cfg.core.ip_profiles.get(ip, IpProfileConfig())
+            profile.bypass = bypass
+            cfg.core.ip_profiles[ip] = profile
+        return self._write()
+
+    def _write(self) -> bool:
+        """Atomically persist the current config back to the YAML file."""
+        try:
+            cfg = self.config
+            tmp = self.config_path.with_suffix(".yaml.tmp")
+            with tmp.open("w", encoding="utf-8") as f:
+                yaml.safe_dump(
+                    cfg.model_dump(mode="json", by_alias=False),
+                    f,
+                    default_flow_style=False,
+                    allow_unicode=True,
+                    sort_keys=False,
+                )
+            tmp.replace(self.config_path)
+        except Exception:  # noqa: BLE001 - persist failure should not crash
+            logger.exception("ConfigManager: failed to persist config to %s", self.config_path)
+            return False
+        return True
 
     @property
     def config(self) -> Config:
