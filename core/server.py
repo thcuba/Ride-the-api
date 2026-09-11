@@ -170,6 +170,12 @@ async def handle_tls_decrypted_request(req: DecryptedRequest) -> dict | None:
         # Apply any per-IP override: custom database + connection type (default auto)
         await db_manager.apply_ip_profile(device_id, req.client_ip)
 
+        # Per-IP bypass: forward this device's traffic straight to the cloud
+        # without pipeline analysis (no buffer/LLM/local match).
+        if await db_manager.is_ips_bypassed(req.client_ip):
+            logger.info("TLS: %s is in bypass, forwarding to cloud directly", req.client_ip)
+            return {"action": "forward", "reason": "bypass"}
+
         # Ensure a dedicated device database exists
         device_db_dir = Path(config.core.device_db_dir)
         device_db_path = device_db_dir / f"{device_id}.db"
@@ -279,6 +285,14 @@ async def handle_protocol_request(request: InterceptedRequest) -> dict | None:
 
     try:
         await db_manager.get_or_create_device(device_id, "unknown")
+
+        # Per-IP bypass: forward straight to the cloud without pipeline analysis.
+        # Only applies when the plugin exposed a source IP (CoAP/TCP/WS/HTTP2);
+        # protocols without an IP (MQTT/Modbus/bridges) never match here.
+        cli_ip = getattr(request, "client_ip", None)
+        if cli_ip and await db_manager.is_ips_bypassed(cli_ip):
+            logger.info("Protocol handler: %s is in bypass, forwarding to cloud", cli_ip)
+            return {"action": "forward", "reason": "bypass"}
 
         # Resolve the operational protocol (ip_profiles > device_meta -> default).
         # The plugin protocol is the physical protocol actually spoken, so an
@@ -1276,6 +1290,31 @@ async def update_device_connection(device_id: str, request: Request):
     return {"device_id": device_id, "connection": connection.value}
 
 
+@app.get("/api/ip-profiles/{ip_address}/bypass")
+async def get_ip_bypass(ip_address: str):
+    """Get the bypass mode for an IP (from ip_profiles config, default False)."""
+    if not db_manager:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    return {"ip_address": ip_address, "bypass": await db_manager.is_ips_bypassed(ip_address)}
+
+
+@app.put("/api/ip-profiles/{ip_address}/bypass")
+async def set_ip_bypass(ip_address: str, request: Request):
+    """Set/clear bypass for an IP, persisting to the config file."""
+    if not db_manager:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    body = await request.json()
+    if not isinstance(body, dict) or "bypass" not in body:
+        return JSONResponse(
+            status_code=400, content={"error": "Expected JSON body with a 'bypass' boolean"}
+        )
+    bypass = bool(body["bypass"])
+    ok = config_manager.set_ip_profile_bypass(ip_address, bypass)
+    if not ok:
+        return JSONResponse(status_code=500, content={"error": "Failed to persist config"})
+    return {"ip_address": ip_address, "bypass": bypass}
+
+
 @app.post("/api/devices/{device_id}/ip")
 async def register_device_ip(device_id: str, request: Request):
     """Register an IP address for a device."""
@@ -2140,6 +2179,53 @@ try:
 except Exception as e:
     logger.warning("Could not mount static files: %s", e)
 
+# ── Main proxy endpoint helpers ───────────────────────────────────────────────
+
+
+async def _forward_bypassed_request(
+    adapter, request: Request, path: str, body, client_ip: str
+) -> JSONResponse:
+    """Forward a bypassed device's request straight to the cloud.
+
+    Used by the HTTP proxy endpoint for per-IP bypass: the traffic transits the
+    gateway but is forwarded without pipeline analysis (no buffer/LLM/match).
+    Mirrors the unmatched-request forward contract — 502 + X-Action: forward
+    for nginx when ``signal_forward_to_cloud`` is on, else legacy adapter
+    forward.
+    """
+    config = config_manager.config
+    if config.learning.signal_forward_to_cloud:
+        return JSONResponse(
+            status_code=502,
+            content={"action": "forward", "reason": "bypass"},
+            headers={"X-Action": "forward", "X-Original-Host": str(request.url)},
+        )
+    cloud_response = await adapter.forward_to_cloud(
+        InterceptedRequest(
+            device_id="",
+            timestamp=datetime.now(UTC),
+            protocol=(
+                ProtocolType.HTTPS if request.url.scheme == "https" else ProtocolType.HTTP
+            ),
+            method=request.method,
+            path=f"/{path}",
+            headers=dict(request.headers),
+            query_params=dict(request.query_params),
+            body=body,
+            client_ip=client_ip,
+        )
+    )
+    if cloud_response and cloud_response.success:
+        return JSONResponse(content=cloud_response.response or {})
+    return JSONResponse(
+        status_code=502,
+        content={
+            "error": "Cloud passthrough failed",
+            "detail": str(cloud_response.error) if cloud_response else "No response",
+        },
+    )
+
+
 # MAIN PROXY ENDPOINT - Catches all device traffic
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -2202,6 +2288,16 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
                 status_code=200,
                 content={"status": "passthrough", "message": "Traffic forwarded directly"},
             )
+
+    # Per-IP bypass: forward this device's traffic straight to the cloud, skipping
+    # the pipeline entirely (no buffer/LLM/local match). Uses the same forward
+    # contract as an unmatched request: 502 + X-Action: forward for nginx when
+    # signal_forward_to_cloud is on, else the legacy adapter forward.
+    if await db_manager.is_ips_bypassed(client_ip):
+        logger.info(f"Bypass for {client_ip} to {vendor}: forwarding to cloud directly")
+        return await _forward_bypassed_request(
+            adapter, request, path, body, client_ip
+        )
 
     # Build intercepted request
     intercepted = InterceptedRequest(

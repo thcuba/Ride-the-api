@@ -118,7 +118,7 @@ class HTTP2ServerPlugin(ProtocolServerPlugin):
                             # and is fully dispatched while here.
                             if event.stream_ended:
                                 stream = pending.pop(event.stream_id)
-                                await self._drain(conn, writer, stream, device_id)
+                                await self._drain(conn, writer, stream, device_id, remote_ip)
                     elif isinstance(event, h2.events.DataReceived):
                         stream = pending.get(event.stream_id)
                         if stream is not None:
@@ -137,7 +137,7 @@ class HTTP2ServerPlugin(ProtocolServerPlugin):
                     elif isinstance(event, h2.events.StreamEnded):
                         stream = pending.pop(event.stream_id, None)
                         if stream is not None:
-                            await self._drain(conn, writer, stream, device_id)
+                            await self._drain(conn, writer, stream, device_id, remote_ip)
                 if conn.data_to_send():
                     writer.write(conn.data_to_send())
                     await writer.drain()
@@ -156,6 +156,7 @@ class HTTP2ServerPlugin(ProtocolServerPlugin):
         writer: asyncio.Writer,
         stream: dict,
         device_id: str,
+        remote_ip: str,
     ) -> None:
         """Build the request from headers + accumulated body and dispatch."""
         headers = stream["headers"]
@@ -176,6 +177,7 @@ class HTTP2ServerPlugin(ProtocolServerPlugin):
             device_id=device_id,
             timestamp=datetime.now(UTC).timestamp(),
             protocol=ProtocolType.HTTP2,
+            client_ip=remote_ip,
             method=method,
             path=path if path.startswith("/") else f"/{path}",
             scheme=scheme,

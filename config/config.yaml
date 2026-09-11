@@ -21,12 +21,16 @@ core:
   #   connection: auto (default) | tls | http | mqtt | coap | modbus
   #     auto -> detect on first bytes: TLS ClientHello = decrypt (MITM),
   #             otherwise route to the matching known protocol handler.
+  #   bypass:     true forwards that IP's traffic straight to the cloud with NO
+  #               analysis (no buffer/LLM/local match). Default false. Can also
+  #               be toggled from the dashboard (persists back here).
   # ip_profiles:
   #   "192.168.1.50":
   #     database: "postgresql://localhost/shelly_lab"
   #     connection: tls
   #   "192.168.1.60":
   #     connection: http
+  #     bypass: true
   
   # Default context buffer size (128KB, 256KB, 512KB, 1MB, 2MB, 5MB, 10MB)
   default_context_buffer_size: 524288  # 512KB

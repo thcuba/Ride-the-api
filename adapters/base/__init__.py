@@ -159,6 +159,10 @@ class InterceptedRequest:
     device_id: str
     timestamp: datetime | float
     protocol: ProtocolType
+    # Source address when the protocol server can observe it (TCP/CoAP/WS/HTTP2).
+    # ``None`` for protocols without a source IP (MQTT by client_id, Modbus by
+    # unit, Zigbee/Matter/Z-Wave). Used for per-IP bypass and routing decisions.
+    client_ip: str | None = None
     # HTTP/HTTPS
     method: str | None = None
     path: str | None = None

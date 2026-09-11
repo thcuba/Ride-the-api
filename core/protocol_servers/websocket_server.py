@@ -93,6 +93,7 @@ class WebSocketServerPlugin(ProtocolServerPlugin):
                     device_id=device_id,
                     timestamp=datetime.now(UTC).timestamp(),
                     protocol=ProtocolType.WEBSOCKET,
+                    client_ip=remote_ip,
                     method="WS",
                     path=self.config.path,
                     body=body,

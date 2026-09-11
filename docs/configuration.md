@@ -33,7 +33,13 @@ Database and per-device context configuration.
 | `database_url` | `string` | `"sqlite+aiosqlite:///./ridebase/core.db"` | Core database connection URL (SQLite with aiosqlite) |
 | `device_db_dir` | `string` | `"./ridebase/devices"` | Directory for per-device databases |
 | `device_databases` | `dict[string, string]` | `{}` | Device-name → database path map, to override the default path |
+| `ip_profiles` | `dict[string, object]` | `{}` | Per-IP overrides: `database` (custom DB URL), `connection` (`auto` default \| `tls` \| `http` \| `mqtt` \| `coap` \| `modbus`) and `bypass` (boolean, default `false`) |
 | `default_context_buffer_size` | `integer` | `524288` | Default context buffer size in bytes (default 512 KB). Possible values from enum `ContextBufferSizes`: `131072` (128 KB), `262144` (256 KB), `524288` (512 KB), `1048576` (1 MB), `2097152` (2 MB), `5242880` (5 MB), `10485760` (10 MB) |
+
+`ip_profiles` — the `bypass` flag forwards that IP source's traffic straight to
+the real cloud **without analysis** (no buffer/LLM/local match). It can be set
+here or toggled from the dashboard "Bypass" switch, which persists back to this
+file. Default is `false`.
 
 Example:
 
@@ -43,6 +49,10 @@ core:
   device_db_dir: "./ridebase/devices"
   device_databases:
     termostato_soggiorno: "./ridebase/custom/termostato.db"
+  ip_profiles:
+    "192.168.1.60":
+      connection: http
+      bypass: true
   default_context_buffer_size: 1048576
 ```
 

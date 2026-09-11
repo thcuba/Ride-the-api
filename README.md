@@ -52,6 +52,7 @@ nginx on port 443 → loop-free cloud forwarding via dedicated DNS (8.8.8.8/1.1.
 - **Automatic Learning** — captures traffic, correlates request/response pairs, LLM analysis generates patterns
 - **Local Response** — matches incoming requests against learned patterns, responds without cloud
 - **Auto-Switch** — transitions from learning to production when match rate ≥ 99%
+- **Per-IP Bypass** — forward specific IPs straight to the real cloud with no analysis (no buffer/LLM/learning)
 - **TLS MITM** — multi-port TLS interception with SNI extraction and dynamic certificate generation
 - **Multi-Protocol** — HTTP, MQTT, CoAP, Modbus, WebSocket, Raw TCP, HTTP/2, Zigbee, Z-Wave, Matter
 - **Portable Patterns** — export/import `.ride-pattern.json` and `.ride-capture.json`

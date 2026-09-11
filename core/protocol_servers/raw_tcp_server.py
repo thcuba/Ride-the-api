@@ -111,6 +111,7 @@ class RawTCPServerPlugin(ProtocolServerPlugin):
                 device_id=device_id,
                 timestamp=datetime.now(UTC).timestamp(),
                 protocol=proto,
+                client_ip=remote_ip,
                 body={"raw": data.hex(), "length": len(data), "port": local_port},
                 transport=TransportMeta(port=local_port),
                 security="none",

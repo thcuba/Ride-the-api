@@ -766,6 +766,13 @@ async function loadDeviceStats(deviceId) {
           </label>
         </div>
         <div class="tc-row">
+          <span class="tc-label" id="bypass-label-${escapeHtml(deviceId)}">Bypass (forward to cloud, no analysis)</span>
+          <label class="tc-toggle" aria-label="Toggle per-IP bypass: forward directly to cloud without analysis">
+            <input type="checkbox" id="tc-bypass-${escapeHtml(deviceId)}" role="switch" aria-checked="${!!s.bypass}" ${s.bypass ? 'checked' : ''} aria-labelledby="bypass-label-${escapeHtml(deviceId)}" onchange="this.setAttribute('aria-checked', this.checked)">
+            <span class="tc-slider"></span>
+          </label>
+        </div>
+        <div class="tc-row">
           <label for="tc-pinning-${escapeHtml(deviceId)}" class="tc-label">Pinning Bypass</label>
           <select id="tc-pinning-${escapeHtml(deviceId)}">
             <option value="mitm_proxy">mitm_proxy (default)</option>
@@ -1047,12 +1054,25 @@ async function saveTlsConfig(deviceId) {
   const vendor = document.getElementById('tc-vendor-' + deviceId).value;
   const passthrough = document.getElementById('tc-passthrough-' + deviceId).checked;
   const pinning = document.getElementById('tc-pinning-' + deviceId).value;
+  const bypass = document.getElementById('tc-bypass-' + deviceId).checked;
   try {
     const res = await fetch(`/api/devices/${deviceId}/tls-config`, {
       method: 'PUT', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({name, vendor, passthrough, pinning_bypass: pinning}),
     });
     if (!res.ok) { showToast('Failed to save config', 'error'); return; }
+    // Persist the per-IP bypass to the ip_profiles config, using the device's
+    // primary IP when known.
+    try {
+      const st = await (await fetch(`/api/devices/${deviceId}/stats`)).json();
+      const ip = (st.stats && st.stats.primary_ip);
+      if (ip) {
+        await fetch(`/api/ip-profiles/${encodeURIComponent(ip)}/bypass`, {
+          method: 'PUT', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({bypass}),
+        });
+      }
+    } catch(_e) { /* IP unknown: bypass stays as configured in config */ }
     showToast('TLS config saved', 'success');
     loadDeviceStats(deviceId);
     loadDevices();
