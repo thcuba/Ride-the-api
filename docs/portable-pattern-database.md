@@ -529,11 +529,17 @@ Verificati contro il codice reale il 2026-09-04 (PR #151/#153 merge su main). Ne
 affermazione inventata; ognuna ha evidenza file:riga (report completo in
 `devicemodel_architect_analysis.md`, sezione *Audit workflow*).
 
-- **P1 — `ProtocolInfo.handler` inerte.** `_persist_device_meta` scrive `connection_mode`/
-  `handler`/`protocols`, ma `handle_request` dirama solo su `device.mode` e
-  `handle_protocol_request` convoglia tutti i plugin (MQTT/CoAP/Modbus/WebSocket/Raw
-  TCP/HTTP2) nello stesso orchestratore. Non esiste ancora una diramazione
-  standard→handler-nativo dopo l'identificazione “auto” (open question M10).
+- **P1 — `ProtocolInfo.handler` consumato all'ingress (parzialmente).** Con la
+  PR #198 il protocollo risolto (`ip_profiles > device_meta > ingress_default`)
+  viene letto dai handler TLS e protocol per scegliere l'adapter
+  (`_select_handler_adapter`) e passato a `handle_request`. Ma `handle_request`
+  dirama ancora solo su `device.mode` (il parametro `protocol` è `ARG002`,
+  inutilizzato) e `handle_protocol_request` convoglia tutti i plugin nello
+  stesso orchestratore: non esiste ancora una diramazione standard→handler-nativo
+  dopo l'identificazione “auto” (open question M10). Il primo flush **non
+  instrada**: la connessione arriva sul canale fisico (TLS solo HTTPS decifrato,
+  ogni plugin solo il proprio protocollo) e resta su `ingress_default` finché
+  un flush non scrive una `connection_mode` stabile.
 - **P2 — Nessuna garanzia di cache calda.** La cache in-memory evita il DB quando è warm,
   ma senza una cache calda il motore fa un fallback a scansione DB a ogni richiesta.
   Il vincolo “Device DB fuori hot path” vale solo per dispositivi con cache warm
