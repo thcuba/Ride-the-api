@@ -16,6 +16,13 @@ class _FakeDB:
     async def get_or_create_device(self, device_id: str, vendor: str) -> None:
         pass
 
+    async def resolve_device_protocol(
+        self, _device_id: str, ingress_default: str = "http"
+    ) -> str:
+        # No ip_profiles/device_meta in the fake: the hierarchy resolves to the
+        # ingress default (the plugin's own protocol), matching the handler flow.
+        return ingress_default
+
 
 class _FakeOrchestrator:
     def __init__(self) -> None:

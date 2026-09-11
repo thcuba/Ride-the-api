@@ -795,6 +795,37 @@ class DatabaseManager:
             await session.commit()
         return payload
 
+    async def resolve_device_protocol(
+        self, device_id: str, ingress_default: str = "http"
+    ) -> str:
+        """Resolve the operational protocol for a device on ingress.
+
+        Priority (highest first):
+        1. ``ip_profiles[ip].connection`` (per-IP config override, stored in
+           ``extra_attributes["connection"]``).
+        2. ``device_meta.connection_mode`` (stable header written at the first
+           LLM flush).
+        3. ``ingress_default`` (the protocol the ingress path actually speaks,
+           e.g. ``https`` for the TLS MITM handler).
+
+        ``auto`` is treated as "not a concrete decision" and yields to the next
+        source, so an unconcluded device falls back to the ingress default.
+        """
+        # Level 1: per-IP override from config (extra_attributes["connection"]).
+        connection = await self.get_device_connection(device_id)
+        if connection and connection != "auto":
+            return connection
+
+        # Level 2: stable header decided at first flush.
+        meta = await self.read_device_meta(device_id)
+        if meta:
+            mode = meta.get("connection_mode")
+            if mode and mode != "auto":
+                return str(mode)
+
+        # Level 3: what this ingress path actually speaks.
+        return ingress_default
+
     @contextlib.asynccontextmanager
     async def core_session(self) -> AsyncGenerator[AsyncSession, None]:
         """Context manager for core DB session."""
