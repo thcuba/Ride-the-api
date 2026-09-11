@@ -57,3 +57,7 @@
 ## 2026-03-31 - Accumulator Loops over Generator Expressions for Hot-Path Collection Counting
 **Learning:** Using `sum(1 for h in required_headers if h in actual_headers)` inside pattern matching loops introduced generator creation and iterator protocol overhead on every request matching call. Standard `for` loops with accumulator variables (`matches = 0; for h in required_headers: if h in actual_headers: matches += 1`) avoid generator allocations, resulting in ~2.5x faster collection counting per call and ~1.45x overall speedup for request similarity evaluation (~0.29s vs ~0.42s per 100,000 iterations).
 **Action:** When counting matching keys or elements in request/response hot paths, use explicit accumulator `for` loops instead of generator expressions with `sum(...)`.
+
+## 2026-03-31 - Pre-compiled JSON Schema Validator Instances
+**Learning:** Calling `jsonschema.validate(data, schema)` on every validation request dynamically looks up and constructs a validator class instance on every call (~20.8s for 1,000 capture validations). Pre-instantiating schema validators via `validator_for(schema)(schema)` and reusing module-level cached validator instances reduces validation overhead to ~0.084s-0.26s per 1,000 calls (~80x to 290x speedup).
+**Action:** When performing schema validation on fixed schemas in request or import hot paths, pre-compile and cache the `jsonschema` validator instances (`validator_for(schema)(schema)`) rather than calling generic `jsonschema.validate(data, schema)`.
