@@ -103,8 +103,14 @@ The common handler (`handle_protocol_request`) translates each plugin's `Interce
 topic becomes the path with method `publish`). A `local_response` result tells the plugin to send the
 response back to the device.
 
-> **Nota (verificata):** oggi ogni plugin (MQTT/CoAP/Modbus/WebSocket/Raw TCP/HTTP2) termina nello
-> stesso orchestratore legacy: non esiste ancora una diramazione per-protocollo verso un handler
-> nativo deterministico dopo l'identificazione `auto` (la prima flush persiste `ProtocolInfo.handler` /
-> `connection_mode`, ma il routing non lo consuma). L'interpretazione del frame al protocollo e la
+> **Nota (verificata):** dalla PR #198 il protocollo risolto (`ip_profiles > device_meta >
+> `ingress_default`) è letto dai handler TLS e protocol per scegliere l'adapter
+> (`_select_handler_adapter`) e passato a `handle_request`. Tuttavia ogni plugin
+> (MQTT/CoAP/Modbus/WebSocket/Raw TCP/HTTP2) termina ancora nello stesso orchestratore:
+> non esiste una diramazione per-protocollo verso un handler nativo deterministico dopo
+> l'identificazione `auto`, e `handle_request` continua a selezionare il comportamento
+> solo da `device.mode` (il parametro `protocol` resta `ARG002`). Il primo flush **non**
+> instrada il traffico: la connessione arriva sul canale fisico (TLS solo HTTPS decifrato,
+> ogni plugin solo il proprio protocollo) e resta su `ingress_default` finché un flush non
+> scrive una `connection_mode` stabile. L'interpretazione del frame al protocollo e la
 > scelta dell'handler dedicato è il passo pianificato della fase successiva (open question M10).

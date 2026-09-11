@@ -422,7 +422,21 @@ knowledge). The v2 root keeps the v1 building blocks at the top level
   identity, ports, handler and confidence — produced by the first-flush LLM
   identification (`mode="auto"`), not a protocol handler.
 
-  **Known limit (verified):** the persisted `handler` / `connection_mode` is *not yet* consumed by request routing — `handle_request` selects behaviour from `device.mode` (production/hybrid/learning) only, and `handle_protocol_request` funnels every protocol plugin (MQTT/CoAP/Modbus/WebSocket/Raw TCP/HTTP2) through the same orchestrator pipeline. There is no per-protocol “native handler” branch after identification yet (open question M10).
+- **Ingress protocol consumption (PR #198):** the resolved protocol — from the
+  hierarchy `ip_profiles > device_meta(connection_mode) > ingress_default` via
+  `DatabaseManager.resolve_device_protocol()` — is consumed **at the ingress
+  adapters**: `server._select_handler_adapter()` picks the protocol adapter
+  first by vendor, else by the resolved protocol, and both the TLS and
+  protocol handlers pass the resolved protocol into `pipeline.handle_request()`.
+  **Known limit (verified later):** inside `handle_request` the `protocol`
+  argument is still unused (`# noqa: ARG002`) — behaviour is selected from
+  `device.mode` (production/hybrid/learning) only, and there is no per-protocol
+  *native* handler branch after identification yet (open question M10). The
+  first flush never routes: a connection arrives on its physical channel (TLS
+  handler only ever sees decrypted HTTPS, each protocol server only its own
+  protocol) and falls back to `ingress_default` until a flush writes a stable
+  `connection_mode`.
+
 - **`observation_history`**: learned traffic history used as grounding for
   synthesising replies to requests never seen before.
 
