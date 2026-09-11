@@ -257,9 +257,10 @@ class DeviceMeta(BaseModel):
     stable: later flushes do not re-derive the protocol.
 
     ``connection_mode`` is the operational ingress decision that the server
-    reads to pick the right handler / routing (``auto`` = decided at the first
-    flush). ``protocols`` mirrors ``ClientConfig.protocols`` for the same
-    device as a cross-check of what it actually speaks.
+    reads for ingress **adapter selection** (``auto`` = not yet decided, falls
+    back to the ingress default; decided at the first flush).
+    ``protocols`` mirrors ``ClientConfig.protocols`` for the same device as a
+    cross-check of what it actually speaks.
     """
 
     version: int = 1
