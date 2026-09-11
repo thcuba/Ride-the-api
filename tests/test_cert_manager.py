@@ -134,3 +134,43 @@ class TestCertKeyMatch:
 
     def test_garbage_pem_returns_false(self):
         assert CertManager._cert_matches_key("not a pem", "still not a key") is False
+
+
+class TestKeyPermissions:
+    """Private key files must be created with mode 0o600 (owner read/write only)."""
+
+    def _manager(self, tmp_path):
+        return CertManager(
+            ca_cert_path=str(tmp_path / "certs" / "ca.pem"),
+            ca_key_path=str(tmp_path / "certs" / "ca.key"),
+            device_certs_dir=str(tmp_path / "device_certs"),
+            external_certs_dir=str(tmp_path / "external_certs"),
+        )
+
+    def test_ca_key_file_permissions(self, tmp_path):
+        cm = self._manager(tmp_path)
+        cm.ensure_ca()
+        ca_key_path = Path(tmp_path / "certs" / "ca.key")
+        assert ca_key_path.exists()
+        if hasattr(ca_key_path, "stat") and hasattr(ca_key_path.stat(), "st_mode"):
+            assert (ca_key_path.stat().st_mode & 0o777) == 0o600
+
+    def test_leaf_key_file_permissions(self, tmp_path):
+        cm = self._manager(tmp_path)
+        cm.ensure_ca()
+        _, key_pem = cm.get_cert_for_hostname("device.example.com")
+        _, key_file = cm._device_cert_files("device.example.com")
+        assert key_file.exists()
+        if hasattr(key_file, "stat") and hasattr(key_file.stat(), "st_mode"):
+            assert (key_file.stat().st_mode & 0o777) == 0o600
+
+    def test_imported_key_file_permissions(self, tmp_path):
+        cm = self._manager(tmp_path)
+        cm.ensure_ca()
+        # Generate a valid pair to import
+        cert_pem, key_pem = cm._generate_leaf_cert("import.example.com")
+        cm.import_cert("import.example.com", cert_pem, key_pem)
+        imported_key_file = cm._ext_dir("import.example.com") / "key.pem"
+        assert imported_key_file.exists()
+        if hasattr(imported_key_file, "stat") and hasattr(imported_key_file.stat(), "st_mode"):
+            assert (imported_key_file.stat().st_mode & 0o777) == 0o600
