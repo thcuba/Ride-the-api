@@ -1820,6 +1820,9 @@ class LearningOrchestrator:
                 stats["vendor"] = device.vendor
                 stats["device_type"] = device.device_type
                 stats["name"] = device.name
+                stats["resolved_protocol"] = await self.db_manager.resolve_device_protocol(
+                    device_id
+                )
         return stats
 
 

@@ -24,6 +24,7 @@ from sqlalchemy import delete, select
 from adapters import get_registered_registry
 from adapters.base import (
     InterceptedRequest,
+    ProtocolAdapter,
     ProtocolAdapterRegistry,
     ProtocolType,
     device_id_from_ip,
@@ -111,6 +112,38 @@ protocol_server_tasks: dict[str, asyncio.Task] = {}
 # ── TLS Decrypted Request Handler ────────────────────────────────────────────
 
 
+def _select_handler_adapter(
+    adapter_registry: ProtocolAdapterRegistry | None,
+    device_vendor: str,
+    resolved_protocol: str,
+) -> ProtocolAdapter | None:
+    """Pick the protocol adapter for a device request.
+
+    - A registered, vendor-specific adapter always wins (e.g. ``shelly``), so
+      devices with a known vendor keep their bespoke handler.
+    - Otherwise, fall back to the first adapter that supports the *resolved*
+      protocol (from ``ip_profiles`` → ``device_meta`` → ingress default). This
+      is the new ingress consumption of ``connection_mode``/``ProtocolInfo``:
+      a device whose protocol was decided at first flush gets routed to the
+      matching handler even when its vendor is generic/unknown.
+    """
+    if not adapter_registry:
+        return None
+
+    # 1) Vendor-specific adapter (unchanged behaviour).
+    vendor_adapter = adapter_registry.get_adapter(device_vendor)
+    if vendor_adapter is not None:
+        return vendor_adapter
+
+    # 2) Adapter for the resolved protocol (new).
+    try:
+        resolved = ProtocolType(resolved_protocol)
+    except (ValueError, KeyError):
+        return None
+    matched = adapter_registry.get_adapter_by_protocol(resolved)
+    return matched[0] if matched else None
+
+
 async def handle_tls_decrypted_request(req: DecryptedRequest) -> dict | None:
     """Handle a decrypted TLS request — find/create device and run through pipeline.
 
@@ -163,10 +196,16 @@ async def handle_tls_decrypted_request(req: DecryptedRequest) -> dict | None:
         # Determine vendor/adapter for this device
         device_vendor = getattr(device, "vendor", "unknown") or "unknown"
 
-        # Find matching adapter if available
-        handler_adapter = None
-        if adapter_registry and device_vendor in adapter_registry._adapters:
-            handler_adapter = adapter_registry._adapters[device_vendor]
+        # Resolve the operational protocol (ip_profiles > device_meta -> default).
+        # The TLS path always speaks https, so an undecided device stays https.
+        resolved_protocol = await db_manager.resolve_device_protocol(
+            device_id, ingress_default="https"
+        )
+
+        # Find matching adapter (vendor-specific first, else by resolved protocol).
+        handler_adapter = _select_handler_adapter(
+            adapter_registry, device_vendor, resolved_protocol
+        )
 
         # Build intercepted request for pipeline
 
@@ -191,7 +230,7 @@ async def handle_tls_decrypted_request(req: DecryptedRequest) -> dict | None:
         result = await orchestrator.handle_request(
             device_id=intercepted.device_id or device_id,
             vendor=device_vendor,
-            protocol="https",
+            protocol=resolved_protocol,
             method=intercepted.method or req.method,
             path=intercepted.path or req.path,
             headers=dict(intercepted.headers) if intercepted.headers else dict(req.headers),
@@ -241,6 +280,14 @@ async def handle_protocol_request(request: InterceptedRequest) -> dict | None:
     try:
         await db_manager.get_or_create_device(device_id, "unknown")
 
+        # Resolve the operational protocol (ip_profiles > device_meta -> default).
+        # The plugin protocol is the physical protocol actually spoken, so an
+        # undecided device keeps the plugin's own protocol; a device whose first
+        # flush decided a different connection_mode wins (config/header override).
+        resolved_protocol = await db_manager.resolve_device_protocol(
+            device_id, ingress_default=protocol
+        )
+
         # Build the D2 enrichment dict from the InterceptedRequest fields emitted
         # by protocol servers (transport/security/identity/kind). It flows into
         # the correlated pair and the buffer JSON, so the observation/LLM layer
@@ -268,7 +315,7 @@ async def handle_protocol_request(request: InterceptedRequest) -> dict | None:
         return await orchestrator.handle_request(
             device_id=device_id,
             vendor="unknown",
-            protocol=protocol,
+            protocol=resolved_protocol,
             method=method,
             path=path,
             headers=request.headers or {},
