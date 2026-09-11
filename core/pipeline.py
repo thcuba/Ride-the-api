@@ -1566,7 +1566,7 @@ class LearningOrchestrator:
         self,
         device_id: str,
         vendor: str,  # noqa: ARG002
-        protocol: str,  # noqa: ARG002
+        protocol: str,
         method: str,
         path: str,
         headers: dict,
@@ -1610,7 +1610,7 @@ class LearningOrchestrator:
         forwarding to the cloud.
         """
         pattern, template, score = await self.engine.find_best_match(
-            device.device_id, method, path, headers, body, query_params
+            device.device_id, method, path, headers, body, query_params, protocol=protocol
         )
 
         if pattern and template and score >= device.match_threshold:
@@ -1665,7 +1665,7 @@ class LearningOrchestrator:
         """Hybrid mode: try local match first; if confident serve locally, otherwise
         forward to cloud + learn."""
         pattern, template, score = await self.engine.find_best_match(
-            device.device_id, method, path, headers, body, query_params
+            device.device_id, method, path, headers, body, query_params, protocol=protocol
         )
 
         if pattern and template and score >= device.match_threshold:

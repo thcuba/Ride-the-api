@@ -357,7 +357,7 @@ class PatternEngine:
 
     # â”€â”€ Pattern Matching â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€  # noqa: E501
 
-    async def find_best_match(  # noqa: PLR0913, PLR0912
+    async def find_best_match(  # noqa: PLR0913, PLR0912, C901
         self,
         device_id: str,
         method: str,
@@ -365,11 +365,25 @@ class PatternEngine:
         headers: dict,
         body: Any,  # noqa: ANN401
         query_params: dict,
+        protocol: str = "",
     ) -> tuple:
-        """Find best matching pattern. Returns (pattern, response_template, score)."""
+        """Find best matching pattern. Returns (pattern, response_template, score).
+
+        ``protocol`` (optional) is the caller's resolved protocol
+        (https/mqtt/coap/...). Endpoints whose own ``protocol`` is set to a
+        DIFFERENT value are skipped, so a device that learned multiple
+        protocols only matches patterns of the protocol actually spoken on
+        this request. An empty ``protocol`` here, or an endpoint whose
+        ``protocol`` is empty (legacy/unknown), never filters — preserving the
+        pre-M10 behaviour for cache entries written before the field existed.
+        """
         best_score = 0.0
         best_pattern = None
         best_template = None
+
+        def _protocol_matches(ep_protocol: str) -> bool:
+            # Filter only when BOTH sides declare a concrete protocol.
+            return not (ep_protocol and protocol and ep_protocol != protocol)
 
         # Try cached in-memory patterns first.
         # The cache is the authoritative snapshot of the last export/import
@@ -385,6 +399,8 @@ class PatternEngine:
                 if best_score >= 1.0:
                     break
                 if best_score >= _METHOD_MISMATCH_SCORE_CAP and ep.method != method:
+                    continue
+                if not _protocol_matches(getattr(ep, "protocol", "")):
                     continue
 
                 headers_req = (
@@ -421,6 +437,8 @@ class PatternEngine:
                 if best_score >= 1.0:
                     break
                 if best_score >= _METHOD_MISMATCH_SCORE_CAP and pat.method != method:
+                    continue
+                if not _protocol_matches(getattr(pat, "protocol", "")):
                     continue
 
                 score = self._calculate_similarity(

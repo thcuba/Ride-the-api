@@ -154,6 +154,11 @@ class ClientEndpoint(BaseModel):
     method: str = "GET"
     path: str = ""
     path_pattern: str = ""
+    # Protocol this endpoint speaks (http/https/mqtt/coap/modbus/websocket/...).
+    # Empty string means "legacy/unknown" and never filters: it matches any
+    # incoming request regardless of the caller's resolved protocol, preserving
+    # the pre-M10 behaviour for endpoints written before the field existed.
+    protocol: str = ""
     headers: dict[str, list[str]] = Field(default_factory=lambda: {"required": []})
     query_params: list[str] = Field(default_factory=list)
     body_schema: dict[str, Any] | None = None
@@ -449,9 +454,11 @@ class DeviceModel(BaseModel):
         matches on the v1 ``PatternDB`` shape (client endpoints / server
         responses + state). v2 is a superset; this projection keeps the engine
         stable while the portable artifact carries the richer model. Lossless
-        for the v1-equivalent sections: v1 has no home for ``protocol`` or
-        ``observation_history``, so those are intentionally not projected.
+        for the v1-equivalent sections: v1 has no home for ``observation_history``,
+        so it is intentionally not projected. The device ``protocol`` IS projected
+        onto each endpoint so the runtime can filter matches by protocol (M10).
         """
+        device_protocol = self.protocol.protocol if self.protocol.protocol else ""
         endpoints = [
             ClientEndpoint(
                 id=c.id,
@@ -459,6 +466,7 @@ class DeviceModel(BaseModel):
                 method=c.method or "GET",
                 path=c.path or c.path_pattern or (c.topic or ""),
                 path_pattern=c.path_pattern or c.path or (c.topic or ""),
+                protocol=device_protocol,
                 headers=c.headers or {"required": []},
                 query_params=c.query_params or [],
                 body_schema=c.body_schema,
