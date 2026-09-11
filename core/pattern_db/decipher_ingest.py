@@ -213,6 +213,7 @@ class DecipherIngest:
                     method=pat.method,
                     path=pat.path_pattern,
                     path_pattern=pat.path_pattern,
+                    protocol=pat.protocol or "",
                     headers={"required": pat.required_headers or []},
                     query_params=pat.query_param_keys or [],
                     body_schema=pat.body_schema or None,
