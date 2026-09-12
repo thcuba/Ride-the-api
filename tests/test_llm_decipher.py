@@ -416,12 +416,12 @@ class TestHotReload:
         client2 = service._get_client(service._profiles["default"])
         # AsyncOpenAI is a MagicMock whose return_value is cached, so identity
         # is not a reliable signal; the call count proves recreation.
-        assert mock_client_class.call_count == 2
+        assert mock_client_class.call_count == 2  # noqa: PLR2004
         assert client2 is mock_client_class.return_value
 
     @pytest.mark.asyncio
     @patch("core.llm_decipher.AsyncOpenAI")
-    async def test_removed_profile_drops_out(self, mock_client_class):
+    async def test_removed_profile_drops_out(self, mock_client_class):  # noqa: ARG002
         """F-11: a profile deleted from config disappears after reload."""
         service, cm = _service_with_profiles()
         assert "default" in service._profiles

@@ -36,7 +36,7 @@ class CertManager:
     unauthorized local reading of sensitive key material.
     """
 
-    def __init__(  # noqa: PLR0913
+    def __init__(  # noqa: PLR0913, PLR0917
         self,
         ca_cert_path: str = "./certs/ca.pem",
         ca_key_path: str = "./certs/ca.key",

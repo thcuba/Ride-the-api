@@ -17,14 +17,17 @@ import hmac
 import json
 import logging
 import secrets
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from starlette.requests import Request
+
     from core.config import SecurityConfig
 
 logger = logging.getLogger(__name__)
@@ -60,14 +63,14 @@ class ControlPlaneAuthMiddleware(BaseHTTPMiddleware):
     :class:`SecurityConfig` so hot-reloads of the YAML are picked up live.
     """
 
-    def __init__(self, app, get_security_config: Callable[[], "SecurityConfig"]) -> None:
+    def __init__(self, app, get_security_config: Callable[[], SecurityConfig]) -> None:
         super().__init__(app)
         self._get_security_config = get_security_config
         self._generated_admin_key: str | None = None
         self._generated_readonly_key: str | None = None
         self._logged = False
 
-    def _effective_keys(self, cfg: "SecurityConfig") -> tuple[str, str]:
+    def _effective_keys(self, cfg: SecurityConfig) -> tuple[str, str]:
         """Return (admin_key, readonly_key), generating random ones if unset."""
         admin = cfg.admin_api_key or self._generated_admin_key
         if not admin:
@@ -87,7 +90,7 @@ class ControlPlaneAuthMiddleware(BaseHTTPMiddleware):
             )
         return admin, readonly
 
-    async def dispatch(self, request: Request, call_next):  # noqa: ANN001
+    async def dispatch(self, request: Request, call_next):  # noqa: ANN001, PLR0911
         path = request.url.path
         if not path.startswith("/api/"):
             return await call_next(request)
@@ -143,7 +146,7 @@ class MaxBodySizeMiddleware:
         self.app = app
         self.max_size = max_size
 
-    async def __call__(self, scope, receive, send) -> None:  # noqa: ANN001
+    async def __call__(self, scope, receive, send) -> None:  # noqa: ANN001, C901
         if scope["type"] != "http" or self.max_size <= 0:
             await self.app(scope, receive, send)
             return
@@ -190,12 +193,7 @@ class MaxBodySizeMiddleware:
 
     async def _reply_413(self, send) -> None:  # noqa: ANN001
         body = json.dumps(
-            {
-                "error": (
-                    f"Request body exceeds the maximum allowed size "
-                    f"({self.max_size} bytes)"
-                )
-            }
+            {"error": (f"Request body exceeds the maximum allowed size ({self.max_size} bytes)")}
         ).encode("utf-8")
         await send(
             {

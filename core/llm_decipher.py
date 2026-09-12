@@ -183,7 +183,7 @@ class LLMDecipherService:
         # Register exactly once so repeated reloads cannot stack callbacks (F-11).
         self.config_manager.register_callback(self._on_config_change)
 
-    def _load_config(self):
+    def _load_config(self):  # noqa: C901
         """Load LLM deciphering configuration."""
         config = self.config_manager.config
         self._config = getattr(config, "llm_decipher", None)
@@ -335,20 +335,20 @@ class LLMDecipherService:
         change takes effect immediately (no file-watch delay).
         """
         if not isinstance(settings, dict):
-            raise ValueError("settings must be an object")
+            raise ValueError("settings must be an object")  # noqa: TRY004
 
         enabled = bool(settings.get("enabled", self._enabled))
         default_profile = settings.get("default_profile", self._default_profile)
         profiles = settings.get("profiles", {})
 
         if not isinstance(profiles, dict):
-            raise ValueError("profiles must be an object")
+            raise ValueError("profiles must be an object")  # noqa: TRY004
 
         # Validate each profile before persisting anything.
         validated: dict[str, dict] = {}
         for name, pcfg in profiles.items():
             if not isinstance(pcfg, dict):
-                raise ValueError(f"profile '{name}' must be an object")
+                raise ValueError(f"profile '{name}' must be an object")  # noqa: TRY004
             validated[name] = {
                 "base_url": str(pcfg.get("base_url", "https://api.openai.com/v1")),
                 "api_key": str(pcfg.get("api_key", "")),

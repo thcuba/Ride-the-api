@@ -13,6 +13,7 @@ sensitive values replaced by ``[REDACTED]``.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 # Header names whose values are always secrets (matched case-insensitively).
@@ -166,7 +167,7 @@ def redact_value(key: Any, value: Any) -> Any:  # noqa: ANN401
     return value
 
 
-def _is_sensitive_key(key: Any) -> bool:
+def _is_sensitive_key(key: object) -> bool:
     return str(key).strip().lower() in SENSITIVE_KEYS
 
 
@@ -180,8 +181,6 @@ def _redact_json_string(text: str) -> str:
     stripped = text.strip()
     if stripped.startswith(("{", "[")):
         try:
-            import json
-
             parsed = json.loads(stripped)
             redacted = redact_body(parsed)
             return json.dumps(redacted, ensure_ascii=False)

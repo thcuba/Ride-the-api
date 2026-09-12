@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.applications import Starlette
 from starlette.responses import JSONResponse
+from starlette.routing import Route
 
 import core.server as server_mod
+from core.security import MaxBodySizeMiddleware
 from core.server import app
 
 _ADMIN_KEY = "test-admin-key-123"
@@ -56,35 +59,42 @@ def _post(client, path, key=None, json=None):
 
 
 def test_read_without_key_returns_401(client):
-    assert _get(client, "/api/devices").status_code == 401
+    assert _get(client, "/api/devices").status_code == 401  # noqa: PLR2004
 
 
 def test_read_with_readonly_key_ok(client):
     resp = _get(client, "/api/devices", key=_READONLY_KEY)
-    assert resp.status_code == 200
+    assert resp.status_code == 200  # noqa: PLR2004
 
 
 def test_read_with_admin_key_ok(client):
     resp = _get(client, "/api/devices", key=_ADMIN_KEY)
-    assert resp.status_code == 200
+    assert resp.status_code == 200  # noqa: PLR2004
 
 
 def test_read_with_wrong_key_returns_401(client):
-    assert _get(client, "/api/devices", key="wrong-key").status_code == 401
+    assert _get(client, "/api/devices", key="wrong-key").status_code == 401  # noqa: PLR2004
 
 
 def test_write_without_key_returns_401(client):
-    assert _post(client, "/api/devices/some-device/mode", json={"mode": "production"}).status_code == 401
+    assert (
+        _post(client, "/api/devices/some-device/mode", json={"mode": "production"}).status_code
+        == 401  # noqa: PLR2004
+    )
 
 
 def test_write_with_readonly_key_returns_401(client):
-    resp = _post(client, "/api/devices/some-device/mode", key=_READONLY_KEY, json={"mode": "production"})
-    assert resp.status_code == 401
+    resp = _post(
+        client, "/api/devices/some-device/mode", key=_READONLY_KEY, json={"mode": "production"}
+    )
+    assert resp.status_code == 401  # noqa: PLR2004
 
 
 def test_write_with_admin_key_ok(client):
-    resp = _post(client, "/api/devices/some-device/mode", key=_ADMIN_KEY, json={"mode": "production"})
-    assert resp.status_code == 200
+    resp = _post(
+        client, "/api/devices/some-device/mode", key=_ADMIN_KEY, json={"mode": "production"}
+    )
+    assert resp.status_code == 200  # noqa: PLR2004
 
 
 def test_write_with_bearer_admin_key_ok(client):
@@ -93,16 +103,16 @@ def test_write_with_bearer_admin_key_ok(client):
         headers={"Authorization": f"Bearer {_ADMIN_KEY}"},
         json={"mode": "production"},
     )
-    assert resp.status_code == 200
+    assert resp.status_code == 200  # noqa: PLR2004
 
 
 def test_health_endpoint_public(client):
-    assert client.get("/health").status_code == 200
+    assert client.get("/health").status_code == 200  # noqa: PLR2004
 
 
 def test_ca_cert_endpoint_public(client):
     resp = client.get("/api/tls/ca-cert")
-    assert resp.status_code == 200
+    assert resp.status_code == 200  # noqa: PLR2004
     assert "BEGIN CERTIFICATE" in resp.text
 
 
@@ -120,10 +130,6 @@ async def _echo_body(request):
 
 
 def _make_size_app(max_size):
-    from starlette.applications import Starlette
-    from starlette.routing import Route
-
-    from core.security import MaxBodySizeMiddleware
 
     inner = Starlette(
         routes=[
@@ -135,36 +141,32 @@ def _make_size_app(max_size):
 
 
 def test_body_size_content_length_rejected():
-    from starlette.testclient import TestClient
 
     client = TestClient(_make_size_app(100))
     resp = client.post("/api/echo", content=b"x" * 200)
-    assert resp.status_code == 413
+    assert resp.status_code == 413  # noqa: PLR2004
 
 
 def test_body_size_under_limit_ok():
-    from starlette.testclient import TestClient
 
     client = TestClient(_make_size_app(100))
     resp = client.post("/api/echo", content=b"x" * 50)
-    assert resp.status_code == 200
-    assert resp.json()["len"] == 50
+    assert resp.status_code == 200  # noqa: PLR2004
+    assert resp.json()["len"] == 50  # noqa: PLR2004
 
 
 def test_body_size_data_plane_exempt():
-    from starlette.testclient import TestClient
 
     client = TestClient(_make_size_app(100))
     resp = client.post("/data/echo", content=b"x" * 5000)
-    assert resp.status_code == 200
+    assert resp.status_code == 200  # noqa: PLR2004
 
 
 @pytest.mark.asyncio
 async def test_body_size_streaming_over_limit_413():
     """Chunked bodies (no Content-Length) are guarded via the receive channel."""
-    from core.security import MaxBodySizeMiddleware
 
-    async def inner(scope, receive, send):
+    async def inner(scope, receive, send):  # noqa: ARG001
         total = 0
         while True:
             msg = await receive()
@@ -176,11 +178,11 @@ async def test_body_size_streaming_over_limit_413():
         await send({"type": "http.response.body", "body": str(total).encode()})
 
     class _ChunkedReceive:
-        def __init__(self, chunks):
+        def __init__(self, chunks) -> None:
             self._chunks = list(chunks) + [b""]
             self._i = 0
 
-        async def __call__(self):
+        async def __call__(self) -> dict:
             msg = {
                 "type": "http.request",
                 "body": self._chunks[self._i],
@@ -190,10 +192,10 @@ async def test_body_size_streaming_over_limit_413():
             return msg
 
     class _Recorder:
-        def __init__(self):
+        def __init__(self) -> None:
             self.messages = []
 
-        async def __call__(self, message):
+        async def __call__(self, message) -> None:
             self.messages.append(message)
 
     app = MaxBodySizeMiddleware(inner, max_size=10)
@@ -203,4 +205,4 @@ async def test_body_size_streaming_over_limit_413():
         _ChunkedReceive([b"aaaa", b"bbbb", b"cccc"]),
         recorder,
     )
-    assert recorder.messages[0]["status"] == 413
+    assert recorder.messages[0]["status"] == 413  # noqa: PLR2004

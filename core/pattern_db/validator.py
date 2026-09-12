@@ -11,11 +11,13 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import jsonschema
 from jsonschema import ValidationError as JsonSchemaValidationError
 from jsonschema.validators import validator_for
+
+if TYPE_CHECKING:
+    from jsonschema.protocols import Validator
 
 from core.paths import resource_path
 
@@ -76,7 +78,7 @@ def get_capture_schema() -> dict[str, Any]:
     return _CAPTURE_SCHEMA
 
 
-def get_capture_validator() -> Any:
+def get_capture_validator() -> Validator:
     """Get pre-compiled jsonschema validator for capture schema (~80x-250x faster validation)."""
     global _CAPTURE_VALIDATOR  # noqa: PLW0603
     if _CAPTURE_VALIDATOR is None:
@@ -93,7 +95,7 @@ def get_pattern_schema() -> dict[str, Any]:
     return _PATTERN_SCHEMA
 
 
-def get_pattern_validator() -> Any:
+def get_pattern_validator() -> Validator:
     """Get pre-compiled jsonschema validator for pattern schema v1 (~80x-250x faster validation)."""
     global _PATTERN_VALIDATOR  # noqa: PLW0603
     if _PATTERN_VALIDATOR is None:
@@ -115,7 +117,7 @@ def get_pattern_schema_v2() -> dict[str, Any]:
     return _PATTERN_SCHEMA_V2
 
 
-def get_pattern_validator_v2() -> Any:
+def get_pattern_validator_v2() -> Validator:
     """Get pre-compiled jsonschema validator for pattern schema v2 (~80x-250x faster validation)."""
     global _PATTERN_VALIDATOR_V2  # noqa: PLW0603
     if _PATTERN_VALIDATOR_V2 is None:
@@ -307,9 +309,7 @@ def validate_pattern(data: dict[str, Any]) -> ValidationResult:  # noqa: C901, P
     # ``$schema`` (kept retro-compatible).
     schema_url = data.get("$schema", "https://ride-the-api.dev/pattern-schema/v1")
     validator = (
-        get_pattern_validator_v2()
-        if "pattern-schema/v2" in schema_url
-        else get_pattern_validator()
+        get_pattern_validator_v2() if "pattern-schema/v2" in schema_url else get_pattern_validator()
     )
 
     # JSON Schema validation (uses pre-compiled validator instance for fast validation)

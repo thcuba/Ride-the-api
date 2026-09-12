@@ -67,7 +67,7 @@ def is_blocked_ip(ip_str: str) -> bool:
     except ValueError:
         # Not a valid IP literal — refuse to connect.
         return True
-    if (
+    return (
         addr.is_loopback
         or addr.is_private
         or addr.is_link_local
@@ -75,9 +75,7 @@ def is_blocked_ip(ip_str: str) -> bool:
         or addr.is_multicast
         or addr.is_reserved
         or addr.is_global is False
-    ):
-        return True
-    return False
+    )
 
 
 def filter_safe_ips(ips: list[str]) -> list[str]:
@@ -111,7 +109,7 @@ def _build_resolver() -> dns.asyncresolver.Resolver:
     return resolver
 
 
-async def resolve_upstream(  # noqa: C901, PLR0912
+async def resolve_upstream(  # noqa: C901, PLR0912, PLR0915
     hostname: str,
     *,
     prefer_ipv6: bool = False,
@@ -143,7 +141,7 @@ async def resolve_upstream(  # noqa: C901, PLR0912
             logger.debug("Resolver cache hit for %s", hostname)
             result = list(cached)
             if prefer_ipv6:
-                # Performance optimization: single-pass partition avoids calling _addr_family twice per address (~2x faster)
+                # Performance optimization: single-pass partition avoids calling _addr_family twice per address (~2x faster)  # noqa: E501
                 v6: list[str] = []
                 v4: list[str] = []
                 for ip in result:
@@ -206,7 +204,7 @@ async def resolve_upstream(  # noqa: C901, PLR0912
     # space, regardless of which resolution path produced it. This is the
     # single choke point so every caller (forwarding, adapters, protocol
     # servers) inherits the protection.
-    # Performance optimization: single-pass partition avoids calling is_blocked_ip twice per address (~2x faster)
+    # Performance optimization: single-pass partition avoids calling is_blocked_ip twice per address (~2x faster)  # noqa: E501
     safe_addresses: list[str] = []
     blocked_addresses: list[str] = []
     for ip in addresses:

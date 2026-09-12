@@ -1744,7 +1744,7 @@ async def update_llm_settings(request: Request):
 
 
 @app.post("/api/llm/settings/profiles")
-async def create_llm_profile(request: Request):
+async def create_llm_profile(request: Request):  # noqa: PLR0911
     """Create or update a single LLM profile and persist the settings."""
     if not llm_decipher_service:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
@@ -2207,9 +2207,7 @@ async def _forward_bypassed_request(
         InterceptedRequest(
             device_id="",
             timestamp=datetime.now(UTC),
-            protocol=(
-                ProtocolType.HTTPS if request.url.scheme == "https" else ProtocolType.HTTP
-            ),
+            protocol=(ProtocolType.HTTPS if request.url.scheme == "https" else ProtocolType.HTTP),
             method=request.method,
             path=f"/{path}",
             headers=dict(request.headers),
@@ -2298,9 +2296,7 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
     # signal_forward_to_cloud is on, else the legacy adapter forward.
     if await db_manager.is_ips_bypassed(client_ip):
         logger.info(f"Bypass for {client_ip} to {vendor}: forwarding to cloud directly")
-        return await _forward_bypassed_request(
-            adapter, request, path, body, client_ip
-        )
+        return await _forward_bypassed_request(adapter, request, path, body, client_ip)
 
     # Build intercepted request
     intercepted = InterceptedRequest(

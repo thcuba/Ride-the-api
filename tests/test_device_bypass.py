@@ -61,9 +61,7 @@ class TestIsIpsBypassed:
 
     @pytest.mark.asyncio
     async def test_known_ip_bypassed_returns_true(self, dm, monkeypatch):
-        _FakeConfig._Core.ip_profiles = {
-            "192.168.1.50": IpProfileConfig(bypass=True)
-        }
+        _FakeConfig._Core.ip_profiles = {"192.168.1.50": IpProfileConfig(bypass=True)}
         monkeypatch.setattr("core.database.get_config", _FakeConfig)
         assert await dm.is_ips_bypassed("192.168.1.50") is True
 

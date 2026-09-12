@@ -337,7 +337,7 @@ def is_local_ip(ip: str) -> bool:
     return False
 
 
-def create_request_info(  # noqa: PLR0913
+def create_request_info(  # noqa: PLR0913, PLR0917
     client_ip: str,
     hostname: str | None = None,
     vendor: str | None = None,

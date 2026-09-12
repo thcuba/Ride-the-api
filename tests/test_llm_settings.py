@@ -7,8 +7,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from core import server
 from core.llm_decipher import LLMDecipherService
-from core.server import app
+from core.server import app, config_manager
 
 
 class MockConfig:
@@ -73,8 +74,9 @@ class TestLLMSettingsService:
 
     def test_update_settings_persists_and_reloads(self):
         service, _ = _service_with_profiles()
-        with patch("core.llm_decipher.save_llm_settings") as mock_save, patch(
-            "core.llm_decipher.load_llm_settings", return_value=None
+        with (
+            patch("core.llm_decipher.save_llm_settings") as mock_save,
+            patch("core.llm_decipher.load_llm_settings", return_value=None),
         ):
             updated = service.update_settings(
                 {
@@ -96,21 +98,23 @@ class TestLLMSettingsService:
         # The payload is persisted with the validated values.
         payload = mock_save.call_args[0][0]
         assert payload["default_profile"] == "default"
-        assert payload["profiles"]["default"]["timeout"] == 60
-        assert payload["profiles"]["default"]["max_retries"] == 3
+        assert payload["profiles"]["default"]["timeout"] == 60  # noqa: PLR2004
+        assert payload["profiles"]["default"]["max_retries"] == 3  # noqa: PLR2004
         assert updated["default_profile"] == "default"
 
     def test_update_settings_rejects_unknown_default(self):
         service, _ = _service_with_profiles()
-        with patch("core.llm_decipher.save_llm_settings") as mock_save:
-            with pytest.raises(ValueError, match="not a known profile"):
-                service.update_settings(
-                    {
-                        "enabled": True,
-                        "default_profile": "missing",
-                        "profiles": {"default": {"base_url": "x", "model_id": "m"}},
-                    }
-                )
+        with (
+            patch("core.llm_decipher.save_llm_settings") as mock_save,
+            pytest.raises(ValueError, match="not a known profile"),
+        ):
+            service.update_settings(
+                {
+                    "enabled": True,
+                    "default_profile": "missing",
+                    "profiles": {"default": {"base_url": "x", "model_id": "m"}},
+                }
+            )
         mock_save.assert_not_called()
 
     def test_runtime_profiles_replace_config_yaml(self):
@@ -151,8 +155,9 @@ class TestLLMSettingsService:
             saved.clear()
             saved.update(payload)
 
-        with patch("core.llm_decipher.save_llm_settings", side_effect=fake_save), patch(
-            "core.llm_decipher.load_llm_settings", side_effect=lambda: saved or None
+        with (
+            patch("core.llm_decipher.save_llm_settings", side_effect=fake_save),
+            patch("core.llm_decipher.load_llm_settings", side_effect=lambda: saved or None),
         ):
             updated = service.update_settings(
                 {"enabled": True, "default_profile": "", "profiles": {}}
@@ -176,7 +181,6 @@ class TestLLMSettingsService:
 class TestLLMSettingsAPI:
     def _client(self):
         # Use a known admin key so the control-plane auth passes.
-        from core.server import config_manager
 
         config_manager.config.security.admin_api_key = "test-admin-key"
         config_manager.config.security.readonly_api_key = "test-ro-key"
@@ -207,19 +211,17 @@ class TestLLMSettingsAPI:
         return svc
 
     def test_get_settings(self):
-        import core.server as server
 
         server.llm_decipher_service = self._mock_service()
         client = self._client()
         resp = client.get("/api/llm/settings", headers={"X-API-Key": "test-admin-key"})
-        assert resp.status_code == 200
+        assert resp.status_code == 200  # noqa: PLR2004
         body = resp.json()
         assert body["enabled"] is True
         assert body["default_profile"] == "default"
         assert "default" in body["profiles"]
 
     def test_put_settings(self):
-        import core.server as server
 
         svc = self._mock_service()
         server.llm_decipher_service = svc
@@ -229,11 +231,10 @@ class TestLLMSettingsAPI:
             headers={"X-API-Key": "test-admin-key"},
             json={"enabled": True, "default_profile": "default", "profiles": {}},
         )
-        assert resp.status_code == 200
+        assert resp.status_code == 200  # noqa: PLR2004
         svc.update_settings.assert_called_once()
 
     def test_put_settings_invalid_body(self):
-        import core.server as server
 
         server.llm_decipher_service = self._mock_service()
         client = self._client()
@@ -242,10 +243,9 @@ class TestLLMSettingsAPI:
             headers={"X-API-Key": "test-admin-key"},
             json=["not", "an", "object"],
         )
-        assert resp.status_code == 400
+        assert resp.status_code == 400  # noqa: PLR2004
 
     def test_post_profile(self):
-        import core.server as server
 
         svc = self._mock_service()
         server.llm_decipher_service = svc
@@ -255,12 +255,11 @@ class TestLLMSettingsAPI:
             headers={"X-API-Key": "test-admin-key"},
             json={"name": "local", "base_url": "http://x", "model_id": "m"},
         )
-        assert resp.status_code == 200
+        assert resp.status_code == 200  # noqa: PLR2004
         assert resp.json()["name"] == "local"
         svc.update_settings.assert_called_once()
 
     def test_post_profile_requires_name(self):
-        import core.server as server
 
         server.llm_decipher_service = self._mock_service()
         client = self._client()
@@ -269,10 +268,9 @@ class TestLLMSettingsAPI:
             headers={"X-API-Key": "test-admin-key"},
             json={"base_url": "http://x"},
         )
-        assert resp.status_code == 400
+        assert resp.status_code == 400  # noqa: PLR2004
 
     def test_delete_profile(self):
-        import core.server as server
 
         svc = self._mock_service()
         server.llm_decipher_service = svc
@@ -281,12 +279,11 @@ class TestLLMSettingsAPI:
             "/api/llm/settings/profiles/default",
             headers={"X-API-Key": "test-admin-key"},
         )
-        assert resp.status_code == 200
+        assert resp.status_code == 200  # noqa: PLR2004
         assert resp.json()["name"] == "default"
         svc.update_settings.assert_called_once()
 
     def test_delete_missing_profile(self):
-        import core.server as server
 
         svc = self._mock_service()
         server.llm_decipher_service = svc
@@ -295,4 +292,4 @@ class TestLLMSettingsAPI:
             "/api/llm/settings/profiles/nope",
             headers={"X-API-Key": "test-admin-key"},
         )
-        assert resp.status_code == 404
+        assert resp.status_code == 404  # noqa: PLR2004
