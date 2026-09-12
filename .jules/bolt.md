@@ -61,3 +61,7 @@
 ## 2026-03-31 - Pre-compiled JSON Schema Validator Instances
 **Learning:** Calling `jsonschema.validate(data, schema)` on every validation request dynamically looks up and constructs a validator class instance on every call (~20.8s for 1,000 capture validations). Pre-instantiating schema validators via `validator_for(schema)(schema)` and reusing module-level cached validator instances reduces validation overhead to ~0.084s-0.26s per 1,000 calls (~80x to 290x speedup).
 **Action:** When performing schema validation on fixed schemas in request or import hot paths, pre-compile and cache the `jsonschema` validator instances (`validator_for(schema)(schema)`) rather than calling generic `jsonschema.validate(data, schema)`.
+
+## 2026-03-31 - Fast Single-Pass Address Partitioning in Upstream Resolver
+**Learning:** `resolve_upstream` ran `is_blocked_ip(ip)` and `_addr_family(ip)` twice for every address via dual-list comprehensions (e.g. `blocked = [ip for ip in addrs if is_blocked_ip(ip)]` and `addresses = [ip for ip in addrs if not is_blocked_ip(ip)]`). Replacing dual list comprehensions with single-pass partition loops reduces predicate calls by 50% and speeds up SSRF filtering and IPv6 sorting in DNS resolution by ~2x (from 9.12s to 4.59s per 10k batch).
+**Action:** When partitioning collections by a condition or predicate function (especially heavy functions parsing IP strings), use a single-pass `for` loop to append to `safe` and `blocked` lists instead of calling the predicate twice in separate list comprehensions.
