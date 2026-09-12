@@ -242,7 +242,7 @@
     .header-right .ram-toggle input:checked + .ram-slider { background: var(--accent); }
     .header-right .ram-toggle input:checked + .ram-slider::before { transform: translateX(18px); }
     .header-right .ram-toggle input:focus-visible + .ram-slider { outline: 2px solid var(--accent); outline-offset: 2px; }
-    .header-right .ram-label { font-size: 13px; color: var(--text-muted); display: flex; align-items: center; gap: 6px; cursor: pointer; }
+    .header-right .ram-label { font-size: 13px; color: var(--text2); display: flex; align-items: center; gap: 6px; cursor: pointer; }
     .header-right .ram-label span { white-space: nowrap; }
     @media (prefers-reduced-motion: reduce) {
       .tls-config .tc-slider, .header-right .ram-slider { transition: none; }
@@ -445,7 +445,7 @@
 <!-- LLM Settings modal -->
 <div class="profile-modal" id="llm-settings-modal" role="dialog" aria-modal="true" aria-labelledby="llm-settings-title" style="display:none;">
   <div class="profile-modal-content" style="max-width:720px;">
-    <h3 id="llm-settings-title">&#x1F916; LLM Settings</h3>
+    <h3 id="llm-settings-title" tabindex="-1">&#x1F916; LLM Settings</h3>
 
     <div class="pm-row">
       <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
@@ -949,6 +949,11 @@ setInterval(loadTlsBar, 15000);
 
 document.addEventListener('keydown', function(event) {
   if (event.key === 'Escape') {
+    const modal = document.getElementById('llm-settings-modal');
+    if (modal && modal.style.display !== 'none') {
+      closeLLMSettings();
+      return;
+    }
     const detail = document.getElementById('details');
     if (detail && !detail.classList.contains('invisible')) {
       closeDetails();
@@ -1172,15 +1177,26 @@ async function deleteProfile(deviceId) {
 
 // ── LLM Settings (global: which LLM to use + its configuration) ──────────────
 
+let lastModalActiveElement = null;
+
 function openLLMSettings() {
+  lastModalActiveElement = document.activeElement;
   const modal = document.getElementById('llm-settings-modal');
   if (modal) modal.style.display = 'flex';
+  const title = document.getElementById('llm-settings-title');
+  if (title) title.focus();
   loadLLMSettings();
 }
 
 function closeLLMSettings() {
   const modal = document.getElementById('llm-settings-modal');
   if (modal) modal.style.display = 'none';
+  if (lastModalActiveElement && document.body.contains(lastModalActiveElement) && typeof lastModalActiveElement.focus === 'function') {
+    lastModalActiveElement.focus();
+  } else {
+    const btn = document.getElementById('llmSettingsBtn');
+    if (btn) btn.focus();
+  }
 }
 
 async function loadLLMSettings() {
