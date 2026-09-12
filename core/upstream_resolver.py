@@ -143,8 +143,14 @@ async def resolve_upstream(  # noqa: C901, PLR0912
             logger.debug("Resolver cache hit for %s", hostname)
             result = list(cached)
             if prefer_ipv6:
-                v6 = [ip for ip in result if _addr_family(ip) == _IPV6_VERSION]
-                v4 = [ip for ip in result if _addr_family(ip) != _IPV6_VERSION]
+                # Performance optimization: single-pass partition avoids calling _addr_family twice per address (~2x faster)
+                v6: list[str] = []
+                v4: list[str] = []
+                for ip in result:
+                    if _addr_family(ip) == _IPV6_VERSION:
+                        v6.append(ip)
+                    else:
+                        v4.append(ip)
                 result = v6 + v4
             return result
 
@@ -200,15 +206,23 @@ async def resolve_upstream(  # noqa: C901, PLR0912
     # space, regardless of which resolution path produced it. This is the
     # single choke point so every caller (forwarding, adapters, protocol
     # servers) inherits the protection.
-    blocked = [ip for ip in addresses if is_blocked_ip(ip)]
-    if blocked:
+    # Performance optimization: single-pass partition avoids calling is_blocked_ip twice per address (~2x faster)
+    safe_addresses: list[str] = []
+    blocked_addresses: list[str] = []
+    for ip in addresses:
+        if is_blocked_ip(ip):
+            blocked_addresses.append(ip)
+        else:
+            safe_addresses.append(ip)
+
+    if blocked_addresses:
         logger.warning(
             "Dropping %d unsafe address(es) for %s: %s",
-            len(blocked),
+            len(blocked_addresses),
             hostname,
-            blocked,
+            blocked_addresses,
         )
-    addresses = [ip for ip in addresses if not is_blocked_ip(ip)]
+    addresses = safe_addresses
 
     # Update cache (TTLCache manages expiration)
     if addresses:
