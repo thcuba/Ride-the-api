@@ -35,7 +35,6 @@ from core.database import (
     get_db_manager,
 )
 from core.llm_decipher import LLMDecipherService, LLMProfile, _parse_llm_json
-from core.redaction import redact_body, redact_headers, redact_query
 from core.pattern_db import decipher_ingest
 from core.pattern_db.pattern_engine import (
     PatternEngine,
@@ -45,6 +44,7 @@ from core.pattern_db.pattern_engine import (
     _path_similarity,
 )
 from core.pattern_db.schemas import DeviceModel, PatternDB, ProtocolInfo
+from core.redaction import redact_body, redact_headers, redact_query
 
 if TYPE_CHECKING:
     from core.buffer.store import BufferStore
@@ -78,6 +78,7 @@ def _redact_pairs_for_prompt(pairs: list) -> list:
                 clone[field] = redact(clone[field])
         result.append(clone)
     return result
+
 
 # Whitelisted protocol tokens that a device can be attributed with. Anything the
 # LLM reports outside this set is dropped so arbitrary/untrusted strings cannot
@@ -325,7 +326,7 @@ class PatternMatcher:
 
         return best_pattern, best_template, best_score
 
-    def _calculate_similarity(  # noqa: PLR0913
+    def _calculate_similarity(  # noqa: PLR0913, C901
         self,
         pattern: RequestPattern,
         method: str,
@@ -473,55 +474,54 @@ class MatchRateTracker:
         # F-12: serialize per-device updates so concurrent requests cannot
         # lose increments on the shared MatchStats row.
         lock = self._locks.setdefault(device_id, asyncio.Lock())
-        async with lock:
-            async with self.db_manager.device_session(device_id) as session:
-                result_obj = await session.execute(
-                    select(MatchStats).where(MatchStats.device_id == device_id)
+        async with lock, self.db_manager.device_session(device_id) as session:
+            result_obj = await session.execute(
+                select(MatchStats).where(MatchStats.device_id == device_id)
+            )
+            stats = result_obj.scalar_one_or_none()
+            if not stats:
+                stats = MatchStats(
+                    device_id=device_id,
+                    total_requests=0,
+                    local_hits=0,
+                    cloud_misses=0,
+                    errors=0,
+                    match_rate_pct=0.0,
+                    patterns_learned=0,
+                    templates_created=0,
+                    buffer_flushes=0,
+                    current_buffer_size_bytes=0,
                 )
-                stats = result_obj.scalar_one_or_none()
-                if not stats:
-                    stats = MatchStats(
-                        device_id=device_id,
-                        total_requests=0,
-                        local_hits=0,
-                        cloud_misses=0,
-                        errors=0,
-                        match_rate_pct=0.0,
-                        patterns_learned=0,
-                        templates_created=0,
-                        buffer_flushes=0,
-                        current_buffer_size_bytes=0,
-                    )
-                    session.add(stats)
-                    await session.flush()
+                session.add(stats)
+                await session.flush()
 
-                stats.total_requests += 1
+            stats.total_requests += 1
 
-                if match_result == MatchResult.LOCAL_HIT:
-                    stats.local_hits += 1
-                elif match_result == MatchResult.CLOUD_MISS:
-                    stats.cloud_misses += 1
-                else:
-                    stats.errors += 1
+            if match_result == MatchResult.LOCAL_HIT:
+                stats.local_hits += 1
+            elif match_result == MatchResult.CLOUD_MISS:
+                stats.cloud_misses += 1
+            else:
+                stats.errors += 1
 
-                # Recalculate match rate
-                total_attempted = stats.local_hits + stats.cloud_misses
-                stats.match_rate_pct = round(
-                    (stats.local_hits / total_attempted * 100) if total_attempted > 0 else 0.0,
-                    2,
-                )
+            # Recalculate match rate
+            total_attempted = stats.local_hits + stats.cloud_misses
+            stats.match_rate_pct = round(
+                (stats.local_hits / total_attempted * 100) if total_attempted > 0 else 0.0,
+                2,
+            )
 
-                # Rolling window
-                recent = list(stats.recent_results or [])
-                recent.append(
-                    {
-                        "result": match_result.value,
-                        "timestamp": datetime.now(UTC).isoformat(),
-                    }
-                )
-                if len(recent) > self._rolling_window:
-                    recent = recent[-self._rolling_window :]
-                stats.recent_results = recent
+            # Rolling window
+            recent = list(stats.recent_results or [])
+            recent.append(
+                {
+                    "result": match_result.value,
+                    "timestamp": datetime.now(UTC).isoformat(),
+                }
+            )
+            if len(recent) > self._rolling_window:
+                recent = recent[-self._rolling_window :]
+            stats.recent_results = recent
 
     async def get_stats(self, device_id: str) -> dict:
         """Get current match stats for a device."""
@@ -656,7 +656,7 @@ class LearningPipeline:
 
         return corr_key
 
-    async def match_response(  # noqa: PLR0913
+    async def match_response(  # noqa: PLR0913, C901
         self,
         device_id: str,
         vendor: str,

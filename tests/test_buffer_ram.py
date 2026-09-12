@@ -26,6 +26,14 @@ from core.buffer import (
 )
 from core.database import DatabaseManager, LLMContextBuffer, MatchStats
 from core.pattern_db.buffer_manager import BufferManager
+from core.pattern_db.schemas import (
+    CaptureDB,
+    CaptureDeviceInfo,
+    CaptureMeta,
+    CaptureSession,
+    RawPairWithResponse,
+    RawResponse,
+)
 from core.pipeline import ContextBuffer, CorrelatedPair
 
 
@@ -245,14 +253,6 @@ class TestImportCapture:
     @pytest.mark.asyncio
     async def test_import_target_device_overrides_payload(self, db_manager):
         """F-08: target_device_id forces the destination device DB."""
-        from core.pattern_db.schemas import (
-            CaptureDB,
-            CaptureDeviceInfo,
-            CaptureMeta,
-            CaptureSession,
-            RawPairWithResponse,
-            RawResponse,
-        )
 
         now = datetime.now(UTC)
         capture = CaptureDB(
@@ -295,13 +295,6 @@ class TestImportCapture:
     @pytest.mark.asyncio
     async def test_import_without_target_uses_payload_device(self, db_manager):
         """F-08: without a target, the payload device id is used (back-compat)."""
-        from core.pattern_db.schemas import (
-            CaptureDB,
-            CaptureDeviceInfo,
-            CaptureMeta,
-            CaptureSession,
-            RawPairWithResponse,
-        )
 
         now = datetime.now(UTC)
         capture = CaptureDB(

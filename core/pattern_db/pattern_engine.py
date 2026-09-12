@@ -9,6 +9,7 @@ with state management and .ride-pattern.json import/export.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import functools
 import json
 import logging
@@ -254,16 +255,15 @@ def _normalize_field_mappings(field_mappings: Any) -> list[dict]:  # noqa: ANN40
     return result
 
 
-def _get_normalized_field_mappings(template: Any) -> list[dict]:
-    """Get normalized field mappings for a template, caching on the template instance (~1.24x speedup)."""
+def _get_normalized_field_mappings(template: object) -> list[dict]:
+    """Get normalized field mappings for a template, caching on the template
+    instance (~1.24x speedup)."""
     cached = getattr(template, "_cached_normalized_field_mappings", None)
     if cached is not None:
         return cached
     fms = _normalize_field_mappings(getattr(template, "field_mappings", None))
-    try:
+    with contextlib.suppress(AttributeError, TypeError):
         object.__setattr__(template, "_cached_normalized_field_mappings", fms)
-    except (AttributeError, TypeError):
-        pass
     return fms
 
 
@@ -342,16 +342,15 @@ class PatternEngine:
             return False
         variables = store.snapshot()["variables"]
         lock = self._locks.setdefault(device_id, asyncio.Lock())
-        async with lock:
-            async with self.db_manager.device_session(device_id) as session:
-                result = await session.execute(
-                    select(DeviceState).where(DeviceState.device_id == device_id)
-                )
-                row = result.scalar_one_or_none()
-                if row is None:
-                    session.add(DeviceState(device_id=device_id, state=variables))
-                else:
-                    row.state = variables
+        async with lock, self.db_manager.device_session(device_id) as session:
+            result = await session.execute(
+                select(DeviceState).where(DeviceState.device_id == device_id)
+            )
+            row = result.scalar_one_or_none()
+            if row is None:
+                session.add(DeviceState(device_id=device_id, state=variables))
+            else:
+                row.state = variables
         store.clear_dirty()
         return True
 
@@ -466,7 +465,7 @@ class PatternEngine:
 
         return best_pattern, best_template, best_score
 
-    def _calculate_similarity(  # noqa: PLR0913
+    def _calculate_similarity(  # noqa: PLR0913, C901
         self,
         method_a: str,
         method_b: str,

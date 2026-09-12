@@ -115,9 +115,7 @@ async def test_cache_legacy_empty_protocol_never_filters():
 async def test_cache_no_request_protocol_never_filters():
     # A caller that doesn't pass a protocol must see every endpoint.
     engine = _cached_engine("mqtt")
-    pattern, _, _ = await engine.find_best_match(
-        "device-1", "GET", "/api/v1/status", {}, None, {}
-    )
+    pattern, _, _ = await engine.find_best_match("device-1", "GET", "/api/v1/status", {}, None, {})
     assert pattern is not None
 
 

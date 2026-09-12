@@ -121,9 +121,7 @@ class BufferManager:
             ],
         )
 
-    async def import_capture(
-        self, capture: CaptureDB, target_device_id: str | None = None
-    ) -> int:
+    async def import_capture(self, capture: CaptureDB, target_device_id: str | None = None) -> int:
         """Import a CaptureDB into the buffer. Returns number of pairs imported.
 
         ``target_device_id`` overrides the (obfuscated) payload device id so a
@@ -131,9 +129,7 @@ class BufferManager:
         """
         # Validate against the portable JSON Schema before importing. Use
         # mode="json" so datetimes serialize to strings the schema accepts.
-        result = validate_capture(
-            capture.model_dump(mode="json", by_alias=True, exclude_none=True)
-        )
+        result = validate_capture(capture.model_dump(mode="json", by_alias=True, exclude_none=True))
         if not result.valid:
             raise ValidationError(result=result)
 

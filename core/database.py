@@ -680,34 +680,33 @@ class DatabaseManager:
         # F-12: serialize per-device creation so concurrent callers cannot both
         # insert a registry row (and race on the device DB) for the same id.
         lock = self._device_locks.setdefault(device_id, asyncio.Lock())
-        async with lock:
-            async with await self.get_core_session() as session:
-                result = await session.execute(
-                    select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
+        async with lock, await self.get_core_session() as session:
+            result = await session.execute(
+                select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
+            )
+            device = result.scalar_one_or_none()
+            if not device:
+                # Inherit global learning defaults into the per-device config
+                try:
+                    learning = get_config().learning
+                    device_config = {
+                        "production_no_fallback": learning.production_no_fallback,
+                    }
+                except Exception:
+                    device_config = {}
+                device = DeviceRegistry(
+                    device_id=device_id,
+                    vendor=vendor,
+                    device_type=device_type,
+                    name=name or device_id,
+                    mode="learning",
+                    config=device_config,
                 )
-                device = result.scalar_one_or_none()
-                if not device:
-                    # Inherit global learning defaults into the per-device config
-                    try:
-                        learning = get_config().learning
-                        device_config = {
-                            "production_no_fallback": learning.production_no_fallback,
-                        }
-                    except Exception:
-                        device_config = {}
-                    device = DeviceRegistry(
-                        device_id=device_id,
-                        vendor=vendor,
-                        device_type=device_type,
-                        name=name or device_id,
-                        mode="learning",
-                        config=device_config,
-                    )
-                    session.add(device)
-                    await session.commit()
-                    # A new device may bring IPs; force the reverse index rebuild.
-                    self.invalidate_ip_lookup_cache()
-                    logger.info(f"Registered new device: {device_id} ({vendor})")
+                session.add(device)
+                await session.commit()
+                # A new device may bring IPs; force the reverse index rebuild.
+                self.invalidate_ip_lookup_cache()
+                logger.info(f"Registered new device: {device_id} ({vendor})")
         await self.get_device_engine(device_id)
 
     async def apply_ip_profile(self, device_id: str, ip: str) -> str:
@@ -811,9 +810,7 @@ class DatabaseManager:
             await session.commit()
         return payload
 
-    async def resolve_device_protocol(
-        self, device_id: str, ingress_default: str = "http"
-    ) -> str:
+    async def resolve_device_protocol(self, device_id: str, ingress_default: str = "http") -> str:
         """Resolve the operational protocol for a device on ingress.
 
         Priority (highest first):

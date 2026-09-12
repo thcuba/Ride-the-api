@@ -53,8 +53,7 @@ class TestResolveDeviceProtocol:
         device_id = "ip-1-2-3-4"
         await db_manager.get_or_create_device(device_id, "unknown")
         assert (
-            await db_manager.resolve_device_protocol(device_id, ingress_default="https")
-            == "https"
+            await db_manager.resolve_device_protocol(device_id, ingress_default="https") == "https"
         )
 
     @pytest.mark.asyncio
@@ -62,10 +61,7 @@ class TestResolveDeviceProtocol:
         device_id = "ip-1-2-3-4"
         await db_manager.get_or_create_device(device_id, "unknown")
         await _set_connection(db_manager, device_id, "auto")
-        assert (
-            await db_manager.resolve_device_protocol(device_id, ingress_default="http")
-            == "http"
-        )
+        assert await db_manager.resolve_device_protocol(device_id, ingress_default="http") == "http"
 
     @pytest.mark.asyncio
     async def test_ip_profile_connection_wins(self, db_manager):
@@ -76,10 +72,7 @@ class TestResolveDeviceProtocol:
             device_id, DeviceMeta(connection_mode="mqtt").model_dump()
         )
         # ip_profiles (extra_attributes) beats device_meta.
-        assert (
-            await db_manager.resolve_device_protocol(device_id, ingress_default="http")
-            == "coap"
-        )
+        assert await db_manager.resolve_device_protocol(device_id, ingress_default="http") == "coap"
 
     @pytest.mark.asyncio
     async def test_device_meta_wins_over_default(self, db_manager):
@@ -89,8 +82,7 @@ class TestResolveDeviceProtocol:
             device_id, DeviceMeta(connection_mode="modbus").model_dump()
         )
         assert (
-            await db_manager.resolve_device_protocol(device_id, ingress_default="https")
-            == "modbus"
+            await db_manager.resolve_device_protocol(device_id, ingress_default="https") == "modbus"
         )
 
     @pytest.mark.asyncio
@@ -101,8 +93,7 @@ class TestResolveDeviceProtocol:
             device_id, DeviceMeta(connection_mode="auto").model_dump()
         )
         assert (
-            await db_manager.resolve_device_protocol(device_id, ingress_default="https")
-            == "https"
+            await db_manager.resolve_device_protocol(device_id, ingress_default="https") == "https"
         )
 
 

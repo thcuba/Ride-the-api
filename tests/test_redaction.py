@@ -88,7 +88,7 @@ def test_redact_body_key_value_string():
 
 
 def test_redact_body_scalar_passthrough():
-    assert redact_body(42) == 42
+    assert redact_body(42) == 42  # noqa: PLR2004
     assert redact_body("plain text") == "plain text"
 
 

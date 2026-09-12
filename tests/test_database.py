@@ -2,6 +2,8 @@
 Tests for the Database module (DatabaseManager, models, CRUD).
 """
 
+import asyncio
+
 import pytest
 import pytest_asyncio
 from sqlalchemy import select
@@ -101,10 +103,10 @@ class TestDeviceRegistry:
                 select(DeviceRegistry).where(DeviceRegistry.device_id == "device-001")
             )
             assert result.scalars().all() is not None
+
     @pytest.mark.asyncio
     async def test_get_or_create_device_concurrent_no_duplicates(self, db_manager):
         """F-12: concurrent creation must not duplicate registry rows."""
-        import asyncio
 
         await asyncio.gather(
             *[

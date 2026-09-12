@@ -276,6 +276,7 @@ async def test_forward_intercepted_all_ips_fail():
     assert result.forwarded is True
     assert "Cloud forward failed" in (result.error or "")
 
+
 # --------------------
 # SSRF guard (F-07)
 # --------------------

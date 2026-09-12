@@ -153,7 +153,7 @@ class TestKeyPermissions:
         ca_key_path = Path(tmp_path / "certs" / "ca.key")
         assert ca_key_path.exists()
         if hasattr(ca_key_path, "stat") and hasattr(ca_key_path.stat(), "st_mode"):
-            assert (ca_key_path.stat().st_mode & 0o777) == 0o600
+            assert (ca_key_path.stat().st_mode & 0o777) == 0o600  # noqa: PLR2004
 
     def test_leaf_key_file_permissions(self, tmp_path):
         cm = self._manager(tmp_path)
@@ -162,7 +162,7 @@ class TestKeyPermissions:
         _, key_file = cm._device_cert_files("device.example.com")
         assert key_file.exists()
         if hasattr(key_file, "stat") and hasattr(key_file.stat(), "st_mode"):
-            assert (key_file.stat().st_mode & 0o777) == 0o600
+            assert (key_file.stat().st_mode & 0o777) == 0o600  # noqa: PLR2004
 
     def test_imported_key_file_permissions(self, tmp_path):
         cm = self._manager(tmp_path)
@@ -173,4 +173,4 @@ class TestKeyPermissions:
         imported_key_file = cm._ext_dir("import.example.com") / "key.pem"
         assert imported_key_file.exists()
         if hasattr(imported_key_file, "stat") and hasattr(imported_key_file.stat(), "st_mode"):
-            assert (imported_key_file.stat().st_mode & 0o777) == 0o600
+            assert (imported_key_file.stat().st_mode & 0o777) == 0o600  # noqa: PLR2004
