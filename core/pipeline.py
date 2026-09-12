@@ -282,7 +282,7 @@ class PatternMatcher:
     def __init__(self, db_manager: DatabaseManager) -> None:
         self.db_manager = db_manager
 
-    async def find_best_match(  # noqa: PLR0913
+    async def find_best_match(  # noqa: PLR0913, PLR0917
         self,
         device_id: str,
         method: str,
@@ -326,7 +326,7 @@ class PatternMatcher:
 
         return best_pattern, best_template, best_score
 
-    def _calculate_similarity(  # noqa: PLR0913, C901
+    def _calculate_similarity(  # noqa: PLR0913, C901, PLR0917
         self,
         pattern: RequestPattern,
         method: str,
@@ -560,7 +560,7 @@ class MatchRateTracker:
 class LearningPipeline:
     """Orchestrates the learning flow: correlate buffer, read LLM, save patterns."""
 
-    def __init__(  # noqa: PLR0913
+    def __init__(  # noqa: PLR0913, PLR0917
         self,
         db_manager: DatabaseManager,
         llm_decipher: LLMDecipherService,
@@ -594,7 +594,7 @@ class LearningPipeline:
             logger.debug("Correlation config unavailable, using 7-day TTL: %s", e)
             return timedelta(days=7)
 
-    async def register_request(  # noqa: PLR0913
+    async def register_request(  # noqa: PLR0913, PLR0917
         self,
         device_id: str,
         vendor: str,
@@ -656,7 +656,7 @@ class LearningPipeline:
 
         return corr_key
 
-    async def match_response(  # noqa: PLR0913, C901
+    async def match_response(  # noqa: PLR0913, C901, PLR0917
         self,
         device_id: str,
         vendor: str,
@@ -1562,7 +1562,7 @@ class LearningOrchestrator:
             logger.info("Pruned %d stale correlation rows across %d devices", total, len(devices))
         return total
 
-    async def handle_request(  # noqa: PLR0913
+    async def handle_request(  # noqa: PLR0913, PLR0917
         self,
         device_id: str,
         vendor: str,  # noqa: ARG002
@@ -1592,7 +1592,7 @@ class LearningOrchestrator:
             device, protocol, method, path, headers, body, query_params, enrichment
         )
 
-    async def _handle_production(  # noqa: PLR0913
+    async def _handle_production(  # noqa: PLR0913, PLR0917
         self,
         device: DeviceRegistry,
         protocol: str,
@@ -1651,7 +1651,7 @@ class LearningOrchestrator:
             "reason": "below_threshold" if pattern else "no_pattern",
         }
 
-    async def _handle_hybrid(  # noqa: PLR0913
+    async def _handle_hybrid(  # noqa: PLR0913, PLR0917
         self,
         device: DeviceRegistry,
         protocol: str,
@@ -1698,7 +1698,7 @@ class LearningOrchestrator:
             "mode": "hybrid",
         }
 
-    async def _handle_learning(  # noqa: PLR0913
+    async def _handle_learning(  # noqa: PLR0913, PLR0917
         self,
         device: DeviceRegistry,
         protocol: str,
@@ -1719,7 +1719,7 @@ class LearningOrchestrator:
             "mode": "learning",
         }
 
-    async def _register_for_learning(  # noqa: PLR0913
+    async def _register_for_learning(  # noqa: PLR0913, PLR0917
         self,
         device: DeviceRegistry,
         protocol: str,
@@ -1753,7 +1753,7 @@ class LearningOrchestrator:
             enrichment,
         )
 
-    async def handle_response(  # noqa: PLR0913
+    async def handle_response(  # noqa: PLR0913, PLR0917
         self,
         device_id: str,
         vendor: str,

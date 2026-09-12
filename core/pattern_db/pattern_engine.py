@@ -356,7 +356,7 @@ class PatternEngine:
 
     # â”€â”€ Pattern Matching â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€  # noqa: E501
 
-    async def find_best_match(  # noqa: PLR0913, PLR0912, C901
+    async def find_best_match(  # noqa: PLR0913, PLR0912, C901, PLR0917
         self,
         device_id: str,
         method: str,
@@ -465,7 +465,7 @@ class PatternEngine:
 
         return best_pattern, best_template, best_score
 
-    def _calculate_similarity(  # noqa: PLR0913, C901
+    def _calculate_similarity(  # noqa: PLR0913, C901, PLR0917
         self,
         method_a: str,
         method_b: str,
