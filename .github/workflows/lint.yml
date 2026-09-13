@@ -11,6 +11,11 @@ on:
   pull_request:
     branches: [ "main" ]
 
+# Scope the GITHUB_TOKEN to read-only: this workflow only checks out code and
+# runs ruff (no writes), so contents:read is all it needs.
+permissions:
+  contents: read
+
 jobs:
   lint:
     runs-on: ubuntu-latest
