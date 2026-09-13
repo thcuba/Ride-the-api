@@ -116,7 +116,7 @@ def redact_headers(headers: dict[str, Any] | None) -> dict[str, Any] | None:
         return headers
     result: dict[str, Any] = {}
     for name, value in headers.items():
-        # Fast path string lowercasing avoids str(name) conversions on string keys (~1.12x speedup)
+        # Fast path lowercasing avoids str(name) on string keys (~1.12x speedup)
         key = name.lower() if isinstance(name, str) else str(name).lower()
         if key in SENSITIVE_HEADERS and value not in (None, ""):
             result[name] = REDACTED
@@ -131,7 +131,7 @@ def redact_query(query_params: dict[str, Any] | None) -> dict[str, Any] | None:
         return query_params
     result: dict[str, Any] = {}
     for name, value in query_params.items():
-        # Fast path string lowercasing avoids str(name) conversions on string keys (~1.12x speedup)
+        # Fast path lowercasing avoids str(name) on string keys (~1.12x speedup)
         key = name.lower() if isinstance(name, str) else str(name).lower()
         if key in SENSITIVE_QUERY_PARAMS and value not in (None, ""):
             result[name] = REDACTED
@@ -162,7 +162,7 @@ def redact_body(body: Any, *, in_headers: bool = True) -> Any:  # noqa: ANN401
 
 def redact_value(key: Any, value: Any) -> Any:  # noqa: ANN401
     """Redact ``value`` if ``key`` names a sensitive field; else recurse."""
-    # Fast path: check string values first so primitive non-strings return immediately (~1.21x speedup)
+    # Fast path: primitive non-strings return immediately without key lookups (~1.21x speedup)
     if isinstance(value, str):
         return REDACTED if _is_sensitive_key(key) else value
     if isinstance(value, (dict, list)):
@@ -171,7 +171,7 @@ def redact_value(key: Any, value: Any) -> Any:  # noqa: ANN401
 
 
 def _is_sensitive_key(key: object) -> bool:
-    # Fast path: exact set membership check avoids intermediate string allocations for clean keys (~1.2x speedup)
+    # Fast path: exact set check avoids string allocations for clean keys (~1.2x speedup)
     if isinstance(key, str):
         if key in SENSITIVE_KEYS:
             return True
