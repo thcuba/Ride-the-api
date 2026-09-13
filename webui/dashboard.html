@@ -181,14 +181,22 @@
   /* ── Device Filter Bar ───────────────────────────────────────────────── */
   .device-filter-bar { margin-bottom: 16px; position: relative; display: flex; align-items: center; max-width: 360px; }
   .device-filter-bar input {
-    width: 100%; padding: 8px 12px 8px 34px; background: var(--surface); border: 1px solid var(--border);
+    width: 100%; padding: 8px 32px 8px 34px; background: var(--surface); border: 1px solid var(--border);
     border-radius: 8px; color: var(--text); font-family: inherit; font-size: 13px; transition: border-color .2s;
   }
   .device-filter-bar input:focus { outline: none; border-color: var(--accent); }
   .device-filter-bar input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .device-filter-bar input[type="search"]::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
   .device-filter-bar .search-icon {
     position: absolute; left: 10px; color: var(--text2); pointer-events: none; width: 16px; height: 16px;
   }
+  .device-filter-bar .clear-search-btn {
+    position: absolute; right: 10px; background: none; border: none; color: var(--text2);
+    font-size: 16px; cursor: pointer; padding: 2px 6px; border-radius: 4px; line-height: 1;
+    transition: color .2s; display: none;
+  }
+  .device-filter-bar .clear-search-btn:hover { color: var(--text); }
+  .device-filter-bar .clear-search-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
   /* ── Misc ──────────────────────────────────────────────────────────────── */
   .empty { color: var(--text2); text-align: center; padding: 60px 20px; grid-column: 1 / -1; }
@@ -428,7 +436,9 @@
 <div id="main-content">
   <div class="device-filter-bar">
     <svg class="search-icon icon-svg-sm" aria-hidden="true" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-    <input type="search" id="deviceSearchInput" placeholder="Filter devices by name, ID, vendor..." aria-label="Filter devices" oninput="filterDevices()">
+    <input type="search" id="deviceSearchInput" placeholder="Filter devices by name, ID, vendor..." aria-label="Filter devices" oninput="filterDevices()" onkeydown="if(event.key==='Escape'){clearDeviceSearch();event.stopPropagation();}">
+    <button type="button" class="clear-search-btn" id="clearSearchBtn" aria-label="Clear device search filter" onclick="clearDeviceSearch()">&times;</button>
+    <span class="sr-only" id="filterStatus" aria-live="polite"></span>
   </div>
   <div id="devices" class="grid" role="region" aria-label="Registered devices">
     <div class="empty">
@@ -629,9 +639,21 @@ async function loadDevices() {
   }
 }
 
+function clearDeviceSearch() {
+  const input = document.getElementById('deviceSearchInput');
+  if (input) {
+    input.value = '';
+    input.focus();
+    filterDevices();
+  }
+}
+
 // ── Real-time device filter ──────────────────────────────────────────────────
 function filterDevices() {
   const query = (document.getElementById('deviceSearchInput')?.value || '').trim().toLowerCase();
+  const clearBtn = document.getElementById('clearSearchBtn');
+  if (clearBtn) clearBtn.style.display = query ? 'block' : 'none';
+
   const cards = document.querySelectorAll('#devices .device-card');
   let visibleCount = 0;
   cards.forEach(card => {
@@ -640,6 +662,16 @@ function filterDevices() {
     card.style.display = matches ? '' : 'none';
     if (matches) visibleCount++;
   });
+
+  const statusEl = document.getElementById('filterStatus');
+  if (statusEl && cards.length > 0) {
+    if (query) {
+      statusEl.textContent = `Showing ${visibleCount} of ${cards.length} devices`;
+    } else {
+      statusEl.textContent = '';
+    }
+  }
+
   let emptyMsg = document.getElementById('noMatchingDevices');
   if (cards.length > 0 && visibleCount === 0) {
     if (!emptyMsg) {
