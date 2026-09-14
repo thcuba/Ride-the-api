@@ -678,7 +678,7 @@ function filterDevices() {
       emptyMsg = document.createElement('div');
       emptyMsg.id = 'noMatchingDevices';
       emptyMsg.className = 'empty';
-      emptyMsg.innerHTML = '<div class="empty-icon"><svg class="icon-svg" aria-hidden="true" viewBox="0 0 24 24" style="width:48px;height:48px;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></div><div class="empty-text">No matching devices found</div><div class="empty-sub">Try searching with a different name, ID, or vendor.</div>';
+      emptyMsg.innerHTML = '<div class="empty-icon"><svg class="icon-svg" aria-hidden="true" viewBox="0 0 24 24" style="width:48px;height:48px;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></div><div class="empty-text">No matching devices found</div><div class="empty-sub">Try searching with a different name, ID, or vendor.</div><button class="btn btn-ghost" style="margin-top:12px;font-size:12px;" onclick="clearDeviceSearch()" aria-label="Clear device search filter">Clear search filter</button>';
       document.getElementById('devices').appendChild(emptyMsg);
     } else {
       emptyMsg.style.display = '';
