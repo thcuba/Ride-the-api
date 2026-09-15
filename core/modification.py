@@ -106,12 +106,21 @@ class ModificationRule:
     # Compiled patterns and precomputed lookups
     _path_regex: re.Pattern | None = field(default=None, init=False, repr=False)
     _match_headers_lower: dict[str, str] | None = field(default=None, init=False, repr=False)
+    _field_path_parts: tuple[str, ...] | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.match_path_pattern:
             self._path_regex = re.compile(self.match_path_pattern)
         if self.match_headers:
             self._match_headers_lower = {k.lower(): v for k, v in self.match_headers.items()}
+        if self.match_field_path and "[" not in self.match_field_path:
+            clean = (
+                self.match_field_path[2:]
+                if self.match_field_path.startswith("$.")
+                else self.match_field_path
+            )
+            if clean and clean != "$":
+                self._field_path_parts = tuple(clean.split("."))
 
     def matches(self, intercepted: InterceptedMessage, direction: str) -> bool:  # noqa: C901, PLR0911, PLR0912
         """Check if this rule matches the intercepted message."""
@@ -164,10 +173,16 @@ class ModificationRule:
             return None
         if path == "$":
             return obj
-        # Fast-path direct dict lookup for dot-paths without array brackets (~35.9x faster)
-        if "[" not in path:
+        parts = (
+            self._field_path_parts
+            if (path == self.match_field_path and self._field_path_parts is not None)
+            else None
+        )
+        if parts is None and "[" not in path:
             clean = path[2:] if path.startswith("$.") else path
-            parts = clean.split(".")
+            if clean and clean != "$":
+                parts = tuple(clean.split("."))
+        if parts:
             curr = obj
             for p in parts:
                 if isinstance(curr, dict):
@@ -187,10 +202,16 @@ class ModificationRule:
         """Simple JSONPath-like setter via dpath."""
         if not obj or not path or path == "$":
             return False
-        # Fast-path direct dict navigation for simple dot-paths (~5.7x faster)
-        if "[" not in path:
+        parts = (
+            self._field_path_parts
+            if (path == self.match_field_path and self._field_path_parts is not None)
+            else None
+        )
+        if parts is None and "[" not in path:
             clean = path[2:] if path.startswith("$.") else path
-            parts = clean.split(".")
+            if clean and clean != "$":
+                parts = tuple(clean.split("."))
+        if parts:
             target = obj
             for p in parts[:-1]:
                 if isinstance(target, dict):
