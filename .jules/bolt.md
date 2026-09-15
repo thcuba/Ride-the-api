@@ -73,3 +73,7 @@
 ## 2026-03-31 - Bulk SQL UPDATE for Buffer Store Flushing
 **Learning:** In `SqlAlchemyBufferStore.flush` and `flush_selected`, fetching ORM model instances via `select(...)` and mutating attributes in a Python `for` loop caused ORM object instantiation overhead and $N$ individual SQL `UPDATE` statements on commit (~42.7ms for 500 items). Using a single bulk SQL `update(...)` query (combined with `func.coalesce(func.sum(...))` for size calculation) executes directly in SQLite/PostgreSQL without loading ORM objects into memory (~4.3ms for 500 items, ~10x speedup).
 **Action:** When updating or marking status on batches of database rows in buffer or queue operations, use SQLAlchemy's bulk `update()` query construct instead of ORM instance loop mutation.
+
+## 2026-03-31 - Pre-computed Field Path Segments for Modification Rules
+**Learning:** In `ModificationRule`, parsing dot-separated JSON paths via `clean.split(".")` and prefix checks (`startswith("$.")`) on every rule match and modification application introduced repeated string allocation and path parsing overhead. Pre-computing `_field_path_parts` as a tuple during rule initialization (`__post_init__`) avoids re-parsing dot-paths and speeds up getter/setter field navigation in rule evaluation by ~2.1x to 2.6x (~0.42s vs ~1.09s per 1,000,000 evaluations).
+**Action:** Pre-compute dot-path tuples on rule/schema initialization whenever static path properties are checked repeatedly across request modification pipelines.
