@@ -453,9 +453,12 @@
 <div id="details" class="invisible" role="dialog" aria-labelledby="details-title" aria-modal="true"></div>
 
 <!-- LLM Settings modal -->
-<div class="profile-modal" id="llm-settings-modal" role="dialog" aria-modal="true" aria-labelledby="llm-settings-title" style="display:none;">
+<div class="profile-modal" id="llm-settings-modal" role="dialog" aria-modal="true" aria-labelledby="llm-settings-title" style="display:none;" onclick="if(event.target===this)closeLLMSettings();">
   <div class="profile-modal-content" style="max-width:720px;">
-    <h3 id="llm-settings-title" tabindex="-1">&#x1F916; LLM Settings</h3>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+      <h3 id="llm-settings-title" tabindex="-1" style="margin-bottom:0;">&#x1F916; LLM Settings</h3>
+      <button class="close-btn" onclick="closeLLMSettings()" aria-label="Close LLM settings modal">&times;</button>
+    </div>
 
     <div class="pm-row">
       <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
