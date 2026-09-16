@@ -943,6 +943,34 @@ class DatabaseManager:
             logger.info(f"Device {device_id} auto-switch {'enabled' if enabled else 'disabled'}")
             return True
 
+    async def update_device_match_threshold(self, device_id: str, threshold: float) -> bool:
+        """Set per-device match confidence threshold (0.0 to 1.0)."""
+        async with await self.get_core_session() as session:
+            result = await session.execute(
+                select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
+            )
+            device = result.scalar_one_or_none()
+            if not device:
+                return False
+            device.match_threshold = threshold
+            await session.commit()
+            logger.info(f"Device {device_id} match_threshold set to {threshold}")
+            return True
+
+    async def update_device_context_buffer_size(self, device_id: str, size: int) -> bool:
+        """Set per-device context buffer size in bytes."""
+        async with await self.get_core_session() as session:
+            result = await session.execute(
+                select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
+            )
+            device = result.scalar_one_or_none()
+            if not device:
+                return False
+            device.context_buffer_size = size
+            await session.commit()
+            logger.info(f"Device {device_id} context_buffer_size set to {size}")
+            return True
+
     # â”€â”€ Context notes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€  # noqa: E501
 
     async def update_device_context_notes(self, device_id: str, notes: str) -> bool:

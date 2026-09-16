@@ -880,6 +880,25 @@ async function loadDeviceStats(deviceId) {
         </div>
 
         <div class="tc-row">
+          <label for="dc-threshold-${escapeHtml(deviceId)}" class="tc-label">Match Threshold</label>
+          <div style="flex:1;display:flex;gap:6px;align-items:center;">
+            <input type="number" id="dc-threshold-${escapeHtml(deviceId)}" value="${(s.match_threshold * 100).toFixed(0)}" min="0" max="100" step="1" style="flex:1;" aria-label="Match threshold percent">
+            <span style="font-size:11px;color:var(--text2);">%</span>
+            <button class="btn btn-ghost" onclick="saveDeviceThreshold('${escapeJs(deviceId)}')" style="padding:4px 10px;font-size:12px;">Save</button>
+          </div>
+        </div>
+        <div class="tc-row">
+          <label for="dc-buffer-${escapeHtml(deviceId)}" class="tc-label">Context Buffer</label>
+          <div style="flex:1;display:flex;gap:6px;align-items:center;">
+            <select id="dc-buffer-${escapeHtml(deviceId)}">
+              ${[131072, 262144, 524288, 1048576, 2097152, 5242880, 10485760].map(sz => `<option value="${sz}" ${s.context_buffer_size === sz ? 'selected' : ''}>${(sz/1024).toFixed(0)} KB${sz===1048576?' (1MB)':''}</option>`).join('')}
+              <option value="${s.context_buffer_size}" ${![131072, 262144, 524288, 1048576, 2097152, 5242880, 10485760].includes(s.context_buffer_size) ? 'selected' : ''}>Custom (${(s.context_buffer_size/1024).toFixed(0)} KB)</option>
+            </select>
+            <button class="btn btn-ghost" onclick="saveDeviceBuffer('${escapeJs(deviceId)}')" style="padding:4px 10px;font-size:12px;">Save</button>
+          </div>
+        </div>
+
+        <div class="tc-row">
           <label for="dc-profile-${escapeHtml(deviceId)}" class="tc-label">LLM Profile</label>
           <select id="dc-profile-${escapeHtml(deviceId)}" data-current="${escapeHtml(s.llm_profile_name || 'default')}"></select>
         </div>
@@ -1390,6 +1409,37 @@ async function saveDeviceConnection(deviceId) {
     showToast('Connection set to ' + connection, 'success');
     loadDeviceStats(deviceId);
   } catch(e) { showToast(await errorFrom(e, 'Failed to save connection'), 'error'); }
+}
+
+async function saveDeviceThreshold(deviceId) {
+  const el = document.getElementById('dc-threshold-' + deviceId);
+  const pct = parseFloat(el ? el.value : '');
+  if (isNaN(pct) || pct < 0 || pct > 100) { showToast('Threshold must be 0–100%', 'warning'); return; }
+  const threshold = pct / 100;
+  try {
+    const res = await fetch(`/api/devices/${deviceId}/threshold`, {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({match_threshold: threshold}),
+    });
+    if (!res.ok) { showToast(await errorFrom(res, 'Failed to save threshold'), 'error'); return; }
+    showToast('Match threshold set to ' + pct + '%', 'success');
+    loadDeviceStats(deviceId);
+  } catch(e) { showToast(await errorFrom(e, 'Failed to save threshold'), 'error'); }
+}
+
+async function saveDeviceBuffer(deviceId) {
+  const el = document.getElementById('dc-buffer-' + deviceId);
+  const size = parseInt(el ? el.value : '', 10);
+  if (!size || size <= 0) { showToast('Invalid buffer size', 'warning'); return; }
+  try {
+    const res = await fetch(`/api/devices/${deviceId}/context-buffer`, {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({context_buffer_size: size}),
+    });
+    if (!res.ok) { showToast(await errorFrom(res, 'Failed to save buffer size'), 'error'); return; }
+    showToast('Context buffer set to ' + (size / 1024) + ' KB', 'success');
+    loadDeviceStats(deviceId);
+  } catch(e) { showToast(await errorFrom(e, 'Failed to save buffer size'), 'error'); }
 }
 
 async function saveDeviceLLM(deviceId) {

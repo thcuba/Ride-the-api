@@ -1102,6 +1102,65 @@ async def set_device_mode(device_id: str, request: Request):
     return {"device_id": device_id, "mode": mode}
 
 
+@app.put("/api/devices/{device_id}/threshold")
+async def set_device_threshold(device_id: str, request: Request):  # noqa: PLR0911
+    """Set the per-device match confidence threshold (0.0 to 1.0)."""
+    if not db_manager:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    body = await request.json()
+    if not isinstance(body, dict):
+        return JSONResponse(
+            status_code=400, content={"error": "Invalid JSON body: expected an object"}
+        )
+    raw = body.get("match_threshold")
+    if raw is None:
+        return JSONResponse(status_code=400, content={"error": "Provide 'match_threshold'"})
+    try:
+        threshold = float(raw)
+    except (TypeError, ValueError):
+        return JSONResponse(
+            status_code=400, content={"error": "'match_threshold' must be a number"}
+        )
+    if not 0.0 <= threshold <= 1.0:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "'match_threshold' must be between 0.0 and 1.0"},
+        )
+    success = await db_manager.update_device_match_threshold(device_id, threshold)
+    if not success:
+        return JSONResponse(status_code=404, content={"error": "Device not found"})
+    return {"device_id": device_id, "match_threshold": threshold}
+
+
+@app.put("/api/devices/{device_id}/context-buffer")
+async def set_device_context_buffer(device_id: str, request: Request):  # noqa: PLR0911
+    """Set the per-device context buffer size in bytes."""
+    if not db_manager:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    body = await request.json()
+    if not isinstance(body, dict):
+        return JSONResponse(
+            status_code=400, content={"error": "Invalid JSON body: expected an object"}
+        )
+    raw = body.get("context_buffer_size")
+    if raw is None:
+        return JSONResponse(status_code=400, content={"error": "Provide 'context_buffer_size'"})
+    try:
+        size = int(raw)
+    except (TypeError, ValueError):
+        return JSONResponse(
+            status_code=400, content={"error": "'context_buffer_size' must be an integer"}
+        )
+    if size <= 0:
+        return JSONResponse(
+            status_code=400, content={"error": "'context_buffer_size' must be positive"}
+        )
+    success = await db_manager.update_device_context_buffer_size(device_id, size)
+    if not success:
+        return JSONResponse(status_code=404, content={"error": "Device not found"})
+    return {"device_id": device_id, "context_buffer_size": size}
+
+
 @app.get("/api/devices/{device_id}/auto-switch")
 async def get_device_auto_switch(device_id: str):
     """Get auto-switch status for a device."""
