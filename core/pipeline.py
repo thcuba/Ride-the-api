@@ -1828,9 +1828,7 @@ class LearningOrchestrator:
                 stats["primary_ip"] = ips[0] if ips else None
                 # Per-device runtime config surfaced for the dashboard (so the
                 # detail panel can render editable controls from one fetch).
-                stats["connection"] = (device.extra_attributes or {}).get(
-                    "connection", "auto"
-                )
+                stats["connection"] = (device.extra_attributes or {}).get("connection", "auto")
                 stats["llm_base_url"] = device.llm_base_url
                 stats["llm_model_id"] = device.llm_model_id
                 stats["llm_profile_name"] = device.llm_profile_name
