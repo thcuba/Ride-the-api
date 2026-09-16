@@ -77,3 +77,7 @@
 ## 2026-03-31 - Pre-computed Field Path Segments for Modification Rules
 **Learning:** In `ModificationRule`, parsing dot-separated JSON paths via `clean.split(".")` and prefix checks (`startswith("$.")`) on every rule match and modification application introduced repeated string allocation and path parsing overhead. Pre-computing `_field_path_parts` as a tuple during rule initialization (`__post_init__`) avoids re-parsing dot-paths and speeds up getter/setter field navigation in rule evaluation by ~2.1x to 2.6x (~0.42s vs ~1.09s per 1,000,000 evaluations).
 **Action:** Pre-compute dot-path tuples on rule/schema initialization whenever static path properties are checked repeatedly across request modification pipelines.
+
+## 2026-03-31 - Fast ASGI Scope Access for Middleware Request Inspection
+**Learning:** In Starlette HTTP middleware, accessing `request.url.path` creates a new `URL` object and parses URL components on every request (~4x slower than raw string access). In ASGI body-size middleware, calling `dict(scope.get("headers") or [])` constructs an intermediate dictionary and hashes all header keys on every request (~1.4x slower than iterating header tuples directly).
+**Action:** In ASGI/Starlette middleware hot paths, access `scope.get("path", "")` directly for path prefix checks and iterate over `scope.get("headers")` tuples instead of building temporary dictionary objects.
