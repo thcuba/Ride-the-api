@@ -355,6 +355,57 @@
   .llm-profile-card .lpc-fields textarea { min-height: 60px; font-family: 'Courier New', monospace; resize: vertical; }
   .llm-profile-card .lpc-fields input:focus, .llm-profile-card .lpc-fields textarea:focus { outline: none; border-color: var(--accent); }
   .llm-profile-card .lpc-enable { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text2); }
+
+  /* ── Responsive: tablet (≤900px) ───────────────────────────────────────── */
+  @media (max-width: 900px) {
+    .header-left h1 { font-size: 24px; }
+    .global-stats { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
+    .stats-grid { grid-template-columns: repeat(2, 1fr); }
+    .device-card { padding: 14px; }
+    .detail-card { padding: 18px; }
+    .llm-profile-card .lpc-fields { grid-template-columns: 1fr; }
+  }
+
+  /* ── Responsive: mobile (≤600px) ───────────────────────────────────────── */
+  @media (max-width: 600px) {
+    body { padding: 12px; }
+    .header { gap: 8px; margin-bottom: 20px; }
+    .header-left h1 { font-size: 21px; }
+    .brand-row img { width: 34px; height: 34px; }
+    .header-right { flex-wrap: wrap; gap: 8px; justify-content: flex-start; }
+    .header-right input[type="password"] { width: 100%; }
+    .header-right .ram-label { font-size: 12px; }
+    .global-stats { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    .global-stat { padding: 12px; }
+    .global-stat .gs-num { font-size: 22px; }
+    .grid { grid-template-columns: 1fr; gap: 12px; }
+    .device-card { padding: 14px; }
+    .stats-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+    .detail-card { padding: 14px; border-radius: 10px; }
+    .detail-header { flex-wrap: wrap; gap: 8px; }
+    .tls-bar { padding: 10px 12px; gap: 8px; }
+    .tls-bar .tb-add input[type="number"] { width: 64px; }
+    .tls-bar .tb-add { flex-wrap: wrap; }
+    #certHostnameInput { width: 100%; }
+    .tls-config { padding: 10px; }
+    .tls-config .tc-row { flex-wrap: wrap; gap: 6px; }
+    .tls-config .tc-row .tc-label { flex-shrink: 0; }
+    .tls-config input, .tls-config select { max-width: 100%; }
+    .tls-config .tc-row input[type="number"], .tls-config .tc-row select { width: 100%; }
+    .profile-modal-content { padding: 16px; max-height: 90vh; }
+    .toast-container { top: auto; bottom: 16px; right: 16px; left: 16px; align-items: stretch; }
+    .toast { max-width: 100%; }
+    .device-filter-bar { width: 100%; }
+    .ring-svg { width: 100px; height: 100px; }
+    .ring-label .pct { font-size: 24px; }
+    .chart .bar { width: 5px; }
+    .sparkline-wrap, .analysis-box, .llm-buffer, .buffer-entry, .tls-config { padding: 10px; }
+    .llm-row { flex-wrap: wrap; gap: 6px; }
+    .llm-row input, .llm-row select, .llm-row textarea { width: 100%; }
+    .llm-actions { justify-content: stretch; }
+    .llm-actions .btn { flex: 1; }
+    .global-stat .gs-num, .stat-box .num { font-size: 20px; }
+  }
 </style>
 </head>
 <body>
