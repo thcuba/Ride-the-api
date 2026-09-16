@@ -866,6 +866,19 @@ async function loadDeviceStats(deviceId) {
           <input type="text" id="dc-db-url-${escapeHtml(deviceId)}" value="${escapeHtml(s.database_url || '')}" placeholder="e.g. sqlite:///./my_ac.db">
         </div>
 
+        <div class="tc-row" style="align-items:flex-start;">
+          <span class="tc-label">IP Addresses</span>
+          <div style="flex:1;display:flex;flex-direction:column;gap:6px;">
+            <div id="dc-ips-${escapeHtml(deviceId)}" style="display:flex;flex-wrap:wrap;gap:6px;">
+              ${(s.ip_addresses && s.ip_addresses.length) ? s.ip_addresses.map(ip => `<span class="tb-badge tb-active" role="listitem">${escapeHtml(ip)}</span>`).join('') : '<span style="font-size:12px;color:var(--text2);">none</span>'}
+            </div>
+            <div style="display:flex;gap:6px;">
+              <input type="text" id="dc-ip-new-${escapeHtml(deviceId)}" placeholder="e.g. 192.168.1.50" style="flex:1;" aria-label="New IP address for device">
+              <button class="btn btn-ghost" onclick="addDeviceIp('${escapeJs(deviceId)}')" style="padding:4px 12px;font-size:12px;">+ Add IP</button>
+            </div>
+          </div>
+        </div>
+
         <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px;gap:8px;">
           <span style="font-size:11px;color:var(--text2);" id="dc-status-${escapeHtml(deviceId)}"></span>
           <div style="text-align:right;display:flex;gap:8px;">
@@ -1224,6 +1237,23 @@ async function saveDeviceLLM(deviceId) {
     showToast('LLM config saved', 'success');
     loadDeviceStats(deviceId);
   } catch(e) { showToast(await errorFrom(e, 'Failed to save LLM config'), 'error'); }
+}
+
+async function addDeviceIp(deviceId) {
+  const input = document.getElementById('dc-ip-new-' + deviceId);
+  if (!input) return;
+  const ip = input.value.trim();
+  if (!ip) { showToast('IP address required', 'warning'); return; }
+  try {
+    const res = await fetch(`/api/devices/${deviceId}/ip`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ip_address: ip}),
+    });
+    if (!res.ok) { showToast(await errorFrom(res, 'Failed to add IP'), 'error'); return; }
+    showToast('IP ' + ip + ' added', 'success');
+    input.value = '';
+    loadDeviceStats(deviceId);
+  } catch(e) { showToast(await errorFrom(e, 'Failed to add IP'), 'error'); }
 }
 
 async function assignDeviceDatabase(deviceId) {
