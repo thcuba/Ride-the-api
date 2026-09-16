@@ -758,7 +758,7 @@ async function loadDeviceStats(deviceId) {
           <option value="production" ${s.mode === 'production' ? 'selected' : ''} title="Serve all matched requests locally without cloud forwarding">Local — Serve All</option>
           <option value="hybrid" ${s.mode === 'hybrid' ? 'selected' : ''} title="Serve local matches first, fallback to cloud for misses">Hybrid — Local then Cloud</option>
         </select>
-        <button class="btn btn-primary" onclick="switchMode('${escapeJs(deviceId)}')" title="Apply selected routing mode" aria-label="Apply mode change">Apply</button>
+        <button class="btn btn-primary" id="apply-mode-btn-${escapeHtml(deviceId)}" onclick="switchMode('${escapeJs(deviceId)}')" title="Apply selected routing mode" aria-label="Apply mode change">Apply</button>
       </div>
 
               <!-- Auto-Switch to Production toggle -->
@@ -822,7 +822,7 @@ async function loadDeviceStats(deviceId) {
         <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px;gap:8px;">
           <a class="btn btn-ghost" href="/patterns/${escapeHtml(deviceId)}" style="padding:6px 12px;font-size:12px;">View Patterns</a>
           <div style="text-align:right;">
-            <button class="btn btn-primary" onclick="saveTlsConfig('${escapeJs(deviceId)}')" style="padding:6px 16px;font-size:12px;">Save TLS Config</button>
+            <button class="btn btn-primary" id="save-tls-btn-${escapeHtml(deviceId)}" onclick="saveTlsConfig('${escapeJs(deviceId)}')" style="padding:6px 16px;font-size:12px;">Save TLS Config</button>
           </div>
         </div>
 
@@ -853,7 +853,7 @@ async function loadDeviceStats(deviceId) {
                     <label style="min-width:0;margin-bottom:4px;">Context Notes</label>
                     <textarea id="context-notes-${escapeHtml(deviceId)}" placeholder="Add context for LLM analysis&#10;e.g.: &#34;This endpoint controls device pairing&#34;"></textarea>
                     <div style="display:flex;gap:6px;margin-top:4px;justify-content:flex-end;">
-                      <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px;" onclick="saveContextNotes('${escapeJs(deviceId)}')">Save Notes</button>
+                      <button class="btn btn-ghost" id="save-notes-btn-${escapeHtml(deviceId)}" style="padding:4px 10px;font-size:11px;" onclick="saveContextNotes('${escapeJs(deviceId)}')">Save Notes</button>
                     </div>
                   </div>
 
@@ -920,7 +920,10 @@ function closeDetails() {
 
 async function switchMode(deviceId) {
   const select = document.getElementById('mode-select-' + deviceId);
+  const btn = document.getElementById('apply-mode-btn-' + deviceId);
   const mode = select.value;
+  const origText = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Applying...'; }
   try {
     await fetch(`/api/devices/${deviceId}/mode`, {
       method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({mode}),
@@ -929,6 +932,7 @@ async function switchMode(deviceId) {
     loadDeviceStats(deviceId);
     loadDevices();
   } catch(e) { showToast('Failed to switch mode', 'error'); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = origText; } }
 }
 
   async function toggleAutoSwitch(deviceId, enabled) {
@@ -1095,6 +1099,9 @@ async function saveTlsConfig(deviceId) {
   const passthrough = document.getElementById('tc-passthrough-' + deviceId).checked;
   const pinning = document.getElementById('tc-pinning-' + deviceId).value;
   const bypass = document.getElementById('tc-bypass-' + deviceId).checked;
+  const btn = document.getElementById('save-tls-btn-' + deviceId);
+  const origText = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
   try {
     const res = await fetch(`/api/devices/${deviceId}/tls-config`, {
       method: 'PUT', headers: {'Content-Type': 'application/json'},
@@ -1117,6 +1124,7 @@ async function saveTlsConfig(deviceId) {
     loadDeviceStats(deviceId);
     loadDevices();
   } catch(e) { showToast('Failed to save config', 'error'); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = origText; } }
 }
 
 // ── LLM Context & Template ───────────────────────────────────────────────────
@@ -1446,6 +1454,9 @@ async function loadContextNotes(deviceId) {
 async function saveContextNotes(deviceId) {
   const ta = document.getElementById('context-notes-' + deviceId);
   if (!ta) return;
+  const btn = document.getElementById('save-notes-btn-' + deviceId);
+  const origText = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
   try {
     const res = await fetch(`/api/devices/${deviceId}/context`, {
       method: 'PUT', headers: {'Content-Type': 'application/json'},
@@ -1454,6 +1465,7 @@ async function saveContextNotes(deviceId) {
     if (!res.ok) return showToast('Failed to save notes', 'error');
     showToast('Context notes saved', 'success');
   } catch(e) { showToast('Failed to save notes', 'error'); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = origText; } }
 }
 
 async function loadBufferEntries(deviceId) {
