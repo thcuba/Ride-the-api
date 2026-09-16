@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ride the API — Configuration</title>
+<link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+<link rel="apple-touch-icon" href="/static/logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0b0e14; --surface: #141820; --surface2: #1a1f2b; --border: #2d3648;
+    --text: #e1e6ed; --text2: #9ca8ba; --accent: #6c8cff; --accent2: #5b7ad0;
+    --green: #34d399; --yellow: #fbbf24; --red: #f87171; --blue: #60a5fa;
+    --radius: 12px; --shadow: 0 8px 32px rgba(0,0,0,.3);
+  }
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    background: var(--bg); color: var(--text); padding: 24px; min-height: 100vh;
+    background-image: radial-gradient(ellipse at 20% 10%, rgba(108,140,255,.08) 0%, transparent 50%),
+                      radial-gradient(ellipse at 80% 90%, rgba(52,211,153,.06) 0%, transparent 50%);
+  }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--surface); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  .skip-link { position: absolute; top: -100%; left: 8px; padding: 8px 16px; background: var(--accent); color: #fff; border-radius: 0 0 8px 8px; font-size: 14px; font-weight: 600; z-index: 9999; text-decoration: none; }
+  .skip-link:focus { top: 0; }
+
+  .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
+  .header-left { display: flex; flex-direction: column; }
+  .header-left h1 { font-size: 28px; font-weight: 800; color: var(--accent); letter-spacing: -.5px; }
+  .header-left .subtitle { font-size: 14px; color: var(--text2); margin-top: 2px; }
+  .brand-row { display: flex; align-items: center; gap: 10px; }
+  .brand-row img { border-radius: 8px; }
+  .header-actions { display: flex; gap: 10px; align-items: center; }
+  .path-chip { font-size: 12px; color: var(--text2); background: var(--surface2); border: 1px solid var(--border); padding: 5px 10px; border-radius: 8px; font-family: ui-monospace, monospace; }
+
+  .btn { padding: 8px 18px; border: none; border-radius: 8px; font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; transition: all .2s; display: inline-flex; align-items: center; gap: 6px; }
+  .btn-primary { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff; box-shadow: 0 4px 14px rgba(108,140,255,.25); }
+  .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(108,140,255,.35); }
+  .btn-primary:active { transform: translateY(0); }
+  .btn-primary:disabled { opacity: .5; cursor: not-allowed; transform: none; box-shadow: none; }
+  .btn-primary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .btn-ghost { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+  .btn-ghost:hover { border-color: var(--accent); background: rgba(108,140,255,.1); }
+  .btn-ghost:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* Layout */
+  .layout { display: flex; gap: 20px; align-items: flex-start; }
+  .sidebar {
+    width: 260px; flex-shrink: 0; background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 10px; position: sticky; top: 20px; max-height: calc(100vh - 140px); overflow-y: auto;
+  }
+  .sidebar-label { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--text2); padding: 8px 10px 6px; }
+  .section-item {
+    display: flex; justify-content: space-between; align-items: center; width: 100%; text-align: left;
+    padding: 9px 10px; border: none; background: transparent; color: var(--text); font-family: inherit;
+    font-size: 13px; font-weight: 600; border-radius: 8px; cursor: pointer; transition: all .15s;
+  }
+  .section-item:hover { background: var(--surface2); }
+  .section-item.active { background: var(--accent); color: #fff; }
+  .section-item .count { font-size: 11px; font-weight: 500; opacity: .75; background: rgba(255,255,255,.12); padding: 1px 7px; border-radius: 10px; }
+  .section-item:not(.active) .count { background: var(--surface2); color: var(--text2); }
+
+  /* Content */
+  .content { flex: 1; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; }
+  .content h2 { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
+  .content .sec-desc { font-size: 13px; color: var(--text2); margin-bottom: 20px; }
+  .field-group { border-top: 1px solid var(--border); padding: 16px 0; }
+  .field-group:first-of-type { border-top: none; padding-top: 0; }
+  .field-group-title { font-size: 13px; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: .4px; margin-bottom: 12px; }
+
+  .field { display: flex; justify-content: space-between; align-items: center; gap: 20px; margin-bottom: 14px; }
+  .field .f-info { min-width: 0; }
+  .field .f-name { font-size: 13px; font-weight: 600; }
+  .field .f-desc { font-size: 12px; color: var(--text2); margin-top: 2px; }
+  .field .f-control { flex-shrink: 0; }
+  .field input[type="text"], .field input[type="number"], .field textarea, .field select {
+    background: var(--surface2); color: var(--text); border: 1px solid var(--border); border-radius: 8px;
+    padding: 7px 10px; font-size: 13px; font-family: inherit; min-width: 220px;
+  }
+  .field input[type="text"] { width: 280px; }
+  .field input[type="number"] { width: 160px; }
+  .field input:focus, .field textarea:focus, .field select:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+  .field select { min-width: 220px; cursor: pointer; }
+
+  input[type="checkbox"].switch { appearance: none; width: 40px; height: 22px; background: var(--border); border-radius: 22px; position: relative; cursor: pointer; transition: background .2s; border: none; }
+  input[type="checkbox"].switch::after { content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; background: #fff; border-radius: 50%; transition: left .2s; }
+  input[type="checkbox"].switch:checked { background: var(--green); }
+  input[type="checkbox"].switch:checked::after { left: 21px; }
+  input[type="checkbox"].switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .list-badge { display: inline-flex; flex-wrap: wrap; gap: 5px; }
+  .list-badge .lb { font-size: 11px; background: var(--surface2); border: 1px solid var(--border); padding: 2px 8px; border-radius: 10px; color: var(--text2); font-family: ui-monospace, monospace; }
+
+  .save-bar { display: flex; align-items: center; gap: 12px; justify-content: flex-end; margin-top: 8px; padding-top: 16px; border-top: 1px solid var(--border); }
+  .save-bar .status { font-size: 12px; color: var(--text2); }
+  .save-bar .status.ok { color: var(--green); }
+  .save-bar .status.err { color: var(--red); max-width: 60ch; white-space: pre-wrap; }
+
+  .dirty { border-left: 3px solid var(--yellow) !important; }
+  .toast-container { position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column; gap: 8px; z-index: 1000; }
+  .toast { background: var(--surface2); border: 1px solid var(--border); padding: 10px 16px; border-radius: 10px; font-size: 13px; box-shadow: var(--shadow); opacity: 0; transition: opacity .3s; display: flex; align-items: center; gap: 8px; }
+  .toast.show { opacity: 1; }
+  .toast.success { border-color: var(--green); }
+  .toast.error { border-color: var(--red); }
+  .toast-icon { font-weight: 700; }
+</style>
+</head>
+<body>
+<a href="#main-content" class="skip-link">Skip to content</a>
+<div class="toast-container" id="toasts" role="status" aria-live="polite" aria-atomic="true"></div>
+
+<div class="header">
+  <div class="header-left">
+    <div class="brand-row">
+      <img src="/static/logo.png" alt="Icona ride-the-api" width="40" height="40">
+      <h1>Configuration</h1>
+    </div>
+    <span class="subtitle">Full config.yaml editor — read, modify and persist every section</span>
+  </div>
+  <div class="header-actions">
+    <span class="path-chip" id="configPath">…</span>
+    <a class="btn btn-ghost" href="/">← Dashboard</a>
+    <button class="btn btn-primary" id="saveBtn" onclick="saveConfig()" disabled>&#x2714; Save All</button>
+  </div>
+</div>
+
+<div class="layout">
+  <nav class="sidebar" id="sidebar" aria-label="Configuration sections"></nav>
+  <main class="content" id="main-content">
+    <h2 id="sectionTitle">Loading…</h2>
+    <p class="sec-desc" id="sectionDesc"></p>
+    <div id="fields"></div>
+    <div class="save-bar">
+      <span class="status" id="saveStatus"></span>
+      <button class="btn btn-primary" id="saveBtn2" onclick="saveConfig()" disabled>&#x2714; Save All</button>
+    </div>
+  </main>
+</div>
+
+<script>
+// ── Control-plane auth (same as dashboard) ──────────────────────────────────
+(function () {
+  const KEY_STORAGE = 'rideApiKey';
+  let apiKey = localStorage.getItem(KEY_STORAGE) || '';
+  const origFetch = window.fetch.bind(window);
+  window.fetch = function (input, init) {
+    init = init || {};
+    let url = input;
+    if (typeof input === 'object' && input && typeof input.url === 'string') url = input.url;
+    if (typeof url === 'string' && url.startsWith('/api/') && apiKey) {
+      const headers = new Headers(init.headers || (input && input.headers) || {});
+      if (!headers.has('X-API-Key')) headers.set('X-API-Key', apiKey);
+      init.headers = headers;
+    }
+    return origFetch(input, init).then(function (resp) {
+      if (resp.status === 401 && !sessionStorage.getItem('ride-config-401')) {
+        sessionStorage.setItem('ride-config-401', '1');
+        const typed = window.prompt('Enter the control-plane API key:');
+        if (typed) { localStorage.setItem(KEY_STORAGE, typed.trim()); location.reload(); }
+      }
+      return resp;
+    });
+  };
+})();
+
+const HINTS = {
+  core: 'Core paths and per-IP overrides',
+  buffer: 'Where the transient capture buffer lives until flushed to the LLM',
+  proxy: 'HTTP server bind address and port',
+  security: 'Control-plane auth keys and TLS interception settings',
+  vendors: 'Per-vendor cloud endpoints and protocol adapters',
+  models: 'Local model registry and inference settings',
+  control: 'Policy engine and online learning tuning',
+  observability: 'Logging, metrics, tracing and health check',
+  dns: 'Upstream DNS servers and example DNS annotations',
+  traffic_selection: 'Rules that decide intercept vs passthrough for traffic',
+  llm_decipher: 'LLM service profiles used to decode protocols',
+  modification: 'On-the-fly request/response transformation rules',
+  correlation: 'Request/response matching strategies per protocol',
+  learning: 'Default mode, match threshold and auto-switch behaviour',
+  tls_decrypt: 'TLS MITM engine — ports, CA and pinning bypass',
+  protocol_servers: 'Direct listeners for MQTT, CoAP, Modbus, WS, etc.',
+};
+
+let cfg = null;            // working copy
+const dirty = new Set();   // touched section paths
+
+function showToast(msg, type) {
+  const c = document.getElementById('toasts');
+  const t = document.createElement('div');
+  t.className = 'toast ' + (type || 'info') + ' show';
+  const icons = { success: '✓', error: '✕', info: 'ℹ' };
+  t.innerHTML = `<span class="toast-icon">${icons[type] || 'ℹ'}</span><span></span>`;
+  t.querySelector('span:last-child').textContent = msg;
+  c.appendChild(t);
+  setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); }, 3500);
+}
+
+// ── Sidebar ─────────────────────────────────────────────────────────────────
+function buildSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  const label = document.createElement('div');
+  label.className = 'sidebar-label';
+  label.textContent = 'Sections';
+  sidebar.appendChild(label);
+  Object.keys(cfg).forEach(key => {
+    const btn = document.createElement('button');
+    btn.className = 'section-item';
+    btn.dataset.section = key;
+    btn.innerHTML = `<span>${escapeHtml(key)}</span><span class="count"></span>`;
+    btn.addEventListener('click', () => selectSection(key));
+    sidebar.appendChild(btn);
+  });
+  sidebar.appendChild(document.createElement('div')).className = 'sidebar-label';
+  const raw = document.createElement('button');
+  raw.className = 'section-item';
+  raw.dataset.section = '__raw__';
+  raw.innerHTML = `<span>Raw YAML/JSON</span>`;
+  raw.addEventListener('click', () => selectSection('__raw__'));
+  sidebar.appendChild(raw);
+}
+
+function selectSection(key) {
+  document.querySelectorAll('.section-item').forEach(b => b.classList.toggle('active', b.dataset.section === key));
+  const title = document.getElementById('sectionTitle');
+  const desc = document.getElementById('sectionDesc');
+  const fields = document.getElementById('fields');
+  if (key === '__raw__') {
+    title.textContent = 'Raw Configuration';
+    desc.textContent = 'Full config as JSON — edit carefully, validated on save.';
+    const ta = document.createElement('textarea');
+    ta.id = 'raw-editor';
+    ta.style.cssText = 'width:100%;min-height:60vh;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:12px;font-family:ui-monospace,monospace;font-size:12px;';
+    ta.value = JSON.stringify(cfg, null, 2);
+    ta.addEventListener('input', () => fields.classList.add('dirty'));
+    fields.innerHTML = '';
+    fields.appendChild(ta);
+    markDirty('__raw__');
+    return;
+  }
+  title.textContent = key;
+  desc.textContent = HINTS[key] || 'Configuration section';
+  fields.innerHTML = '';
+  renderObject(fields, cfg[key], '');
+  fields.classList.remove('dirty');
+  // re-mark dirty fields visually
+  dirty.forEach(p => {
+    document.querySelectorAll(`[data-path="${p}"]`).forEach(el => el.classList.add('dirty'));
+  });
+}
+
+// ── Generic field renderer ──────────────────────────────────────────────────
+function isSimpleType(v) {
+  return ['string', 'number', 'boolean'].includes(typeof v) || v === null;
+}
+
+let fieldCounter = 0;
+
+function renderObject(container, obj, path) {
+  const entries = Object.entries(obj || {});
+  if (entries.length === 0) {
+    const p = document.createElement('p');
+    p.className = 'sec-desc';
+    p.textContent = '(empty)';
+    container.appendChild(p);
+    return;
+  }
+  entries.forEach(([k, v]) => {
+    const childPath = path ? path + '.' + k : k;
+    if (isSimpleType(v)) {
+      container.appendChild(renderField(childPath, k, v));
+    } else if (Array.isArray(v)) {
+      container.appendChild(renderArray(childPath, k, v));
+    } else {
+      // nested object → collapsible group
+      const group = document.createElement('div');
+      group.className = 'field-group';
+      group.dataset.path = childPath;
+      const head = document.createElement('div');
+      head.className = 'field-group-title';
+      head.textContent = k;
+      head.style.cssText = 'cursor:pointer;user-select:none;';
+      const chevron = document.createElement('span');
+      chevron.textContent = '▾ ';
+      const body = document.createElement('div');
+      renderObject(body, v, childPath);
+      head.addEventListener('click', () => {
+        const hidden = body.style.display === 'none';
+        body.style.display = hidden ? '' : 'none';
+        chevron.textContent = hidden ? '▾ ' : '▸ ';
+      });
+      head.prepend(chevron);
+      group.appendChild(head);
+      group.appendChild(body);
+      container.appendChild(group);
+    }
+  });
+}
+
+function renderField(path, label, value) {
+  const row = document.createElement('div');
+  row.className = 'field';
+  row.dataset.path = path;
+  const info = document.createElement('div');
+  info.className = 'f-info';
+  info.innerHTML = `<div class="f-name">${escapeHtml(label)}</div><div class="f-desc">${escapeHtml(path)}</div>`;
+  row.appendChild(info);
+  const ctrl = document.createElement('div');
+  ctrl.className = 'f-control';
+  const id = 'f-' + (fieldCounter++);
+  if (typeof value === 'boolean') {
+    const input = document.createElement('input');
+    input.type = 'checkbox'; input.className = 'switch';
+    input.id = id; input.checked = value;
+    input.setAttribute('aria-label', label);
+    input.addEventListener('change', () => {
+      setDirty(path);
+      markFieldDirty(path);
+    });
+    ctrl.appendChild(input);
+  } else if (typeof value === 'number') {
+    const input = document.createElement('input');
+    input.type = 'number'; input.id = id; input.value = value;
+    input.step = 'any';
+    input.addEventListener('change', () => { setDirty(path); markFieldDirty(path); });
+    ctrl.appendChild(input);
+  } else if (value === null) {
+    const input = document.createElement('input');
+    input.type = 'text'; input.id = id; input.value = '';
+    input.placeholder = 'null';
+    input.addEventListener('change', () => { setDirty(path); markFieldDirty(path); });
+    ctrl.appendChild(input);
+  } else {
+    // string
+    const isLong = typeof value === 'string' && value.length > 80;
+    if (isLong) {
+      const ta = document.createElement('textarea');
+      ta.id = id; ta.value = value; ta.rows = 4; ta.style.cssText = 'width:420px;';
+      ta.addEventListener('input', () => { setDirty(path); markFieldDirty(path); });
+      ctrl.appendChild(ta);
+    } else {
+      const input = document.createElement('input');
+      input.type = 'text'; input.id = id; input.value = value;
+      input.addEventListener('change', () => { setDirty(path); markFieldDirty(path); });
+      ctrl.appendChild(input);
+    }
+  }
+  row.appendChild(ctrl);
+  return row;
+}
+
+function renderArray(path, label, arr) {
+  const group = document.createElement('div');
+  group.className = 'field-group';
+  group.dataset.path = path;
+  const head = document.createElement('div');
+  head.className = 'field-group-title';
+  head.textContent = label + ' (' + arr.length + ')';
+  head.style.cssText = 'cursor:pointer;user-select:none;';
+  const chevron = document.createElement('span');
+  chevron.textContent = '▾ ';
+  const body = document.createElement('div');
+  renderObject(body, arr, path);
+  head.addEventListener('click', () => {
+    const hidden = body.style.display === 'none';
+    body.style.display = hidden ? '' : 'none';
+    chevron.textContent = hidden ? '▾ ' : '▸ ';
+  });
+  head.prepend(chevron);
+  group.appendChild(head);
+  group.appendChild(body);
+  // Unknown primitive arrays → JSON badges
+  if (arr.length && arr.every(isSimpleType)) {
+    body.innerHTML = '';
+    const badge = document.createElement('div');
+    badge.className = 'list-badge';
+    arr.forEach(v => {
+      const s = document.createElement('span');
+      s.className = 'lb';
+      s.textContent = String(v);
+      badge.appendChild(s);
+    });
+    body.appendChild(badge);
+  }
+  return group;
+}
+
+// Path helpers — mirrors how we write values back
+function getAt(obj, path) {
+  if (!path) return obj;
+  return path.split('.').reduce((o, k) => (o == null ? o : o[k]), obj);
+}
+function setAt(obj, path, value) {
+  const parts = path.split('.');
+  const last = parts.pop();
+  const parent = parts.reduce((o, k) => (o[k] == null ? (o[k] = {}) : o[k]), obj);
+  parent[last] = value;
+}
+
+// Collect the edited section tree from the DOM (only the currently rendered section)
+function collectSection(key) {
+  if (key === '__raw__') {
+    const ta = document.getElementById('raw-editor');
+    if (!ta) return cfg;
+    try { return JSON.parse(ta.value); } catch (e) { return null; }
+  }
+  return collectObject(cfg[key]);
+}
+
+function collectObject(obj) {
+  // Traverse nested groups; for each rendered field update the value.
+  // Uses the DOM ids (f-*) to read current values, keyed by data-path.
+  document.querySelectorAll('#fields [data-path]').forEach(el => {
+    const path = el.dataset.path;
+    if (!path) return;
+    const basePath = el.closest('#fields');
+    // skip nested group headers (no input)
+    const input = el.querySelector('input[type="checkbox"]') ||
+                  el.querySelector('input[type="number"]') ||
+                  el.querySelector('input[type="text"]') ||
+                  el.querySelector('textarea');
+    if (!input) return;
+    const rootObj = cfg;
+    if (input.type === 'checkbox') setAt(rootObj, path, input.checked);
+    else if (input.type === 'number') {
+      const n = parseFloat(input.value);
+      setAt(rootObj, path, isNaN(n) ? null : n);
+    } else if (input.type === 'text') setAt(rootObj, path, input.value === '' ? null : input.value);
+    else setAt(rootObj, path, input.value);
+  });
+  return obj;
+}
+
+function setDirty(path) { dirty.add(path); updateSaveBtn(); }
+function markFieldDirty(path) {
+  const el = document.querySelector(`[data-path="${path}"]`);
+  if (el) el.classList.add('dirty');
+  // also mark parent section title
+}
+function updateSaveBtn() {
+  const has = dirty.size > 0;
+  document.getElementById('saveBtn').disabled = !has;
+  document.getElementById('saveBtn2').disabled = !has;
+}
+
+// ── Load & save ─────────────────────────────────────────────────────────────
+async function loadConfig() {
+  try {
+    const res = await fetch('/api/config');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    cfg = data.config || {};
+    document.getElementById('configPath').textContent = 'config/config.yaml';
+    buildSidebar();
+    selectSection(Object.keys(cfg)[0] || 'core');
+  } catch (e) {
+    document.getElementById('sectionTitle').textContent = 'Error loading config';
+    document.getElementById('sectionDesc').textContent = String(e.message || e);
+  }
+}
+
+async function saveConfig() {
+  const btn = document.getElementById('saveBtn');
+  const status = document.getElementById('saveStatus');
+  btn.disabled = true;
+  status.textContent = 'Saving…';
+  status.className = 'status';
+  // First collect current section tree into cfg
+  const activeSection = document.querySelector('.section-item.active');
+  const key = activeSection ? activeSection.dataset.section : Object.keys(cfg)[0];
+  if (key === '__raw__') {
+    const parsed = collectSection('__raw__');
+    if (parsed === null) {
+      status.textContent = 'Invalid JSON — not saved';
+      status.className = 'status err';
+      btn.disabled = false;
+      updateSaveBtn();
+      return;
+    }
+    cfg = parsed;
+  } else {
+    collectObject(cfg[key]);
+  }
+  try {
+    const res = await fetch('/api/config', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config: cfg }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => null);
+      const msg = (err && err.error) ? err.error : 'HTTP ' + res.status;
+      status.textContent = msg;
+      status.className = 'status err';
+      showToast('Save failed', 'error');
+      btn.disabled = false;
+      updateSaveBtn();
+      return;
+    }
+    // Reload canonical config from server (validated/dumped)
+    const savedRes = await fetch('/api/config');
+    const savedData = await savedRes.json();
+    cfg = savedData.config || cfg;
+    dirty.clear();
+    updateSaveBtn();
+    status.textContent = 'Saved, hot-reload applied.';
+    status.className = 'status ok';
+    showToast('Configuration saved', 'success');
+    // Rebuild current view from canonical config
+    selectSection(key);
+  } catch (e) {
+    status.textContent = String(e.message || e);
+    status.className = 'status err';
+    showToast('Save failed', 'error');
+    btn.disabled = false;
+    updateSaveBtn();
+  }
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+loadConfig();
+</script>
+</body>
+</html>

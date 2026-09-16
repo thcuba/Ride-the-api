@@ -88,6 +88,7 @@ from core.traffic_selector import TrafficRequestInfo, get_traffic_selector, is_l
 WEBUI_DIR = resource_path("webui")
 DASHBOARD_HTML = WEBUI_DIR / "dashboard.html"
 PATTERNS_HTML = WEBUI_DIR / "patterns.html"
+CONFIG_HTML = WEBUI_DIR / "config.html"
 
 # Configure logging
 setup_logging(level="INFO", fmt="json")
@@ -1883,6 +1884,37 @@ async def set_buffer_backend_setting(request: Request):
     return {"backend": get_buffer_backend()}
 
 
+@app.get("/api/config")
+async def get_config():
+    """Return the full current configuration (validated YAML model_dump)."""
+    return {"config": config_manager.config.model_dump(mode="json")}
+
+
+@app.put("/api/config")
+async def put_config(request: Request):
+    """Validate and persist a full replacement of the configuration."""
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
+    if not isinstance(body, dict) or "config" not in body:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Invalid JSON body: expected an object with a 'config' key"},
+        )
+    try:
+        ok = config_manager.update_config(body["config"])
+    except ValidationError as ve:
+        return JSONResponse(status_code=400, content={"error": f"Config validation failed: {ve}"})
+    except Exception:  # noqa: BLE001 - persist failure should not 500 silently
+        logger.exception("Failed to update config")
+        return JSONResponse(status_code=500, content={"error": "Failed to update config"})
+    if not ok:
+        return JSONResponse(status_code=500, content={"error": "Failed to persist config"})
+    logger.info("Configuration updated via /api/config API")
+    return {"config": config_manager.config.model_dump(mode="json"), "status": "saved"}
+
+
 @app.get("/api/devices/{device_id}/context")
 async def get_device_context(device_id: str):
     """Get custom context notes for a device."""
@@ -2160,6 +2192,20 @@ async def patterns_page(device_id: str):  # noqa: ARG001
         html = (
             "<!DOCTYPE html><html><body><h1>Patterns page not found</h1>"
             "<p>Expected at webui/patterns.html</p></body></html>"
+        )
+    return HTMLResponse(content=html, status_code=200)
+
+
+@app.get("/config", response_class=HTMLResponse)
+async def config_page():
+    """Serve the Configuration web UI."""
+    try:
+        html = CONFIG_HTML.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        logger.warning("Config HTML not found at %s", CONFIG_HTML)
+        html = (
+            "<!DOCTYPE html><html><body><h1>Config page not found</h1>"
+            "<p>Expected at webui/config.html</p></body></html>"
         )
     return HTMLResponse(content=html, status_code=200)
 
