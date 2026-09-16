@@ -17,6 +17,7 @@ from http import HTTPStatus
 import pytest
 from fastapi.testclient import TestClient
 
+import core.server as server_mod
 from core.server import app
 
 pytestmark = pytest.mark.smoke
@@ -33,6 +34,29 @@ def test_server_app_imports() -> None:
     }
     assert "/health" in paths
     assert "/api/devices" in paths
+    assert "/api/config" in paths
+    assert "/config" in paths
+
+
+def test_config_endpoint_returns_config() -> None:
+    """GET /api/config returns the (validated) full config object."""
+    server_mod.config_manager.config.security.auth_enabled = False
+    client = TestClient(app)
+    resp = client.get("/api/config")
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    assert "config" in body
+    assert isinstance(body["config"], dict)
+    # A few well-known top-level sections must be present.
+    for section in (
+        "core",
+        "security",
+        "learning",
+        "tls_decrypt",
+        "protocol_servers",
+        "llm_decipher",
+    ):
+        assert section in body["config"]
 
 
 def test_health_endpoint_returns_healthy() -> None:

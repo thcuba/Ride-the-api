@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 import yaml
+from pydantic import ValidationError
 
 from core.config import (
     Config,
@@ -484,3 +485,34 @@ class TestGlobalHelpers:
         cm2 = get_config_manager(config_path="/some/other/path.yaml")
         assert cm2 is cm
         assert cm2.config_path == original_path
+
+    def test_update_config_validates_and_persists(self, tmp_path):
+        path = tmp_path / "config.yaml"
+        data = {"core": {"database_url": "sqlite:///orig.db"}}
+        with path.open("w") as f:
+            yaml.dump(data, f)
+
+        cm = ConfigManager(config_path=path)
+        cm.load()
+        # update_config replaces the whole config and writes it atomically
+        ok = cm.update_config({"core": {"database_url": "sqlite:///new.db"}})
+        assert ok is True
+        assert cm.config.core.database_url == "sqlite:///new.db"
+        # persisted to disk
+        reloaded = ConfigManager(config_path=path).load()
+        assert reloaded.core.database_url == "sqlite:///new.db"
+
+    def test_update_config_rejects_invalid_data(self, tmp_path):
+        path = tmp_path / "config.yaml"
+        data = {"core": {"database_url": "sqlite:///x.db"}}
+        with path.open("w") as f:
+            yaml.dump(data, f)
+
+        cm = ConfigManager(config_path=path)
+        cm.load()
+        # invalid: proxy.port is not coercible to int, and update_config must
+        # not replace the config with invalid data
+        with pytest.raises(ValidationError):
+            cm.update_config({"proxy": {"port": "not-a-port"}})
+        # config preserved (unchanged)
+        assert cm.config.core.database_url == "sqlite:///x.db"

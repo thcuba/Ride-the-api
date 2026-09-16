@@ -542,6 +542,13 @@ class ConfigManager:
             cfg.core.ip_profiles[ip] = profile
         return self._write()
 
+    def update_config(self, data: dict) -> bool:
+        """Replace the full config after validation; atomically persist."""
+        new_config = Config(**data)
+        with self._lock:
+            self._config = new_config
+        return self._write()
+
     def _write(self) -> bool:
         """Atomically persist the current config back to the YAML file."""
         try:
