@@ -427,6 +427,19 @@
   <div id="tlsCertsList" style="margin-top:8px;">loading…</div>
 </div>
 
+<!-- Protocol Servers panel -->
+<div class="tls-bar" id="protoServersBar" role="region" aria-label="Protocol server status and control" style="display:block;margin-top:8px;">
+  <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+    <span class="tb-label">
+      <svg class="icon-svg-sm" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+      Protocol Servers
+    </span>
+    <span style="font-size:11px;color:var(--text2);" id="protoServersHint">status &amp; start/stop per protocol listener</span>
+  </div>
+  <div id="protoServersList" style="margin-top:8px;display:flex;flex-wrap:wrap;gap:8px;">loading…</div>
+</div>
+</div>
+
 <!-- Global stats bar -->
 <div class="global-stats" id="globalStats" role="region" aria-label="Global device statistics">
   <div class="global-stat gs-blue">
@@ -1065,6 +1078,7 @@ async function switchMode(deviceId) {
   loadRamBufferSetting();
 loadTlsBar();
 loadTlsCerts();
+loadProtoServers();
 loadVendors();
 setInterval(loadDevices, 8000);
 setInterval(loadTlsBar, 15000);
@@ -1238,6 +1252,57 @@ async function deleteCert(hostname) {
     showToast('Certificate deleted for ' + hostname, 'success');
     loadTlsCerts();
   } catch(e) { showToast(await errorFrom(e, 'Failed to delete certificate'), 'error'); }
+}
+
+// ── Protocol Servers ──────────────────────────────────────────────────────────
+
+const PROTO_DISPLAY = {
+  mqtt: 'MQTT', coap: 'CoAP', modbus: 'Modbus', websocket: 'WebSocket',
+  raw_tcp: 'Raw TCP', http2: 'HTTP/2', zigbee_bridge: 'Zigbee Bridge',
+  zwave_bridge: 'Z-Wave Bridge', matter_bridge: 'Matter Bridge',
+};
+
+async function loadProtoServers() {
+  const list = document.getElementById('protoServersList');
+  const hint = document.getElementById('protoServersHint');
+  if (!list) return;
+  try {
+    const res = await fetch('/api/protocol-servers');
+    if (!res.ok) { list.innerHTML = '<span class="tb-badge tb-inactive">error</span>'; return; }
+    const data = await res.json();
+    const servers = data.servers || [];
+    if (!servers.length) {
+      list.innerHTML = '<span style="font-size:12px;color:var(--text2);">No protocol servers configured. Enable a protocol in config.yaml to manage it here.</span>';
+      if (hint) hint.textContent = '';
+      return;
+    }
+    list.innerHTML = servers.map(s => {
+      const name = s.name || 'unknown';
+      const running = !!s.running;
+      const display = PROTO_DISPLAY[name] || name;
+      const cls = running ? 'tb-active' : 'tb-inactive';
+      return `<span class="tb-badge ${cls}" role="listitem" style="align-items:center;gap:8px;">
+        <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${running ? 'var(--green,#34d399)' : 'var(--text2,#9ca3af)'};"></span>
+        <strong>${escapeHtml(display)}</strong>
+        <span style="opacity:.85;text-transform:lowercase;">${running ? 'running' : 'stopped'}</span>
+        ${s.error ? `<span style="color:var(--red);font-size:11px;" title="${escapeHtml(s.error)}">⚠</span>` : ''}
+        <button class="tb-btn" onclick="toggleProtoServer('${escapeJs(name)}', ${running})" aria-label="${running ? 'Stop' : 'Start'} ${escapeHtml(display)} server">${running ? '■ Stop' : '▶ Start'}</button>
+      </span>`;
+    }).join('');
+    if (hint) hint.textContent = '';
+  } catch(_e) {
+    list.innerHTML = '<span class="tb-badge tb-inactive">error</span>';
+  }
+}
+
+async function toggleProtoServer(name, running) {
+  const action = running ? 'stop' : 'start';
+  try {
+    const res = await fetch(`/api/protocol-servers/${encodeURIComponent(name)}/${action}`, { method: 'POST' });
+    if (!res.ok) { showToast(await errorFrom(res, `Failed to ${action} ${name}`), 'error'); return; }
+    showToast(`${(PROTO_DISPLAY[name] || name)} ${running ? 'stopped' : 'started'}`, 'success');
+    loadProtoServers();
+  } catch(e) { showToast(await errorFrom(e, `Failed to ${action} ${name}`), 'error'); }
 }
 
 // Extract a human-readable message from a failed fetch Response (or an Error).
