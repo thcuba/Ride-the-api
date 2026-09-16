@@ -108,6 +108,39 @@
   .toast.success { border-color: var(--green); }
   .toast.error { border-color: var(--red); }
   .toast-icon { font-weight: 700; }
+
+  /* ── Responsive: tablet (≤900px) ───────────────────────────────────────── */
+  @media (max-width: 900px) {
+    .content { padding: 18px; }
+    .field input[type="text"] { width: 100%; }
+  }
+
+  /* ── Responsive: mobile (≤600px) ───────────────────────────────────────── */
+  @media (max-width: 600px) {
+    body { padding: 12px; }
+    .header { gap: 8px; margin-bottom: 18px; }
+    .header-left h1 { font-size: 22px; }
+    .brand-row img { width: 34px; height: 34px; }
+    .header-actions { flex-wrap: wrap; gap: 8px; }
+    .path-chip { display: none; }
+    .layout { flex-direction: column; gap: 12px; }
+    .sidebar {
+      width: 100%; position: static; max-height: none;
+      display: flex; flex-wrap: wrap; gap: 6px; padding: 8px;
+    }
+    .sidebar .sidebar-label { width: 100%; padding: 4px 8px; }
+    .section-item { width: auto; flex: 1 1 auto; min-width: 42%; }
+    .content { padding: 14px; }
+    .content h2 { font-size: 18px; }
+    .field { flex-direction: column; align-items: flex-start; gap: 8px; }
+    .field .f-control, .field .f-control input, .field .f-control select { width: 100%; }
+    .field input[type="text"], .field input[type="number"], .field textarea, .field select { width: 100%; min-width: 0; }
+    .save-bar { flex-wrap: wrap; justify-content: stretch; }
+    .save-bar .btn { flex: 1; }
+    .toast-container { bottom: 12px; right: 12px; left: 12px; }
+    .toast { width: 100%; }
+    .list-badge { flex-wrap: wrap; width: 100%; }
+  }
 </style>
 </head>
 <body>
