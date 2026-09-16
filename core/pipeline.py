@@ -1826,6 +1826,16 @@ class LearningOrchestrator:
                 ips = list(device.ip_addresses or [])
                 stats["ip_addresses"] = ips
                 stats["primary_ip"] = ips[0] if ips else None
+                # Per-device runtime config surfaced for the dashboard (so the
+                # detail panel can render editable controls from one fetch).
+                stats["connection"] = (device.extra_attributes or {}).get(
+                    "connection", "auto"
+                )
+                stats["llm_base_url"] = device.llm_base_url
+                stats["llm_model_id"] = device.llm_model_id
+                stats["llm_profile_name"] = device.llm_profile_name
+                stats["database_url"] = device.database_url
+                stats["database_name"] = device.database_name
                 # Bypass state (per-IP: from any profile IP, else config default).
                 bypass_flags = [await self.db_manager.is_ips_bypassed(ip) for ip in ips]
                 stats["bypass"] = any(bypass_flags)
