@@ -409,6 +409,24 @@
   <span class="tb-status" id="tlsStatus">loading…</span>
 </div>
 
+<!-- Imported Certificates panel -->
+<div class="tls-bar" id="tlsCertsBar" role="region" aria-label="Imported TLS certificates" style="display:block;margin-top:8px;">
+  <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+    <span class="tb-label">
+      <svg class="icon-svg-sm" aria-hidden="true" viewBox="0 0 24 24"><path d="M9 12l2 2 4-4"/><path d="M5 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M19 15v2a2 2 0 0 1-2 2h-2"/><path d="M9 19H7a2 2 0 0 1-2-2v-2"/></svg>
+      Imported Certificates
+    </span>
+    <span class="tb-add">
+      <input type="text" id="certHostnameInput" placeholder="hostname (e.g. api.cloud.com)" aria-label="Certificate hostname" style="padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:12px;width:200px;">
+      <input type="file" id="certFileInput" accept=".pem,.crt,.cer,.key" multiple aria-label="Certificate (PEM) and key files" style="display:none;">
+      <button class="btn btn-ghost" onclick="pickCertFiles()" style="padding:4px 10px;font-size:12px;" aria-label="Choose certificate files">Choose files…</button>
+      <button class="btn btn-primary" onclick="uploadCert()" style="padding:4px 12px;font-size:12px;" aria-label="Upload certificate">Upload</button>
+    </span>
+    <span style="font-size:11px;color:var(--text2);" id="tlsCertsStatus"></span>
+  </div>
+  <div id="tlsCertsList" style="margin-top:8px;">loading…</div>
+</div>
+
 <!-- Global stats bar -->
 <div class="global-stats" id="globalStats" role="region" aria-label="Global device statistics">
   <div class="global-stat gs-blue">
@@ -1033,6 +1051,7 @@ async function switchMode(deviceId) {
     loadDevices();
   loadRamBufferSetting();
 loadTlsBar();
+loadTlsCerts();
 loadVendors();
 setInterval(loadDevices, 8000);
 setInterval(loadTlsBar, 15000);
@@ -1126,6 +1145,86 @@ async function removeTlsPort(port) {
     showToast('Removed port ' + port, 'success');
     loadTlsBar();
   } catch(e) { showToast(await errorFrom(e, 'Failed to remove port'), 'error'); }
+}
+
+let certFiles = [];
+function pickCertFiles() {
+  const input = document.getElementById('certFileInput');
+  input.onchange = () => { certFiles = Array.from(input.files || []); };
+  input.click();
+}
+
+async function loadTlsCerts() {
+  const container = document.getElementById('tlsCertsList');
+  const status = document.getElementById('tlsCertsStatus');
+  if (!container) return;
+  try {
+    const res = await fetch('/api/tls/certs');
+    if (!res.ok) { container.innerHTML = '<span class="tb-badge tb-inactive">error</span>'; return; }
+    const data = await res.json();
+    const certs = data.certs || [];
+    if (!certs.length) {
+      container.innerHTML = '<span style="font-size:12px;color:var(--text2);">No imported certificates. Upload a PEM cert + key for a hostname to serve it via MITM.</span>';
+      if (status) status.textContent = '';
+      return;
+    }
+    container.innerHTML = certs.map(c => {
+      const notAfter = c.not_after ? new Date(c.not_after) : null;
+      const expired = notAfter && notAfter < new Date();
+      const host = c.hostname || 'unknown';
+      return `<div class="tb-badge tb-active" style="align-items:center;gap:8px;" role="listitem">
+        <strong>${escapeHtml(host)}</strong>
+        ${c.label ? `<span style="opacity:.8">${escapeHtml(c.label)}</span>` : ''}
+        ${notAfter ? `<span style="opacity:.8;${expired ? 'color:var(--red);' : ''}">exp ${expired ? '⚠ ' : ''}${new Date(notAfter).toLocaleDateString()}</span>` : ''}
+        ${(c.sans && c.sans.length) ? `<span style="opacity:.6">${escapeHtml(c.sans.slice(0,2).join(', '))}${c.sans.length>2?'…':''}</span>` : ''}
+        <button class="tb-btn" onclick="deleteCert('${escapeJs(host)}')" aria-label="Delete certificate for ${escapeHtml(host)}" title="Delete imported cert (reverts to auto-generated)">&times;</button>
+      </div>`;
+    }).join('');
+    if (status) status.textContent = `${certs.length} certificate${certs.length!==1?'s':''} imported`;
+  } catch(_e) {
+    container.innerHTML = '<span class="tb-badge tb-inactive">error</span>';
+  }
+}
+
+async function uploadCert() {
+  const hostname = (document.getElementById('certHostnameInput') || {}).value || '';
+  if (!hostname.trim()) { showToast('Hostname required', 'warning'); return; }
+  if (!certFiles.length) { showToast('Choose a certificate (PEM) and key file', 'warning'); return; }
+  // Reuse the JSON endpoint: read PEM files as text, base64-encode, POST /upload-json.
+  const readAsText = (file) => new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result || ''));
+    r.onerror = () => reject(new Error('Failed to read ' + file.name));
+    r.readAsText(file);
+  });
+  const b64 = (s) => btoa(unescape(encodeURIComponent(s)));
+  try {
+    const certFile = certFiles.find(f => /\.(pem|crt|cer)$/i.test(f.name)) || certFiles[0];
+    const keyFile = certFiles.find(f => /\.key$/i.test(f.name));
+    if (!certFile || !keyFile) { showToast('Select both a cert (.pem/.crt) and its key (.key)', 'warning'); return; }
+    const certPem = await readAsText(certFile);
+    const keyPem = await readAsText(keyFile);
+    const res = await fetch('/api/tls/certs/upload-json', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({hostname: hostname.trim(), cert_base64: b64(certPem), key_base64: b64(keyPem)}),
+    });
+    if (!res.ok) { showToast(await errorFrom(res, 'Failed to upload certificate'), 'error'); return; }
+    showToast('Certificate imported for ' + hostname.trim(), 'success');
+    certFiles = [];
+    document.getElementById('certFileInput').value = '';
+    document.getElementById('certHostnameInput').value = '';
+    loadTlsCerts();
+  } catch(e) { showToast(await errorFrom(e, 'Failed to upload certificate'), 'error'); }
+}
+
+async function deleteCert(hostname) {
+  if (!confirm('Delete imported certificate for "' + hostname + '"? It will revert to the auto-generated cert.')) return;
+  try {
+    const res = await fetch('/api/tls/certs/' + encodeURIComponent(hostname), { method: 'DELETE' });
+    if (!res.ok) { showToast(await errorFrom(res, 'Failed to delete certificate'), 'error'); return; }
+    showToast('Certificate deleted for ' + hostname, 'success');
+    loadTlsCerts();
+  } catch(e) { showToast(await errorFrom(e, 'Failed to delete certificate'), 'error'); }
 }
 
 // Extract a human-readable message from a failed fetch Response (or an Error).
