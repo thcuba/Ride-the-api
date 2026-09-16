@@ -826,6 +826,56 @@ async function loadDeviceStats(deviceId) {
           </div>
         </div>
 
+              <!-- Device Connection, LLM & Database Config Panel -->
+      <div class="tls-config" role="region" aria-label="Device connection, LLM and database configuration for ${escapeHtml(s.name || deviceId)}">
+        <h3>
+          <svg class="icon-svg-sm" aria-hidden="true" viewBox="0 0 24 24"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+          Connection, LLM &amp; Database
+        </h3>
+        <div class="tc-row">
+          <label for="dc-connection-${escapeHtml(deviceId)}" class="tc-label">Connection Type</label>
+          <select id="dc-connection-${escapeHtml(deviceId)}">
+            <option value="auto" ${s.connection === 'auto' ? 'selected' : ''} title="Detect on first bytes (decrypt TLS or route to protocol handler)">auto (detect)</option>
+            <option value="tls" ${s.connection === 'tls' ? 'selected' : ''} title="Always decrypt as HTTPS/MQTT-TLS (MITM)">tls</option>
+            <option value="http" ${s.connection === 'http' ? 'selected' : ''} title="Route to the HTTP protocol handler">http</option>
+            <option value="mqtt" ${s.connection === 'mqtt' ? 'selected' : ''} title="Route to the MQTT protocol handler">mqtt</option>
+            <option value="coap" ${s.connection === 'coap' ? 'selected' : ''} title="Route to the CoAP protocol handler">coap</option>
+            <option value="modbus" ${s.connection === 'modbus' ? 'selected' : ''} title="Route to the Modbus protocol handler">modbus</option>
+          </select>
+        </div>
+
+        <div class="tc-row">
+          <label for="dc-profile-${escapeHtml(deviceId)}" class="tc-label">LLM Profile</label>
+          <select id="dc-profile-${escapeHtml(deviceId)}" data-current="${escapeHtml(s.llm_profile_name || 'default')}"></select>
+        </div>
+        <div class="tc-row">
+          <label for="dc-base-url-${escapeHtml(deviceId)}" class="tc-label">LLM Base URL</label>
+          <input type="text" id="dc-base-url-${escapeHtml(deviceId)}" value="${escapeHtml(s.llm_base_url || '')}" placeholder="override profile base URL">
+        </div>
+        <div class="tc-row">
+          <label for="dc-model-${escapeHtml(deviceId)}" class="tc-label">LLM Model</label>
+          <input type="text" id="dc-model-${escapeHtml(deviceId)}" value="${escapeHtml(s.llm_model_id || '')}" placeholder="override">
+        </div>
+
+        <div class="tc-row">
+          <label for="dc-db-name-${escapeHtml(deviceId)}" class="tc-label">Database Name</label>
+          <input type="text" id="dc-db-name-${escapeHtml(deviceId)}" value="${escapeHtml(s.database_name || '')}" placeholder="e.g. my_ac_protocol">
+        </div>
+        <div class="tc-row">
+          <label for="dc-db-url-${escapeHtml(deviceId)}" class="tc-label">Database URL</label>
+          <input type="text" id="dc-db-url-${escapeHtml(deviceId)}" value="${escapeHtml(s.database_url || '')}" placeholder="e.g. sqlite:///./my_ac.db">
+        </div>
+
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px;gap:8px;">
+          <span style="font-size:11px;color:var(--text2);" id="dc-status-${escapeHtml(deviceId)}"></span>
+          <div style="text-align:right;display:flex;gap:8px;">
+            <button class="btn btn-ghost" onclick="saveDeviceConnection('${escapeJs(deviceId)}')" style="padding:6px 12px;font-size:12px;">Save Connection</button>
+            <button class="btn btn-ghost" onclick="saveDeviceLLM('${escapeJs(deviceId)}')" style="padding:6px 12px;font-size:12px;">Save LLM</button>
+            <button class="btn btn-primary" onclick="assignDeviceDatabase('${escapeJs(deviceId)}')" style="padding:6px 16px;font-size:12px;">Assign Database</button>
+          </div>
+        </div>
+      </div>
+
                       <!-- LLM Context & Template Section -->
               <div class="llm-section" role="region" aria-label="LLM decoding context">
                 <div class="llm-header" id="llm-header-${escapeHtml(deviceId)}" role="button" tabindex="0" aria-expanded="true" aria-controls="llm-body-${escapeHtml(deviceId)}" onclick="toggleLLMSection('${escapeJs(deviceId)}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleLLMSection('${escapeJs(deviceId)}');}">
@@ -901,6 +951,7 @@ async function loadDeviceStats(deviceId) {
 
         // Load LLM section data
         loadLLMProfiles(deviceId);
+        loadDeviceLLMConfig(deviceId);
         loadContextNotes(deviceId);
         loadBufferEntries(deviceId);
       } catch(e) { showToast('Failed to load device details', 'error'); }
@@ -1125,6 +1176,78 @@ async function saveTlsConfig(deviceId) {
     loadDevices();
   } catch(e) { showToast('Failed to save config', 'error'); }
   finally { if (btn) { btn.disabled = false; btn.textContent = origText; } }
+}
+
+// ── Device Connection, LLM & Database config ─────────────────────────────────
+
+// Populate the LLM profile dropdown (system profiles) and select the current one.
+async function loadDeviceLLMConfig(deviceId) {
+  const sel = document.getElementById('dc-profile-' + deviceId);
+  if (!sel) return;
+  try {
+    const res = await fetch('/api/llm/profiles');
+    if (!res.ok) return;
+    const data = await res.json();
+    const current = sel.getAttribute('data-current') || 'default';
+    sel.innerHTML = (data.profiles || []).map(p => {
+      const name = p.name || '';
+      const isSel = (name === current);
+      return `<option value="${escapeHtml(name)}"${isSel ? ' selected' : ''}>${escapeHtml(name)}</option>`;
+    }).join('');
+  } catch(_e) { /* ignore */ }
+}
+
+async function saveDeviceConnection(deviceId) {
+  const sel = document.getElementById('dc-connection-' + deviceId);
+  const connection = sel ? sel.value : 'auto';
+  try {
+    const res = await fetch(`/api/devices/${deviceId}/connection`, {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({connection}),
+    });
+    if (!res.ok) { showToast(await errorFrom(res, 'Failed to save connection'), 'error'); return; }
+    showToast('Connection set to ' + connection, 'success');
+    loadDeviceStats(deviceId);
+  } catch(e) { showToast(await errorFrom(e, 'Failed to save connection'), 'error'); }
+}
+
+async function saveDeviceLLM(deviceId) {
+  const profile = (document.getElementById('dc-profile-' + deviceId) || {}).value || 'default';
+  const baseUrl = (document.getElementById('dc-base-url-' + deviceId) || {}).value || '';
+  const model = (document.getElementById('dc-model-' + deviceId) || {}).value || '';
+  try {
+    const res = await fetch(`/api/devices/${deviceId}/llm`, {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({profile_name: profile, base_url: baseUrl, model_id: model}),
+    });
+    if (!res.ok) { showToast(await errorFrom(res, 'Failed to save LLM config'), 'error'); return; }
+    showToast('LLM config saved', 'success');
+    loadDeviceStats(deviceId);
+  } catch(e) { showToast(await errorFrom(e, 'Failed to save LLM config'), 'error'); }
+}
+
+async function assignDeviceDatabase(deviceId) {
+  const name = (document.getElementById('dc-db-name-' + deviceId) || {}).value || '';
+  const url = (document.getElementById('dc-db-url-' + deviceId) || {}).value || '';
+  if (!name && !url) {
+    showToast('Provide a database name or URL', 'warning');
+    return;
+  }
+  const statusEl = document.getElementById('dc-status-' + deviceId);
+  if (statusEl) statusEl.textContent = 'Assigning...';
+  try {
+    const res = await fetch(`/api/devices/${deviceId}/database`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({database_name: name, database_url: url}),
+    });
+    if (!res.ok) { showToast(await errorFrom(res, 'Failed to assign database'), 'error'); }
+    else { showToast('Database assigned', 'success'); }
+    if (statusEl) statusEl.textContent = '';
+    loadDeviceStats(deviceId);
+  } catch(e) {
+    showToast(await errorFrom(e, 'Failed to assign database'), 'error');
+    if (statusEl) statusEl.textContent = '';
+  }
 }
 
 // ── LLM Context & Template ───────────────────────────────────────────────────
