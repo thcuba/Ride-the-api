@@ -769,6 +769,48 @@ async def test_update_device_auto_switch_not_found(db_manager):
 
 
 @pytest.mark.asyncio
+async def test_update_device_match_threshold(db_manager):
+    """Test setting the match threshold for a device."""
+    await db_manager.get_or_create_device("test_threshold", "example", "ac", "Test Threshold")
+    result = await db_manager.update_device_match_threshold("test_threshold", 0.9)
+    assert result is True
+    devices = await db_manager.list_devices()
+    for d in devices:
+        if d["device_id"] == "test_threshold":
+            assert d.get("match_threshold") == 0.9  # noqa: PLR2004
+            return
+    pytest.fail("Device not found")
+
+
+@pytest.mark.asyncio
+async def test_update_device_match_threshold_not_found(db_manager):
+    """Test setting the match threshold for a non-existent device returns False."""
+    result = await db_manager.update_device_match_threshold("nonexistent", 0.9)
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_update_device_context_buffer_size(db_manager):
+    """Test setting the context buffer size for a device."""
+    await db_manager.get_or_create_device("test_buffer", "example", "ac", "Test Buffer")
+    result = await db_manager.update_device_context_buffer_size("test_buffer", 1048576)
+    assert result is True
+    devices = await db_manager.list_devices()
+    for d in devices:
+        if d["device_id"] == "test_buffer":
+            assert d.get("context_buffer_size") == 1048576  # noqa: PLR2004
+            return
+    pytest.fail("Device not found")
+
+
+@pytest.mark.asyncio
+async def test_update_device_context_buffer_size_not_found(db_manager):
+    """Test setting the context buffer size for a non-existent device returns False."""
+    result = await db_manager.update_device_context_buffer_size("nonexistent", 1048576)
+    assert result is False
+
+
+@pytest.mark.asyncio
 async def test_auto_switch_threshold_constants():
     """Verify the auto-switch thresholds are set correctly."""
     assert AUTO_SWITCH_MATCH_RATE == 99.0  # noqa: PLR2004
