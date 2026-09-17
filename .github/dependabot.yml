@@ -39,11 +39,11 @@ updates:
           - "greenlet"
       async-protocol-libs:
         patterns:
-          - "gmqtt"
+          - "amqtt"
           - "aiocoap"
           - "pymodbus"
           - "websockets"
-          - "hyper-h2"
+          - "h2"
           - "paho-mqtt"
       async-common:
         patterns:
