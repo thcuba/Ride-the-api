@@ -1965,6 +1965,15 @@ function getSelectedPairIds(deviceId) {
 }
 
 function updateSelectedCount(deviceId) {
+  const container = document.getElementById('buffer-list-' + deviceId);
+  if (container) {
+    container.querySelectorAll('.buffer-entry').forEach(card => {
+      const cb = card.querySelector('input[type="checkbox"]');
+      if (cb) {
+        card.classList.toggle('be-checked', cb.checked);
+      }
+    });
+  }
   const ids = getSelectedPairIds(deviceId);
   const previewBtn = document.getElementById('preview-btn-' + deviceId);
   const sendBtn = document.getElementById('send-btn-' + deviceId);
