@@ -10,13 +10,39 @@ hand-rolled regex parser and response serializer:
 
 from __future__ import annotations
 
+import tempfile
+from datetime import UTC, datetime, timedelta
+
 import h11
 import pytest
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.x509.oid import NameOID
 
+from core.cert_manager import CertManager
 from core.tls_mitm import (
+    TLSMITMServer,
     parse_decrypted_http_request,
     serialize_http_response,
 )
+
+
+def _make_test_server() -> TLSMITMServer:
+    """Build a TLSMITMServer with a throwaway CA for SSL context caching tests."""
+    tmp = tempfile.mkdtemp()
+    cm = CertManager(
+        ca_cert_path=f"{tmp}/ca.pem",
+        ca_key_path=f"{tmp}/ca.key",
+        device_certs_dir=f"{tmp}/device_certs",
+        external_certs_dir=f"{tmp}/external_certs",
+    )
+    cm.ensure_ca()
+    server = TLSMITMServer(cert_manager=cm)
+    # Purge the default port list so no sockets are bound.
+    server.listen_ports = []
+    return server
+
 
 
 def _parse_via_client(raw: bytes) -> tuple[int, dict[str, str], bytes]:
@@ -184,3 +210,68 @@ class TestSerializeHttpResponse:
         raw = serialize_http_response(200, None, payload)
         _, _, body = _parse_via_client(raw)
         assert body == payload
+
+
+class TestSslContextCaching:
+    def test_same_cert_returns_cached_context(self) -> None:
+        server = _make_test_server()
+        hostname = "device.local"
+        cert_pem, key_pem = server.cert_manager.get_cert_for_hostname(hostname)
+
+        ctx_a, temp_a = server._make_ssl_context(cert_pem, key_pem)
+        ctx_b, temp_b = server._make_ssl_context(cert_pem, key_pem)
+
+        # Same material -> same context object, and no temp file on the hit.
+        assert ctx_a is ctx_b
+        assert temp_a is not None
+        assert temp_b is None
+
+    def test_cache_holds_one_entry_per_cert(self) -> None:
+        server = _make_test_server()
+        cert_pem, key_pem = server.cert_manager.get_cert_for_hostname("one.local")
+        cert_pem2, key_pem2 = server.cert_manager.get_cert_for_hostname("two.local")
+
+        ctx_one, _ = server._make_ssl_context(cert_pem, key_pem)
+        ctx_two, _ = server._make_ssl_context(cert_pem2, key_pem2)
+        ctx_one_again, _ = server._make_ssl_context(cert_pem, key_pem)
+
+        assert ctx_one is ctx_one_again
+        assert ctx_one is not ctx_two
+
+    def test_rotated_cert_builds_fresh_context(self) -> None:
+        """Changing the PEM (simulating cert rotation) must not reuse the old ctx."""
+        server = _make_test_server()
+        hostname = "rot.local"
+        cert_pem, key_pem = server.cert_manager.get_cert_for_hostname(hostname)
+        ctx_a, _ = server._make_ssl_context(cert_pem, key_pem)
+
+        # Build a genuinely new self-signed cert (a "rotated" replacement).
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        now = datetime.now(UTC)
+        subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, hostname)])
+        rotated = (
+            x509.CertificateBuilder()
+            .subject_name(subject)
+            .issuer_name(subject)
+            .public_key(key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(now)
+            .not_valid_after(now + timedelta(days=1))
+            .sign(key, hashes.SHA256())
+        )
+        rotated_cert = rotated.public_bytes(serialization.Encoding.PEM).decode()
+        rotated_key = key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.TraditionalOpenSSL,
+            serialization.NoEncryption(),
+        ).decode()
+
+        ctx_b, _ = server._make_ssl_context(rotated_cert, rotated_key)
+
+        # Different PEM for the same hostname -> different context.
+        assert ctx_a is not ctx_b
+        # Both are real, usable server contexts.
+        assert ctx_a is not None
+        assert ctx_b is not None
+        assert ctx_b.maximum_version == ctx_a.maximum_version
+
