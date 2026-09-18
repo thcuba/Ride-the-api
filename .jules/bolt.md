@@ -81,3 +81,7 @@
 ## 2026-03-31 - Fast ASGI Scope Access for Middleware Request Inspection
 **Learning:** In Starlette HTTP middleware, accessing `request.url.path` creates a new `URL` object and parses URL components on every request (~4x slower than raw string access). In ASGI body-size middleware, calling `dict(scope.get("headers") or [])` constructs an intermediate dictionary and hashes all header keys on every request (~1.4x slower than iterating header tuples directly).
 **Action:** In ASGI/Starlette middleware hot paths, access `scope.get("path", "")` directly for path prefix checks and iterate over `scope.get("headers")` tuples instead of building temporary dictionary objects.
+
+## 2026-03-31 - Bulk Pre-fetching for Pattern DB Exports
+**Learning:** Querying `ResponseTemplate` by `pattern_id` and `FieldMapping` by `intent` inside the loop over `RequestPattern` in `DecipherIngest.export_patterns` and `export_device_model` caused $2N + 1$ SQL queries per export call. Pre-fetching all templates and mappings into dictionary lookups (`templates_by_pattern_id` and `mappings_by_intent`) reduces queries to 3 total, resulting in a ~9.5x speedup (~9.92s to ~1.04s per 20 exports of 100 patterns).
+**Action:** When exporting or serializing relational entities from database sessions, bulk-query child/related tables and index by key before entering iteration loops.
