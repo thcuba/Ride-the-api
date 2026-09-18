@@ -1829,6 +1829,12 @@ class LearningOrchestrator:
                 # Per-device runtime config surfaced for the dashboard (so the
                 # detail panel can render editable controls from one fetch).
                 stats["connection"] = (device.extra_attributes or {}).get("connection", "auto")
+                stats["tls_passthrough"] = (device.extra_attributes or {}).get(
+                    "tls_passthrough", False
+                )
+                stats["tls_pinning_bypass"] = (device.extra_attributes or {}).get(
+                    "tls_pinning_bypass", "mitm_proxy"
+                )
                 stats["llm_base_url"] = device.llm_base_url
                 stats["llm_model_id"] = device.llm_model_id
                 stats["llm_profile_name"] = device.llm_profile_name

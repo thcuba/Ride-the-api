@@ -888,14 +888,14 @@ async function loadDeviceStats(deviceId) {
         </div>
         <div class="tc-row">
           <label for="tc-vendor-${escapeHtml(deviceId)}" class="tc-label">Vendor / Adapter</label>
-          <select id="tc-vendor-${escapeHtml(deviceId)}">
+          <select id="tc-vendor-${escapeHtml(deviceId)}" data-current="${escapeHtml(s.vendor || 'unknown')}">
             <option value="unknown" ${(s.vendor || 'unknown') === 'unknown' ? 'selected' : ''}>unknown</option>
           </select>
         </div>
         <div class="tc-row">
           <span class="tc-label" id="passthrough-label-${escapeHtml(deviceId)}">Passthrough to Cloud</span>
           <label class="tc-toggle" aria-label="Toggle passthrough to cloud">
-            <input type="checkbox" id="tc-passthrough-${escapeHtml(deviceId)}" role="switch" aria-checked="true" checked aria-labelledby="passthrough-label-${escapeHtml(deviceId)}" onchange="this.setAttribute('aria-checked', this.checked)">
+                    <input type="checkbox" id="tc-passthrough-${escapeHtml(deviceId)}" role="switch" aria-checked="${!!s.tls_passthrough}" ${s.tls_passthrough ? 'checked' : ''} aria-labelledby="passthrough-label-${escapeHtml(deviceId)}" onchange="this.setAttribute('aria-checked', this.checked)">
             <span class="tc-slider"></span>
           </label>
         </div>
@@ -909,9 +909,9 @@ async function loadDeviceStats(deviceId) {
         <div class="tc-row">
           <label for="tc-pinning-${escapeHtml(deviceId)}" class="tc-label">Pinning Bypass</label>
           <select id="tc-pinning-${escapeHtml(deviceId)}">
-            <option value="mitm_proxy">mitm_proxy (default)</option>
-            <option value="frida">frida (script)</option>
-            <option value="disable_pin_check">disable_pin_check</option>
+                    <option value="mitm_proxy" ${(s.tls_pinning_bypass || 'mitm_proxy') === 'mitm_proxy' ? 'selected' : ''}>mitm_proxy (default)</option>
+                    <option value="frida" ${s.tls_pinning_bypass === 'frida' ? 'selected' : ''}>frida (script)</option>
+                    <option value="disable_pin_check" ${s.tls_pinning_bypass === 'disable_pin_check' ? 'selected' : ''}>disable_pin_check</option>
           </select>
         </div>
         <div class="tc-row">
@@ -1193,14 +1193,16 @@ async function loadVendors() {
     const adapters = h.adapters || [];
     if (adapters.length === 0) return;
     document.querySelectorAll('[id^="tc-vendor-"]').forEach(sel => {
-      adapters.forEach(v => {
-        if (!sel.querySelector(`option[value="${v}"]`)) {
-          const opt = document.createElement('option');
-          opt.value = v; opt.textContent = v;
-          sel.appendChild(opt);
-        }
-      });
-    });
+          const current = sel.getAttribute('data-current') || 'unknown';
+          adapters.forEach(v => {
+            if (!sel.querySelector(`option[value="${v}"]`)) {
+              const opt = document.createElement('option');
+              opt.value = v; opt.textContent = v;
+              if (v === current) opt.selected = true;
+              sel.appendChild(opt);
+            }
+          });
+        });
   } catch(e) { /* ignore */ }
 }
 

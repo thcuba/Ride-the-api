@@ -1447,6 +1447,7 @@ async def get_device_patterns(device_id: str):
                         "body_template": tpl.body_template,
                         "headers_template": tpl.headers_template,
                         "field_mappings": tpl.field_mappings,
+                        "expected_variables": tpl.expected_variables,
                     }
                     if tpl
                     else None,
