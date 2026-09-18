@@ -76,7 +76,7 @@ from core.resilience import (
     AutoSwitchScheduler,
     register_resilience_routes,
 )
-from core.security import ControlPlaneAuthMiddleware, MaxBodySizeMiddleware
+from core.security import ControlPlaneAuthMiddleware, MaxBodySizeMiddleware, get_generated_keys
 from core.tls_mitm import (
     DecryptedRequest,
     TLSMITMServer,
@@ -584,6 +584,37 @@ async def _json_decode_error_handler(request: Request, exc: json.JSONDecodeError
     """Return a client-friendly 400 for malformed JSON payloads."""
     del request, exc
     return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
+
+
+# ── First-access bootstrap ───────────────────────────────────────────────────
+
+@app.get("/api/setup/keys")
+async def setup_keys():
+    """Reveal the generated control-plane keys on first access.
+
+    Only answers while the keys are ephemeral (auth enabled and no explicit
+    ``security.*_api_key`` in config.yaml). Once explicit keys are configured
+    this returns 404, so the generated keys are never disclosed afterwards.
+    """
+    keys = get_generated_keys()
+    if keys is None:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "Control-plane API keys are configured"},
+        )
+    admin_key, readonly_key = keys
+    return JSONResponse(
+        status_code=200,
+        content={
+            "admin_api_key": admin_key,
+            "readonly_api_key": readonly_key,
+            "ephemeral": True,
+            "message": (
+                "Generated ephemeral keys for this run. Set security.admin_api_key "
+                "and security.readonly_api_key in config.yaml to define stable keys."
+            ),
+        },
+    )
 
 
 # ── TLS API Routes ───────────────────────────────────────────────────────────

@@ -32,10 +32,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Paths that must remain reachable without credentials (device bootstrap).
+# Paths that must remain reachable without credentials.
 # The CA certificate is downloaded by an operator to install on devices; it is
 # not secret, so it stays public to avoid breaking MITM onboarding.
-PUBLIC_PATHS = frozenset({"/api/tls/ca-cert"})
+# /api/setup/keys is public only while the control-plane keys are ephemeral
+# (no explicit keys in config.yaml): it lets the web UI show the generated
+# keys on first access. Once explicit keys are configured it stops exposing
+# anything.
+PUBLIC_PATHS = frozenset({"/api/tls/ca-cert", "/api/setup/keys"})
 
 _READ_ONLY_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
@@ -69,6 +73,23 @@ class ControlPlaneAuthMiddleware(BaseHTTPMiddleware):
         self._generated_admin_key: str | None = None
         self._generated_readonly_key: str | None = None
         self._logged = False
+        # Expose the active instance so the setup route can reveal ephemeral
+        # keys on first access (see get_generated_keys).
+        global _control_plane_auth  # noqa: PLW0603
+        _control_plane_auth = self
+
+    def effective_keys(self) -> tuple[str, str]:
+        """Return (admin_key, readonly_key), generating ephemeral ones if unset."""
+        return self._effective_keys(self._get_security_config())
+
+    def uses_ephemeral_keys(self) -> bool:
+        """True when auth is on and no explicit keys are configured.
+
+        In that case the middleware generates random keys at startup that the
+        operator cannot know — so the first-access UI must reveal them.
+        """
+        cfg = self._get_security_config()
+        return bool(cfg.auth_enabled) and not cfg.admin_api_key and not cfg.readonly_api_key
 
     def _effective_keys(self, cfg: SecurityConfig) -> tuple[str, str]:
         """Return (admin_key, readonly_key), generating random ones if unset."""
@@ -84,9 +105,12 @@ class ControlPlaneAuthMiddleware(BaseHTTPMiddleware):
             self._logged = True
             logger.warning(
                 "Control-plane auth enabled. No API keys configured in config.yaml; "
-                "generated ephemeral keys for this run (not logged). Set "
+                "generated ephemeral keys for this run — admin key: %s, readonly "
+                "key: %s. The web UI shows these on first access. Set "
                 "security.admin_api_key / security.readonly_api_key in config.yaml "
-                "to access the control plane."
+                "to define stable keys.",
+                admin,
+                readonly,
             )
         return admin, readonly
 
@@ -121,6 +145,24 @@ class ControlPlaneAuthMiddleware(BaseHTTPMiddleware):
             content={"error": "Unauthorized"},
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+
+# Active ControlPlaneAuthMiddleware instance, registered at stack-build time.
+# Used by /api/setup/keys to reveal ephemeral keys on first access.
+_control_plane_auth: ControlPlaneAuthMiddleware | None = None
+
+
+def get_generated_keys() -> tuple[str, str] | None:
+    """Return the generated (admin_key, readonly_key) on first access.
+
+    Only available while the keys are ephemeral (auth enabled and no explicit
+    keys in config.yaml). Once the operator sets explicit keys this returns
+    ``None`` so they are never exposed over the network.
+    """
+    auth = _control_plane_auth
+    if auth is None or not auth.uses_ephemeral_keys():
+        return None
+    return auth.effective_keys()
 
 
 class RequestBodyTooLarge(StarletteHTTPException):
