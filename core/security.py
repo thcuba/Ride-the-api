@@ -252,3 +252,15 @@ class MaxBodySizeMiddleware:
             }
         )
         await send({"type": "http.response.body", "body": body})
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Add standard HTTP security response headers to all responses."""
+
+    async def dispatch(self, request: Request, call_next):  # noqa: ANN001
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("X-XSS-Protection", "1; mode=block")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        return response
