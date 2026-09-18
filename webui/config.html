@@ -292,6 +292,45 @@ function isSimpleType(v) {
   return ['string', 'number', 'boolean'].includes(typeof v) || v === null;
 }
 
+// Known enum fields → rendered as dropdowns instead of free text.
+// Paths may contain '*' to match any single segment (e.g. array indices).
+const ENUM_FIELDS = {
+  'learning.default_mode': ['learning', 'production', 'hybrid'],
+  'buffer.backend': ['disk', 'memory'],
+  'observability.logging.format': ['json', 'text'],
+  'observability.logging.output': ['stdout', 'file'],
+  'correlation.http.method': ['connection', 'header', 'body_hash'],
+  'correlation.mqtt.method': ['topic_sequence', 'packet_id'],
+  'correlation.coap.method': ['message_id', 'token'],
+  'tls_decrypt.min_tls_version': ['TLSv1.0', 'TLSv1.1', 'TLSv1.2', 'TLSv1.3'],
+  'tls_decrypt.max_tls_version': ['TLSv1.0', 'TLSv1.1', 'TLSv1.2', 'TLSv1.3'],
+  'control.policy.default_policy': ['pid_thermal', 'rule_based'],
+  'core.ip_profiles.*.connection': ['auto', 'tls', 'http', 'mqtt', 'coap', 'modbus'],
+  'modification.rules.*.action': ['modify', 'block', 'inject', 'replace', 'redirect', 'delay'],
+  'modification.rules.*.direction': ['request', 'response', 'both'],
+  'modification.rules.*.match_type': ['hostname', 'path', 'header', 'body', 'method'],
+  'traffic_selection.default_action': ['intercept', 'passthrough'],
+  'traffic_selection.rules.*.action': ['intercept', 'passthrough'],
+  'traffic_selection.rules.*.match_type': ['cidr', 'hostname', 'vendor', 'device_id'],
+  'traffic_selection.rules.*.scope': ['local', 'external'],
+  'tls_decrypt.pinning_bypass.*.strategy': ['mitm_proxy', 'frida', 'disable_pin_check'],
+  'protocol_servers.zwave_bridge.connection_type': ['mqtt', 'ws'],
+};
+
+function enumOptionsFor(path) {
+  for (const [pattern, options] of Object.entries(ENUM_FIELDS)) {
+    const pat = pattern.split('.');
+    const seg = path.split('.');
+    if (pat.length !== seg.length) continue;
+    let match = true;
+    for (let i = 0; i < pat.length; i++) {
+      if (pat[i] !== '*' && pat[i] !== seg[i]) { match = false; break; }
+    }
+    if (match) return options;
+  }
+  return null;
+}
+
 let fieldCounter = 0;
 
 function renderObject(container, obj, path) {
@@ -301,6 +340,20 @@ function renderObject(container, obj, path) {
     p.className = 'sec-desc';
     p.textContent = '(empty)';
     container.appendChild(p);
+    // Allow populating empty dicts (e.g. core.ip_profiles, vendors, profiles)
+    const addBtn = document.createElement('button');
+    addBtn.className = 'btn btn-ghost';
+    addBtn.textContent = '+ Add key';
+    addBtn.style.cssText = 'margin-top:6px;font-size:12px;padding:4px 12px;';
+    addBtn.addEventListener('click', () => {
+      const key = prompt('New key name:');
+      if (!key) return;
+      const parent = getAt(cfg, path);
+      parent[key] = '';
+      setDirty(path);
+      rerenderSection();
+    });
+    container.appendChild(addBtn);
     return;
   }
   entries.forEach(([k, v]) => {
@@ -335,6 +388,13 @@ function renderObject(container, obj, path) {
   });
 }
 
+// Re-render the currently active section (used after structural edits like
+// adding/removing array items or dict keys).
+function rerenderSection() {
+  const active = document.querySelector('.section-item.active');
+  if (active) selectSection(active.dataset.section);
+}
+
 function renderField(path, label, value) {
   const row = document.createElement('div');
   row.className = 'field';
@@ -352,37 +412,67 @@ function renderField(path, label, value) {
     input.id = id; input.checked = value;
     input.setAttribute('aria-label', label);
     input.addEventListener('change', () => {
-      setDirty(path);
-      markFieldDirty(path);
-    });
-    ctrl.appendChild(input);
-  } else if (typeof value === 'number') {
-    const input = document.createElement('input');
-    input.type = 'number'; input.id = id; input.value = value;
-    input.step = 'any';
-    input.addEventListener('change', () => { setDirty(path); markFieldDirty(path); });
-    ctrl.appendChild(input);
-  } else if (value === null) {
-    const input = document.createElement('input');
-    input.type = 'text'; input.id = id; input.value = '';
-    input.placeholder = 'null';
-    input.addEventListener('change', () => { setDirty(path); markFieldDirty(path); });
-    ctrl.appendChild(input);
-  } else {
-    // string
-    const isLong = typeof value === 'string' && value.length > 80;
-    if (isLong) {
-      const ta = document.createElement('textarea');
-      ta.id = id; ta.value = value; ta.rows = 4; ta.style.cssText = 'width:420px;';
-      ta.addEventListener('input', () => { setDirty(path); markFieldDirty(path); });
-      ctrl.appendChild(ta);
-    } else {
-      const input = document.createElement('input');
-      input.type = 'text'; input.id = id; input.value = value;
-      input.addEventListener('change', () => { setDirty(path); markFieldDirty(path); });
+        setAt(cfg, path, input.checked);
+        setDirty(path);
+        markFieldDirty(path);
+      });
       ctrl.appendChild(input);
-    }
-  }
+    } else if (typeof value === 'number') {
+      const input = document.createElement('input');
+      input.type = 'number'; input.id = id; input.value = value;
+      input.step = 'any';
+      input.addEventListener('change', () => {
+        const n = parseFloat(input.value);
+        setAt(cfg, path, Number.isNaN(n) ? null : n);
+        setDirty(path); markFieldDirty(path);
+      });
+      ctrl.appendChild(input);
+    } else if (value === null) {
+      const input = document.createElement('input');
+      input.type = 'text'; input.id = id; input.value = '';
+      input.placeholder = 'null';
+      input.addEventListener('change', () => {
+        setAt(cfg, path, input.value === '' ? null : input.value);
+        setDirty(path); markFieldDirty(path);
+      });
+      ctrl.appendChild(input);
+        } else if (typeof value === 'string') {
+          const enumOpts = enumOptionsFor(path);
+          if (enumOpts) {
+            const select = document.createElement('select');
+            select.id = id;
+            enumOpts.forEach(opt => {
+              const o = document.createElement('option');
+              o.value = opt; o.textContent = opt;
+              if (opt === value) o.selected = true;
+              select.appendChild(o);
+            });
+            select.addEventListener('change', () => {
+              setAt(cfg, path, select.value);
+              setDirty(path); markFieldDirty(path);
+            });
+            ctrl.appendChild(select);
+          } else {
+            const isLong = typeof value === 'string' && value.length > 80;
+            if (isLong) {
+              const ta = document.createElement('textarea');
+              ta.id = id; ta.value = value; ta.rows = 4; ta.style.cssText = 'width:420px;';
+              ta.addEventListener('input', () => {
+                setAt(cfg, path, ta.value);
+                setDirty(path); markFieldDirty(path);
+              });
+              ctrl.appendChild(ta);
+            } else {
+              const input = document.createElement('input');
+              input.type = 'text'; input.id = id; input.value = value;
+              input.addEventListener('change', () => {
+                setAt(cfg, path, input.value === '' ? null : input.value);
+                setDirty(path); markFieldDirty(path);
+              });
+              ctrl.appendChild(input);
+            }
+          }
+        }
   row.appendChild(ctrl);
   return row;
 }
@@ -398,7 +488,6 @@ function renderArray(path, label, arr) {
   const chevron = document.createElement('span');
   chevron.textContent = '▾ ';
   const body = document.createElement('div');
-  renderObject(body, arr, path);
   head.addEventListener('click', () => {
     const hidden = body.style.display === 'none';
     body.style.display = hidden ? '' : 'none';
@@ -407,18 +496,85 @@ function renderArray(path, label, arr) {
   head.prepend(chevron);
   group.appendChild(head);
   group.appendChild(body);
-  // Unknown primitive arrays → JSON badges
+  // Primitive arrays → editable comma-separated list
   if (arr.length && arr.every(isSimpleType)) {
-    body.innerHTML = '';
-    const badge = document.createElement('div');
-    badge.className = 'list-badge';
-    arr.forEach(v => {
-      const s = document.createElement('span');
-      s.className = 'lb';
-      s.textContent = String(v);
-      badge.appendChild(s);
+    const row = document.createElement('div');
+    row.className = 'field';
+    const info = document.createElement('div');
+    info.className = 'f-info';
+    info.innerHTML = `<div class="f-name">${escapeHtml(label)}</div><div class="f-desc">${escapeHtml(path)} — comma-separated values</div>`;
+    row.appendChild(info);
+    const ctrl = document.createElement('div');
+    ctrl.className = 'f-control';
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = arr.join(', ');
+    input.setAttribute('aria-label', label);
+    input.addEventListener('change', () => {
+      const parts = input.value.split(',').map(s => s.trim()).filter(s => s !== '');
+      const isNum = arr.every(v => typeof v === 'number');
+      setAt(cfg, path, isNum ? parts.map(Number) : parts);
+      setDirty(path);
+      markFieldDirty(path);
     });
-    body.appendChild(badge);
+    ctrl.appendChild(input);
+    row.appendChild(ctrl);
+    body.appendChild(row);
+  } else {
+    // Object array (or empty array) → render each item with add/remove controls
+    if (arr.length === 0) {
+      const p = document.createElement('p');
+      p.className = 'sec-desc';
+      p.textContent = '(empty)';
+      body.appendChild(p);
+    } else {
+      arr.forEach((item, idx) => {
+        const itemPath = path + '.' + idx;
+        const itemGroup = document.createElement('div');
+        itemGroup.className = 'field-group';
+        itemGroup.dataset.path = itemPath;
+        const itemHead = document.createElement('div');
+        itemHead.className = 'field-group-title';
+        itemHead.textContent = '#' + idx;
+        itemHead.style.cssText = 'cursor:pointer;user-select:none;';
+        const itemChevron = document.createElement('span');
+        itemChevron.textContent = '▾ ';
+        const itemBody = document.createElement('div');
+        renderObject(itemBody, item, itemPath);
+        itemHead.addEventListener('click', () => {
+          const hidden = itemBody.style.display === 'none';
+          itemBody.style.display = hidden ? '' : 'none';
+          itemChevron.textContent = hidden ? '▾ ' : '▸ ';
+        });
+        itemHead.prepend(itemChevron);
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'btn btn-ghost';
+        removeBtn.textContent = 'Remove';
+        removeBtn.style.cssText = 'margin-left:8px;font-size:11px;padding:2px 10px;';
+        removeBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const parent = getAt(cfg, path);
+          parent.splice(idx, 1);
+          setDirty(path);
+          rerenderSection();
+        });
+        itemHead.appendChild(removeBtn);
+        itemGroup.appendChild(itemHead);
+        itemGroup.appendChild(itemBody);
+        body.appendChild(itemGroup);
+      });
+    }
+    const addBtn = document.createElement('button');
+    addBtn.className = 'btn btn-ghost';
+    addBtn.textContent = '+ Add item';
+    addBtn.style.cssText = 'margin-top:8px;font-size:12px;padding:4px 12px;';
+    addBtn.addEventListener('click', () => {
+      const parent = getAt(cfg, path);
+      parent.push({});
+      setDirty(path);
+      rerenderSection();
+    });
+    body.appendChild(addBtn);
   }
   return group;
 }
@@ -442,31 +598,7 @@ function collectSection(key) {
     if (!ta) return cfg;
     try { return JSON.parse(ta.value); } catch (e) { return null; }
   }
-  return collectObject(cfg[key]);
-}
-
-function collectObject(obj) {
-  // Traverse nested groups; for each rendered field update the value.
-  // Uses the DOM ids (f-*) to read current values, keyed by data-path.
-  document.querySelectorAll('#fields [data-path]').forEach(el => {
-    const path = el.dataset.path;
-    if (!path) return;
-    const basePath = el.closest('#fields');
-    // skip nested group headers (no input)
-    const input = el.querySelector('input[type="checkbox"]') ||
-                  el.querySelector('input[type="number"]') ||
-                  el.querySelector('input[type="text"]') ||
-                  el.querySelector('textarea');
-    if (!input) return;
-    const rootObj = cfg;
-    if (input.type === 'checkbox') setAt(rootObj, path, input.checked);
-    else if (input.type === 'number') {
-      const n = parseFloat(input.value);
-      setAt(rootObj, path, isNaN(n) ? null : n);
-    } else if (input.type === 'text') setAt(rootObj, path, input.value === '' ? null : input.value);
-    else setAt(rootObj, path, input.value);
-  });
-  return obj;
+  return cfg[key];
 }
 
 function setDirty(path) { dirty.add(path); updateSaveBtn(); }
@@ -516,9 +648,9 @@ async function saveConfig() {
       return;
     }
     cfg = parsed;
-  } else {
-    collectObject(cfg[key]);
-  }
+    }
+    // For normal sections cfg already reflects every edit: field changes write
+    // straight into cfg, so edits in any section are preserved across switches.
   try {
     const res = await fetch('/api/config', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
