@@ -81,6 +81,25 @@ def test_redact_body_json_string():
     assert "bob" in out
 
 
+def test_redact_body_json_string_fast_path_keeps_formatting():
+    """Secret-free JSON string bodies bypass the json round-trip untouched."""
+    body = ' {\n  "temperature": 21.5,\n  "online": true\n} '
+    assert redact_body(body) == body
+
+
+def test_redact_body_json_string_with_key_inside_value_still_redacts():
+    """A sensitive key elsewhere keeps the payload safe even if a value echoes it."""
+    out = redact_body('{"data": "token=abc", "api_key": "k1"}')
+    assert '"api_key": "[REDACTED]"' in out
+    assert "k1" not in out
+
+
+def test_redact_body_json_string_case_insensitive_key():
+    out = redact_body('{"API_KEY": "k1", "Name": "bob"}')
+    assert '"API_KEY": "[REDACTED]"' in out
+    assert "bob" in out
+
+
 def test_redact_body_key_value_string():
     out = redact_body("token=abc&device=shelly")
     assert "token=[REDACTED]" in out
