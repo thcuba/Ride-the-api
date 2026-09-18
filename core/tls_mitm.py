@@ -285,6 +285,13 @@ class TLSMITMServer:
         self.device_ports: dict[str, DevicePortInfo] = {}
         self._device_ports_lock = asyncio.Lock()
 
+        # Cache of parsed SSLContexts keyed by (cert_pem, key_pem). Building a
+        # context writes a temp file and parses the PEM on every TLS connection;
+        # caching it removes that per-connection cost while staying correct across
+        # cert rotation — rotation changes the PEM, so the cache key changes and a
+        # fresh context is built automatically.
+        self._ssl_context_cache: dict[tuple[str, str], ssl.SSLContext] = {}
+
         # Ensure CA exists on init
         self.cert_manager.ensure_ca()
 
@@ -579,7 +586,18 @@ class TLSMITMServer:
 
         Returns (context, temp_file_path) or (None, None) on failure.
         The temp file must be cleaned up after use.
+
+        Performance: contexts are cached per ``(cert_pem, key_pem)`` so the
+        temp-file write + PEM parse + context construction only happens once
+        per distinct certificate instead of on every TLS connection. A cached
+        context returns a ``None`` temp path (nothing to clean up). Cert
+        rotation changes the PEM, so the key changes and a fresh context is
+        built for the new certificate.
         """
+        cache_key = (cert_pem, key_pem)
+        cached = self._ssl_context_cache.get(cache_key)
+        if cached is not None:
+            return cached, None
         try:
             # Write cert+key to a temp file (load_cert_chain only takes file paths)
             with tempfile.NamedTemporaryFile(
@@ -601,6 +619,9 @@ class TLSMITMServer:
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_NONE
 
+            # load_cert_chain parses the file eagerly, so the context is
+            # self-contained and the temp file may be cleaned up immediately.
+            self._ssl_context_cache[cache_key] = ctx
             return ctx, temp_path  # noqa: TRY300
         except Exception:
             logger.exception("TLS MITM: failed to create SSL context")
