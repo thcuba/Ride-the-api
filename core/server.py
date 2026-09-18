@@ -76,7 +76,12 @@ from core.resilience import (
     AutoSwitchScheduler,
     register_resilience_routes,
 )
-from core.security import ControlPlaneAuthMiddleware, MaxBodySizeMiddleware, get_generated_keys
+from core.security import (
+    ControlPlaneAuthMiddleware,
+    MaxBodySizeMiddleware,
+    SecurityHeadersMiddleware,
+    get_generated_keys,
+)
 from core.tls_mitm import (
     DecryptedRequest,
     TLSMITMServer,
@@ -573,6 +578,8 @@ app.add_middleware(
     MaxBodySizeMiddleware,
     max_size=config_manager.config.proxy.max_request_size,
 )
+# Security response headers (defense-in-depth against clickjacking, MIME sniffing, XSS)
+app.add_middleware(SecurityHeadersMiddleware)
 
 
 # FastAPI does not map JSONDecodeError from unguarded
