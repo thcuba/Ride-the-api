@@ -102,13 +102,13 @@ class ControlPlaneAuthMiddleware(BaseHTTPMiddleware):
             self._generated_readonly_key = secrets.token_urlsafe(32)
             readonly = self._generated_readonly_key
         if not self._logged:
-                    self._logged = True
-                    logger.warning(
-                        "Control-plane auth enabled. No API keys configured in config.yaml; "
-                        "generated ephemeral keys for this run (not logged). The web UI "
-                        "shows them on first access. Set security.admin_api_key / "
-                        "security.readonly_api_key in config.yaml to define stable keys."
-                    )
+            self._logged = True
+            logger.warning(
+                "Control-plane auth enabled. No API keys configured in config.yaml; "
+                "generated ephemeral keys for this run (not logged). The web UI "
+                "shows them on first access. Set security.admin_api_key / "
+                "security.readonly_api_key in config.yaml to define stable keys."
+            )
         return admin, readonly
 
     async def dispatch(self, request: Request, call_next):  # noqa: ANN001, PLR0911
