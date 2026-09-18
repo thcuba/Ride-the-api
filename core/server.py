@@ -588,6 +588,7 @@ async def _json_decode_error_handler(request: Request, exc: json.JSONDecodeError
 
 # ── First-access bootstrap ───────────────────────────────────────────────────
 
+
 @app.get("/api/setup/keys")
 async def setup_keys():
     """Reveal the generated control-plane keys on first access.
