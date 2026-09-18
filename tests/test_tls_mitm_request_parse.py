@@ -44,7 +44,6 @@ def _make_test_server() -> TLSMITMServer:
     return server
 
 
-
 def _parse_via_client(raw: bytes) -> tuple[int, dict[str, str], bytes]:
     """Feed raw response bytes to a client-side h11 connection."""
     conn = h11.Connection(h11.CLIENT)
@@ -274,4 +273,3 @@ class TestSslContextCaching:
         assert ctx_a is not None
         assert ctx_b is not None
         assert ctx_b.maximum_version == ctx_a.maximum_version
-
