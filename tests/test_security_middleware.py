@@ -121,6 +121,44 @@ def test_unauthorized_returns_www_authenticate(client):
     assert resp.headers.get("www-authenticate") == "Bearer"
 
 
+# ── First-access key reveal (/api/setup/keys) ───────────────────────────────
+
+
+def test_setup_keys_404_when_configured(client):
+    """With explicit keys configured the setup endpoint must not leak them."""
+    resp = client.get("/api/setup/keys")
+    assert resp.status_code == 404  # noqa: PLR2004
+
+
+def test_setup_keys_reveals_ephemeral_keys(monkeypatch):
+    """On first access, generated ephemeral keys are shown and actually work."""
+    cfg = server_mod.config_manager.config
+    saved = (cfg.security.auth_enabled, cfg.security.admin_api_key, cfg.security.readonly_api_key)
+    cfg.security.auth_enabled = True
+    cfg.security.admin_api_key = ""
+    cfg.security.readonly_api_key = ""
+    monkeypatch.setattr(server_mod, "db_manager", _FakeDB())
+    monkeypatch.setattr(server_mod, "orchestrator", object())
+    monkeypatch.setattr(server_mod, "cert_manager", _FakeCertManager())
+    try:
+        client = TestClient(app)
+        resp = client.get("/api/setup/keys")
+        assert resp.status_code == 200  # noqa: PLR2004
+        data = resp.json()
+        assert data["admin_api_key"]
+        assert data["readonly_api_key"]
+        assert data["ephemeral"] is True
+        # The revealed admin key really authenticates a write.
+        write = client.post(
+            "/api/devices/some-device/mode",
+            headers={"X-API-Key": data["admin_api_key"]},
+            json={"mode": "production"},
+        )
+        assert write.status_code == 200  # noqa: PLR2004
+    finally:
+        cfg.security.auth_enabled, cfg.security.admin_api_key, cfg.security.readonly_api_key = saved
+
+
 # ── F-09: MaxBodySizeMiddleware ────────────────────────────────────────────────
 
 

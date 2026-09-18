@@ -621,7 +621,86 @@
   });
 })();
 
-let lastActiveElement = null;
+  // ── First-access: reveal ephemeral control-plane keys ───────────────────────
+  (function () {
+    const KEY_STORAGE = 'rideApiKey';
+    function keyRow(label, value, container) {
+      const row = document.createElement('div');
+      row.style.cssText = 'margin:10px 0;font-size:12px;';
+      const lab = document.createElement('div');
+      lab.textContent = label;
+      lab.style.cssText = 'color:#9ca8ba;margin-bottom:4px;text-transform:uppercase;letter-spacing:.3px;';
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'display:flex;gap:8px;';
+      const code = document.createElement('code');
+      code.textContent = value;
+      code.style.cssText = 'flex:1;background:#1a1f2b;border:1px solid #2d3648;border-radius:6px;padding:8px;font-size:12px;word-break:break-all;';
+      const btn = document.createElement('button');
+      btn.textContent = 'Copy';
+      btn.style.cssText = 'padding:8px 12px;border-radius:6px;border:1px solid #2d3648;background:#1a1f2b;color:#e1e6ed;font-family:inherit;font-size:12px;cursor:pointer;';
+      btn.addEventListener('click', function () {
+        navigator.clipboard.writeText(value).then(function () {
+          btn.textContent = 'Copied';
+          setTimeout(function () { btn.textContent = 'Copy'; }, 1500);
+        }).catch(function () {});
+      });
+      wrap.appendChild(code);
+      wrap.appendChild(btn);
+      row.appendChild(lab);
+      row.appendChild(wrap);
+      container.appendChild(row);
+    }
+
+    function show(keys) {
+      const overlay = document.createElement('div');
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:9000;';
+      const box = document.createElement('div');
+      box.style.cssText = 'background:#141820;border:1px solid #2d3648;border-radius:12px;padding:24px;max-width:520px;width:90%;color:#e1e6ed;font-family:Inter,system-ui,sans-serif;box-shadow:0 8px 32px rgba(0,0,0,.3);';
+      const title = document.createElement('h2');
+      title.textContent = 'Control-plane API keys';
+      title.style.cssText = 'margin:0 0 8px;font-size:18px;color:#6c8cff;';
+      const para = document.createElement('p');
+      para.style.cssText = 'margin:0 0 12px;font-size:13px;color:#9ca8ba;line-height:1.5;';
+      para.innerHTML = 'No API keys are configured in <code>config.yaml</code>, so the server generated <b>ephemeral</b> keys for this run. They are shown only on this first access and are lost on restart. Copy the <b>Admin key</b> to continue, or set <code>security.admin_api_key</code> / <code>security.readonly_api_key</code> in config.yaml for stable keys.';
+      box.appendChild(title);
+      box.appendChild(para);
+      keyRow('Admin key (full access)', keys.admin_api_key, box);
+      keyRow('Read-only key', keys.readonly_api_key, box);
+      const okBtn = document.createElement('button');
+      okBtn.textContent = 'Got it — use the admin key';
+      okBtn.style.cssText = 'margin-top:16px;width:100%;padding:10px;border:none;border-radius:8px;background:linear-gradient(135deg,#6c8cff,#5b7ad0);color:#fff;font-weight:600;font-family:inherit;cursor:pointer;';
+      okBtn.addEventListener('click', function () {
+        try { localStorage.setItem(KEY_STORAGE, keys.admin_api_key); } catch (e) {}
+        overlay.remove();
+        location.reload();
+      });
+      box.appendChild(okBtn);
+      overlay.appendChild(box);
+      document.body.appendChild(overlay);
+      okBtn.focus();
+    }
+
+    function init() {
+      if (sessionStorage.getItem('ride-setup-shown')) return;
+      if (localStorage.getItem(KEY_STORAGE)) return;
+      fetch('/api/setup/keys')
+        .then(function (resp) { return resp.ok ? resp.json() : null; })
+        .then(function (keys) {
+          if (keys && keys.admin_api_key) {
+            sessionStorage.setItem('ride-setup-shown', '1');
+            show(keys);
+          }
+        })
+        .catch(function () {});
+    }
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', init);
+    } else {
+      init();
+    }
+  })();
+
+  let lastActiveElement = null;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function rateClass(pct) { return pct >= 80 ? 'good' : pct >= 50 ? 'warning' : 'danger'; }
