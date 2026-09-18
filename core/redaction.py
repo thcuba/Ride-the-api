@@ -109,6 +109,24 @@ SENSITIVE_QUERY_PARAMS = frozenset(
 
 REDACTED = "[REDACTED]"
 
+# Lower-cased sensitive JSON key names, used by the fast path to cheaply test
+# whether a payload can possibly contain a secret before committing to the full
+# ``json.loads`` -> walk -> ``json.dumps`` round-trip. The check is only a
+# conservative *presence* test: over-matching falls through to the slow path,
+# so it can never skip redacting an actual secret.
+_SENSITIVE_KEY_NAMES = frozenset(key.lower() for key in SENSITIVE_KEYS)
+
+
+def _contains_sensitive_key(text: str) -> bool:
+    """Return True if any sensitive key name appears in ``text``.
+
+    Case-insensitive substring test. The JSON fast path only skips redaction
+    when this returns False; a false positive is harmless because it just
+    disables the fast path for that payload.
+    """
+    lower = text.lower()
+    return any(key in lower for key in _SENSITIVE_KEY_NAMES)
+
 
 def redact_headers(headers: dict[str, Any] | None) -> dict[str, Any] | None:
     """Return a copy of ``headers`` with sensitive values redacted."""
@@ -189,6 +207,13 @@ def _redact_json_string(text: str) -> str:
     """
     stripped = text.strip()
     if stripped.startswith(("{", "[")):
+        # Fast path: JSON payloads rarely contain secrets, and the full
+        # json.loads -> walk -> json.dumps round-trip is a per-capture
+        # allocation on the request/response hot path. When no sensitive key
+        # name is present anywhere, return the payload untouched (which also
+        # preserves the original formatting instead of re-serializing it).
+        if not _contains_sensitive_key(stripped):
+            return text
         try:
             parsed = json.loads(stripped)
             redacted = redact_body(parsed)
