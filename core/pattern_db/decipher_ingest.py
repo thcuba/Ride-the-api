@@ -205,6 +205,15 @@ class DecipherIngest:
             result = await session.execute(select(RequestPattern))
             patterns = result.scalars().all()
 
+            # Pre-fetch all templates and mappings to eliminate N+1 queries per pattern
+            tmpls_result = await session.execute(select(ResponseTemplate))
+            templates_by_pattern_id = {t.pattern_id: t for t in tmpls_result.scalars().all()}
+
+            mappings_result = await session.execute(select(FieldMapping))
+            mappings_by_intent: dict[str, list[FieldMapping]] = {}
+            for m in mappings_result.scalars().all():
+                mappings_by_intent.setdefault(m.intent, []).append(m)
+
             for pat in patterns:
                 # Build client endpoint
                 ep = ClientEndpoint(
@@ -221,15 +230,9 @@ class DecipherIngest:
                 client_endpoints.append(ep)
 
                 # Build server response
-                tmpl_result = await session.execute(
-                    select(ResponseTemplate).where(ResponseTemplate.pattern_id == pat.pattern_id)
-                )
-                tmpl = tmpl_result.scalar_one_or_none()
+                tmpl = templates_by_pattern_id.get(pat.pattern_id)
                 if tmpl:
-                    mappings_result = await session.execute(
-                        select(FieldMapping).where(FieldMapping.intent == pat.intent)
-                    )
-                    mappings = mappings_result.scalars().all()
+                    mappings = mappings_by_intent.get(pat.intent, [])
                     srv_resp = ServerResponse(
                         id=tmpl.template_id,
                         triggers=[pat.intent],
@@ -374,6 +377,15 @@ class DecipherIngest:
             result = await session.execute(select(RequestPattern))
             patterns = result.scalars().all()
 
+            # Pre-fetch all templates and mappings to eliminate N+1 queries per pattern
+            tmpls_result = await session.execute(select(ResponseTemplate))
+            templates_by_pattern_id = {t.pattern_id: t for t in tmpls_result.scalars().all()}
+
+            mappings_result = await session.execute(select(FieldMapping))
+            mappings_by_intent: dict[str, list[FieldMapping]] = {}
+            for m in mappings_result.scalars().all():
+                mappings_by_intent.setdefault(m.intent, []).append(m)
+
             for pat in patterns:
                 commands.append(
                     Command(
@@ -390,15 +402,9 @@ class DecipherIngest:
                     )
                 )
 
-                tmpl_result = await session.execute(
-                    select(ResponseTemplate).where(ResponseTemplate.pattern_id == pat.pattern_id)
-                )
-                tmpl = tmpl_result.scalar_one_or_none()
+                tmpl = templates_by_pattern_id.get(pat.pattern_id)
                 if tmpl:
-                    mappings_result = await session.execute(
-                        select(FieldMapping).where(FieldMapping.intent == pat.intent)
-                    )
-                    mappings = mappings_result.scalars().all()
+                    mappings = mappings_by_intent.get(pat.intent, [])
                     fms = [
                         SchemaFieldMapping(
                             source=m.request_field,
