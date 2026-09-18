@@ -654,6 +654,19 @@ function deviceIcon() {
   return '<svg class="icon-svg-sm" aria-hidden="true" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>';
 }
 
+function copyToClipboard(text, label) {
+  if (!text) return;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(() => {
+      showToast((label || 'Text') + ' copied to clipboard', 'success');
+    }).catch(() => {
+      showToast('Failed to copy ' + (label || 'text'), 'error');
+    });
+  } else {
+    showToast('Clipboard API not available', 'warning');
+  }
+}
+
 // ── Toast ────────────────────────────────────────────────────────────────────
 function showToast(msg, type) {
   const c = document.getElementById('toasts');
@@ -868,7 +881,7 @@ async function loadDeviceStats(deviceId) {
           <svg class="icon-svg-sm" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
           TLS Interception
         </h3>
-        <div class="tc-row"><span class="tc-label">Device ID</span><span class="tc-value">${escapeHtml(shortId(deviceId))}</span></div>
+        <div class="tc-row"><span class="tc-label">Device ID</span><div style="display:flex;align-items:center;gap:6px;"><span class="tc-value" title="${escapeHtml(deviceId)}">${escapeHtml(shortId(deviceId))}</span><button class="btn btn-ghost" style="padding:2px 6px;font-size:11px;" onclick="copyToClipboard('${escapeJs(deviceId)}', 'Device ID')" aria-label="Copy full device ID ${escapeHtml(deviceId)}" title="Copy full device ID"><svg class="icon-svg-sm" aria-hidden="true" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
         <div class="tc-row">
           <label for="tc-name-${escapeHtml(deviceId)}" class="tc-label">Name</label>
           <input type="text" id="tc-name-${escapeHtml(deviceId)}" value="${escapeHtml(s.name || deviceId)}">
