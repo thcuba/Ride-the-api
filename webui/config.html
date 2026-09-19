@@ -64,6 +64,8 @@
   .section-item.active { background: var(--accent); color: #fff; }
   .section-item .count { font-size: 11px; font-weight: 500; opacity: .75; background: rgba(255,255,255,.12); padding: 1px 7px; border-radius: 10px; }
   .section-item:not(.active) .count { background: var(--surface2); color: var(--text2); }
+  .section-item.dirty-section .count { background: rgba(251,191,36,.25); color: var(--yellow); font-weight: 700; opacity: 1; }
+  .section-item.dirty-section:not(.active) { border-left: 3px solid var(--yellow); }
 
   /* Content */
   .content { flex: 1; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; }
@@ -358,7 +360,7 @@ function selectSection(key) {
   title.textContent = key;
   desc.textContent = HINTS[key] || 'Configuration section';
   fields.innerHTML = '';
-  renderObject(fields, cfg[key], '');
+  renderObject(fields, cfg[key], key);
   fields.classList.remove('dirty');
   // re-mark dirty fields visually
   dirty.forEach(p => {
@@ -690,6 +692,29 @@ function updateSaveBtn() {
   const has = dirty.size > 0;
   document.getElementById('saveBtn').disabled = !has;
   document.getElementById('saveBtn2').disabled = !has;
+
+  document.querySelectorAll('.section-item[data-section]').forEach(btn => {
+    const sec = btn.dataset.section;
+    let isDirty = false;
+    let secDirtyCount = 0;
+    if (sec === '__raw__') {
+      isDirty = dirty.has('__raw__');
+    } else {
+      secDirtyCount = [...dirty].filter(p => p === sec || p.startsWith(sec + '.')).length;
+      isDirty = secDirtyCount > 0;
+    }
+    btn.classList.toggle('dirty-section', isDirty);
+    const countEl = btn.querySelector('.count');
+    if (countEl) {
+      if (sec === '__raw__') {
+        countEl.textContent = isDirty ? '●' : '';
+        countEl.title = isDirty ? 'Has unsaved changes' : '';
+      } else {
+        countEl.textContent = isDirty ? `● ${secDirtyCount}` : '';
+        countEl.title = isDirty ? `${secDirtyCount} unsaved change${secDirtyCount > 1 ? 's' : ''}` : '';
+      }
+    }
+  });
 }
 
 // ── Load & save ─────────────────────────────────────────────────────────────
