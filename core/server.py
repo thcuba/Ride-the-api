@@ -114,6 +114,17 @@ auto_switch_scheduler: AutoSwitchScheduler | None = None
 protocol_servers: dict[str, object] = {}
 protocol_server_tasks: dict[str, asyncio.Task] = {}
 
+# Pre-computed immutable tuples for hot-path request inspection
+_ENRICHMENT_FIELDS: tuple[str, ...] = ("security", "identity", "kind")
+_DEVICE_ID_HEADERS: tuple[str, ...] = (
+    "x-device-id",
+    "x-deviceid",
+    "device-id",
+    "deviceid",
+    "x-client-id",
+    "x-sn",
+)
+
 
 # ── TLS Decrypted Request Handler ────────────────────────────────────────────
 
@@ -318,7 +329,7 @@ async def handle_protocol_request(request: InterceptedRequest) -> dict | None:
         enrichment: dict | None = None
         transport = getattr(request, "transport", None)
         if transport is not None or any(
-            getattr(request, f, None) is not None for f in ("security", "identity", "kind")
+            getattr(request, f, None) is not None for f in _ENRICHMENT_FIELDS
         ):
             enrichment = {}
             if transport is not None:
@@ -330,7 +341,7 @@ async def handle_protocol_request(request: InterceptedRequest) -> dict | None:
                     enrichment["transport"] = transport
                 else:
                     enrichment["transport"] = str(transport)
-            for f in ("security", "identity", "kind"):
+            for f in _ENRICHMENT_FIELDS:
                 val = getattr(request, f, None)
                 if val is not None:
                     enrichment[f] = val.value if hasattr(val, "value") else val
@@ -2610,7 +2621,7 @@ def _is_local_ip(ip: str) -> bool:
 def _extract_device_id(headers: dict, path: str) -> str:
     """Try to extract device ID from headers or path."""
     # Check common headers
-    for header in ["x-device-id", "x-deviceid", "device-id", "deviceid", "x-client-id", "x-sn"]:
+    for header in _DEVICE_ID_HEADERS:
         if header in headers:
             return headers[header]
     # Check path for common patterns
