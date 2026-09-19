@@ -52,6 +52,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# Pre-computed tuple mapping field names to redaction handlers for LLM prompt pair preparation
+_REDACT_MAPPINGS = (
+    ("request_headers", redact_headers),
+    ("response_headers", redact_headers),
+    ("request_query", redact_query),
+    ("request_body", redact_body),
+    ("response_body", redact_body),
+)
+
+
 def _redact_pairs_for_prompt(pairs: list) -> list:
     """Return a copy of capture pairs with sensitive fields redacted.
 
@@ -67,13 +77,7 @@ def _redact_pairs_for_prompt(pairs: list) -> list:
             result.append(pair)
             continue
         clone = dict(pair)
-        for field, redact in (
-            ("request_headers", redact_headers),
-            ("response_headers", redact_headers),
-            ("request_query", redact_query),
-            ("request_body", redact_body),
-            ("response_body", redact_body),
-        ):
+        for field, redact in _REDACT_MAPPINGS:
             if field in clone:
                 clone[field] = redact(clone[field])
         result.append(clone)
