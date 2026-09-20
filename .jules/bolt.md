@@ -85,3 +85,7 @@
 ## 2026-03-31 - Bulk Pre-fetching for Pattern DB Exports
 **Learning:** Querying `ResponseTemplate` by `pattern_id` and `FieldMapping` by `intent` inside the loop over `RequestPattern` in `DecipherIngest.export_patterns` and `export_device_model` caused $2N + 1$ SQL queries per export call. Pre-fetching all templates and mappings into dictionary lookups (`templates_by_pattern_id` and `mappings_by_intent`) reduces queries to 3 total, resulting in a ~9.5x speedup (~9.92s to ~1.04s per 20 exports of 100 patterns).
 **Action:** When exporting or serializing relational entities from database sessions, bulk-query child/related tables and index by key before entering iteration loops.
+
+## 2026-03-31 - Pre-computed Set for Orphaned Response Cross-Checks in Pattern Validation
+**Learning:** Checking `trigger not in endpoint_intents.values()` in pattern validation hot paths forced linear $O(N)$ scans over `dict_values` for every trigger ($O(N \times M)$ overall). Pre-computing `endpoint_intent_values = set(endpoint_intents.values())` replaces linear list/dict-values iteration with $O(1)$ set lookups (~107x faster check for pattern validation).
+**Action:** Always pre-convert `dict.values()` or `dict.keys()` to a `set` before performing repeated membership checks (`in` / `not in`) inside loops.
