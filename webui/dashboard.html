@@ -424,9 +424,10 @@
   <div class="header-right">
       <input type="password" id="apiKeyInput" placeholder="API key" autocomplete="off"
              aria-label="Control-plane API key"
-             title="Control-plane API key (X-API-Key). Stored in this browser only."
+                   title="Control-plane API key (X-API-Key)."
              style="padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:12px;width:150px;"
-             onchange="setApiKey(this.value, true)">
+                   onkeydown="if(event.key==='Enter'){event.preventDefault();saveApiKeyFromInput();}">
+            <button class="btn btn-ghost" onclick="saveApiKeyFromInput()" style="padding:6px 10px;font-size:12px;" aria-label="Save API key">Save</button>
       <div class="ram-label" title="Buffer request/response pairs in RAM instead of disk (volatile)">
         <span>RAM Buffer</span>
         <label class="ram-toggle" aria-label="Toggle RAM buffer">
@@ -580,19 +581,93 @@
 // lives in localStorage so it survives reloads, and a 401 triggers a prompt.
 (function () {
   const KEY_STORAGE = 'rideApiKey';
-  let apiKey = localStorage.getItem(KEY_STORAGE) || '';
+  const SESSION_STORAGE = 'rideSessionKey';
+  let apiKey = localStorage.getItem(KEY_STORAGE) || sessionStorage.getItem(SESSION_STORAGE) || '';
   const keyInput = () => document.getElementById('apiKeyInput');
 
-  function setApiKey(key, notify) {
+  function storeKey(key, remember) {
+    if (remember) {
+      localStorage.setItem(KEY_STORAGE, key);
+      sessionStorage.removeItem(SESSION_STORAGE);
+    } else {
+      sessionStorage.setItem(SESSION_STORAGE, key);
+      localStorage.removeItem(KEY_STORAGE);
+    }
+  }
+
+  function setApiKey(key, notify, remember) {
     apiKey = (key || '').trim();
-    if (apiKey) localStorage.setItem(KEY_STORAGE, apiKey);
-    else localStorage.removeItem(KEY_STORAGE);
+    if (apiKey) storeKey(apiKey, remember !== false);
+    else { localStorage.removeItem(KEY_STORAGE); sessionStorage.removeItem(SESSION_STORAGE); }
     if (keyInput()) { keyInput().value = apiKey; }
     if (notify && typeof showToast === 'function') {
       showToast(apiKey ? 'API key saved' : 'API key cleared', 'info');
     }
   }
   window.setApiKey = setApiKey;
+
+  // Ask the user whether to remember the key on this machine for automatic
+  // entry. Resolves true = save to localStorage, false = current session only.
+  function askRememberKey(key) {
+    return new Promise(function (resolve) {
+      const overlay = document.createElement('div');
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:9500;';
+      const box = document.createElement('div');
+      box.style.cssText = 'background:#141820;border:1px solid #2d3648;border-radius:12px;padding:24px;max-width:440px;width:90%;color:#e1e6ed;font-family:Inter,system-ui,sans-serif;box-shadow:0 8px 32px rgba(0,0,0,.3);';
+      const title = document.createElement('h2');
+      title.textContent = 'Save the control-plane API key?';
+      title.style.cssText = 'margin:0 0 8px;font-size:16px;color:#6c8cff;';
+      const para = document.createElement('p');
+      para.style.cssText = 'margin:0 0 12px;font-size:13px;color:#9ca8ba;line-height:1.5;';
+      para.textContent = 'The key was accepted. Save it on this machine so you can enter automatically next time?';
+      const label = document.createElement('label');
+      label.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:13px;color:#e1e6ed;margin:8px 0 16px;cursor:pointer;';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = true;
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode('Remember this key on this machine'));
+      const actions = document.createElement('div');
+      actions.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;';
+      const noBtn = document.createElement('button');
+      noBtn.textContent = 'This session only';
+      noBtn.style.cssText = 'padding:8px 14px;border-radius:8px;border:1px solid #2d3648;background:#1a1f2b;color:#e1e6ed;font-family:inherit;font-size:13px;cursor:pointer;';
+      const yesBtn = document.createElement('button');
+      yesBtn.textContent = 'Save & Continue';
+      yesBtn.style.cssText = 'padding:8px 14px;border-radius:8px;border:none;background:linear-gradient(135deg,#6c8cff,#5b7ad0);color:#fff;font-weight:600;font-family:inherit;font-size:13px;cursor:pointer;';
+      function done(remember) {
+        overlay.remove();
+        resolve(remember);
+      }
+      noBtn.addEventListener('click', function () { done(false); });
+      yesBtn.addEventListener('click', function () { done(cb.checked); });
+      actions.appendChild(noBtn);
+      actions.appendChild(yesBtn);
+      box.appendChild(title);
+      box.appendChild(para);
+      box.appendChild(label);
+      box.appendChild(actions);
+      overlay.appendChild(box);
+      document.body.appendChild(overlay);
+      yesBtn.focus();
+    });
+  }
+  window.askRememberKey = askRememberKey;
+
+  // Save the key from the header input. The first time a key is entered, ask
+  // whether to remember it on this machine for automatic entry.
+  window.saveApiKeyFromInput = function () {
+    const input = keyInput();
+    const key = (input ? input.value : '').trim();
+    if (!key) { setApiKey('', true); return; }
+    if (localStorage.getItem(KEY_STORAGE) || sessionStorage.getItem(SESSION_STORAGE)) {
+      setApiKey(key, true, true);
+    } else {
+      askRememberKey(key).then(function (remember) {
+        setApiKey(key, true, remember);
+      });
+    }
+  };
 
   const origFetch = window.fetch.bind(window);
   window.fetch = function (input, init) {
@@ -610,7 +685,14 @@
       if (resp.status === 401 && !sessionStorage.getItem('ride-401-shown')) {
         sessionStorage.setItem('ride-401-shown', '1');
         const typed = window.prompt('Enter the control-plane API key:');
-        if (typed) { setApiKey(typed); location.reload(); }
+        if (typed) {
+          const key = typed.trim();
+          apiKey = key;
+          askRememberKey(key).then(function (remember) {
+            storeKey(key, remember);
+            location.reload();
+          });
+        }
       }
       return resp;
     });
@@ -675,11 +757,23 @@
       okBtn.textContent = 'Got it — use the admin key';
       okBtn.style.cssText = 'margin-top:16px;width:100%;padding:10px;border:none;border-radius:8px;background:linear-gradient(135deg,#6c8cff,#5b7ad0);color:#fff;font-weight:600;font-family:inherit;cursor:pointer;';
       okBtn.addEventListener('click', function () {
-        try { localStorage.setItem(KEY_STORAGE, keys.admin_api_key); } catch (e) {}
-        overlay.remove();
-        location.reload();
-      });
-      box.appendChild(okBtn);
+              const key = keys.admin_api_key;
+              if (typeof window.askRememberKey === 'function') {
+                window.askRememberKey(key).then(function (remember) {
+                  try {
+                    if (remember) localStorage.setItem(KEY_STORAGE, key);
+                    else sessionStorage.setItem('rideSessionKey', key);
+                  } catch (e) {}
+                  overlay.remove();
+                  location.reload();
+                });
+              } else {
+                try { localStorage.setItem(KEY_STORAGE, key); } catch (e) {}
+                overlay.remove();
+                location.reload();
+              }
+            });
+            box.appendChild(okBtn);
       overlay.appendChild(box);
       document.body.appendChild(overlay);
       okBtn.focus();
