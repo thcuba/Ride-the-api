@@ -349,6 +349,9 @@ function selectSection(key) {
   const title = document.getElementById('sectionTitle');
   const desc = document.getElementById('sectionDesc');
   const fields = document.getElementById('fields');
+  if (title) {
+    title.setAttribute('tabindex', '-1');
+  }
   if (key === '__raw__') {
     title.textContent = 'Raw Configuration';
     desc.textContent = 'Full config as JSON — edit carefully, validated on save.';
@@ -360,6 +363,7 @@ function selectSection(key) {
     fields.innerHTML = '';
     fields.appendChild(ta);
     markDirty('__raw__');
+    if (title) title.focus();
     return;
   }
   title.textContent = key;
@@ -371,6 +375,7 @@ function selectSection(key) {
   dirty.forEach(p => {
     document.querySelectorAll(`[data-path="${p}"]`).forEach(el => el.classList.add('dirty'));
   });
+  if (title) title.focus();
 }
 
 // ── Generic field renderer ──────────────────────────────────────────────────
@@ -485,13 +490,13 @@ function renderField(path, label, value) {
   const row = document.createElement('div');
   row.className = 'field';
   row.dataset.path = path;
+  const id = 'f-' + (fieldCounter++);
   const info = document.createElement('div');
   info.className = 'f-info';
-  info.innerHTML = `<div class="f-name">${escapeHtml(label)}</div><div class="f-desc">${escapeHtml(path)}</div>`;
+  info.innerHTML = `<label for="${id}" class="f-name">${escapeHtml(label)}</label><div class="f-desc">${escapeHtml(path)}</div>`;
   row.appendChild(info);
   const ctrl = document.createElement('div');
   ctrl.className = 'f-control';
-  const id = 'f-' + (fieldCounter++);
   if (typeof value === 'boolean') {
     const input = document.createElement('input');
     input.type = 'checkbox'; input.className = 'switch';
@@ -586,14 +591,16 @@ function renderArray(path, label, arr) {
   if (arr.length && arr.every(isSimpleType)) {
     const row = document.createElement('div');
     row.className = 'field';
+    const id = 'f-' + (fieldCounter++);
     const info = document.createElement('div');
     info.className = 'f-info';
-    info.innerHTML = `<div class="f-name">${escapeHtml(label)}</div><div class="f-desc">${escapeHtml(path)} — comma-separated values</div>`;
+    info.innerHTML = `<label for="${id}" class="f-name">${escapeHtml(label)}</label><div class="f-desc">${escapeHtml(path)} — comma-separated values</div>`;
     row.appendChild(info);
     const ctrl = document.createElement('div');
     ctrl.className = 'f-control';
     const input = document.createElement('input');
     input.type = 'text';
+    input.id = id;
     input.value = arr.join(', ');
     input.setAttribute('aria-label', label);
     input.addEventListener('change', () => {

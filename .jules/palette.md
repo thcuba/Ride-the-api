@@ -1,3 +1,7 @@
+## 2026-08-30 - [Dynamic Form Field Label Association & SPA Section Focus]
+**Learning:** In dynamically constructed JavaScript UI forms, rendering field names in `<div>` tags instead of `<label for="${id}">` breaks explicit label association in assistive technologies and disables native click-to-focus mouse behavior. In SPA section switching, setting `tabindex="-1"` and programmatically calling `.focus()` on the section title or heading re-orients focus and alerts screen reader users to newly loaded views.
+**Action:** Always generate `<label for="${id}" class="...">` linked directly to control element IDs in dynamic form builders, and programmatically shift focus to the view heading when switching SPA tabs or sections.
+
 ## 2026-08-29 - [HTML Attribute Quotes in Template Strings & Screen Reader Controls]
 **Learning:** In dynamically generated HTML template literals inside JavaScript, single/double quote mismatches in event handler inline strings (e.g. `onchange="...('${id}")"`) cause hidden JS syntax errors that break UI interactions like count updates. Additionally, dynamically inserted icon buttons (`&times;`) and unlabeled checkboxes in buffer lists are invisible to screen readers without explicit `aria-label` attributes.
 **Action:** Always validate inline JS event handler quotes in template strings, and add descriptive `aria-label` attributes incorporating action and item context (e.g., `aria-label="Delete entry ${method} ${path}"`) when generating interactive elements dynamically.
