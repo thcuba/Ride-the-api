@@ -179,7 +179,67 @@
 // ── Control-plane auth (same as dashboard) ──────────────────────────────────
 (function () {
   const KEY_STORAGE = 'rideApiKey';
-  let apiKey = localStorage.getItem(KEY_STORAGE) || '';
+  const SESSION_STORAGE = 'rideSessionKey';
+  let apiKey = localStorage.getItem(KEY_STORAGE) || sessionStorage.getItem(SESSION_STORAGE) || '';
+
+  function storeKey(key, remember) {
+    if (remember) {
+      localStorage.setItem(KEY_STORAGE, key);
+      sessionStorage.removeItem(SESSION_STORAGE);
+    } else {
+      sessionStorage.setItem(SESSION_STORAGE, key);
+      localStorage.removeItem(KEY_STORAGE);
+    }
+  }
+
+  // Ask the user whether to remember the key on this machine for automatic
+  // entry. Resolves true = save to localStorage, false = current session only.
+  function askRememberKey(key) {
+    return new Promise(function (resolve) {
+      const overlay = document.createElement('div');
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:9500;';
+      const box = document.createElement('div');
+      box.style.cssText = 'background:#141820;border:1px solid #2d3648;border-radius:12px;padding:24px;max-width:440px;width:90%;color:#e1e6ed;font-family:Inter,system-ui,sans-serif;box-shadow:0 8px 32px rgba(0,0,0,.3);';
+      const title = document.createElement('h2');
+      title.textContent = 'Save the control-plane API key?';
+      title.style.cssText = 'margin:0 0 8px;font-size:16px;color:#6c8cff;';
+      const para = document.createElement('p');
+      para.style.cssText = 'margin:0 0 12px;font-size:13px;color:#9ca8ba;line-height:1.5;';
+      para.textContent = 'The key was accepted. Save it on this machine so you can enter automatically next time?';
+      const label = document.createElement('label');
+      label.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:13px;color:#e1e6ed;margin:8px 0 16px;cursor:pointer;';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = true;
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode('Remember this key on this machine'));
+      const actions = document.createElement('div');
+      actions.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;';
+      const noBtn = document.createElement('button');
+      noBtn.textContent = 'This session only';
+      noBtn.style.cssText = 'padding:8px 14px;border-radius:8px;border:1px solid #2d3648;background:#1a1f2b;color:#e1e6ed;font-family:inherit;font-size:13px;cursor:pointer;';
+      const yesBtn = document.createElement('button');
+      yesBtn.textContent = 'Save & Continue';
+      yesBtn.style.cssText = 'padding:8px 14px;border-radius:8px;border:none;background:linear-gradient(135deg,#6c8cff,#5b7ad0);color:#fff;font-weight:600;font-family:inherit;font-size:13px;cursor:pointer;';
+      function done(remember) {
+        overlay.remove();
+        resolve(remember);
+      }
+      noBtn.addEventListener('click', function () { done(false); });
+      yesBtn.addEventListener('click', function () { done(cb.checked); });
+      actions.appendChild(noBtn);
+      actions.appendChild(yesBtn);
+      box.appendChild(title);
+      box.appendChild(para);
+      box.appendChild(label);
+      box.appendChild(actions);
+      overlay.appendChild(box);
+      document.body.appendChild(overlay);
+      yesBtn.focus();
+    });
+  }
+  window.askRememberKey = askRememberKey;
+
   const origFetch = window.fetch.bind(window);
   window.fetch = function (input, init) {
     init = init || {};
@@ -194,7 +254,14 @@
       if (resp.status === 401 && !sessionStorage.getItem('ride-config-401')) {
         sessionStorage.setItem('ride-config-401', '1');
         const typed = window.prompt('Enter the control-plane API key:');
-        if (typed) { localStorage.setItem(KEY_STORAGE, typed.trim()); location.reload(); }
+        if (typed) {
+          const key = typed.trim();
+          apiKey = key;
+          askRememberKey(key).then(function (remember) {
+            storeKey(key, remember);
+            location.reload();
+          });
+        }
       }
       return resp;
     });
@@ -250,11 +317,23 @@
       okBtn.textContent = 'Got it — use the admin key';
       okBtn.style.cssText = 'margin-top:16px;width:100%;padding:10px;border:none;border-radius:8px;background:linear-gradient(135deg,#6c8cff,#5b7ad0);color:#fff;font-weight:600;font-family:inherit;cursor:pointer;';
       okBtn.addEventListener('click', function () {
-        try { localStorage.setItem(KEY_STORAGE, keys.admin_api_key); } catch (e) {}
-        overlay.remove();
-        location.reload();
-      });
-      box.appendChild(okBtn);
+              const key = keys.admin_api_key;
+              if (typeof window.askRememberKey === 'function') {
+                window.askRememberKey(key).then(function (remember) {
+                  try {
+                    if (remember) localStorage.setItem(KEY_STORAGE, key);
+                    else sessionStorage.setItem('rideSessionKey', key);
+                  } catch (e) {}
+                  overlay.remove();
+                  location.reload();
+                });
+              } else {
+                try { localStorage.setItem(KEY_STORAGE, key); } catch (e) {}
+                overlay.remove();
+                location.reload();
+              }
+            });
+            box.appendChild(okBtn);
       overlay.appendChild(box);
       document.body.appendChild(overlay);
       okBtn.focus();
@@ -349,10 +428,10 @@ function selectSection(key) {
     ta.id = 'raw-editor';
     ta.style.cssText = 'width:100%;min-height:60vh;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:12px;font-family:ui-monospace,monospace;font-size:12px;';
     ta.value = JSON.stringify(cfg, null, 2);
-    ta.addEventListener('input', () => fields.classList.add('dirty'));
+        ta.addEventListener('input', () => { fields.classList.add('dirty'); setDirty('__raw__'); });
     fields.innerHTML = '';
     fields.appendChild(ta);
-    markDirty('__raw__');
+        setDirty('__raw__');
     return;
   }
   title.textContent = key;
@@ -710,8 +789,10 @@ async function loadConfig() {
 
 async function saveConfig() {
   const btn = document.getElementById('saveBtn');
+  const btn2 = document.getElementById('saveBtn2');
   const status = document.getElementById('saveStatus');
   btn.disabled = true;
+  btn2.disabled = true;
   status.textContent = 'Saving…';
   status.className = 'status';
   // First collect current section tree into cfg
@@ -722,7 +803,6 @@ async function saveConfig() {
     if (parsed === null) {
       status.textContent = 'Invalid JSON — not saved';
       status.className = 'status err';
-      btn.disabled = false;
       updateSaveBtn();
       return;
     }
@@ -741,7 +821,6 @@ async function saveConfig() {
       status.textContent = msg;
       status.className = 'status err';
       showToast('Save failed', 'error');
-      btn.disabled = false;
       updateSaveBtn();
       return;
     }
@@ -757,13 +836,12 @@ async function saveConfig() {
     // Rebuild current view from canonical config
     selectSection(key);
   } catch (e) {
-    status.textContent = String(e.message || e);
-    status.className = 'status err';
-    showToast('Save failed', 'error');
-    btn.disabled = false;
-    updateSaveBtn();
+      status.textContent = String(e.message || e);
+      status.className = 'status err';
+      showToast('Save failed', 'error');
+      updateSaveBtn();
+    }
   }
-}
 
 function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
