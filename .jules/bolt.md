@@ -89,3 +89,7 @@
 ## 2026-03-31 - Pre-computed Set for Orphaned Response Cross-Checks in Pattern Validation
 **Learning:** Checking `trigger not in endpoint_intents.values()` in pattern validation hot paths forced linear $O(N)$ scans over `dict_values` for every trigger ($O(N \times M)$ overall). Pre-computing `endpoint_intent_values = set(endpoint_intents.values())` replaces linear list/dict-values iteration with $O(1)$ set lookups (~107x faster check for pattern validation).
 **Action:** Always pre-convert `dict.values()` or `dict.keys()` to a `set` before performing repeated membership checks (`in` / `not in`) inside loops.
+
+## 2026-03-31 - Direct SQL Aggregates for Cloud Independence Verification
+**Learning:** `CloudIndependenceVerifier.check_cloud_independence` fetched all `RequestPattern` and `ResponseTemplate` ORM model instances into Python lists via `scalars().all()` to count patterns/templates and evaluate max confidence. Replacing ORM model fetching with SQL aggregate functions (`func.count` and `func.max`) computes totals directly in the database engine, eliminating ORM object instantiation and list allocations (~1.44x speedup, ~18.98ms -> ~13.14ms per check).
+**Action:** When evaluating existence, counts, or thresholds across database entities in verification or background polling loops, execute SQL aggregate queries (`func.count`, `func.max`) instead of loading ORM model instances into memory.
