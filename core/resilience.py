@@ -56,9 +56,7 @@ class CloudIndependenceVerifier:
 
             # Performance optimization: SQL aggregate queries eliminate loading full
             # ORM instances and list allocations during cloud independence checks (~1.44x speedup).
-            patterns_count_res = await session.execute(
-                select(func.count(RequestPattern.id))
-            )
+            patterns_count_res = await session.execute(select(func.count(RequestPattern.id)))
             patterns_count = patterns_count_res.scalar_one() or 0
 
             templates_count_res = await session.execute(
