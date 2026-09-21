@@ -9,7 +9,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 import core.server as server_mod
-from core.security import MaxBodySizeMiddleware
+from core.security import ControlPlaneAuthMiddleware, MaxBodySizeMiddleware
 from core.server import app
 
 _ADMIN_KEY = "test-admin-key-123"
@@ -155,6 +155,76 @@ def test_setup_keys_reveals_ephemeral_keys(monkeypatch):
             json={"mode": "production"},
         )
         assert write.status_code == 200  # noqa: PLR2004
+    finally:
+        cfg.security.auth_enabled, cfg.security.admin_api_key, cfg.security.readonly_api_key = saved
+
+
+# ── Stable startup keys (persisted + logged in plaintext) ────────────────────
+
+
+def _make_auth(cfg, persisted, auth_enabled=True, admin="", readonly=""):
+    """Build a throwaway middleware over the shared config with chosen keys.
+
+    Returns the middleware; the caller is responsible for restoring ``cfg``.
+    """
+    cfg.security.auth_enabled = auth_enabled
+    cfg.security.admin_api_key = admin
+    cfg.security.readonly_api_key = readonly
+    return ControlPlaneAuthMiddleware(
+        object(),
+        get_security_config=lambda: cfg.security,
+        persist_keys=lambda a, r: persisted.append((a, r)) or True,
+    )
+
+
+def test_ensure_stable_keys_generates_persists_and_logs(caplog):
+    """Missing keys are generated once, persisted and logged in plaintext."""
+    cfg = server_mod.config_manager.config
+    saved = (cfg.security.auth_enabled, cfg.security.admin_api_key, cfg.security.readonly_api_key)
+    persisted = []
+    try:
+        mw = _make_auth(cfg, persisted)
+        with caplog.at_level("INFO", logger="core.security"):
+            mw.ensure_stable_keys()
+
+        assert len(persisted) == 1  # noqa: PLR2004
+        admin, readonly = persisted[0]
+        assert admin
+        assert readonly
+        assert admin != readonly
+        # Both effective keys appear in plaintext in the log.
+        assert admin in caplog.text
+        assert readonly in caplog.text
+    finally:
+        cfg.security.auth_enabled, cfg.security.admin_api_key, cfg.security.readonly_api_key = saved
+
+
+def test_ensure_stable_keys_preserves_explicit_keys(caplog):
+    """Configured keys are not regenerated, but are still logged in plaintext."""
+    cfg = server_mod.config_manager.config
+    saved = (cfg.security.auth_enabled, cfg.security.admin_api_key, cfg.security.readonly_api_key)
+    persisted = []
+    try:
+        mw = _make_auth(cfg, persisted, admin=_ADMIN_KEY, readonly=_READONLY_KEY)
+        with caplog.at_level("INFO", logger="core.security"):
+            mw.ensure_stable_keys()
+
+        assert persisted == [], "explicit keys must not be re-persisted"
+        assert _ADMIN_KEY in caplog.text
+        assert _READONLY_KEY in caplog.text
+    finally:
+        cfg.security.auth_enabled, cfg.security.admin_api_key, cfg.security.readonly_api_key = saved
+
+
+def test_ensure_stable_keys_noop_when_auth_disabled():
+    """With auth disabled nothing is generated, persisted or logged."""
+    cfg = server_mod.config_manager.config
+    saved = (cfg.security.auth_enabled, cfg.security.admin_api_key, cfg.security.readonly_api_key)
+    persisted = []
+    try:
+        mw = _make_auth(cfg, persisted, auth_enabled=False)
+        mw.ensure_stable_keys()
+        assert persisted == []
     finally:
         cfg.security.auth_enabled, cfg.security.admin_api_key, cfg.security.readonly_api_key = saved
 

@@ -542,6 +542,20 @@ class ConfigManager:
             cfg.core.ip_profiles[ip] = profile
         return self._write()
 
+    def set_security_api_keys(self, admin_api_key: str, readonly_api_key: str) -> bool:
+        """Persist the control-plane API keys back to the config file.
+
+        Used to write back auto-generated keys so they stay stable across
+        restarts. Mutates the in-memory config, writes the file atomically and
+        leaves the hot-reload watcher to refresh other consumers. Returns True
+        on success.
+        """
+        cfg = self.config
+        with self._lock:
+            cfg.security.admin_api_key = admin_api_key
+            cfg.security.readonly_api_key = readonly_api_key
+        return self._write()
+
     def update_config(self, data: dict) -> bool:
         """Replace the full config after validation; atomically persist."""
         new_config = Config(**data)
