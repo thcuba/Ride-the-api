@@ -244,3 +244,21 @@ async def test_body_size_streaming_over_limit_413():
         recorder,
     )
     assert recorder.messages[0]["status"] == 413  # noqa: PLR2004
+
+
+def test_security_headers_present(client):
+    """Verify standard security response headers are included on HTTP responses."""
+    response = client.get("/health")
+    assert response.status_code == 200  # noqa: PLR2004
+    assert response.headers.get("x-content-type-options") == "nosniff"
+    assert response.headers.get("x-frame-options") == "DENY"
+    assert response.headers.get("x-xss-protection") == "1; mode=block"
+    assert response.headers.get("referrer-policy") == "strict-origin-when-cross-origin"
+
+    # Verify on an authenticated /api route as well
+    api_resp = _get(client, "/api/devices", key=_READONLY_KEY)
+    assert api_resp.status_code == 200  # noqa: PLR2004
+    assert api_resp.headers.get("x-content-type-options") == "nosniff"
+    assert api_resp.headers.get("x-frame-options") == "DENY"
+    assert api_resp.headers.get("x-xss-protection") == "1; mode=block"
+    assert api_resp.headers.get("referrer-policy") == "strict-origin-when-cross-origin"

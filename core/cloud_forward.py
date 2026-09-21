@@ -43,6 +43,9 @@ _DEFAULT_CONNECT_TIMEOUT: float = 3.0
 _READ_CHUNK = 65536
 _MAX_RESPONSE_BODY = 5 * 1024 * 1024  # 5 MiB cap on forwarded response body
 
+# Pre-computed tuple of hop-by-hop/framing headers stripped before replaying requests
+_HOP_BY_HOP_HEADERS: tuple[str, ...] = ("content-length", "transfer-encoding", "connection")
+
 # A process-wide default TLS context, built lazily and reused for every
 # outbound forward. ``ssl.create_default_context()`` loads and parses the
 # system CA bundle, which is comparatively expensive and immutable after
@@ -115,7 +118,7 @@ class CloudForwarder:
         # device link, not the upstream one. Forwarding a stale ``content-length``
         # makes the upstream hang or read a truncated/oversized body; h11 rejects
         # it with a ``LocalProtocolError`` when it mismatches the replayed body.
-        for _h in ("content-length", "transfer-encoding", "connection"):
+        for _h in _HOP_BY_HOP_HEADERS:
             send_headers.pop(_h, None)
         # Re-add the actual framing so h11 (which receives the body as a
         # separate Data event) knows the true body length. h11 refuses to send

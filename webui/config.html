@@ -64,6 +64,8 @@
   .section-item.active { background: var(--accent); color: #fff; }
   .section-item .count { font-size: 11px; font-weight: 500; opacity: .75; background: rgba(255,255,255,.12); padding: 1px 7px; border-radius: 10px; }
   .section-item:not(.active) .count { background: var(--surface2); color: var(--text2); }
+  .section-item.dirty-section .count { background: rgba(251,191,36,.25); color: var(--yellow); font-weight: 700; opacity: 1; }
+  .section-item.dirty-section:not(.active) { border-left: 3px solid var(--yellow); }
 
   /* Content */
   .content { flex: 1; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; }
@@ -284,6 +286,7 @@
       code.style.cssText = 'flex:1;background:#1a1f2b;border:1px solid #2d3648;border-radius:6px;padding:8px;font-size:12px;word-break:break-all;';
       const btn = document.createElement('button');
       btn.textContent = 'Copy';
+      btn.setAttribute('aria-label', 'Copy ' + label);
       btn.style.cssText = 'padding:8px 12px;border-radius:6px;border:1px solid #2d3648;background:#1a1f2b;color:#e1e6ed;font-family:inherit;font-size:12px;cursor:pointer;';
       btn.addEventListener('click', function () {
         navigator.clipboard.writeText(value).then(function () {
@@ -300,10 +303,14 @@
 
     function show(keys) {
       const overlay = document.createElement('div');
+      overlay.setAttribute('role', 'dialog');
+      overlay.setAttribute('aria-modal', 'true');
+      overlay.setAttribute('aria-labelledby', 'setup-keys-title');
       overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:9000;';
       const box = document.createElement('div');
       box.style.cssText = 'background:#141820;border:1px solid #2d3648;border-radius:12px;padding:24px;max-width:520px;width:90%;color:#e1e6ed;font-family:Inter,system-ui,sans-serif;box-shadow:0 8px 32px rgba(0,0,0,.3);';
       const title = document.createElement('h2');
+      title.id = 'setup-keys-title';
       title.textContent = 'Control-plane API keys';
       title.style.cssText = 'margin:0 0 8px;font-size:18px;color:#6c8cff;';
       const para = document.createElement('p');
@@ -421,6 +428,9 @@ function selectSection(key) {
   const title = document.getElementById('sectionTitle');
   const desc = document.getElementById('sectionDesc');
   const fields = document.getElementById('fields');
+  if (title) {
+    title.setAttribute('tabindex', '-1');
+  }
   if (key === '__raw__') {
     title.textContent = 'Raw Configuration';
     desc.textContent = 'Full config as JSON — edit carefully, validated on save.';
@@ -428,21 +438,23 @@ function selectSection(key) {
     ta.id = 'raw-editor';
     ta.style.cssText = 'width:100%;min-height:60vh;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:12px;font-family:ui-monospace,monospace;font-size:12px;';
     ta.value = JSON.stringify(cfg, null, 2);
-        ta.addEventListener('input', () => { fields.classList.add('dirty'); setDirty('__raw__'); });
-    fields.innerHTML = '';
-    fields.appendChild(ta);
+            ta.addEventListener('input', () => { fields.classList.add('dirty'); setDirty('__raw__'); });
+        fields.innerHTML = '';
+        fields.appendChild(ta);
         setDirty('__raw__');
-    return;
+        if (title) title.focus();
+        return;
   }
   title.textContent = key;
   desc.textContent = HINTS[key] || 'Configuration section';
   fields.innerHTML = '';
-  renderObject(fields, cfg[key], '');
+  renderObject(fields, cfg[key], key);
   fields.classList.remove('dirty');
   // re-mark dirty fields visually
   dirty.forEach(p => {
     document.querySelectorAll(`[data-path="${p}"]`).forEach(el => el.classList.add('dirty'));
   });
+  if (title) title.focus();
 }
 
 // ── Generic field renderer ──────────────────────────────────────────────────
@@ -557,13 +569,13 @@ function renderField(path, label, value) {
   const row = document.createElement('div');
   row.className = 'field';
   row.dataset.path = path;
+  const id = 'f-' + (fieldCounter++);
   const info = document.createElement('div');
   info.className = 'f-info';
-  info.innerHTML = `<div class="f-name">${escapeHtml(label)}</div><div class="f-desc">${escapeHtml(path)}</div>`;
+  info.innerHTML = `<label for="${id}" class="f-name">${escapeHtml(label)}</label><div class="f-desc">${escapeHtml(path)}</div>`;
   row.appendChild(info);
   const ctrl = document.createElement('div');
   ctrl.className = 'f-control';
-  const id = 'f-' + (fieldCounter++);
   if (typeof value === 'boolean') {
     const input = document.createElement('input');
     input.type = 'checkbox'; input.className = 'switch';
@@ -658,14 +670,16 @@ function renderArray(path, label, arr) {
   if (arr.length && arr.every(isSimpleType)) {
     const row = document.createElement('div');
     row.className = 'field';
+    const id = 'f-' + (fieldCounter++);
     const info = document.createElement('div');
     info.className = 'f-info';
-    info.innerHTML = `<div class="f-name">${escapeHtml(label)}</div><div class="f-desc">${escapeHtml(path)} — comma-separated values</div>`;
+    info.innerHTML = `<label for="${id}" class="f-name">${escapeHtml(label)}</label><div class="f-desc">${escapeHtml(path)} — comma-separated values</div>`;
     row.appendChild(info);
     const ctrl = document.createElement('div');
     ctrl.className = 'f-control';
     const input = document.createElement('input');
     input.type = 'text';
+    input.id = id;
     input.value = arr.join(', ');
     input.setAttribute('aria-label', label);
     input.addEventListener('change', () => {
@@ -769,6 +783,29 @@ function updateSaveBtn() {
   const has = dirty.size > 0;
   document.getElementById('saveBtn').disabled = !has;
   document.getElementById('saveBtn2').disabled = !has;
+
+  document.querySelectorAll('.section-item[data-section]').forEach(btn => {
+    const sec = btn.dataset.section;
+    let isDirty = false;
+    let secDirtyCount = 0;
+    if (sec === '__raw__') {
+      isDirty = dirty.has('__raw__');
+    } else {
+      secDirtyCount = [...dirty].filter(p => p === sec || p.startsWith(sec + '.')).length;
+      isDirty = secDirtyCount > 0;
+    }
+    btn.classList.toggle('dirty-section', isDirty);
+    const countEl = btn.querySelector('.count');
+    if (countEl) {
+      if (sec === '__raw__') {
+        countEl.textContent = isDirty ? '●' : '';
+        countEl.title = isDirty ? 'Has unsaved changes' : '';
+      } else {
+        countEl.textContent = isDirty ? `● ${secDirtyCount}` : '';
+        countEl.title = isDirty ? `${secDirtyCount} unsaved change${secDirtyCount > 1 ? 's' : ''}` : '';
+      }
+    }
+  });
 }
 
 // ── Load & save ─────────────────────────────────────────────────────────────

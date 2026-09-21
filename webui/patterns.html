@@ -187,6 +187,7 @@
       code.style.cssText = 'flex:1;background:#1a1f2b;border:1px solid #2d3648;border-radius:6px;padding:8px;font-size:12px;word-break:break-all;';
       const btn = document.createElement('button');
       btn.textContent = 'Copy';
+      btn.setAttribute('aria-label', 'Copy ' + label);
       btn.style.cssText = 'padding:8px 12px;border-radius:6px;border:1px solid #2d3648;background:#1a1f2b;color:#e1e6ed;font-family:inherit;font-size:12px;cursor:pointer;';
       btn.addEventListener('click', function () {
         navigator.clipboard.writeText(value).then(function () {
@@ -203,10 +204,14 @@
 
     function show(keys) {
       const overlay = document.createElement('div');
+      overlay.setAttribute('role', 'dialog');
+      overlay.setAttribute('aria-modal', 'true');
+      overlay.setAttribute('aria-labelledby', 'setup-keys-title');
       overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:9000;';
       const box = document.createElement('div');
       box.style.cssText = 'background:#141820;border:1px solid #2d3648;border-radius:12px;padding:24px;max-width:520px;width:90%;color:#e1e6ed;font-family:Inter,system-ui,sans-serif;box-shadow:0 8px 32px rgba(0,0,0,.3);';
       const title = document.createElement('h2');
+      title.id = 'setup-keys-title';
       title.textContent = 'Control-plane API keys';
       title.style.cssText = 'margin:0 0 8px;font-size:18px;color:#6c8cff;';
       const para = document.createElement('p');
