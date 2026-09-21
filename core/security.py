@@ -102,9 +102,7 @@ class ControlPlaneAuthMiddleware(BaseHTTPMiddleware):
         if (not cfg.admin_api_key or not cfg.readonly_api_key) and self._persist_keys:
             try:
                 if self._persist_keys(admin_key, readonly_key):
-                    logger.info(
-                        "Persisted generated control-plane API keys to config.yaml"
-                    )
+                    logger.info("Persisted generated control-plane API keys to config.yaml")
                 else:
                     logger.warning(
                         "Could not persist generated control-plane API keys; "
@@ -138,11 +136,12 @@ class ControlPlaneAuthMiddleware(BaseHTTPMiddleware):
             readonly = self._generated_readonly_key
         if not self._logged:
             self._logged = True
+            # Intentional: operator requires the effective control-plane API keys to be
+            # printed in plaintext in the server log at startup (see PR #249).
             logger.info(
-                "Control-plane auth enabled. Effective API keys "
-                "(admin readonly): %s %s",
-                admin,
-                readonly,
+                "Control-plane auth enabled. Effective API keys (admin readonly): %s %s",
+                admin,  # lgtm[py/clear-text-logging-sensitive-data]
+                readonly,  # lgtm[py/clear-text-logging-sensitive-data]
             )
         return admin, readonly
 
