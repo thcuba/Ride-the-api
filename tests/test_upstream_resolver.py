@@ -246,8 +246,7 @@ async def test_batch_resolve(mock_build):
         skip_cache=True,
     )
 
-    assert "api.example.com" in result.keys()
-    assert "mqtt.example.com" in result.keys()
+    assert set(result.keys()) == {"api.example.com", "mqtt.example.com"}  # noqa: SIM118
     assert len(result["api.example.com"]) == 1
     assert len(result["mqtt.example.com"]) == 1
 
