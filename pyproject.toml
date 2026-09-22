@@ -46,9 +46,10 @@ dependencies = [
     "pymodbus>=3.5.0",
     "python-multipart>=0.0.9",
     
-    # Model Serving
-    "onnxruntime>=1.18.0",
-    "numpy>=1.26.0",
+    # Model Serving (optional — see extras "inference" below)
+    # onnxruntime/numpy are NOT imported by any module; CPU inference is an
+    # opt-in extra so the base install stays light on low-RAM devices such as
+    # a Raspberry Pi (see [project.optional-dependencies].inference).
     
     # LLM & Resilience
     "openai>=2.0.0",
@@ -95,6 +96,13 @@ gpu = [
 ]
 tflite = [
     "tflite-runtime>=2.16.0",
+]
+# Optional CPU model-serving dependencies. onnxruntime/numpy are not imported
+# by any module and add ~100MB+ RAM when loaded, so they are opt-in — keep the
+# base install light on low-RAM devices (e.g. Raspberry Pi 4 2GB, HAOS).
+inference = [
+    "onnxruntime>=1.18.0",
+    "numpy>=1.26.0",
 ]
 
 [build-system]
