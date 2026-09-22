@@ -526,6 +526,16 @@ class CertManager:
                 encoding=serialization.Encoding.PEM,
                 format=serialization.PublicFormat.SubjectPublicKeyInfo,
             )
+        except (TypeError, ValueError) as e:
+            if "encrypted" in str(e).lower():
+                # An encrypted/password-protected key cannot be verified here
+                # (the UI has no password prompt), so fail with a clear,
+                # actionable message instead of a misleading "does not match".
+                raise ValueError(
+                    "Private key is encrypted — import requires a decrypted (unencrypted) key"
+                ) from e
+            logger.warning("Cert/key match check failed: %s", e)
+            return False
         except Exception as e:  # noqa: BLE001 - malformed PEM should reject
             logger.warning("Cert/key match check failed: %s", e)
             return False

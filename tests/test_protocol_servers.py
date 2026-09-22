@@ -152,3 +152,36 @@ async def test_bridge_status_no_crash():
     assert status["name"] == "zigbee_bridge"
     status2 = await ZWaveBridgePlugin(ZWaveBridgeConfig(enabled=True)).get_status()
     assert status2["name"] == "zwave_bridge"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_config_starts_newly_enabled_and_stops_disabled():
+    """Reconcile must start servers enabled in the new config and stop those
+    disabled, without dropping plugins from registration."""
+    from core.config import ProtocolServersConfig
+    from core.protocol_servers import ProtocolServerManager
+
+    mgr = ProtocolServerManager(ProtocolServersConfig())
+    disabled_cfg = RawTCPServerConfig(host="127.0.0.1", port=0, enabled=False)
+    mgr.register_plugin(RawTCPServerPlugin(disabled_cfg))
+
+    # All disabled initially.
+    status = await mgr.get_all_status()
+    assert status[0]["running"] is False
+
+    # Enable raw_tcp via a new config; plugin must start.
+    new_cfg = ProtocolServersConfig(
+        raw_tcp=RawTCPServerConfig(host="127.0.0.1", port=0, enabled=True)
+    )
+    await mgr.reconcile_config(new_cfg)
+    status = await mgr.get_all_status()
+    assert status[0]["running"] is True
+
+    # Disable it again; plugin must stop but remain registered/reported.
+    off_cfg = ProtocolServersConfig(
+        raw_tcp=RawTCPServerConfig(host="127.0.0.1", port=0, enabled=False)
+    )
+    await mgr.reconcile_config(off_cfg)
+    status = await mgr.get_all_status()
+    assert len(status) == 1
+    assert status[0]["running"] is False

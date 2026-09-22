@@ -160,6 +160,47 @@ class ProtocolServerManager:
             return False
         return await plugin.update_config(**kwargs)
 
+    async def reconcile_config(self, new_config: ProtocolServersConfig) -> None:
+        """
+        Bring registered plugins in line with a reloaded ``ProtocolServersConfig``.
+
+        - A plugin whose ``enabled`` flag changed is started or stopped.
+        - A plugin whose effective config value changed (e.g. port/host) is
+          restarted so it binds with the new settings.
+        - The plugin's ``.config`` is always swapped to the fresh sub-config
+          object so status/reads reflect the latest values.
+        """
+        for name, plugin in self._plugins.items():
+            sub = getattr(new_config, name, None)
+            if sub is None:
+                continue
+            old_cfg = plugin.config
+            old_enabled = bool(getattr(old_cfg, "enabled", False))
+            new_enabled = bool(getattr(sub, "enabled", False))
+            if type(old_cfg) is type(sub):
+                old_vals = old_cfg.model_dump()
+                new_vals = sub.model_dump()
+            else:
+                old_vals, new_vals = {}, {}
+            plugin.config = sub
+            if new_enabled:
+                if old_enabled and old_vals == new_vals:
+                    # Already running with identical settings — leave as is.
+                    continue
+                if plugin.running:
+                    with contextlib.suppress(Exception):
+                        await plugin.stop()
+                try:
+                    await plugin.start()
+                    logger.info("Protocol server %s started with new config", name)
+                except Exception:
+                    logger.exception("Failed to start %s", name)
+            elif old_enabled:
+                with contextlib.suppress(Exception):
+                    await plugin.stop()
+                logger.info("Protocol server %s stopped (disabled in config)", name)
+        self._config = new_config
+
 
 # Global manager instance
 _manager: ProtocolServerManager | None = None

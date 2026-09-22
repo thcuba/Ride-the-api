@@ -115,6 +115,11 @@ auto_switch_scheduler: AutoSwitchScheduler | None = None
 protocol_servers: dict[str, object] = {}
 protocol_server_tasks: dict[str, asyncio.Task] = {}
 
+# Event loop the protocol-server manager is active on; refreshed at every
+# startup and used by the config-reload callback (which runs on the config
+# watch thread) to schedule async start/stop via run_coroutine_threadsafe.
+_protocol_event_loop: asyncio.AbstractEventLoop | None = None
+
 # Pre-computed immutable tuples for hot-path request inspection
 _ENRICHMENT_FIELDS: tuple[str, ...] = ("security", "identity", "kind")
 _DEVICE_ID_HEADERS: tuple[str, ...] = (
@@ -445,72 +450,82 @@ async def lifespan(_app: FastAPI):  # noqa: C901, PLR0912, PLR0915
     config_manager.start_watching()
 
     # Start protocol servers if configured
-    # Start protocol servers if configured
     protocol_servers_cfg = getattr(config, "protocol_servers", None)
     if protocol_servers_cfg:
         try:
             proto_mgr = get_protocol_server_manager(protocol_servers_cfg)
 
-            # Register plugins based on config (handlers forwarded to the
-            # orchestrator pipeline so intercepted traffic is actually learned).
-            if getattr(protocol_servers_cfg.mqtt, "enabled", False):
-                proto_mgr.register_plugin(
-                    MQTTServerPlugin(protocol_servers_cfg.mqtt, handler=handle_protocol_request)
+            # Register EVERY plugin regardless of `enabled` so the UI can always
+            # see and control each protocol server (a server toggled on later is
+            # already registered and merely stopped). Constructors are inert —
+            # nothing binds a socket until start_all()/start_plugin() is called.
+            # Handlers are forwarded to the orchestrator pipeline so intercepted
+            # traffic is actually learned.
+            proto_mgr.register_plugin(
+                MQTTServerPlugin(protocol_servers_cfg.mqtt, handler=handle_protocol_request)
+            )
+            proto_mgr.register_plugin(
+                CoAPServerPlugin(protocol_servers_cfg.coap, handler=handle_protocol_request)
+            )
+            proto_mgr.register_plugin(
+                ModbusServerPlugin(protocol_servers_cfg.modbus, handler=handle_protocol_request)
+            )
+            proto_mgr.register_plugin(
+                WebSocketServerPlugin(
+                    protocol_servers_cfg.websocket, handler=handle_protocol_request
                 )
-            if getattr(protocol_servers_cfg.coap, "enabled", False):
-                proto_mgr.register_plugin(
-                    CoAPServerPlugin(protocol_servers_cfg.coap, handler=handle_protocol_request)
+            )
+            proto_mgr.register_plugin(
+                RawTCPServerPlugin(
+                    protocol_servers_cfg.raw_tcp, handler=handle_protocol_request
                 )
-            if getattr(protocol_servers_cfg.modbus, "enabled", False):
-                proto_mgr.register_plugin(
-                    ModbusServerPlugin(protocol_servers_cfg.modbus, handler=handle_protocol_request)
+            )
+            proto_mgr.register_plugin(
+                HTTP2ServerPlugin(protocol_servers_cfg.http2, handler=handle_protocol_request)
+            )
+            proto_mgr.register_plugin(
+                ZigbeeBridgePlugin(
+                    protocol_servers_cfg.zigbee_bridge, handler=handle_protocol_request
                 )
-            if getattr(protocol_servers_cfg.websocket, "enabled", False):
-                proto_mgr.register_plugin(
-                    WebSocketServerPlugin(
-                        protocol_servers_cfg.websocket, handler=handle_protocol_request
-                    )
+            )
+            proto_mgr.register_plugin(
+                ZWaveBridgePlugin(
+                    protocol_servers_cfg.zwave_bridge, handler=handle_protocol_request
                 )
-            if getattr(protocol_servers_cfg.raw_tcp, "enabled", False):
-                proto_mgr.register_plugin(
-                    RawTCPServerPlugin(
-                        protocol_servers_cfg.raw_tcp, handler=handle_protocol_request
-                    )
+            )
+            proto_mgr.register_plugin(
+                MatterBridgePlugin(
+                    protocol_servers_cfg.matter_bridge, handler=handle_protocol_request
                 )
-            if getattr(protocol_servers_cfg.http2, "enabled", False):
-                proto_mgr.register_plugin(
-                    HTTP2ServerPlugin(protocol_servers_cfg.http2, handler=handle_protocol_request)
-                )
+            )
 
-            # Auto-start enabled servers
+            # Auto-start only the enabled servers (bridges included, since they
+            # are registered above and start when their config says enabled).
             results = await proto_mgr.start_all()
             for name, status in results.items():
                 logger.info("Protocol server %s: %s", name, status)
 
-            # Register bridges if enabled
-            if getattr(protocol_servers_cfg.zigbee_bridge, "enabled", False):
-                proto_mgr.register_plugin(
-                    ZigbeeBridgePlugin(
-                        protocol_servers_cfg.zigbee_bridge, handler=handle_protocol_request
-                    )
-                )
-                await proto_mgr.start_plugin("zigbee_bridge")
+            # Remember the running event loop so a config hot-reload (fired
+            # from the config watch thread) can schedule start/stop onto it.
+            global _protocol_event_loop
+            _protocol_event_loop = asyncio.get_running_loop()
 
-            if getattr(protocol_servers_cfg.zwave_bridge, "enabled", False):
-                proto_mgr.register_plugin(
-                    ZWaveBridgePlugin(
-                        protocol_servers_cfg.zwave_bridge, handler=handle_protocol_request
-                    )
-                )
-                await proto_mgr.start_plugin("zwave_bridge")
+            # Reconcile protocol servers whenever config.yaml changes (e.g. the
+            # UI toggles a server on/off). The callback runs on the config
+            # watch thread, so async start/stop is scheduled onto the loop.
+            def reconcile_protocol_servers(cfg: object) -> None:  # noqa: ANN001
+                """Apply the reloaded protocol-server config to the manager."""
+                try:
+                    loop = _protocol_event_loop
+                    new_pcfg = getattr(cfg, "protocol_servers", None)
+                    if loop is None or new_pcfg is None or loop.is_closed():
+                        return
+                    coro = proto_mgr.reconcile_config(new_pcfg)
+                    asyncio.run_coroutine_threadsafe(coro, loop)
+                except Exception:  # noqa: BLE001
+                    logger.exception("Failed to reconcile protocol servers")
 
-            if getattr(protocol_servers_cfg.matter_bridge, "enabled", False):
-                proto_mgr.register_plugin(
-                    MatterBridgePlugin(
-                        protocol_servers_cfg.matter_bridge, handler=handle_protocol_request
-                    )
-                )
-                await proto_mgr.start_plugin("matter_bridge")
+            config_manager.register_callback(reconcile_protocol_servers)
         except Exception as e:
             logger.error("Failed to initialize protocol servers: %s", e)  # noqa: TRY400
 
