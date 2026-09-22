@@ -557,11 +557,26 @@ class ConfigManager:
         return self._write()
 
     def update_config(self, data: dict) -> bool:
-        """Replace the full config after validation; atomically persist."""
-        new_config = Config(**data)
-        with self._lock:
-            self._config = new_config
-        return self._write()
+            """Replace the full config after validation; atomically persist.
+
+            Control-plane API keys are preserved across updates: if the incoming
+            data omits the ``security`` section or sends empty keys, the current
+            keys are kept so they never change after a config update.
+            """
+            current = self.config
+            if "security" not in data:
+                data = {**data, "security": current.security.model_dump(mode="json")}
+            else:
+                security = dict(data["security"])
+                if not security.get("admin_api_key"):
+                    security["admin_api_key"] = current.security.admin_api_key
+                if not security.get("readonly_api_key"):
+                    security["readonly_api_key"] = current.security.readonly_api_key
+                data = {**data, "security": security}
+            new_config = Config(**data)
+            with self._lock:
+                self._config = new_config
+            return self._write()
 
     def _write(self) -> bool:
         """Atomically persist the current config back to the YAML file."""
