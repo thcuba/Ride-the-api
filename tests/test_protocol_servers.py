@@ -17,11 +17,13 @@ from core.config import (
     MatterBridgeConfig,
     ModbusServerConfig,
     MQTTServerConfig,
+    ProtocolServersConfig,
     RawTCPServerConfig,
     WebSocketServerConfig,
     ZigbeeBridgeConfig,
     ZWaveBridgeConfig,
 )
+from core.protocol_servers import ProtocolServerManager
 from core.protocol_servers.coap_server import CoAPServerPlugin
 from core.protocol_servers.http2_server import HTTP2ServerPlugin
 from core.protocol_servers.matter_bridge import MatterBridgePlugin
@@ -158,8 +160,6 @@ async def test_bridge_status_no_crash():
 async def test_reconcile_config_starts_newly_enabled_and_stops_disabled():
     """Reconcile must start servers enabled in the new config and stop those
     disabled, without dropping plugins from registration."""
-    from core.config import ProtocolServersConfig
-    from core.protocol_servers import ProtocolServerManager
 
     mgr = ProtocolServerManager(ProtocolServersConfig())
     disabled_cfg = RawTCPServerConfig(host="127.0.0.1", port=0, enabled=False)

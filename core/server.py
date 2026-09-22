@@ -476,9 +476,7 @@ async def lifespan(_app: FastAPI):  # noqa: C901, PLR0912, PLR0915
                 )
             )
             proto_mgr.register_plugin(
-                RawTCPServerPlugin(
-                    protocol_servers_cfg.raw_tcp, handler=handle_protocol_request
-                )
+                RawTCPServerPlugin(protocol_servers_cfg.raw_tcp, handler=handle_protocol_request)
             )
             proto_mgr.register_plugin(
                 HTTP2ServerPlugin(protocol_servers_cfg.http2, handler=handle_protocol_request)
@@ -507,8 +505,7 @@ async def lifespan(_app: FastAPI):  # noqa: C901, PLR0912, PLR0915
 
             # Remember the running event loop so a config hot-reload (fired
             # from the config watch thread) can schedule start/stop onto it.
-            global _protocol_event_loop
-            _protocol_event_loop = asyncio.get_running_loop()
+            _protocol_event_loop = asyncio.get_running_loop()  # noqa: PLW0603
 
             # Reconcile protocol servers whenever config.yaml changes (e.g. the
             # UI toggles a server on/off). The callback runs on the config

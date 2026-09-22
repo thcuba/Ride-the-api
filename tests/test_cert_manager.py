@@ -8,12 +8,11 @@ escape the external-certs directory and reach arbitrary paths).
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
-
-import pytest
 
 from core.cert_manager import CertManager
 
