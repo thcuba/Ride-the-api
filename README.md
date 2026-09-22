@@ -145,4 +145,10 @@ socket tests use loopback) — `pip install -e ".[dev]"` is all you need to
 run `pytest`.
 
 yes it is all vibecoded 
-please review the repo with your tools and push pr too if you want to help or appreciate this project... everyone is welcome 
+contributions! Here's how you can help:
+
+🍴 Fork the repository
+🔧 Create your feature branch
+💾 Commit your changes
+📤 Push to the branch 
+🎉 Open a Pull Request
