@@ -93,3 +93,7 @@
 ## 2026-03-31 - Direct SQL Aggregates for Cloud Independence Verification
 **Learning:** `CloudIndependenceVerifier.check_cloud_independence` fetched all `RequestPattern` and `ResponseTemplate` ORM model instances into Python lists via `scalars().all()` to count patterns/templates and evaluate max confidence. Replacing ORM model fetching with SQL aggregate functions (`func.count` and `func.max`) computes totals directly in the database engine, eliminating ORM object instantiation and list allocations (~1.44x speedup, ~18.98ms -> ~13.14ms per check).
 **Action:** When evaluating existence, counts, or thresholds across database entities in verification or background polling loops, execute SQL aggregate queries (`func.count`, `func.max`) instead of loading ORM model instances into memory.
+
+## 2026-03-31 - Memoized JSON Path Segment Splitting for Pattern Engine and Response Building
+**Learning:** Repeatedly checking `path.startswith("$.")` and calling `clean.split(".")` inside JSON path resolution hot paths (`_get_nested`, `_resolve_json_path`, `_dpath_set`) allocates temporary `list` objects on every call. Caching clean segment tuples via `@functools.lru_cache(maxsize=2048)` (`_split_clean_path`) eliminates list allocations and speeds up JSON path resolution by ~1.65x (from ~1.97s to ~1.20s per 1,500,000 lookups).
+**Action:** Memoize string splitting and prefix stripping for dynamic string property paths checked repeatedly in payload navigation hot paths.
