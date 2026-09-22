@@ -80,6 +80,7 @@ from core.security import (
     ControlPlaneAuthMiddleware,
     MaxBodySizeMiddleware,
     SecurityHeadersMiddleware,
+    ensure_stable_api_keys,
     get_generated_keys,
 )
 from core.tls_mitm import (
@@ -377,6 +378,11 @@ async def lifespan(_app: FastAPI):  # noqa: C901, PLR0912, PLR0915
 
     config = config_manager.config
 
+    # Ensure the control-plane API keys are stable across restarts: any key
+    # missing from config.yaml is generated and persisted back, and the
+    # effective keys are logged in plaintext at startup.
+    ensure_stable_api_keys()
+
     # Initialize database
     data_dir = Path(config.core.device_db_dir)
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -581,6 +587,7 @@ app.add_middleware(
 app.add_middleware(
     ControlPlaneAuthMiddleware,
     get_security_config=lambda: config_manager.config.security,
+    persist_keys=config_manager.set_security_api_keys,
 )
 # Control-plane body limits (F-09): reject /api/* request bodies larger than
 # proxy.max_request_size. The catch-all data-plane route stays exempt because

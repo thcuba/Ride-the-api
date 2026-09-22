@@ -502,6 +502,23 @@ class TestGlobalHelpers:
         reloaded = ConfigManager(config_path=path).load()
         assert reloaded.core.database_url == "sqlite:///new.db"
 
+    def test_set_security_api_keys_persists(self, tmp_path):
+        path = tmp_path / "config.yaml"
+        data = {"core": {"database_url": "sqlite:///orig.db"}}
+        with path.open("w") as f:
+            yaml.dump(data, f)
+
+        cm = ConfigManager(config_path=path)
+        cm.load()
+        ok = cm.set_security_api_keys("admin-key", "readonly-key")
+        assert ok is True
+        assert cm.config.security.admin_api_key == "admin-key"
+        assert cm.config.security.readonly_api_key == "readonly-key"
+        # persisted to disk so keys survive a restart
+        reloaded = ConfigManager(config_path=path).load()
+        assert reloaded.security.admin_api_key == "admin-key"
+        assert reloaded.security.readonly_api_key == "readonly-key"
+
     def test_update_config_rejects_invalid_data(self, tmp_path):
         path = tmp_path / "config.yaml"
         data = {"core": {"database_url": "sqlite:///x.db"}}

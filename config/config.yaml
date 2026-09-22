@@ -83,13 +83,13 @@ proxy:
 #   - read-only methods (GET/HEAD) accept the read-only key or the admin key
 #   - all other methods (POST/PUT/DELETE/...) require the admin key
 # Keys are sent via the "X-API-Key" header or "Authorization: Bearer <key>".
-# If a key is left empty, a random ephemeral key is generated at startup
-# (never logged) and the control plane stays locked until explicit keys are
-# set here.
+# If a key is left empty, it is generated once at startup and written back
+# here, so the same key is used on every restart. The effective keys are
+# always printed in plaintext in the server log at startup.
 security:
   auth_enabled: true
-  admin_api_key: ""          # e.g. "change-me-admin"
-  readonly_api_key: ""       # e.g. "change-me-readonly"
+  admin_api_key: ""          # auto-generated + persisted on first startup
+  readonly_api_key: ""       # auto-generated + persisted on first startup
 
   # No hardcoded routes — each device is identified dynamically
   # by its adapter and device ID. The vendor field is just a
