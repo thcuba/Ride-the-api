@@ -5,6 +5,7 @@
 
 ## Table of Contents
 
+- [Prebuilt binaries (all platforms)](#prebuilt-binaries-all-platforms)
 - [Direct Execution](#direct-execution-python--m-coreserverpy)
 - [Docker](#docker)
 - [Docker Compose with nginx Sidecar](#docker-compose-with-nginx-sidecar)
@@ -14,6 +15,69 @@
 - [GPU Support](#gpu-support)
 - [Systemd (Linux)](#systemd-linux)
 - [Troubleshooting](#troubleshooting)
+
+---
+
+## Prebuilt binaries (all platforms)
+
+Each GitHub **release ships prebuilt bundles** for Linux (x64/arm64), macOS
+(arm64) and Windows (x64) — produced by `.github/workflows/build-platforms.yml`
+and attached to the release under stable names:
+
+| Asset | Platform |
+|-------|----------|
+| `ride-the-api-linux-x64.tar.gz` | Linux x86_64 |
+| `ride-the-api-linux-arm64.tar.gz` | Linux arm64 — **Raspberry Pi 64-bit** |
+| `ride-the-api-macos-arm64.tar.gz` | macOS arm64 (Apple Silicon) |
+| `ride-the-api-windows-x64-setup.exe` | Windows x64 (Inno Setup installer) |
+
+Use the **one-shot installer scripts** to fetch and install the **latest**
+release. Rerunning the same script upgrades to a newer release **in place,
+preserving `config/`, `data/`, `certs/` and `logs/`**.
+
+### Linux / macOS / Raspberry Pi — `deploy/install.sh`
+
+```bash
+curl -sSL https://raw.githubusercontent.com/thcuba/Ride-the-api/main/deploy/install.sh -o install.sh
+bash install.sh            # → installs the latest release into ~/ride-the-api
+bash install.sh --systemd  # optional: also write a systemd user service
+```
+
+Options:
+
+| Option | Description |
+|--------|-------------|
+| `--version <tag>` | Install a specific release tag (default: latest) |
+| `--dir <path>` | Install directory (default: `$HOME/ride-the-api`) |
+| `--systemd` | Write a systemd user unit that runs it as a service |
+| `RTA_VERSION` / `RTA_DIR` | Environment overrides for the same flags |
+
+On a Raspberry Pi (arm64), install and run as a user service:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/thcuba/Ride-the-api/main/deploy/install.sh -o install.sh
+bash install.sh --systemd
+systemctl --user enable --now ride-the-api
+```
+
+> **Pi 4 / 2GB RAM note:** the base install is lightweight (excludes the unused
+> `onnxruntime`), and LLM inference is meant to run **off-box via API cloud** —
+> a local Ollama `llama3.1:8b` (~6GB) does not fit a 2GB Pi. The default
+> profile already points at an OpenAI-compatible endpoint.
+
+### Windows — `deploy/install.ps1`
+
+```powershell
+# In PowerShell
+Invoke-WebRequest https://raw.githubusercontent.com/thcuba/Ride-the-api/main/deploy/install.ps1 -OutFile install.ps1
+powershell -ExecutionPolicy Bypass -File .\install.ps1          # latest, GUI installer
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -Silent  # silent install
+```
+
+### Installing from source (alternative)
+
+If you prefer to build from source instead of using a prebuilt bundle, see the
+[Direct Execution](#direct-execution-python--m-coreserverpy) section below.
 
 ---
 

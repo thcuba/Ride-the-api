@@ -14,38 +14,52 @@ Local cloud replacement proxy that intercepts IoT traffic, learns protocols via 
 
 ---
 
-## 2. Clone the repository
+## 2. Install
+
+### A) Prebuilt binary (fast — no build)
+
+Every GitHub release ships a prebuilt bundle for your platform. Install/upgrade
+with the one-shot script (rerunning it upgrades in place, preserving
+`config/`, `data/`, `certs/`, `logs/`):
+
+```bash
+# Linux / macOS / Raspberry Pi
+curl -sSL https://raw.githubusercontent.com/thcuba/Ride-the-api/main/deploy/install.sh -o install.sh
+bash install.sh            # → ~/ride-the-api
+bash install.sh --systemd  # optional: run as a user service
+```
+
+```powershell
+# Windows (x64)
+Invoke-WebRequest https://raw.githubusercontent.com/thcuba/Ride-the-api/main/deploy/install.ps1 -OutFile install.ps1
+powershell -ExecutionPolicy Bypass -File .\install.ps1   # add -Silent for silent install
+```
+
+See [Deployment](deployment.md) for all options (`--version`, `--dir`, `RTA_*`).
+
+### B) From source
 
 ```bash
 git clone https://github.com/thcuba/Ride-the-api.git
 cd Ride-the-api
+pip install -e .      # or: uv pip install -e .
 ```
 
----
-
-## 3. Install dependencies
-
-### With pip (recommended)
-
-```bash
-pip install -e .
-```
-
-### With uv (faster alternative)
-
-```bash
-uv pip install -e .
-```
-
-### Optional dependencies
+### Optional dependencies (from-source build)
 
 - **Dev tools** (ruff, mypy, pytest): `pip install -e ".[dev]"`
+- **CPU model serving** (`onnxruntime`, `numpy`): `pip install -e ".[inference]"`
 - **GPU ONNX**: `pip install -e ".[gpu]"`
 - **TFLite**: `pip install -e ".[tflite]"`
 
+> `onnxruntime`/`numpy` are **not** installed by default — they are dead
+> scaffolding (never imported) and add ~100MB+ RAM when loaded. Only install
+> `.[inference]` if you actually serve local models; most setups (LLM via API
+> cloud, e.g. on a Raspberry Pi) do not need it.
+
 ---
 
-## 4. Configure config.yaml
+## 3. Configure config.yaml
 
 Copy and customize the configuration file:
 
@@ -54,7 +68,7 @@ cp config/config.yaml config/config.local.yaml
 # or edit config/config.yaml directly
 ```
 
-### 4.1 — LLM (required)
+### 3.1 — LLM (required)
 
 Set the LLM profile in the `llm_decipher` section:
 
@@ -78,7 +92,7 @@ Export the environment variable:
 export OPENAI_API_KEY="sk-..."
 ```
 
-### 4.2 — Database (optional)
+### 3.2 — Database (optional)
 
 For development with SQLite (default), no changes needed:
 
@@ -95,7 +109,7 @@ core:
   database_url: "postgresql+asyncpg://user:pass@localhost/ride_api"
 ```
 
-### 4.3 — Learning/Production mode
+### 3.3 — Learning/Production mode
 
 ```yaml
 learning:
@@ -105,7 +119,7 @@ learning:
   auto_switch_to_production: false  # true for automatic switch at 99% match rate
 ```
 
-### 4.4 — DNS routing (dnsmasq example)
+### 3.4 — DNS routing (dnsmasq example)
 
 Create `/etc/dnsmasq.d/ride-api.conf`:
 
@@ -124,7 +138,7 @@ sudo systemctl restart dnsmasq
 
 ---
 
-## 5. Start the server
+## 4. Start the server
 
 ### Directly with Python
 
@@ -155,9 +169,9 @@ sudo systemctl start ride-the-api
 
 ---
 
-## 6. Connect an IoT device
+## 5. Connect an IoT device
 
-### 6.1 — Configure the device DNS
+### 5.1 — Configure the device DNS
 
 - On your router/DHCP, set the primary DNS to the ride-the-api server IP
 - Or statically configure DNS on the IoT device
@@ -168,7 +182,7 @@ sudo systemctl start ride-the-api
 192.168.1.100   api.example.com
 ```
 
-### 6.2 — (Optional) Intercept TLS
+### 5.2 — (Optional) Intercept TLS
 
 If the device uses HTTPS, the MITM proxy must be active:
 
@@ -182,13 +196,13 @@ tls_decrypt:
 
 Download the CA certificate from `http://<server-ip>:8911/api/tls/ca-cert` and install it on the device as a trusted authority.
 
-### 6.3 — Verify the connection
+### 5.3 — Verify the connection
 
 Turn on the IoT device. The device will start talking to the cloud — ride-the-api intercepts the traffic and begins learning.
 
 ---
 
-## 7. Verification
+## 6. Verification
 
 ### Web dashboard
 
@@ -240,7 +254,7 @@ docker logs -f <container-id>
 
 ---
 
-## 8. Next steps
+## 7. Next steps
 
 | What to do | Documentation |
 |---|---|
@@ -252,7 +266,7 @@ docker logs -f <container-id>
 
 ---
 
-## 9. Quick Troubleshooting
+## 8. Quick Troubleshooting
 
 | Problem | Likely cause | Solution |
 |---|---|---|
