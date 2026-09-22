@@ -8,6 +8,7 @@ escape the external-certs directory and reach arbitrary paths).
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -134,6 +135,24 @@ class TestCertKeyMatch:
 
     def test_garbage_pem_returns_false(self):
         assert CertManager._cert_matches_key("not a pem", "still not a key") is False
+
+        def test_encrypted_key_raises_clear_error(self):
+            """An encrypted/password-protected key must fail loudly and clearly.
+
+            Previously the loader raised TypeError (caught by the generic except),
+            so the user got the misleading "Certificate and private key do not
+            match" even though the pair was fine — the key just needed its
+            password. Now it raises a distinct, actionable ValueError.
+            """
+            cert_pem, _ = self._make_pair()
+            key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+            encrypted = key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.TraditionalOpenSSL,
+                serialization.BestAvailableEncryption(b"password123"),
+            )
+            with pytest.raises(ValueError, match="encrypted"):
+                CertManager._cert_matches_key(cert_pem, encrypted.decode())
 
 
 class TestKeyPermissions:

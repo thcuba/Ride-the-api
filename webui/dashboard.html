@@ -1508,9 +1508,26 @@ async function uploadCert() {
   try {
     const certFile = certFiles.find(f => /\.(pem|crt|cer)$/i.test(f.name)) || certFiles[0];
     const keyFile = certFiles.find(f => /\.key$/i.test(f.name));
-    if (!certFile || !keyFile) { showToast('Select both a cert (.pem/.crt) and its key (.key)', 'warning'); return; }
-    const certPem = await readAsText(certFile);
-    const keyPem = await readAsText(keyFile);
+    let certPem, keyPem;
+    if (certFile && keyFile) {
+      certPem = await readAsText(certFile);
+      keyPem = await readAsText(keyFile);
+    } else if (certFile) {
+      // Allow a single combined .pem that contains BOTH the certificate and
+      // its private key — split them so import works the same as two files.
+      const combined = await readAsText(certFile);
+      const blockRe = /-----BEGIN ([A-Z ]+)-----[\s\S]*?-----END \1-----/g;
+      const certs = [], keys = [];
+      let m;
+      while ((m = blockRe.exec(combined)) !== null) {
+        if (m[1] === 'CERTIFICATE') certs.push(m[0]);
+        else if (m[1] === 'PRIVATE KEY' || /RSA |EC |DSA /i.test(m[1])) keys.push(m[0]);
+      }
+      if (certs.length && keys.length) { certPem = certs.join('\n'); keyPem = keys.join('\n'); }
+      else { showToast('Select both a cert (.pem/.crt) and its key (.key), or one combined .pem', 'warning'); return; }
+    } else {
+      showToast('Select both a cert (.pem/.crt) and its key (.key), or one combined .pem', 'warning'); return;
+    }
     const res = await fetch('/api/tls/certs/upload-json', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({hostname: hostname.trim(), cert_base64: b64(certPem), key_base64: b64(keyPem)}),
