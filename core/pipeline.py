@@ -42,6 +42,7 @@ from core.pattern_db.pattern_engine import (
     _dot_to_dpath,
     _dpath_set,
     _path_similarity,
+    _split_clean_path,
 )
 from core.pattern_db.schemas import DeviceModel, PatternDB, ProtocolInfo
 from core.redaction import redact_body, redact_headers, redact_query
@@ -443,8 +444,7 @@ class PatternMatcher:
             return d
         # Fast-path direct dict lookup for dot-paths without array brackets (~35.9x faster)
         if "[" not in path:
-            clean = path[2:] if path.startswith("$.") else path
-            parts = clean.split(".")
+            parts = _split_clean_path(path)
             curr = d
             for p in parts:
                 if isinstance(curr, dict):
