@@ -523,7 +523,7 @@
 <div id="main-content">
   <div class="device-filter-bar">
     <svg class="search-icon icon-svg-sm" aria-hidden="true" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-    <input type="search" id="deviceSearchInput" placeholder="Filter devices by name, ID, vendor..." aria-label="Filter devices" oninput="filterDevices()" onkeydown="if(event.key==='Escape'){clearDeviceSearch();event.stopPropagation();}">
+    <input type="search" id="deviceSearchInput" placeholder="Filter devices by name, ID, vendor... (Press '/' to search)" aria-label="Filter devices" oninput="filterDevices()" onkeydown="if(event.key==='Escape'){clearDeviceSearch();event.stopPropagation();}">
     <button type="button" class="clear-search-btn" id="clearSearchBtn" aria-label="Clear device search filter" onclick="clearDeviceSearch()">&times;</button>
     <span class="sr-only" id="filterStatus" aria-live="polite"></span>
   </div>
@@ -1358,6 +1358,19 @@ document.addEventListener('keydown', function(event) {
     const detail = document.getElementById('details');
     if (detail && !detail.classList.contains('invisible')) {
       closeDetails();
+    }
+  } else if (event.key === '/' || ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k')) {
+    const active = document.activeElement;
+    const isEditing = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.tagName === 'SELECT' || active.isContentEditable);
+    const modal = document.getElementById('llm-settings-modal');
+    const isModalOpen = modal && modal.style.display !== 'none';
+    if (!isEditing && !isModalOpen) {
+      const searchInput = document.getElementById('deviceSearchInput');
+      if (searchInput) {
+        event.preventDefault();
+        searchInput.focus();
+        searchInput.select();
+      }
     }
   }
 });
