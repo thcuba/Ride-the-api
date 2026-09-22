@@ -83,6 +83,17 @@ Output: `dist\installer\ride-the-api-setup.exe`.
 
 ## 3. Installing / running
 
+### A) One-shot download script (fast — latest release)
+
+```powershell
+Invoke-WebRequest https://raw.githubusercontent.com/thcuba/Ride-the-api/main/deploy/install.ps1 -OutFile install.ps1
+powershell -ExecutionPolicy Bypass -File .\install.ps1          # latest, GUI installer
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -Silent  # silent install
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -Version 1.1   # specific tag
+```
+
+### B) Manual — run the installer
+
 Run `ride-the-api-setup.exe` as **Administrator** (the service registration and
 `%ProgramData%` seeding need elevation). The installer:
 
@@ -146,8 +157,9 @@ it, or reconfigure `config.yaml` (`tls_decrypt.listen_ports`) to an alternate.
 ### Dependencies excluded from the build
 
 `onnxruntime`, `numpy`, `asyncpg`, and `psycopg2` are excluded from the
-bundle: onnxruntime is dead scaffolding (never imported by the code) and the
-DB uses the async SQLite backend.
+bundle: `onnxruntime`/`numpy` are optional (the `inference` extra; never
+imported by the code) and the DB uses the async SQLite backend. The base
+install therefore does not ship them.
 
 ## 5. Existing firewall / antivirus notes
 

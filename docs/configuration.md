@@ -183,6 +183,11 @@ vendors:
 
 ML model (ONNX) configuration for local inference.
 
+> **Note:** the ONNX runtime itself (`onnxruntime`) is **optional** — install it
+> with the `inference` extra (`pip install -e ".[inference]"`). The base install
+> does not ship it, and most setups (LLM via API cloud, e.g. a Raspberry Pi)
+> do not serve local models.
+
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `registry_path` | `string` | `"models"` | Directory containing registered ONNX models |
