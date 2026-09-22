@@ -24,6 +24,28 @@ python -m core.server
 
 Open `http://localhost:8911/` — dashboard + pattern editor.
 
+### Prebuilt binaries (all platforms)
+
+Every GitHub **release ships prebuilt bundles** for Linux (x64/arm64), macOS
+(arm64) and Windows. Install/upgrade with the one-shot scripts (they download
+the **latest** release by default and rerunning them upgrades **in place,
+preserving `config/`, `data/`, `certs/` and `logs/`**):
+
+```bash
+# Linux (x64) or Raspberry Pi (arm64) / macOS (arm64)
+curl -sSL https://raw.githubusercontent.com/thcuba/Ride-the-api/main/deploy/install.sh -o install.sh
+bash install.sh            # → ~/ride-the-api
+bash install.sh --systemd  # optional: run as a user service
+# Optionally choose dir/version:  bash install.sh --dir /opt/ride-the-api --version 1.1
+```
+
+```powershell
+# Windows (x64) — in PowerShell
+Invoke-WebRequest https://raw.githubusercontent.com/thcuba/Ride-the-api/main/deploy/install.ps1 -OutFile install.ps1
+powershell -ExecutionPolicy Bypass -File .\install.ps1          # latest, GUI installer
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -Silent  # silent install
+```
+
 ### Docker (with nginx sidecar)
 
 ```bash
