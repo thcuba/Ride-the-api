@@ -625,9 +625,8 @@ class TestProtocolAdapter:
 
     def test_vendor_hostnames(self, example_adapter):
         """Test vendor hostnames."""
-        hostnames = example_adapter.vendor_hostnames
-        assert "mqtt.example.com" in hostnames
-        assert "api.example.com" in hostnames
+        hostnames = set(example_adapter.vendor_hostnames)
+        assert {"mqtt.example.com", "api.example.com"} <= hostnames
 
     def test_mode_mapping(self, example_adapter):
         """Test mode mapping."""
