@@ -519,6 +519,47 @@ class TestGlobalHelpers:
         assert reloaded.security.admin_api_key == "admin-key"
         assert reloaded.security.readonly_api_key == "readonly-key"
 
+    def test_update_config_preserves_api_keys(self, tmp_path):
+        path = tmp_path / "config.yaml"
+        data = {
+            "core": {"database_url": "sqlite:///orig.db"},
+            "security": {"admin_api_key": "admin-key", "readonly_api_key": "readonly-key"},
+        }
+        with path.open("w") as f:
+            yaml.dump(data, f)
+
+        cm = ConfigManager(config_path=path)
+        cm.load()
+        # Updating without a security section must keep the existing keys.
+        ok = cm.update_config({"core": {"database_url": "sqlite:///new.db"}})
+        assert ok is True
+        assert cm.config.security.admin_api_key == "admin-key"
+        assert cm.config.security.readonly_api_key == "readonly-key"
+        # Empty keys in the payload must not blank the persisted ones.
+        ok = cm.update_config(
+            {
+                "core": {"database_url": "sqlite:///new.db"},
+                "security": {"admin_api_key": "", "readonly_api_key": ""},
+            }
+        )
+        assert ok is True
+        assert cm.config.security.admin_api_key == "admin-key"
+        assert cm.config.security.readonly_api_key == "readonly-key"
+        # Explicit new keys are honored.
+        ok = cm.update_config(
+            {
+                "core": {"database_url": "sqlite:///new.db"},
+                "security": {"admin_api_key": "new-admin", "readonly_api_key": "new-readonly"},
+            }
+        )
+        assert ok is True
+        assert cm.config.security.admin_api_key == "new-admin"
+        assert cm.config.security.readonly_api_key == "new-readonly"
+        # Persisted to disk so keys survive a restart.
+        reloaded = ConfigManager(config_path=path).load()
+        assert reloaded.security.admin_api_key == "new-admin"
+        assert reloaded.security.readonly_api_key == "new-readonly"
+
     def test_update_config_rejects_invalid_data(self, tmp_path):
         path = tmp_path / "config.yaml"
         data = {"core": {"database_url": "sqlite:///x.db"}}
