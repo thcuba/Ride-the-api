@@ -409,7 +409,37 @@
     });
   }
 
-  function fieldRow(labelText, inputEl){ const row = el('div',{class:'row'}); const col = el('div',{class:'col'}); col.appendChild(el('label',{},labelText)); col.appendChild(inputEl); row.appendChild(col); return row; }
+  function fieldRow(labelText, inputEl){
+    const row = el('div',{class:'row'});
+    const col = el('div',{class:'col'});
+    const labelHeader = el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;'},[
+      el('label',{style:'margin-bottom:0;'},labelText)
+    ]);
+    if (inputEl && inputEl.tagName === 'TEXTAREA') {
+      const copyBtn = el('button',{
+        type:'button',
+        class:'btn btn-ghost',
+        style:'padding:2px 8px;font-size:11px;line-height:1.2;',
+        'aria-label': `Copy ${labelText} to clipboard`
+      }, 'Copy JSON');
+      copyBtn.addEventListener('click', ()=>{
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(inputEl.value).then(()=>{
+            showToast(`${labelText} copied to clipboard`, 'success');
+          }).catch(()=>{
+            showToast('Failed to copy text', 'error');
+          });
+        } else {
+          showToast('Clipboard API not available', 'warning');
+        }
+      });
+      labelHeader.appendChild(copyBtn);
+    }
+    col.appendChild(labelHeader);
+    col.appendChild(inputEl);
+    row.appendChild(col);
+    return row;
+  }
 
   function inputText(name, val){ const i=document.createElement('input'); i.type='text'; i.name=name; i.value = val||''; return i; }
   function inputNumber(name, val){ const i=document.createElement('input'); i.type='number'; i.name=name; i.value = val||0; return i; }
