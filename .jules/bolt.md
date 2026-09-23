@@ -97,3 +97,7 @@
 ## 2026-03-31 - Memoized JSON Path Segment Splitting for Pattern Engine and Response Building
 **Learning:** Repeatedly checking `path.startswith("$.")` and calling `clean.split(".")` inside JSON path resolution hot paths (`_get_nested`, `_resolve_json_path`, `_dpath_set`) allocates temporary `list` objects on every call. Caching clean segment tuples via `@functools.lru_cache(maxsize=2048)` (`_split_clean_path`) eliminates list allocations and speeds up JSON path resolution by ~1.65x (from ~1.97s to ~1.20s per 1,500,000 lookups).
 **Action:** Memoize string splitting and prefix stripping for dynamic string property paths checked repeatedly in payload navigation hot paths.
+
+## 2026-03-31 - Fast Tuple Iteration for Sensitive Key Presence Checks in Payload Redaction
+**Learning:** `_contains_sensitive_key` evaluated `any(key in lower for key in _SENSITIVE_KEY_NAMES)` using a generator expression and a `frozenset`. Generator creation and iterator protocol overhead added ~70% runtime overhead compared to an explicit `for key in _SENSITIVE_KEY_NAMES:` loop over a pre-computed `tuple` (~1.70x speedup, 1.39s vs 2.36s per 500k checks).
+**Action:** Replace generator expressions (`any(...)`) in string presence checks on payload/redaction hot paths with explicit `for` loops over pre-computed `tuple` objects.
