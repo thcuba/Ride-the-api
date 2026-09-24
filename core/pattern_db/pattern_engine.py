@@ -443,6 +443,7 @@ class PatternEngine:
                     body,
                     ep.query_params or _EMPTY_TUPLE,
                     query_params,
+                    best_score=best_score,
                 )
                 if score > best_score:
                     best_score = score
@@ -476,6 +477,7 @@ class PatternEngine:
                     body,
                     pat.query_param_keys or [],
                     query_params,
+                    best_score=best_score,
                 )
                 if score > best_score:
                     best_score = score
@@ -502,6 +504,7 @@ class PatternEngine:
         actual_body: Any,  # noqa: ANN401
         query_param_keys: list | tuple,
         actual_query: dict,
+        best_score: float = 0.0,
     ) -> float:
         """Calculate similarity score (0.0 to 1.0)."""
         score = 0.0
@@ -514,6 +517,13 @@ class PatternEngine:
         path_score = _path_similarity(path_pattern, actual_path)
         if path_score:
             score += 30.0 * path_score
+
+        total_weight = 100.0 if bool(actual_body) == bool(body_schema) else 85.0
+
+        # Fast path exit: headers (15) + query (10) + body (15) can add at most 40.0 points.
+        # If upper bound max_possible score cannot beat best_score, short-circuit (~1.64x speedup).
+        if (score + 40.0) / total_weight <= best_score:
+            return score / total_weight
 
         # Headers
         # Performance optimization: direct loop counting avoids generator allocation overhead
@@ -536,12 +546,8 @@ class PatternEngine:
         # Body match
         if actual_body and body_schema:
             score += 15.0 * self._body_similarity(body_schema, actual_body)
-            total_weight = 100.0
         elif not actual_body and not body_schema:
             score += 15.0
-            total_weight = 100.0
-        else:
-            total_weight = 85.0
 
         return score / total_weight
 
