@@ -429,7 +429,7 @@
                    onkeydown="if(event.key==='Enter'){event.preventDefault();saveApiKeyFromInput();}">
             <button class="btn btn-ghost" onclick="saveApiKeyFromInput()" style="padding:6px 10px;font-size:12px;" aria-label="Save API key">Save</button>
       <div class="ram-label" title="Buffer request/response pairs in RAM instead of disk (volatile)">
-        <span>RAM Buffer</span>
+        <label for="ram-buffer-toggle" style="cursor:pointer;">RAM Buffer</label>
         <label class="ram-toggle" aria-label="Toggle RAM buffer">
           <input type="checkbox" id="ram-buffer-toggle" role="switch" aria-checked="false" onchange="toggleRamBuffer(this.checked)">
           <span class="ram-slider"></span>
@@ -1071,14 +1071,14 @@ async function loadDeviceStats(deviceId) {
           </select>
         </div>
         <div class="tc-row">
-          <span class="tc-label" id="passthrough-label-${escapeHtml(deviceId)}">Passthrough to Cloud</span>
+          <label for="tc-passthrough-${escapeHtml(deviceId)}" class="tc-label" id="passthrough-label-${escapeHtml(deviceId)}" style="cursor:pointer;">Passthrough to Cloud</label>
           <label class="tc-toggle" aria-label="Toggle passthrough to cloud">
                     <input type="checkbox" id="tc-passthrough-${escapeHtml(deviceId)}" role="switch" aria-checked="${!!s.tls_passthrough}" ${s.tls_passthrough ? 'checked' : ''} aria-labelledby="passthrough-label-${escapeHtml(deviceId)}" onchange="this.setAttribute('aria-checked', this.checked)">
             <span class="tc-slider"></span>
           </label>
         </div>
         <div class="tc-row">
-          <span class="tc-label" id="bypass-label-${escapeHtml(deviceId)}">Bypass (forward to cloud, no analysis)</span>
+          <label for="tc-bypass-${escapeHtml(deviceId)}" class="tc-label" id="bypass-label-${escapeHtml(deviceId)}" style="cursor:pointer;">Bypass (forward to cloud, no analysis)</label>
           <label class="tc-toggle" aria-label="Toggle per-IP bypass: forward directly to cloud without analysis">
             <input type="checkbox" id="tc-bypass-${escapeHtml(deviceId)}" role="switch" aria-checked="${!!s.bypass}" ${s.bypass ? 'checked' : ''} aria-labelledby="bypass-label-${escapeHtml(deviceId)}" onchange="this.setAttribute('aria-checked', this.checked)">
             <span class="tc-slider"></span>
