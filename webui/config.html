@@ -160,7 +160,7 @@
   <div class="header-actions">
     <span class="path-chip" id="configPath">…</span>
     <a class="btn btn-ghost" href="/">← Dashboard</a>
-    <button class="btn btn-primary" id="saveBtn" onclick="saveConfig()" disabled>&#x2714; Save All</button>
+    <button class="btn btn-primary" id="saveBtn" onclick="saveConfig()" title="No unsaved changes" disabled>&#x2714; Save All</button>
   </div>
 </div>
 
@@ -172,7 +172,7 @@
     <div id="fields"></div>
     <div class="save-bar">
       <span class="status" id="saveStatus"></span>
-      <button class="btn btn-primary" id="saveBtn2" onclick="saveConfig()" disabled>&#x2714; Save All</button>
+      <button class="btn btn-primary" id="saveBtn2" onclick="saveConfig()" title="No unsaved changes" disabled>&#x2714; Save All</button>
     </div>
   </main>
 </div>
@@ -781,8 +781,16 @@ function markFieldDirty(path) {
 }
 function updateSaveBtn() {
   const has = dirty.size > 0;
-  document.getElementById('saveBtn').disabled = !has;
-  document.getElementById('saveBtn2').disabled = !has;
+  const saveBtn = document.getElementById('saveBtn');
+  const saveBtn2 = document.getElementById('saveBtn2');
+  if (saveBtn) {
+    saveBtn.disabled = !has;
+    saveBtn.title = has ? 'Save configuration changes' : 'No unsaved changes';
+  }
+  if (saveBtn2) {
+    saveBtn2.disabled = !has;
+    saveBtn2.title = has ? 'Save configuration changes' : 'No unsaved changes';
+  }
 
   document.querySelectorAll('.section-item[data-section]').forEach(btn => {
     const sec = btn.dataset.section;
