@@ -21,6 +21,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from core.atomic_io import write_json
 from core.config import get_config
 
 logger = logging.getLogger(__name__)
@@ -57,6 +58,5 @@ def load_llm_settings() -> dict[str, Any] | None:
 def save_llm_settings(settings: dict[str, Any]) -> None:
     """Persist LLM settings overrides so they survive a restart."""
     path = llm_settings_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+    write_json(path, settings, indent=2)
     logger.info("LLM runtime settings saved to %s", path)

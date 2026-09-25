@@ -7,6 +7,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from core.atomic_io import write_json
 from core.buffer.memory import dispose_memory_db, memory_session
 from core.buffer.sqlalchemy_store import SqlAlchemyBufferStore
 from core.config import get_config
@@ -77,7 +78,6 @@ def persist_backend(backend: str) -> None:
     if backend not in VALID_BACKENDS:
         raise ValueError(f"Unknown buffer backend: {backend!r}")
     path = _settings_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
     data: dict = {}
     if path.exists():
         try:
@@ -85,7 +85,7 @@ def persist_backend(backend: str) -> None:
         except (OSError, json.JSONDecodeError):
             data = {}
     data["buffer_backend"] = backend
-    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    write_json(path, data, indent=2)
 
 
 def initialize_buffer_backend() -> str:
