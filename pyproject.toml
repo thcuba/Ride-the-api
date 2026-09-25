@@ -29,8 +29,11 @@ dependencies = [
     "pydantic-settings>=2.3.0",
     "python-dotenv>=1.0.0",
     
-    # Database
-    "sqlalchemy>=2.0.30",
+    # Database. sqlalchemy[asyncio] pulls in `greenlet`, which is required by
+    # sqlalchemy.ext.asyncio (used e.g. by core/database.py create_async_engine).
+    # Without it, a clean environment (CI) fails at import with
+    # "No module named 'greenlet'".
+    "sqlalchemy[asyncio]>=2.0.30",
     "alembic>=1.13.0",
     "aiosqlite>=0.19.0",
     "asyncpg>=0.29.0",
