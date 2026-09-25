@@ -52,6 +52,27 @@
   .toast.error .toast-icon { color: var(--red); }
   .toast.warning .toast-icon { color: var(--yellow); }
   .toast.info .toast-icon { color: var(--blue); }
+  .pattern-filter-bar { margin-bottom: 16px; position: relative; display: flex; align-items: center; max-width: 480px; }
+  .pattern-filter-bar input {
+    width: 100%; padding: 8px 32px 8px 34px; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; color: var(--text); font-family: inherit; font-size: 13px; transition: border-color .2s;
+  }
+  .pattern-filter-bar input:focus { outline: none; border-color: var(--accent); }
+  .pattern-filter-bar input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .pattern-filter-bar input[type="search"]::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
+  .pattern-filter-bar .search-icon {
+    position: absolute; left: 10px; color: var(--text2); pointer-events: none; width: 16px; height: 16px;
+    fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+  }
+  .pattern-filter-bar .clear-search-btn {
+    position: absolute; right: 10px; background: none; border: none; color: var(--text2);
+    font-size: 16px; cursor: pointer; padding: 2px 6px; border-radius: 4px; line-height: 1;
+    transition: color .2s; display: none;
+  }
+  .pattern-filter-bar .clear-search-btn:hover { color: var(--text); }
+  .pattern-filter-bar .clear-search-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .empty { text-align: center; color: var(--text2); padding: 40px 20px; font-size: 14px; grid-column: 1 / -1; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
   @media (min-width:720px) { .cards { grid-template-columns: 1fr; } }
 </style>
 </head>
@@ -69,6 +90,13 @@
               <button class="btn btn-primary" id="newPatternBtn" aria-label="Create a new pattern">+ New Pattern</button>
               <a class="btn btn-ghost" href="/" aria-label="Back to dashboard">Back</a>
             </div>
+    </div>
+
+    <div class="pattern-filter-bar">
+      <svg class="search-icon" aria-hidden="true" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input type="search" id="patternSearchInput" placeholder="Filter patterns by method, path, intent... (Press '/' to search)" aria-label="Filter patterns" oninput="filterPatterns()" onkeydown="if(event.key==='Escape'){clearPatternSearch();event.stopPropagation();}">
+      <button type="button" class="clear-search-btn" id="clearPatternSearchBtn" aria-label="Clear pattern search filter" onclick="clearPatternSearch()">&times;</button>
+      <span class="sr-only" id="patternFilterStatus" aria-live="polite"></span>
     </div>
 
     <div id="cards" class="cards">
@@ -300,6 +328,52 @@
     }catch(e){ cardsEl.innerHTML = '<div class="empty">Failed to load patterns</div>'; showToast('Failed to load patterns','error'); }
   }
 
+  function clearPatternSearch() {
+    const input = document.getElementById('patternSearchInput');
+    if (input) {
+      input.value = '';
+      input.focus();
+      filterPatterns();
+    }
+  }
+  window.clearPatternSearch = clearPatternSearch;
+
+  function filterPatterns() {
+    const query = (document.getElementById('patternSearchInput')?.value || '').trim().toLowerCase();
+    const clearBtn = document.getElementById('clearPatternSearchBtn');
+    if (clearBtn) clearBtn.style.display = query ? 'block' : 'none';
+
+    const cards = document.querySelectorAll('#cards .pattern-card');
+    let visibleCount = 0;
+    cards.forEach(card => {
+      const text = card.textContent.toLowerCase();
+      const matches = !query || text.includes(query);
+      card.style.display = matches ? '' : 'none';
+      if (matches) visibleCount++;
+    });
+
+    const statusEl = document.getElementById('patternFilterStatus');
+    if (statusEl && cards.length > 0) {
+      statusEl.textContent = query ? `Showing ${visibleCount} of ${cards.length} patterns` : '';
+    }
+
+    let emptyMsg = document.getElementById('noMatchingPatterns');
+    if (cards.length > 0 && visibleCount === 0) {
+      if (!emptyMsg) {
+        emptyMsg = document.createElement('div');
+        emptyMsg.id = 'noMatchingPatterns';
+        emptyMsg.className = 'empty';
+        emptyMsg.innerHTML = '<div style="font-size:16px;font-weight:500;margin-bottom:4px;">No matching patterns found</div><div style="font-size:13px;color:var(--text2);">Try filtering with a different method, path, or intent.</div><button class="btn btn-ghost" style="margin-top:12px;font-size:12px;" onclick="clearPatternSearch()" aria-label="Clear pattern search filter">Clear search filter</button>';
+        cardsEl.appendChild(emptyMsg);
+      } else {
+        emptyMsg.style.display = '';
+      }
+    } else if (emptyMsg) {
+      emptyMsg.style.display = 'none';
+    }
+  }
+  window.filterPatterns = filterPatterns;
+
   function renderPatterns(list){
     cardsEl.innerHTML='';
     if(!list.length){ cardsEl.innerHTML = '<div class="empty">No patterns found</div>'; return; }
@@ -407,6 +481,7 @@
 
       cardsEl.appendChild(card);
     });
+    filterPatterns();
   }
 
   function fieldRow(labelText, inputEl){
@@ -567,6 +642,21 @@
     }
 
     document.getElementById('newPatternBtn').addEventListener('click', renderNewPatternCard);
+
+    document.addEventListener('keydown', function(event) {
+      if (event.key === '/' || ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k')) {
+        const active = document.activeElement;
+        const isEditing = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.tagName === 'SELECT' || active.isContentEditable);
+        if (!isEditing) {
+          const searchInput = document.getElementById('patternSearchInput');
+          if (searchInput) {
+            event.preventDefault();
+            searchInput.focus();
+            searchInput.select();
+          }
+        }
+      }
+    });
 
     loadPatterns();
   })();
