@@ -109,3 +109,7 @@
 ## 2026-03-31 - Bulk Targeted Pre-fetching for DeviceModel Merge
 **Learning:** Querying `RequestPattern`, `ResponseTemplate`, and `FieldMapping` sequentially inside the loop over `model.commands` in `DecipherIngest.merge_device_model` caused $O(N + M)$ individual SQL SELECT queries per model merge. Pre-computing candidate IDs and bulk-querying existing rows into dictionary lookups (`existing_patterns`, `existing_templates`, `existing_mappings`) via `.in_(...)` filters reduces queries to 3 total, resulting in an ~8x speedup (~0.138s vs ~1.096s per 250 merged items).
 **Action:** When upserting or merging batches of entities in database sessions, pre-compute candidate ID sets and execute targeted bulk `.in_(...)` queries into dictionaries before entering the iteration loop.
+
+## 2026-03-31 - Cached Initial Headers for Request Modification Engine
+**Learning:** `ModificationEngine._apply_to_request` evaluated `{k.lower(): v for k, v in original.headers.items()}` on every request to determine whether `msg.headers` had been modified by a rule. Pre-computing a copy on `InterceptedMessage._initial_headers` in `from_request` and comparing `msg.headers != msg._initial_headers` avoids redundant dictionary comprehension and lowercasing per request (~5x speedup for header modification checks in the request hot path).
+**Action:** Store a pre-computed lowercased dictionary snapshot on messages during parsing/instantiation to allow O(1) change detection without re-building dictionary comprehensions on completion.

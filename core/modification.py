@@ -358,11 +358,12 @@ class InterceptedMessage:
     blocked: bool = False
     block_reason: str | None = None
     modifications: list[dict] = field(default_factory=list)
+    _initial_headers: dict[str, str] | None = field(default=None, init=False, repr=False)
 
     def copy(self) -> InterceptedMessage:
         """Efficiently copy InterceptedMessage (~2.9x faster than generic copy.deepcopy)."""
         body_copy = copy.deepcopy(self.body) if self.body is not None else None
-        return InterceptedMessage(
+        copied = InterceptedMessage(
             direction=self.direction,
             device_id=self.device_id,
             vendor=self.vendor,
@@ -378,13 +379,18 @@ class InterceptedMessage:
             block_reason=self.block_reason,
             modifications=copy.deepcopy(self.modifications),
         )
+        if self._initial_headers is not None:
+            copied._initial_headers = self._initial_headers
+        return copied
 
     @classmethod
     def from_request(cls, intercepted: InterceptedRequest) -> InterceptedMessage:
         """Create from InterceptedRequest."""
         _metadata = getattr(intercepted, "metadata", None) or {}
         _parsed = getattr(intercepted, "parsed_intent", None)
-        return cls(
+        # Performance optimization: pre-compute lowercased headers once and cache reference on _initial_headers
+        headers_lower = {k.lower(): v for k, v in intercepted.headers.items()}
+        msg = cls(
             direction="request",
             device_id=intercepted.device_id,
             vendor=getattr(intercepted, "vendor", ""),
@@ -392,11 +398,13 @@ class InterceptedMessage:
             intent=_parsed.value if _parsed else "unknown",
             method=intercepted.method,
             path=intercepted.path,
-            headers={k.lower(): v for k, v in intercepted.headers.items()},
+            headers=headers_lower,
             body=intercepted.body,
             query_params=getattr(intercepted, "query_params", None) or {},
             metadata=_metadata,
         )
+        msg._initial_headers = headers_lower.copy()
+        return msg
 
     @classmethod
     def from_response(cls, response: ResponseRecord) -> InterceptedMessage:
@@ -632,7 +640,11 @@ class ModificationEngine:
         # action sets ``host``). In all other cases keep the intercepted keys
         # as-is: re-casing every header (e.g. ``content-type`` -> ``Content-Type``)
         # on every request broke downstream adapters that expect lowercase keys.
-        if msg.headers != {k.lower(): v for k, v in original.headers.items()}:
+        # Performance optimization: compare against pre-computed _initial_headers to avoid dict comprehension on every request
+        init_headers = getattr(msg, "_initial_headers", None)
+        if init_headers is None:
+            init_headers = {k.lower(): v for k, v in original.headers.items()}
+        if msg.headers != init_headers:
             original.headers = dict(msg.headers)
         original.metadata = msg.metadata
         original.modifications = msg.modifications
