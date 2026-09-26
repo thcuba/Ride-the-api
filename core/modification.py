@@ -388,7 +388,8 @@ class InterceptedMessage:
         """Create from InterceptedRequest."""
         _metadata = getattr(intercepted, "metadata", None) or {}
         _parsed = getattr(intercepted, "parsed_intent", None)
-        # Performance optimization: pre-compute lowercased headers once and cache reference on _initial_headers
+        # Performance optimization: pre-compute lowercased headers once and cache reference on
+        # _initial_headers
         headers_lower = {k.lower(): v for k, v in intercepted.headers.items()}
         msg = cls(
             direction="request",
@@ -640,7 +641,8 @@ class ModificationEngine:
         # action sets ``host``). In all other cases keep the intercepted keys
         # as-is: re-casing every header (e.g. ``content-type`` -> ``Content-Type``)
         # on every request broke downstream adapters that expect lowercase keys.
-        # Performance optimization: compare against pre-computed _initial_headers to avoid dict comprehension on every request
+        # Performance optimization: compare against pre-computed _initial_headers to avoid
+        # dict comprehension on every request
         init_headers = getattr(msg, "_initial_headers", None)
         if init_headers is None:
             init_headers = {k.lower(): v for k, v in original.headers.items()}
