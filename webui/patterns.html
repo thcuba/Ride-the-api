@@ -487,8 +487,23 @@
   function fieldRow(labelText, inputEl){
     const row = el('div',{class:'row'});
     const col = el('div',{class:'col'});
+    let inputId = inputEl ? inputEl.id : '';
+    if (inputEl && !inputId) {
+      const target = (inputEl.tagName === 'INPUT' || inputEl.tagName === 'SELECT' || inputEl.tagName === 'TEXTAREA')
+        ? inputEl
+        : inputEl.querySelector('input, select, textarea');
+      if (target) {
+        if (!target.id) {
+          const name = inputEl.name || (inputEl.dataset && inputEl.dataset.name) || target.name || 'field';
+          target.id = 'field-' + name + '-' + Math.random().toString(36).slice(2, 7);
+        }
+        inputId = target.id;
+      }
+    }
+    const labelAttrs = { style: 'margin-bottom:0;cursor:pointer;' };
+    if (inputId) labelAttrs['for'] = inputId;
     const labelHeader = el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;'},[
-      el('label',{style:'margin-bottom:0;'},labelText)
+      el('label', labelAttrs, labelText)
     ]);
     if (inputEl && inputEl.tagName === 'TEXTAREA') {
       const copyBtn = el('button',{
