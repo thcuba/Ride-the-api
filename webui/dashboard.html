@@ -1457,7 +1457,17 @@ async function removeTlsPort(port) {
 let certFiles = [];
 function pickCertFiles() {
   const input = document.getElementById('certFileInput');
-  input.onchange = () => { certFiles = Array.from(input.files || []); };
+  input.onchange = () => {
+    certFiles = Array.from(input.files || []);
+    const status = document.getElementById('tlsCertsStatus');
+    if (status) {
+      if (certFiles.length > 0) {
+        status.textContent = 'Selected: ' + certFiles.map(f => f.name).join(', ');
+      } else {
+        status.textContent = '';
+      }
+    }
+  };
   input.click();
 }
 
