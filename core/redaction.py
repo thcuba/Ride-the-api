@@ -138,17 +138,14 @@ def redact_headers(headers: dict[str, Any] | None) -> dict[str, Any] | None:
     """Return a copy of ``headers`` with sensitive values redacted."""
     if not headers:
         return headers
-    result: dict[str, Any] = {}
+    result = dict(headers)
     for name, value in headers.items():
         if value in (None, ""):
-            result[name] = value
             continue
         # Fast path lowercasing avoids str(name) on string keys (~1.12x speedup)
         key = name.lower() if isinstance(name, str) else str(name).lower()
         if key in SENSITIVE_HEADERS:
             result[name] = REDACTED
-        else:
-            result[name] = value
     return result
 
 
@@ -156,17 +153,14 @@ def redact_query(query_params: dict[str, Any] | None) -> dict[str, Any] | None:
     """Return a copy of ``query_params`` with sensitive values redacted."""
     if not query_params:
         return query_params
-    result: dict[str, Any] = {}
+    result = dict(query_params)
     for name, value in query_params.items():
         if value in (None, ""):
-            result[name] = value
             continue
         # Fast path lowercasing avoids str(name) on string keys (~1.12x speedup)
         key = name.lower() if isinstance(name, str) else str(name).lower()
         if key in SENSITIVE_QUERY_PARAMS:
             result[name] = REDACTED
-        else:
-            result[name] = value
     return result
 
 

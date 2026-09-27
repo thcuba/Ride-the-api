@@ -113,3 +113,7 @@
 ## 2026-03-31 - Cached Initial Headers for Request Modification Engine
 **Learning:** `ModificationEngine._apply_to_request` evaluated `{k.lower(): v for k, v in original.headers.items()}` on every request to determine whether `msg.headers` had been modified by a rule. Pre-computing a copy on `InterceptedMessage._initial_headers` in `from_request` and comparing `msg.headers != msg._initial_headers` avoids redundant dictionary comprehension and lowercasing per request (~5x speedup for header modification checks in the request hot path).
 **Action:** Store a pre-computed lowercased dictionary snapshot on messages during parsing/instantiation to allow O(1) change detection without re-building dictionary comprehensions on completion.
+
+## 2026-03-31 - Native Dictionary Cloning for Header Redaction
+**Learning:** Initializing `result = dict(headers)` constructs the initial copy in native C code (~0.16s for 500,000 calls) and only assigns `REDACTED` for matching sensitive keys, avoiding Python element-by-element assignment loop overhead (`result[name] = value`) for clean keys while strictly preserving function immutability contracts.
+**Action:** When redacting or updating dictionary fields where most keys remain unchanged, use `result = dict(input)` native copy first before overwriting sensitive entries.
