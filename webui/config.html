@@ -424,7 +424,15 @@ function buildSidebar() {
 }
 
 function selectSection(key) {
-  document.querySelectorAll('.section-item').forEach(b => b.classList.toggle('active', b.dataset.section === key));
+  document.querySelectorAll('.section-item').forEach(b => {
+    const isActive = b.dataset.section === key;
+    b.classList.toggle('active', isActive);
+    if (isActive) {
+      b.setAttribute('aria-current', 'true');
+    } else {
+      b.removeAttribute('aria-current');
+    }
+  });
   const title = document.getElementById('sectionTitle');
   const desc = document.getElementById('sectionDesc');
   const fields = document.getElementById('fields');
@@ -579,9 +587,12 @@ function renderField(path, label, value) {
   if (typeof value === 'boolean') {
     const input = document.createElement('input');
     input.type = 'checkbox'; input.className = 'switch';
+    input.role = 'switch';
     input.id = id; input.checked = value;
+    input.setAttribute('aria-checked', value ? 'true' : 'false');
     input.setAttribute('aria-label', label);
     input.addEventListener('change', () => {
+        input.setAttribute('aria-checked', input.checked ? 'true' : 'false');
         setAt(cfg, path, input.checked);
         setDirty(path);
         markFieldDirty(path);
