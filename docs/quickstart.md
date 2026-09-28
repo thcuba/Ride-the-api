@@ -37,6 +37,28 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1   # add -Silent for silen
 
 See [Deployment](deployment.md) for all options (`--version`, `--dir`, `RTA_*`).
 
+### A1) Raspberry Pi — fully automatic (install from source)
+
+Raspberry Pi OS is **64-bit only** (arm64). The bootstrap script does everything:
+checks the architecture, installs prerequisites, clones the repo, creates a
+Python virtualenv with **all dependencies** (`pip install -e .`), registers a
+boot auto-start service that runs the server from the venv (reachable on the
+LAN at `0.0.0.0:8911`) and waits until the health check passes. One command and
+the Pi has Python + the full environment and the server running.
+
+```bash
+# 2 commands total — the rest is handled automatically
+curl -fsSL https://raw.githubusercontent.com/thcuba/Ride-the-api/main/deploy/bootstrap-rpi.sh -o bootstrap-rpi.sh
+bash bootstrap-rpi.sh            # install from source + auto-start service (default)
+# for a quick foreground test instead of a service:
+#   bash bootstrap-rpi.sh --fg
+```
+
+After install the web UI is at `http://<pi-ip>:8911/` and the server starts at
+boot. The LLM API key and DNS routing are a later step (sections 3 and 3.4).
+Rerunning the script upgrades in place (git pull + `pip install`), preserving
+`config/ data/ certs/ logs/`.
+
 ### B) From source
 
 ```bash
