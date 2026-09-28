@@ -56,6 +56,10 @@ fail() { printf '\033[31m✘ %s\033[0m\n' "$*"; exit 1; }
 
 IP() { local ip; ip="$(hostname -I 2>/dev/null | awk '{print $1}')"; echo "${ip:-<ip-della-pi>}"; }
 
+# sudo non interattivo: `sudo -n` fallisce subito se serve password (niente blocchi).
+# Ritorna l'exit code; il chiamante decide se fail-hard o warn.
+sudorun() { if command -v sudo >/dev/null 2>&1; then sudo -n "$@"; else return 127; fi; }
+
 echo
 bold "Ride the API — Raspberry Pi bootstrap (da sorgente, one-shot)"
 
@@ -75,9 +79,9 @@ for cmd in git curl python3; do command -v "$cmd" >/dev/null 2>&1 || MISSING="$M
 python3 -m venv --help >/dev/null 2>&1 || MISSING="$MISSING python3-venv"
 if [[ -n "${MISSING}" ]]; then
   warn "Mancano:$MISSING — li installo (serve internet + sudo)..."
-  sudo apt-get update -y >/dev/null 2>&1 || warn "apt-get update non riuscito."
-  for pkg in git curl python3 python3-venv; do
-    dpkg -s "$pkg" >/dev/null 2>&1 || sudo apt-get install -y "$pkg" >/dev/null
+  sudorun apt-get update -y >/dev/null 2>&1 || warn "apt-get update non riuscito."
+  for pkg in git curl python3 python3-venv python3-pip; do
+    dpkg -s "$pkg" >/dev/null 2>&1 || sudorun apt-get install -y "$pkg" >/dev/null || warn "Install di $pkg fallito (già presente o sudo negato)."
   done
 fi
 for cmd in git curl python3; do
@@ -91,9 +95,22 @@ echo; printf '\033[1m▸ 3/6  Scarico il codice sorgente\033[0m\n'
 mkdir -p "$BASE_DIR"
 if [[ -d "${SRC_DIR}/.git" ]]; then
   echo "  Repo già presente, aggiorno..."
-  ( cd "$SRC_DIR" && git fetch --quiet --tags origin && git pull --ff-only origin main )
+  ( cd "$SRC_DIR" && git fetch --quiet --tags origin && git pull --ff-only origin main ) \
+    || fail "Aggiornamento del repo fallito. Guarda l'output qui sopra."
 else
-  git clone --quiet "$REPO_URL" "$SRC_DIR" || fail "Clone fallito. Controlla la connessione."
+  # Se la cartella esiste ma NON è un repo git (es. residuo di un tentativo
+  # precedente, download incompleto), la spostiamo in backup invece di
+  # fallire il clone: altrimenti git darebbe un errore fuorviante.
+  if [[ -e "${SRC_DIR}" ]]; then
+    STALE="${SRC_DIR}.stale.$(date +%s)"
+    warn "Trovata cartella ${SRC_DIR} senza repo git: la sposto in ${STALE}"
+    mv "${SRC_DIR}" "${STALE}" || fail "Impossibile spostare ${SRC_DIR}."
+  fi
+  echo "  Clono ${REPO_URL} ..."
+  git clone --quiet "$REPO_URL" "$SRC_DIR" \
+    || fail "Clone fallito. Verifica l'errore qui sopra o prova:
+  time curl -s -o /dev/null -w 'github: %{http_code}\n' https://github.com
+  (connessione a github.com assente/lenta se non stampa un codice 2xx/3xx)."
 fi
 ok "Sorgente in ${SRC_DIR}."
 
@@ -135,7 +152,7 @@ EOF
   unit
   # A user service won't start at boot unless the user session lingers.
   if command -v loginctl >/dev/null 2>&1; then
-    sudo loginctl enable-linger "$(whoami)" || warn "Impossibile abilitare lingering (serve sudo)."
+    sudorun loginctl enable-linger "$(whoami)" || warn "Impossibile abilitare lingering (serve sudo -n)."
   fi
   systemctl --user daemon-reload
   systemctl --user enable --now ride-the-api 2>/dev/null \
