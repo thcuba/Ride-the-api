@@ -59,6 +59,22 @@ boot. The LLM API key and DNS routing are a later step (sections 3 and 3.4).
 Rerunning the script upgrades in place (git pull + `pip install`), preserving
 `config/ data/ certs/ logs/`.
 
+### A2) Linux — fully automatic (install from source)
+
+Same one-command flow for any 64-bit Linux (amd64/aarch64). Supports apt/dnf/
+pacman for prerequisites, uses systemd when available (else falls back to the
+foreground):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/thcuba/Ride-the-api/main/deploy/bootstrap-linux.sh -o bootstrap-linux.sh
+bash bootstrap-linux.sh        # install from source + auto-start service (default)
+# for a quick foreground test instead of a service:
+#   bash bootstrap-linux.sh --fg
+```
+
+After install the web UI is at `http://<host-ip>:8911/`. Same later steps as
+section A1 (LLM key + DNS routing).
+
 ### B) From source
 
 ```bash
