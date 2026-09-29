@@ -121,3 +121,7 @@
 ## 2026-03-31 - Fast Direct Raw Header Appending for Security Headers Middleware
 **Learning:** In Starlette `BaseHTTPMiddleware`, calling `response.headers.setdefault(...)` multiple times triggers multiple linear scans and key conversions over `response.raw_headers` via `MutableHeaders`. Direct tuple iteration on `response.raw_headers` and bulk `extend()` with pre-computed `(bytes, bytes)` tuples bypasses `MutableHeaders` wrapper overhead and reduces security header injection time by ~2.3x per response (~0.36s vs ~0.84s per 100,000 HTTP responses).
 **Action:** When injecting fixed HTTP response headers in Starlette/FastAPI middleware, perform a single-pass inspection directly on `response.raw_headers` tuples and append pre-encoded `(b"name", b"value")` byte tuples instead of making multiple `response.headers.setdefault()` calls.
+
+## 2026-03-31 - Cached Device Buffer Size in Capture Buffer Manager
+**Learning:** `BufferManager._get_max_buffer_size(device_id)` executed an async SQL query `select(DeviceRegistry.context_buffer_size)` on every single captured request/response pair added via `add_pair`. Caching the max buffer size in an instance dictionary (`_buffer_size_cache`) and clearing it during session cache flushes eliminates DB query overhead per pair (~64.5x speedup for buffer size lookups, 568ms -> 8.8ms per 100 pairs).
+**Action:** Always cache per-device configuration thresholds on manager/service instances when evaluated inside packet interception or capture storage loops.
