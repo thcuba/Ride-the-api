@@ -21,7 +21,7 @@
 ## Prebuilt binaries (all platforms)
 
 > **New to the project?** The [Quick Start](quickstart.md) is the recommended
-> starting point — it covers the one-command install paths (sections A1/A2).
+> starting point — it covers the one-command install from source (section A1).
 > This section describes the prebuilt-binary route in detail.
 
 Each GitHub **release ships prebuilt bundles** for Linux (x64/arm64), macOS
@@ -56,20 +56,20 @@ Options:
 | `--systemd` | Write a systemd user unit that runs it as a service |
 | `RTA_VERSION` / `RTA_DIR` | Environment overrides for the same flags |
 
-On a Raspberry Pi (arm64), the recommended one-command install is **from
-source** via the dedicated bootstrap script — it verifies you are on Raspberry
-Pi OS (via `/etc/os-release`, warning if not) and on a 64-bit architecture,
-clones the repo, creates a Python virtualenv with all dependencies, and
-registers an auto-start service.
-See [Quick Start section A1](quickstart.md#a1-raspberry-pi-fully-automatic-install-from-source):
+On any supported 64-bit Linux (Raspberry Pi OS, **Debian**, Ubuntu, Fedora,
+Arch), the recommended one-command install is **from source** via the unified
+bootstrap script — it detects the distro and package manager (via
+`/etc/os-release`), verifies the architecture (Raspberry Pi OS requires
+`arm64/aarch64`), clones the repo, creates a Python virtualenv with all
+dependencies, and registers an auto-start service.
+See [Quick Start section A1](quickstart.md#a1-linux-raspberry-pi-fully-automatic-install-from-source):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/thcuba/Ride-the-api/main/deploy/bootstrap-rpi.sh -o bootstrap-rpi.sh
-bash bootstrap-rpi.sh            # install from source + auto-start service (default)
+curl -fsSL https://raw.githubusercontent.com/thcuba/Ride-the-api/main/deploy/bootstrap.sh -o bootstrap.sh
+bash bootstrap.sh            # install from source + auto-start service (default)
 ```
 
-The same flow exists for any 64-bit Linux ([Quick Start A2](quickstart.md#a2-linux-fully-automatic-install-from-source)):
-`deploy/bootstrap-linux.sh`. Run in the foreground for a quick test with `--fg`.
+Run in the foreground for a quick test with `--fg`.
 
 Alternatively, install the **prebuilt bundle** as a user service:
 
