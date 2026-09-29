@@ -7,7 +7,7 @@
 # the server starts at boot and is accessible from the network.
 #
 # What this script does:
-#   1. Verifies the OS is 64-bit (arm64/aarch64) — the #1 blocker on Pi.
+#   1. Verifies the OS is Raspberry Pi OS 64-bit (arm64/aarch64) — the #1 blocker on Pi.
 #   2. Installs missing prerequisites (git, curl, python3, python3-venv).
 #   3. Clones the repo into <dir>/ride-the-api (or updates if present).
 #   4. Creates a virtualenv and installs ALL dependencies: pip install -e .
@@ -63,8 +63,26 @@ sudorun() { if command -v sudo >/dev/null 2>&1; then sudo -n "$@"; else return 1
 echo
 bold "Ride the API — Raspberry Pi bootstrap (da sorgente, one-shot)"
 
-# ── 1. 64-bit check ──────────────────────────────────────────────────────────
-echo; printf '\033[1m▸ 1/6  Verifica architettura a 64 bit\033[0m\n'
+# ── 1. OS + 64-bit check ──────────────────────────────────────────────────────
+echo; printf '\033[1m▸ 1/6  Verifica Raspberry Pi OS a 64 bit\033[0m\n'
+
+# OS: rileva da /etc/os-release (Raspberry Pi OS si identifica come "raspbian").
+OS_ID="$(sed -n 's/^ID=//p' /etc/os-release 2>/dev/null | tr -d '"' | head -1)"
+OS_NAME="$(sed -n 's/^PRETTY_NAME=//p' /etc/os-release 2>/dev/null | tr -d '"' | head -1)"
+if [[ "${OS_ID}" == "raspbian" ]]; then
+  echo "  OS: ${OS_NAME}"
+  ok "Raspberry Pi OS rilevato."
+elif command -v uname >/dev/null 2>&1 && uname -a 2>/dev/null | grep -qi "raspberry pi"; then
+  warn "OS aspetta Raspberry Pi OS, ma /etc/os-release non lo conferma (ID='${OS_ID:-?}')."
+  echo "  Rilevato: ${OS_NAME:-Host sconosciuto}"
+elif [[ -n "${OS_NAME}" ]]; then
+  warn "Non sembra Raspberry Pi OS (ID='${OS_ID}', '${OS_NAME}')."
+  warn "Questo script è pensato per Raspberry Pi OS: alcuni passi potrebbero non adattarsi."
+else
+  warn "Impossibile leggere /etc/os-release: continuo, ma potresti non essere su Raspberry Pi OS."
+fi
+
+# Architettura: serve a 64 bit.
 ARCH="$(uname -m)"
 if [[ "${ARCH}" != "aarch64" && "${ARCH}" != "arm64" ]]; then
   fail "Architettura '${ARCH}' rilevata. Serve Raspberry Pi OS a 64 bit (arm64/aarch64).
