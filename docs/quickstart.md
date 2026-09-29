@@ -39,12 +39,15 @@ See [Deployment](deployment.md) for all options (`--version`, `--dir`, `RTA_*`).
 
 ### A1) Raspberry Pi — fully automatic (install from source)
 
-Raspberry Pi OS is **64-bit only** (arm64). The bootstrap script does everything:
-checks the architecture, installs prerequisites, clones the repo, creates a
-Python virtualenv with **all dependencies** (`pip install -e .`), registers a
-boot auto-start service that runs the server from the venv (reachable on the
-LAN at `0.0.0.0:8911`) and waits until the health check passes. One command and
-the Pi has Python + the full environment and the server running.
+Raspberry Pi OS is **64-bit only** (arm64). The bootstrap script checks first that
+you are running Raspberry Pi OS (via `/etc/os-release`) and on a 64-bit
+architecture, then installs prerequisites, clones the repo, creates a Python
+virtualenv with **all dependencies** (`pip install -e .`), registers a boot
+auto-start service that runs the server from the venv (reachable on the LAN at
+`0.0.0.0:8911`) and waits until the health check passes. One command and the Pi
+has Python + the full environment and the server running. If the OS is not
+Raspberry Pi OS the script warns you (it may still work); if the architecture is
+not 64-bit it stops with a clear message.
 
 ```bash
 # 2 commands total — the rest is handled automatically
