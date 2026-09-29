@@ -57,8 +57,10 @@ Options:
 | `RTA_VERSION` / `RTA_DIR` | Environment overrides for the same flags |
 
 On a Raspberry Pi (arm64), the recommended one-command install is **from
-source** via the dedicated bootstrap script — it clones the repo, creates a
-Python virtualenv with all dependencies, and registers an auto-start service.
+source** via the dedicated bootstrap script — it verifies you are on Raspberry
+Pi OS (via `/etc/os-release`, warning if not) and on a 64-bit architecture,
+clones the repo, creates a Python virtualenv with all dependencies, and
+registers an auto-start service.
 See [Quick Start section A1](quickstart.md#a1-raspberry-pi-fully-automatic-install-from-source):
 
 ```bash
