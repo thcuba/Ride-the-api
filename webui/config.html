@@ -903,6 +903,13 @@ function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+window.addEventListener('beforeunload', (event) => {
+  if (dirty.size > 0) {
+    event.preventDefault();
+    event.returnValue = '';
+  }
+});
+
 loadConfig();
 </script>
 </body>
