@@ -117,13 +117,17 @@ if [[ -n "${MISSING}" ]]; then
   warn "Mancano:$MISSING — provo a installarli (richiede sudo)..."
   if command -v apt-get >/dev/null 2>&1; then
     sudorun apt-get update -y >/dev/null 2>&1 || true
-    for pkg in git curl python3 python3-venv python3-pip; do
+    # build-essential + python3-dev: servono se pip deve compilare qualche
+    # dipendenza senza wheel (es. asyncpg/aiocoap su piattaforme nuove).
+    for pkg in git curl python3 python3-venv python3-pip python3-dev build-essential; do
       dpkg -s "$pkg" >/dev/null 2>&1 || sudorun apt-get install -y "$pkg" >/dev/null || warn "Install di $pkg fallito (già presente o sudo negato)."
     done
   elif command -v dnf >/dev/null 2>&1; then
-    sudorun dnf install -y git curl python3 python3-venv >/dev/null 2>&1 || true
+    # python3-devel + gcc: come sopra, per la compilazione.
+    sudorun dnf install -y git curl python3 python3-venv python3-devel gcc gcc-c++ make >/dev/null 2>&1 || true
   elif command -v pacman >/dev/null 2>&1; then
-    sudorun pacman -S --noconfirm git curl python python-virtualenv >/dev/null 2>&1 || true
+    # base-devel + python-pip: tool di build + gestore pip di sistema.
+    sudorun pacman -S --noconfirm git curl python python-virtualenv python-pip base-devel >/dev/null 2>&1 || true
   else
     fail "Gestore pacchetti non riconosciuto. Installa a mano: git, curl, python3, python3-venv."
   fi
@@ -166,7 +170,11 @@ fi
 # fast: su arm64 i wheel manylinux non servono compilazione locale.
 "${VENV}/bin/python" -m pip install --upgrade pip >/dev/null
 "${VENV}/bin/python" -m pip install -e "${SRC_DIR}" \
-  || fail "pip install è fallito. Verifica: ${VENV}/bin/pip install -e ${SRC_DIR}"
+  || fail "pip install è fallito. Verifica: ${VENV}/bin/pip install -e ${SRC_DIR}
+Se l'errore parla di 'build tools' o 'compiler', installa i tool di build:
+  apt:     sudo apt-get install -y python3-dev build-essential
+  dnf:     sudo dnf install -y python3-devel gcc gcc-c++ make
+  pacman:  sudo pacman -S --noconfirm base-devel"
 ok "Dipendenze installate (venv in ${VENV})."
 
 # ── 5. Start ─────────────────────────────────────────────────────────────────
