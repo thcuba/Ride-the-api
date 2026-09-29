@@ -37,46 +37,37 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1   # add -Silent for silen
 
 See [Deployment](deployment.md) for all options (`--version`, `--dir`, `RTA_*`).
 
-### A1) Raspberry Pi — fully automatic (install from source)
+### A1) Linux / Raspberry Pi — fully automatic (install from source)
 
-Raspberry Pi OS is **64-bit only** (arm64). The bootstrap script checks first that
-you are running Raspberry Pi OS (via `/etc/os-release`) and on a 64-bit
-architecture, then installs prerequisites, clones the repo, creates a Python
-virtualenv with **all dependencies** (`pip install -e .`), registers a boot
-auto-start service that runs the server from the venv (reachable on the LAN at
-`0.0.0.0:8911`) and waits until the health check passes. One command and the Pi
-has Python + the full environment and the server running. If the OS is not
-Raspberry Pi OS the script warns you (it may still work); if the architecture is
-not 64-bit it stops with a clear message.
+One bootstrap script works on **any** supported 64-bit Linux — Raspberry Pi OS,
+**Debian**, Ubuntu, Fedora, Arch. It detects the distro (via `/etc/os-release`)
+and the package manager (apt/dnf/pacman), installs prerequisites, clones the
+repo, creates a Python virtualenv with **all dependencies** (`pip install -e .`),
+registers a boot auto-start service that runs the server from the venv
+(reachable on the LAN at `0.0.0.0:8911`) and waits until the health check
+passes. One command and the machine has Python + the full environment and the
+server running.
+
+Two per-distro specifics, handled automatically:
+- **Raspberry Pi OS** is **64-bit only**: the script requires `arm64/aarch64`
+  and stops with a clear message otherwise.
+- **Debian / Ubuntu / Fedora / Arch**: script accepts `amd64` or `arm64` and
+  picks the right package manager for prerequisites.
+- On an unrecognized distro it warns (it may still work); on a non-64-bit
+  architecture it stops.
 
 ```bash
 # 2 commands total — the rest is handled automatically
-curl -fsSL https://raw.githubusercontent.com/thcuba/Ride-the-api/main/deploy/bootstrap-rpi.sh -o bootstrap-rpi.sh
-bash bootstrap-rpi.sh            # install from source + auto-start service (default)
+curl -fsSL https://raw.githubusercontent.com/thcuba/Ride-the-api/main/deploy/bootstrap.sh -o bootstrap.sh
+bash bootstrap.sh            # install from source + auto-start service (default)
 # for a quick foreground test instead of a service:
-#   bash bootstrap-rpi.sh --fg
+#   bash bootstrap.sh --fg
 ```
 
-After install the web UI is at `http://<pi-ip>:8911/` and the server starts at
+After install the web UI is at `http://<host-ip>:8911/` and the server starts at
 boot. The LLM API key and DNS routing are a later step (sections 3 and 3.4).
 Rerunning the script upgrades in place (git pull + `pip install`), preserving
 `config/ data/ certs/ logs/`.
-
-### A2) Linux — fully automatic (install from source)
-
-Same one-command flow for any 64-bit Linux (amd64/aarch64). Supports apt/dnf/
-pacman for prerequisites, uses systemd when available (else falls back to the
-foreground):
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/thcuba/Ride-the-api/main/deploy/bootstrap-linux.sh -o bootstrap-linux.sh
-bash bootstrap-linux.sh        # install from source + auto-start service (default)
-# for a quick foreground test instead of a service:
-#   bash bootstrap-linux.sh --fg
-```
-
-After install the web UI is at `http://<host-ip>:8911/`. Same later steps as
-section A1 (LLM key + DNS routing).
 
 ### B) From source
 
