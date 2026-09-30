@@ -182,8 +182,7 @@ class TestLLMSettingsAPI:
     def _client(self):
         # Use a known admin key so the control-plane auth passes.
 
-        config_manager.config.security.admin_api_key = "test-admin-key"
-        config_manager.config.security.readonly_api_key = "test-ro-key"
+        config_manager.config.security.password = "test-password"
         return TestClient(app)
 
     def _mock_service(self):
@@ -214,7 +213,7 @@ class TestLLMSettingsAPI:
 
         server.llm_decipher_service = self._mock_service()
         client = self._client()
-        resp = client.get("/api/llm/settings", headers={"X-API-Key": "test-admin-key"})
+        resp = client.get("/api/llm/settings", headers={"X-API-Key": "test-password"})
         assert resp.status_code == 200  # noqa: PLR2004
         body = resp.json()
         assert body["enabled"] is True
@@ -228,7 +227,7 @@ class TestLLMSettingsAPI:
         client = self._client()
         resp = client.put(
             "/api/llm/settings",
-            headers={"X-API-Key": "test-admin-key"},
+            headers={"X-API-Key": "test-password"},
             json={"enabled": True, "default_profile": "default", "profiles": {}},
         )
         assert resp.status_code == 200  # noqa: PLR2004
@@ -240,7 +239,7 @@ class TestLLMSettingsAPI:
         client = self._client()
         resp = client.put(
             "/api/llm/settings",
-            headers={"X-API-Key": "test-admin-key"},
+            headers={"X-API-Key": "test-password"},
             json=["not", "an", "object"],
         )
         assert resp.status_code == 400  # noqa: PLR2004
@@ -252,7 +251,7 @@ class TestLLMSettingsAPI:
         client = self._client()
         resp = client.post(
             "/api/llm/settings/profiles",
-            headers={"X-API-Key": "test-admin-key"},
+            headers={"X-API-Key": "test-password"},
             json={"name": "local", "base_url": "http://x", "model_id": "m"},
         )
         assert resp.status_code == 200  # noqa: PLR2004
@@ -265,7 +264,7 @@ class TestLLMSettingsAPI:
         client = self._client()
         resp = client.post(
             "/api/llm/settings/profiles",
-            headers={"X-API-Key": "test-admin-key"},
+            headers={"X-API-Key": "test-password"},
             json={"base_url": "http://x"},
         )
         assert resp.status_code == 400  # noqa: PLR2004
@@ -277,7 +276,7 @@ class TestLLMSettingsAPI:
         client = self._client()
         resp = client.delete(
             "/api/llm/settings/profiles/default",
-            headers={"X-API-Key": "test-admin-key"},
+            headers={"X-API-Key": "test-password"},
         )
         assert resp.status_code == 200  # noqa: PLR2004
         assert resp.json()["name"] == "default"
@@ -290,6 +289,6 @@ class TestLLMSettingsAPI:
         client = self._client()
         resp = client.delete(
             "/api/llm/settings/profiles/nope",
-            headers={"X-API-Key": "test-admin-key"},
+            headers={"X-API-Key": "test-password"},
         )
         assert resp.status_code == 404  # noqa: PLR2004

@@ -5,10 +5,15 @@ plane (administrative ``/api/*`` routes). Without protection, any client that
 can reach the server can change modes, delete patterns, start listeners,
 upload TLS keys, read captures and trigger LLM calls.
 
-This module provides a middleware that requires an API key for every
-``/api/*`` route. Read-only methods (GET/HEAD) accept either the read-only key
-or the admin key; every other method requires the admin key. Keys are accepted
-via the ``X-API-Key`` header or ``Authorization: Bearer <key>``.
+This module provides a middleware that requires a single control-plane
+``password`` for every ``/api/*`` route. When ``security.auth_enabled`` is
+true, the password grants full access (reads and writes) — there is no
+read-only vs admin distinction. It is accepted via the ``X-API-Key`` header
+or ``Authorization: Bearer ***``.
+
+If ``password`` is left empty while auth is enabled, the control plane is
+locked: every protected request is rejected with a clear instruction to set
+``security.password`` in ``config.yaml`` (no ephemeral keys are generated).
 """
 
 from __future__ import annotations
@@ -16,7 +21,6 @@ from __future__ import annotations
 import hmac
 import json
 import logging
-import secrets
 from typing import TYPE_CHECKING
 
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -35,13 +39,7 @@ logger = logging.getLogger(__name__)
 # Paths that must remain reachable without credentials.
 # The CA certificate is downloaded by an operator to install on devices; it is
 # not secret, so it stays public to avoid breaking MITM onboarding.
-# /api/setup/keys is public only while the control-plane keys are ephemeral
-# (no explicit keys in config.yaml): it lets the web UI show the generated
-# keys on first access. Once explicit keys are configured it stops exposing
-# anything.
-PUBLIC_PATHS = frozenset({"/api/tls/ca-cert", "/api/setup/keys"})
-
-_READ_ONLY_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+PUBLIC_PATHS = frozenset({"/api/tls/ca-cert"})
 
 
 def _safe_eq(a: str, b: str) -> bool:
@@ -50,7 +48,7 @@ def _safe_eq(a: str, b: str) -> bool:
 
 
 def _extract_key(request: Request) -> str:
-    """Return the API key from the X-API-Key header or Authorization bearer."""
+    """Return the password from the X-API-Key header or Authorization bearer."""
     key = request.headers.get("x-api-key")
     if key:
         return key
@@ -61,7 +59,7 @@ def _extract_key(request: Request) -> str:
 
 
 class ControlPlaneAuthMiddleware(BaseHTTPMiddleware):
-    """Require an API key for every ``/api/*`` route.
+    """Require the control-plane password for every ``/api/*`` route.
 
     ``get_security_config`` is a zero-argument callable returning the current
     :class:`SecurityConfig` so hot-reloads of the YAML are picked up live.
@@ -71,79 +69,23 @@ class ControlPlaneAuthMiddleware(BaseHTTPMiddleware):
         self,
         app,
         get_security_config: Callable[[], SecurityConfig],
-        persist_keys: Callable[[str, str], bool] | None = None,
     ) -> None:
         super().__init__(app)
         self._get_security_config = get_security_config
-        # Optional callback that persists generated keys back to the config
-        # file (wired at startup) so they stay stable across restarts.
-        self._persist_keys = persist_keys
-        self._generated_admin_key: str | None = None
-        self._generated_readonly_key: str | None = None
         self._logged = False
-        # Expose the active instance so the setup route can reveal ephemeral
-        # keys on first access (see get_generated_keys).
-        global _control_plane_auth  # noqa: PLW0603
-        _control_plane_auth = self
 
-    def ensure_stable_keys(self) -> None:
-        """Generate missing API keys, persist them and log them in plaintext.
-
-        Called once at server startup so the effective keys are stable across
-        restarts and visible in the log immediately. Missing keys are generated
-        and written back to config.yaml via ``persist_keys`` when available.
-        """
-        cfg = self._get_security_config()
-        if not cfg.auth_enabled:
+    def _log_once(self, password_ok: bool) -> None:
+        """Log once at startup so the operator can confirm auth state."""
+        if self._logged:
             return
-        admin_key, readonly_key = self._effective_keys(cfg)
-        # Persist generated keys so they survive a restart. Only when at least
-        # one key was missing (explicitly configured keys are left untouched).
-        if (not cfg.admin_api_key or not cfg.readonly_api_key) and self._persist_keys:
-            try:
-                if self._persist_keys(admin_key, readonly_key):
-                    logger.info("Persisted generated control-plane API keys to config.yaml")
-                else:
-                    logger.warning(
-                        "Could not persist generated control-plane API keys; "
-                        "they are valid only for this run"
-                    )
-            except Exception:
-                logger.exception("Failed to persist generated control-plane API keys")
-
-    def effective_keys(self) -> tuple[str, str]:
-        """Return (admin_key, readonly_key), generating ephemeral ones if unset."""
-        return self._effective_keys(self._get_security_config())
-
-    def uses_ephemeral_keys(self) -> bool:
-        """True when auth is on and no explicit keys are configured.
-
-        In that case the middleware generates random keys at startup that the
-        operator cannot know — so the first-access UI must reveal them.
-        """
-        cfg = self._get_security_config()
-        return bool(cfg.auth_enabled) and not cfg.admin_api_key and not cfg.readonly_api_key
-
-    def _effective_keys(self, cfg: SecurityConfig) -> tuple[str, str]:
-        """Return (admin_key, readonly_key), generating random ones if unset."""
-        admin = cfg.admin_api_key or self._generated_admin_key
-        if not admin:
-            self._generated_admin_key = secrets.token_urlsafe(32)
-            admin = self._generated_admin_key
-        readonly = cfg.readonly_api_key or self._generated_readonly_key
-        if not readonly:
-            self._generated_readonly_key = secrets.token_urlsafe(32)
-            readonly = self._generated_readonly_key
-        if not self._logged:
-            self._logged = True
-            # Intentional: operator requires the effective control-plane API keys to be
-            # printed in plaintext in the server log at startup (see PR #249).
-            logger.info(
-                "Control-plane auth enabled. Effective API keys (admin readonly): %s %s",
-                admin,  # lgtm[py/clear-text-logging-sensitive-data]
-                readonly,  # lgtm[py/clear-text-logging-sensitive-data]
+        self._logged = True
+        if password_ok:
+            logger.info("Control-plane auth enabled. A password is configured in config.yaml.")
+        else:
+            logger.warning(
+                "Control-plane auth enabled but security.password is empty: "
+                "the control plane is locked until you set it in config.yaml."
             )
-        return admin, readonly
 
     async def dispatch(self, request: Request, call_next):  # noqa: ANN001, PLR0911
         # Performance optimization: direct scope lookup avoids parsing URL object (~4x speedup)
@@ -160,15 +102,23 @@ class ControlPlaneAuthMiddleware(BaseHTTPMiddleware):
         if not cfg.auth_enabled:
             return await call_next(request)
 
-        admin_key, readonly_key = self._effective_keys(cfg)
-        provided = _extract_key(request)
+        password = cfg.password
+        if not password:
+            self._log_once(password_ok=False)
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "error": (
+                        "Control-plane auth is enabled but security.password is "
+                        "empty. Set your password in config.yaml and restart, "
+                        "or disable auth_enabled."
+                    )
+                },
+            )
 
-        if request.method in _READ_ONLY_METHODS:
-            if (readonly_key and _safe_eq(provided, readonly_key)) or (
-                admin_key and _safe_eq(provided, admin_key)
-            ):
-                return await call_next(request)
-        elif admin_key and _safe_eq(provided, admin_key):
+        self._log_once(password_ok=True)
+        provided = _extract_key(request)
+        if _safe_eq(provided, password):
             return await call_next(request)
 
         return JSONResponse(
@@ -176,37 +126,6 @@ class ControlPlaneAuthMiddleware(BaseHTTPMiddleware):
             content={"error": "Unauthorized"},
             headers={"WWW-Authenticate": "Bearer"},
         )
-
-
-# Active ControlPlaneAuthMiddleware instance, registered at stack-build time.
-# Used by /api/setup/keys to reveal ephemeral keys on first access.
-_control_plane_auth: ControlPlaneAuthMiddleware | None = None
-
-
-def get_generated_keys() -> tuple[str, str] | None:
-    """Return the generated (admin_key, readonly_key) on first access.
-
-    Only available while the keys are ephemeral (auth enabled and no explicit
-    keys in config.yaml). Once the operator sets explicit keys this returns
-    ``None`` so they are never exposed over the network.
-    """
-    auth = _control_plane_auth
-    if auth is None or not auth.uses_ephemeral_keys():
-        return None
-    return auth.effective_keys()
-
-
-def ensure_stable_api_keys() -> None:
-    """Generate (once) and persist missing control-plane API keys.
-
-    Called at server startup. Keys that are absent from config.yaml are
-    generated and written back so they stay identical across restarts; the
-    effective keys are logged in plaintext at startup. No-op when the active
-    middleware is not registered yet or auth is disabled.
-    """
-    auth = _control_plane_auth
-    if auth is not None:
-        auth.ensure_stable_keys()
 
 
 class RequestBodyTooLarge(StarletteHTTPException):

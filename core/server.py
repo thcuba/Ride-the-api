@@ -80,8 +80,6 @@ from core.security import (
     ControlPlaneAuthMiddleware,
     MaxBodySizeMiddleware,
     SecurityHeadersMiddleware,
-    ensure_stable_api_keys,
-    get_generated_keys,
 )
 from core.tls_mitm import (
     DecryptedRequest,
@@ -383,11 +381,6 @@ async def lifespan(_app: FastAPI):  # noqa: C901, PLR0912, PLR0915
 
     config = config_manager.config
 
-    # Ensure the control-plane API keys are stable across restarts: any key
-    # missing from config.yaml is generated and persisted back, and the
-    # effective keys are logged in plaintext at startup.
-    ensure_stable_api_keys()
-
     # Initialize database
     data_dir = Path(config.core.device_db_dir)
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -594,12 +587,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-# Control-plane authentication: every /api/* route requires an API key
-# (admin key for writes, admin or read-only key for reads). See core/security.py.
+# Control-plane authentication: every /api/* route requires the single
+# control-plane password (full access, no read-only distinction). See core/security.py.
 app.add_middleware(
     ControlPlaneAuthMiddleware,
     get_security_config=lambda: config_manager.config.security,
-    persist_keys=config_manager.set_security_api_keys,
 )
 # Control-plane body limits (F-09): reject /api/* request bodies larger than
 # proxy.max_request_size. The catch-all data-plane route stays exempt because
@@ -621,38 +613,6 @@ async def _json_decode_error_handler(request: Request, exc: json.JSONDecodeError
     """Return a client-friendly 400 for malformed JSON payloads."""
     del request, exc
     return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
-
-
-# ── First-access bootstrap ───────────────────────────────────────────────────
-
-
-@app.get("/api/setup/keys")
-async def setup_keys():
-    """Reveal the generated control-plane keys on first access.
-
-    Only answers while the keys are ephemeral (auth enabled and no explicit
-    ``security.*_api_key`` in config.yaml). Once explicit keys are configured
-    this returns 404, so the generated keys are never disclosed afterwards.
-    """
-    keys = get_generated_keys()
-    if keys is None:
-        return JSONResponse(
-            status_code=404,
-            content={"error": "Control-plane API keys are configured"},
-        )
-    admin_key, readonly_key = keys
-    return JSONResponse(
-        status_code=200,
-        content={
-            "admin_api_key": admin_key,
-            "readonly_api_key": readonly_key,
-            "ephemeral": True,
-            "message": (
-                "Generated ephemeral keys for this run. Set security.admin_api_key "
-                "and security.readonly_api_key in config.yaml to define stable keys."
-            ),
-        },
-    )
 
 
 # ── TLS API Routes ───────────────────────────────────────────────────────────
