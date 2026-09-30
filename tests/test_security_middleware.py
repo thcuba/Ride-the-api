@@ -9,11 +9,10 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 import core.server as server_mod
-from core.security import ControlPlaneAuthMiddleware, MaxBodySizeMiddleware
+from core.security import MaxBodySizeMiddleware
 from core.server import app
 
-_ADMIN_KEY = "test-admin-key-123"
-_READONLY_KEY = "test-readonly-key-456"
+_PASSWORD = "test-password-123"
 
 
 class _FakeDB:
@@ -35,17 +34,16 @@ class _FakeCertManager:
 
 @pytest.fixture
 def client(monkeypatch):
-    """TestClient with a fake db_manager and deterministic API keys."""
+    """TestClient with a fake db_manager and a deterministic password."""
     cfg = server_mod.config_manager.config
-    saved = (cfg.security.auth_enabled, cfg.security.admin_api_key, cfg.security.readonly_api_key)
+    saved = (cfg.security.auth_enabled, cfg.security.password)
     cfg.security.auth_enabled = True
-    cfg.security.admin_api_key = _ADMIN_KEY
-    cfg.security.readonly_api_key = _READONLY_KEY
+    cfg.security.password = _PASSWORD
     monkeypatch.setattr(server_mod, "db_manager", _FakeDB())
     monkeypatch.setattr(server_mod, "orchestrator", object())
     monkeypatch.setattr(server_mod, "cert_manager", _FakeCertManager())
     yield TestClient(app)
-    cfg.security.auth_enabled, cfg.security.admin_api_key, cfg.security.readonly_api_key = saved
+    cfg.security.auth_enabled, cfg.security.password = saved
 
 
 def _get(client, path, key=None):
@@ -58,52 +56,55 @@ def _post(client, path, key=None, json=None):
     return client.post(path, headers=headers, json=json or {})
 
 
-def test_read_without_key_returns_401(client):
+def test_read_without_password_returns_401(client):
     assert _get(client, "/api/devices").status_code == 401  # noqa: PLR2004
 
 
-def test_read_with_readonly_key_ok(client):
-    resp = _get(client, "/api/devices", key=_READONLY_KEY)
+def test_read_with_password_ok(client):
+    resp = _get(client, "/api/devices", key=_PASSWORD)
     assert resp.status_code == 200  # noqa: PLR2004
 
 
-def test_read_with_admin_key_ok(client):
-    resp = _get(client, "/api/devices", key=_ADMIN_KEY)
-    assert resp.status_code == 200  # noqa: PLR2004
+def test_read_with_wrong_password_returns_401(client):
+    assert _get(client, "/api/devices", key="wrong-password").status_code == 401  # noqa: PLR2004
 
 
-def test_read_with_wrong_key_returns_401(client):
-    assert _get(client, "/api/devices", key="wrong-key").status_code == 401  # noqa: PLR2004
-
-
-def test_write_without_key_returns_401(client):
+def test_write_without_password_returns_401(client):
     assert (
         _post(client, "/api/devices/some-device/mode", json={"mode": "production"}).status_code
         == 401  # noqa: PLR2004
     )
 
 
-def test_write_with_readonly_key_returns_401(client):
+def test_write_with_password_ok(client):
     resp = _post(
-        client, "/api/devices/some-device/mode", key=_READONLY_KEY, json={"mode": "production"}
-    )
-    assert resp.status_code == 401  # noqa: PLR2004
-
-
-def test_write_with_admin_key_ok(client):
-    resp = _post(
-        client, "/api/devices/some-device/mode", key=_ADMIN_KEY, json={"mode": "production"}
-    )
-    assert resp.status_code == 200  # noqa: PLR2004
-
-
-def test_write_with_bearer_admin_key_ok(client):
-    resp = client.post(
+        client,
         "/api/devices/some-device/mode",
-        headers={"Authorization": f"Bearer {_ADMIN_KEY}"},
+        key=_PASSWORD,
         json={"mode": "production"},
     )
     assert resp.status_code == 200  # noqa: PLR2004
+
+
+def test_write_with_bearer_password_ok(client):
+    resp = client.post(
+        "/api/devices/some-device/mode",
+        headers={"Authorization": f"Bearer {_PASSWORD}"},
+        json={"mode": "production"},
+    )
+    assert resp.status_code == 200  # noqa: PLR2004
+
+
+def test_single_level_access_same_password_for_read_and_write(client):
+    """The one password grants both reads and writes (no read-only distinction)."""
+    assert _get(client, "/api/devices", key=_PASSWORD).status_code == 200  # noqa: PLR2004
+    write = _post(
+        client,
+        "/api/devices/some-device/mode",
+        key=_PASSWORD,
+        json={"mode": "production"},
+    )
+    assert write.status_code == 200  # noqa: PLR2004
 
 
 def test_health_endpoint_public(client):
@@ -121,112 +122,29 @@ def test_unauthorized_returns_www_authenticate(client):
     assert resp.headers.get("www-authenticate") == "Bearer"
 
 
-# ── First-access key reveal (/api/setup/keys) ───────────────────────────────
+# ── Empty password (auth enabled) locks the control plane ───────────────────
 
 
-def test_setup_keys_404_when_configured(client):
-    """With explicit keys configured the setup endpoint must not leak them."""
-    resp = client.get("/api/setup/keys")
-    assert resp.status_code == 404  # noqa: PLR2004
-
-
-def test_setup_keys_reveals_ephemeral_keys(monkeypatch):
-    """On first access, generated ephemeral keys are shown and actually work."""
+def test_empty_password_locks_control_plane_with_instruction(monkeypatch):
+    """With auth on and an empty password, the API tells the operator to set it."""
     cfg = server_mod.config_manager.config
-    saved = (cfg.security.auth_enabled, cfg.security.admin_api_key, cfg.security.readonly_api_key)
+    saved = (cfg.security.auth_enabled, cfg.security.password)
     cfg.security.auth_enabled = True
-    cfg.security.admin_api_key = ""
-    cfg.security.readonly_api_key = ""
+    cfg.security.password = ""
     monkeypatch.setattr(server_mod, "db_manager", _FakeDB())
     monkeypatch.setattr(server_mod, "orchestrator", object())
     monkeypatch.setattr(server_mod, "cert_manager", _FakeCertManager())
     try:
         client = TestClient(app)
-        resp = client.get("/api/setup/keys")
-        assert resp.status_code == 200  # noqa: PLR2004
-        data = resp.json()
-        assert data["admin_api_key"]
-        assert data["readonly_api_key"]
-        assert data["ephemeral"] is True
-        # The revealed admin key really authenticates a write.
-        write = client.post(
-            "/api/devices/some-device/mode",
-            headers={"X-API-Key": data["admin_api_key"]},
-            json={"mode": "production"},
+        resp = client.get("/api/devices")
+        assert resp.status_code == 503  # noqa: PLR2004
+        assert "security.password" in resp.json()["error"]
+        # Even a non-empty header does not bypass the lock.
+        assert (
+            client.get("/api/devices", headers={"X-API-Key": "whatever"}).status_code == 503  # noqa: PLR2004
         )
-        assert write.status_code == 200  # noqa: PLR2004
     finally:
-        cfg.security.auth_enabled, cfg.security.admin_api_key, cfg.security.readonly_api_key = saved
-
-
-# ── Stable startup keys (persisted + logged in plaintext) ────────────────────
-
-
-def _make_auth(cfg, persisted, auth_enabled=True, admin="", readonly=""):
-    """Build a throwaway middleware over the shared config with chosen keys.
-
-    Returns the middleware; the caller is responsible for restoring ``cfg``.
-    """
-    cfg.security.auth_enabled = auth_enabled
-    cfg.security.admin_api_key = admin
-    cfg.security.readonly_api_key = readonly
-    return ControlPlaneAuthMiddleware(
-        object(),
-        get_security_config=lambda: cfg.security,
-        persist_keys=lambda a, r: persisted.append((a, r)) or True,
-    )
-
-
-def test_ensure_stable_keys_generates_persists_and_logs(caplog):
-    """Missing keys are generated once, persisted and logged in plaintext."""
-    cfg = server_mod.config_manager.config
-    saved = (cfg.security.auth_enabled, cfg.security.admin_api_key, cfg.security.readonly_api_key)
-    persisted = []
-    try:
-        mw = _make_auth(cfg, persisted)
-        with caplog.at_level("INFO", logger="core.security"):
-            mw.ensure_stable_keys()
-
-        assert len(persisted) == 1  # noqa: PLR2004
-        admin, readonly = persisted[0]
-        assert admin
-        assert readonly
-        assert admin != readonly
-        # Both effective keys appear in plaintext in the log.
-        assert admin in caplog.text
-        assert readonly in caplog.text
-    finally:
-        cfg.security.auth_enabled, cfg.security.admin_api_key, cfg.security.readonly_api_key = saved
-
-
-def test_ensure_stable_keys_preserves_explicit_keys(caplog):
-    """Configured keys are not regenerated, but are still logged in plaintext."""
-    cfg = server_mod.config_manager.config
-    saved = (cfg.security.auth_enabled, cfg.security.admin_api_key, cfg.security.readonly_api_key)
-    persisted = []
-    try:
-        mw = _make_auth(cfg, persisted, admin=_ADMIN_KEY, readonly=_READONLY_KEY)
-        with caplog.at_level("INFO", logger="core.security"):
-            mw.ensure_stable_keys()
-
-        assert persisted == [], "explicit keys must not be re-persisted"
-        assert _ADMIN_KEY in caplog.text
-        assert _READONLY_KEY in caplog.text
-    finally:
-        cfg.security.auth_enabled, cfg.security.admin_api_key, cfg.security.readonly_api_key = saved
-
-
-def test_ensure_stable_keys_noop_when_auth_disabled():
-    """With auth disabled nothing is generated, persisted or logged."""
-    cfg = server_mod.config_manager.config
-    saved = (cfg.security.auth_enabled, cfg.security.admin_api_key, cfg.security.readonly_api_key)
-    persisted = []
-    try:
-        mw = _make_auth(cfg, persisted, auth_enabled=False)
-        mw.ensure_stable_keys()
-        assert persisted == []
-    finally:
-        cfg.security.auth_enabled, cfg.security.admin_api_key, cfg.security.readonly_api_key = saved
+        cfg.security.auth_enabled, cfg.security.password = saved
 
 
 # ── F-09: MaxBodySizeMiddleware ────────────────────────────────────────────────
@@ -326,7 +244,7 @@ def test_security_headers_present(client):
     assert response.headers.get("referrer-policy") == "strict-origin-when-cross-origin"
 
     # Verify on an authenticated /api route as well
-    api_resp = _get(client, "/api/devices", key=_READONLY_KEY)
+    api_resp = _get(client, "/api/devices", key=_PASSWORD)
     assert api_resp.status_code == 200  # noqa: PLR2004
     assert api_resp.headers.get("x-content-type-options") == "nosniff"
     assert api_resp.headers.get("x-frame-options") == "DENY"

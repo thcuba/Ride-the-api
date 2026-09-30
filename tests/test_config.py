@@ -502,7 +502,7 @@ class TestGlobalHelpers:
         reloaded = ConfigManager(config_path=path).load()
         assert reloaded.core.database_url == "sqlite:///new.db"
 
-    def test_set_security_api_keys_persists(self, tmp_path):
+    def test_set_security_password_persists(self, tmp_path):
         path = tmp_path / "config.yaml"
         data = {"core": {"database_url": "sqlite:///orig.db"}}
         with path.open("w") as f:
@@ -510,14 +510,12 @@ class TestGlobalHelpers:
 
         cm = ConfigManager(config_path=path)
         cm.load()
-        ok = cm.set_security_api_keys("admin-key", "readonly-key")
+        ok = cm.set_security_password("mypassword")
         assert ok is True
-        assert cm.config.security.admin_api_key == "admin-key"
-        assert cm.config.security.readonly_api_key == "readonly-key"
-        # persisted to disk so keys survive a restart
+        assert cm.config.security.password == "mypassword"
+        # persisted to disk so the password survives a restart
         reloaded = ConfigManager(config_path=path).load()
-        assert reloaded.security.admin_api_key == "admin-key"
-        assert reloaded.security.readonly_api_key == "readonly-key"
+        assert reloaded.security.password == "mypassword"
 
     def test_set_protocol_server_enabled_persists(self, tmp_path):
         path = tmp_path / "config.yaml"
@@ -542,46 +540,42 @@ class TestGlobalHelpers:
         # Unknown server name → not found, nothing persisted.
         assert cm.set_protocol_server_enabled("no_such_server", True) is False
 
-    def test_update_config_preserves_api_keys(self, tmp_path):
+    def test_update_config_preserves_password(self, tmp_path):
         path = tmp_path / "config.yaml"
         data = {
             "core": {"database_url": "sqlite:///orig.db"},
-            "security": {"admin_api_key": "admin-key", "readonly_api_key": "readonly-key"},
+            "security": {"password": "existing-pw"},
         }
         with path.open("w") as f:
             yaml.dump(data, f)
 
         cm = ConfigManager(config_path=path)
         cm.load()
-        # Updating without a security section must keep the existing keys.
+        # Updating without a security section must keep the existing password.
         ok = cm.update_config({"core": {"database_url": "sqlite:///new.db"}})
         assert ok is True
-        assert cm.config.security.admin_api_key == "admin-key"
-        assert cm.config.security.readonly_api_key == "readonly-key"
-        # Empty keys in the payload must not blank the persisted ones.
+        assert cm.config.security.password == "existing-pw"
+        # Empty password in the payload must not blank the persisted one.
         ok = cm.update_config(
             {
                 "core": {"database_url": "sqlite:///new.db"},
-                "security": {"admin_api_key": "", "readonly_api_key": ""},
+                "security": {"password": ""},
             }
         )
         assert ok is True
-        assert cm.config.security.admin_api_key == "admin-key"
-        assert cm.config.security.readonly_api_key == "readonly-key"
-        # Explicit new keys are honored.
+        assert cm.config.security.password == "existing-pw"
+        # Explicit new password is honored.
         ok = cm.update_config(
             {
                 "core": {"database_url": "sqlite:///new.db"},
-                "security": {"admin_api_key": "new-admin", "readonly_api_key": "new-readonly"},
+                "security": {"password": "new-password"},
             }
         )
         assert ok is True
-        assert cm.config.security.admin_api_key == "new-admin"
-        assert cm.config.security.readonly_api_key == "new-readonly"
-        # Persisted to disk so keys survive a restart.
+        assert cm.config.security.password == "new-password"
+        # Persisted to disk so the password survives a restart.
         reloaded = ConfigManager(config_path=path).load()
-        assert reloaded.security.admin_api_key == "new-admin"
-        assert reloaded.security.readonly_api_key == "new-readonly"
+        assert reloaded.security.password == "new-password"
 
     def test_update_config_rejects_invalid_data(self, tmp_path):
         path = tmp_path / "config.yaml"

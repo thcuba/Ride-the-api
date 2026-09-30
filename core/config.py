@@ -107,18 +107,17 @@ class SecurityConfig(BaseModel):
     """Control-plane authentication and hardening.
 
     When ``auth_enabled`` is true (default), every ``/api/*`` route requires
-    an API key. Read-only methods (GET/HEAD) accept either the read-only key
-    or the admin key; all other methods require the admin key. Keys are sent
-    via the ``X-API-Key`` header or ``Authorization: Bearer <key>``.
+    the control-plane ``password``. It is sent via the ``X-API-Key`` header or
+    ``Authorization: Bearer ***`` and grants full access (reads and writes) —
+    there is no read-only vs admin distinction.
 
-    If a key is left empty, a random ephemeral key is generated at startup
-    (never logged) — set explicit keys in ``config.yaml`` to make them
-    stable across restarts.
+    If ``password`` is left empty while auth is enabled, the control plane is
+    locked and the API and UI ask the operator to set ``security.password`` in
+    ``config.yaml`` and restart — no ephemeral keys are generated.
     """
 
     auth_enabled: bool = True
-    admin_api_key: str = ""
-    readonly_api_key: str = ""
+    password: str = ""
 
 
 class CloudConfig(BaseModel):
@@ -542,18 +541,16 @@ class ConfigManager:
             cfg.core.ip_profiles[ip] = profile
         return self._write()
 
-    def set_security_api_keys(self, admin_api_key: str, readonly_api_key: str) -> bool:
-        """Persist the control-plane API keys back to the config file.
+    def set_security_password(self, password: str) -> bool:
+        """Persist the control-plane ``security.password`` back to the config.
 
-        Used to write back auto-generated keys so they stay stable across
-        restarts. Mutates the in-memory config, writes the file atomically and
-        leaves the hot-reload watcher to refresh other consumers. Returns True
-        on success.
+        Mutates the in-memory config, writes the file atomically and leaves
+        the hot-reload watcher to refresh other consumers. Returns True on
+        success.
         """
         cfg = self.config
         with self._lock:
-            cfg.security.admin_api_key = admin_api_key
-            cfg.security.readonly_api_key = readonly_api_key
+            cfg.security.password = password
         return self._write()
 
     def set_protocol_server_enabled(self, name: str, enabled: bool) -> bool:
@@ -576,19 +573,18 @@ class ConfigManager:
     def update_config(self, data: dict) -> bool:
         """Replace the full config after validation; atomically persist.
 
-        Control-plane API keys are preserved across updates: if the incoming
-        data omits the ``security`` section or sends empty keys, the current
-        keys are kept so they never change after a config update.
+        The control-plane ``security.password`` is preserved across updates:
+        if the incoming data omits the ``security`` section or sends an empty
+        password, the current password is kept so it never changes after a
+        config update.
         """
         current = self.config
         if "security" not in data:
             data = {**data, "security": current.security.model_dump(mode="json")}
         else:
             security = dict(data["security"])
-            if not security.get("admin_api_key"):
-                security["admin_api_key"] = current.security.admin_api_key
-            if not security.get("readonly_api_key"):
-                security["readonly_api_key"] = current.security.readonly_api_key
+            if not security.get("password"):
+                security["password"] = current.security.password
             data = {**data, "security": security}
         new_config = Config(**data)
         with self._lock:
