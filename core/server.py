@@ -1887,7 +1887,10 @@ async def system_update():
         )
     except Exception as e:  # noqa: BLE001
         logger.exception("Failed to launch updater")
-        return JSONResponse(status_code=500, content={"error": f"Failed to start update: {e}"})
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Failed to start update. Check server logs for details."},
+        )
     return {
         "status": "started",
         "message": "Update started in the background. The service will restart — "
