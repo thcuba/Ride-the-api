@@ -169,6 +169,21 @@ def _select_handler_adapter(
     return matched[0] if matched else None
 
 
+async def _resolve_device_for_ip(db, client_ip: str | None) -> str | None:
+    """Resolve a source IP to a known device id, when it is bound.
+
+    Automatic device recognition: if ``client_ip`` is exposed by the producer
+    and already appears in some device's ``ip_addresses``, return that device
+    id so an already-recognized device keeps ONE identity across ports and
+    protocols (and reuses its learned protocol/vendor). Returns ``None`` for
+    unbound IPs, ``"unknown"`` placeholders, or IP-less protocols so the caller
+    falls back to its own generated id.
+    """
+    if not client_ip or client_ip == "unknown":
+        return None
+    return await db.resolve_device_id(client_ip)
+
+
 async def handle_tls_decrypted_request(req: DecryptedRequest) -> dict | None:
     """Handle a decrypted TLS request — find/create device and run through pipeline.
 
@@ -186,9 +201,8 @@ async def handle_tls_decrypted_request(req: DecryptedRequest) -> dict | None:
     # Automatic device recognition: if this source IP is already bound to a
     # known device (device.ip_addresses), use THAT device instead of a fresh
     # per-IP id. The same physical device keeps one identity across ports.
-    device_id = await db_manager.resolve_device_id(req.client_ip) or device_id_from_ip(
-        "ip", req.client_ip
-    )
+    recognized = await _resolve_device_for_ip(db_manager, req.client_ip)
+    device_id = recognized or device_id_from_ip("ip", req.client_ip)
 
     try:
         # Create or find device by IP
@@ -306,16 +320,14 @@ async def handle_protocol_request(request: InterceptedRequest) -> dict | None:
 
     device_id = request.device_id or "unknown"
 
-    # Automatic device recognition: if the plugin exposed a source IP and that
-    # IP is already bound to a known device (device.ip_addresses), use THAT
-    # device — not a fresh per-protocol id. The same physical device then keeps
-    # one identity even if it arrives on a different port/protocol. Unbound IPs
-    # (and IP-less protocols like MQTT/Modbus bridges) keep the generated id.
-    cli_ip = getattr(request, "client_ip", None)
-    if cli_ip and cli_ip != "unknown":
-        known = await db_manager.resolve_device_id(cli_ip)
-        if known:
-            device_id = known
+    # Automatic device recognition: a plugin-exposed source IP bound to a known
+    # device wins over the per-protocol generated id, so an already-recognized
+    # device keeps ONE identity across ports/protocols (and reuses its learned
+    # protocol/vendor). IP-less protocols (MQTT/Modbus/bridges) and unbound IPs
+    # keep the generated id.
+    device_id = (
+        await _resolve_device_for_ip(db_manager, getattr(request, "client_ip", None))
+    ) or device_id
 
     protocol = (
         request.protocol.value
