@@ -39,12 +39,12 @@ Use the **one-shot installer scripts** to fetch and install the **latest**
 release. Rerunning the same script upgrades to a newer release **in place,
 preserving `config/`, `data/`, `certs/` and `logs/`**.
 
-### Linux / macOS / Raspberry Pi — `deploy/install.sh`
+### Linux / macOS / Raspberry Pi — `deploy/rideapi`
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/thcuba/Ride-the-api/main/deploy/install.sh -o install.sh
-bash install.sh            # → installs the latest release into ~/ride-the-api
-bash install.sh --systemd  # optional: also write a systemd user service
+curl -sSL https://raw.githubusercontent.com/thcuba/Ride-the-api/main/deploy/rideapi -o rideapi
+bash rideapi            # → installs the latest release into ~/ride-the-api
+bash rideapi --systemd  # optional: also write a systemd user service
 ```
 
 Options:
@@ -74,8 +74,8 @@ Run in the foreground for a quick test with `--fg`.
 Alternatively, install the **prebuilt bundle** as a user service:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/thcuba/Ride-the-api/main/deploy/install.sh -o install.sh
-bash install.sh --systemd
+curl -sSL https://raw.githubusercontent.com/thcuba/Ride-the-api/main/deploy/rideapi -o rideapi
+bash rideapi --systemd
 systemctl --user enable --now ride-the-api
 ```
 

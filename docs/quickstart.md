@@ -24,9 +24,9 @@ with the one-shot script (rerunning it upgrades in place, preserving
 
 ```bash
 # Linux / macOS / Raspberry Pi
-curl -sSL https://raw.githubusercontent.com/thcuba/Ride-the-api/main/deploy/install.sh -o install.sh
-bash install.sh            # → ~/ride-the-api
-bash install.sh --systemd  # optional: run as a user service
+curl -sSL https://raw.githubusercontent.com/thcuba/Ride-the-api/main/deploy/rideapi -o rideapi
+bash rideapi            # → ~/ride-the-api
+bash rideapi --systemd  # optional: run as a user service
 ```
 
 ```powershell
