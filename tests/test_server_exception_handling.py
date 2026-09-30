@@ -157,3 +157,29 @@ def test_system_update_starts_detached_updater(client, monkeypatch):
     assert kwargs["start_new_session"] is True
     assert launched["args"][0][1].endswith("update.sh")
     assert kwargs["cwd"].endswith(("ride-the-api", "Ride-the-api"))
+
+
+def test_system_update_finds_script_in_frozen_bundle(client, monkeypatch, tmp_path):
+    """In a PyInstaller bundle the updater lives under _internal/deploy/."""
+    bundle = tmp_path
+    deploy = bundle / "deploy"
+    deploy.mkdir()
+    (deploy / "update.sh").touch()
+    launched: dict = {}
+
+    class _SP:
+        DEVNULL = object()
+
+        @staticmethod
+        def Popen(*args, **kwargs) -> object:  # noqa: ANN001
+            launched["args"] = args
+            launched["kwargs"] = kwargs
+            return object()
+
+    monkeypatch.setattr(server_mod, "subprocess", _SP)
+    monkeypatch.setattr(server_mod, "is_frozen", lambda: True)
+    monkeypatch.setattr(server_mod, "bundle_root", lambda: bundle)
+    resp = client.post("/api/system/update")
+    assert resp.status_code == _HTTP_OK
+    assert launched["args"][0][1] == str(deploy / "update.sh")
+    assert launched["args"][0][5] == "systemd"

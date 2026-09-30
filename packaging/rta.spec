@@ -58,6 +58,12 @@ _datas = [
     (str(REPO_ROOT / "webui"), "webui"),
     (str(REPO_ROOT / "assets"), "assets"),
     (str(REPO_ROOT / "core/pattern_db/schemas"), "core/pattern_db/schemas"),
+    # Self-update scripts: the "Update" button (POST /api/system/update) shells
+    # out to deploy/update.sh (and deploy/rideapi for prebuilt bundles). In the
+    # frozen layout they land in _internal/deploy/ and are resolved via
+    # core/paths.bundle_root().
+    (str(REPO_ROOT / "deploy/update.sh"), "deploy"),
+    (str(REPO_ROOT / "deploy/rideapi"), "deploy"),
 ]
 
 # `certs/` is generated at runtime by CertManager; bundle the (possibly empty)

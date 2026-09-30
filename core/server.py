@@ -51,7 +51,7 @@ from core.database import (
 from core.llm_decipher import LLMDecipherService, get_llm_decipher
 from core.logging_config import setup_logging
 from core.modification import get_modification_engine
-from core.paths import resource_path
+from core.paths import bundle_root, is_frozen, resource_path
 from core.pattern_db import buffer_manager, decipher_ingest
 from core.pattern_db.schemas import CaptureDB, DeviceModel, PatternDB
 from core.pattern_db.validator import (
@@ -1866,14 +1866,25 @@ async def system_update():
     """
     if not db_manager:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    script = Path(__file__).resolve().parent.parent / "deploy" / "update.sh"
+    # Install root is the process CWD: the systemd unit's WorkingDirectory (and
+    # gui_main's chdir onto the data dir) make CWD the install root in BOTH the
+    # source tree and the frozen bundle — never derive it from ``__file__``,
+    # which points into ``_internal/`` in a PyInstaller build.
+    install_dir = Path.cwd()
+    # Locate the updater script. In a PyInstaller bundle the deploy/ scripts are
+    # bundled under _internal/deploy/; in a source checkout they sit at the repo
+    # root. Fall back to deploy/rideapi (the standalone installer) when the
+    # update.sh wrapper is absent.
+    updater_base = (
+        bundle_root() if is_frozen() else Path(__file__).resolve().parent.parent
+    ) or Path(__file__).resolve().parent.parent
+    script = updater_base / "deploy" / "update.sh"
     if not script.exists():
-        script = Path(__file__).resolve().parent.parent / "deploy" / "rideapi"
+        script = updater_base / "deploy" / "rideapi"
     if not script.exists():
         return JSONResponse(
             status_code=500, content={"error": "Updater script not found in this install"}
         )
-    install_dir = Path(__file__).resolve().parent.parent
     # Detached: start_new_session + explicit stdio to /dev/null so the child
     # survives the parent's restart and the daemon never blocks on a pipe.
     try:
@@ -1885,7 +1896,7 @@ async def system_update():
             stderr=subprocess.DEVNULL,
             cwd=str(install_dir),
         )
-    except Exception as e:  # noqa: BLE001
+    except Exception:  # noqa: BLE001
         logger.exception("Failed to launch updater")
         return JSONResponse(
             status_code=500,
