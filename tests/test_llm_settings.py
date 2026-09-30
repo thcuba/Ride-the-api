@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -232,6 +232,51 @@ class TestLLMSettingsAPI:
         )
         assert resp.status_code == 200  # noqa: PLR2004
         svc.update_settings.assert_called_once()
+
+    def test_test_profile_success(self):
+        svc = MagicMock()
+        svc.test_connection = AsyncMock(
+            return_value={
+                "success": True,
+                "content": "hi",
+                "message": "Test passed: got a response",
+            }
+        )
+        server.llm_decipher_service = svc
+        client = self._client()
+        resp = client.post(
+            "/api/llm/profiles/test",
+            headers={"X-API-Key": "test-password"},
+            json={"base_url": "http://a/v1", "model_id": "m", "api_key": "k"},
+        )
+        assert resp.status_code == 200  # noqa: PLR2004
+        assert resp.json()["success"] is True
+        svc.test_connection.assert_called_once()
+
+    def test_test_profile_failure_returns_502(self):
+        svc = MagicMock()
+        svc.test_connection = AsyncMock(
+            return_value={"success": False, "error": "LLM test failed: boom"}
+        )
+        server.llm_decipher_service = svc
+        client = self._client()
+        resp = client.post(
+            "/api/llm/profiles/test",
+            headers={"X-API-Key": "test-password"},
+            json={"base_url": "http://a/v1", "model_id": "m", "api_key": "k"},
+        )
+        assert resp.status_code == 502  # noqa: PLR2004
+        assert resp.json()["success"] is False
+
+    def test_test_profile_requires_base_and_model(self):
+        server.llm_decipher_service = self._mock_service()
+        client = self._client()
+        resp = client.post(
+            "/api/llm/profiles/test",
+            headers={"X-API-Key": "test-password"},
+            json={"model_id": "m"},
+        )
+        assert resp.status_code == 400  # noqa: PLR2004
 
     def test_put_settings_invalid_body(self):
 
