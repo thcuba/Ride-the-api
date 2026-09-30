@@ -715,6 +715,46 @@ Response:
             raise LLMCallError("LLM returned an empty completion")
         return content
 
+    async def test_connection(
+        self,
+        *,
+        base_url: str,
+        model_id: str,
+        api_key: str = "",
+        timeout: int = 30,
+        max_retries: int = 2,
+    ) -> dict:
+        """Send a "hello" completion to a provider and report whether it answers.
+
+        Used by the dashboard's per-profile Test button. Builds a throwaway
+        profile from the (possibly unsaved) form values so the operator can
+        check a config before saving. Returns ``{"success": true, ...}`` when
+        the provider answers with a non-empty completion, ``{"success": false,
+        "error": ...}`` otherwise.
+        """
+        profile = LLMProfile(
+            name="_test",
+            base_url=base_url,
+            api_key=SecretStr(api_key),
+            model_id=model_id,
+            prompt_template="",
+            enabled=True,
+            timeout=timeout,
+            max_retries=max_retries,
+        )
+        client = self._get_client(profile)
+        kwargs = {
+            "model": profile.model_id,
+            "messages": [{"role": "user", "content": "hello"}],
+            "max_tokens": 10,
+        }
+        try:
+            content = await asyncio.wait_for(self._complete(client, kwargs), timeout=timeout)
+        except Exception as exc:  # noqa: BLE001 - surface the provider error to the UI
+            logger.warning("LLM connection test failed for %s: %s", base_url, exc)
+            return {"success": False, "error": f"LLM test failed: {exc}"}
+        return {"success": True, "content": content, "message": "Test passed: got a response"}
+
     def _get_db_schema(self, vendor: str) -> str:
         """Get database schema for vendor (simplified)."""
         # In production, this would query the actual schema

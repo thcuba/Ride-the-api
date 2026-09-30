@@ -1849,6 +1849,46 @@ async def update_llm_settings(request: Request):
     return settings
 
 
+@app.post("/api/llm/profiles/test")
+async def test_llm_profile(request: Request):
+    """Send a "hello" completion to a provider and report whether it answers.
+
+    The dashboard's per-profile Test button calls this with the current form
+    values (which need not be saved yet). Returns 200 with ``{"success": true}``
+    when the provider responds, or 502 with the provider error otherwise.
+    """
+    if not llm_decipher_service:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
+    if not isinstance(body, dict):
+        return JSONResponse(
+            status_code=400, content={"error": "Invalid JSON body: expected an object"}
+        )
+    base_url = str(body.get("base_url", "")).strip()
+    model_id = str(body.get("model_id", "")).strip()
+    if not base_url or not model_id:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Both 'base_url' and 'model_id' are required for the test"},
+        )
+    api_key = str(body.get("api_key", ""))
+    timeout = int(body.get("timeout", 30) or 30)
+    max_retries = int(body.get("max_retries", 2) or 2)
+    result = await llm_decipher_service.test_connection(
+        base_url=base_url,
+        model_id=model_id,
+        api_key=api_key,
+        timeout=timeout,
+        max_retries=max_retries,
+    )
+    if not result.get("success"):
+        return JSONResponse(status_code=502, content=result)
+    return result
+
+
 @app.post("/api/llm/settings/profiles")
 async def create_llm_profile(request: Request):  # noqa: PLR0911
     """Create or update a single LLM profile and persist the settings."""

@@ -1849,6 +1849,7 @@ function renderLLMProfileCards(settings) {
           <label class="lpc-enable">
             <input type="checkbox" class="lpc-enabled" ${p.enabled ? 'checked' : ''}> Enabled
           </label>
+          <button class="btn" style="padding:2px 8px;font-size:11px;" onclick="testLLMProfile('${escapeJs(name)}')" aria-label="Test ${escapeHtml(name)} LLM connection">Test</button>
           <button class="btn btn-danger" style="padding:2px 8px;font-size:11px;" onclick="deleteLLMProfile('${escapeJs(name)}')">Delete</button>
         </div>
       </div>
@@ -1901,6 +1902,7 @@ function addLLMProfile() {
         <label class="lpc-enable">
           <input type="checkbox" class="lpc-enabled" checked> Enabled
         </label>
+        <button class="btn" style="padding:2px 8px;font-size:11px;" onclick="testLLMProfile('${escapeJs(name.trim())}')" aria-label="Test ${escapeHtml(name.trim())} LLM connection">Test</button>
         <button class="btn btn-danger" style="padding:2px 8px;font-size:11px;" onclick="deleteLLMProfile('${escapeJs(name.trim())}')">Delete</button>
       </div>
     </div>
@@ -1951,6 +1953,42 @@ function deleteLLMProfile(name) {
     const opt = [...defaultSel.options].find(o => o.value === name);
     if (opt) opt.remove();
     if (defaultSel.value === name) defaultSel.value = defaultSel.options[0] ? defaultSel.options[0].value : '';
+  }
+}
+
+async function testLLMProfile(name) {
+  // Send a "hello" completion to the provider using this profile's CURRENT
+  // form values (which need not be saved yet). A response = test passed.
+  const list = document.getElementById('llm-profiles-list');
+  if (!list) return;
+  const card = list.querySelector('.llm-profile-card[data-name="' + name + '"]');
+  if (!card) return;
+  const btn = card.querySelector('.lpc-actions .btn');
+  const origText = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Testing…'; }
+  const body = {
+    base_url: card.querySelector('.lpc-base-url').value,
+    model_id: card.querySelector('.lpc-model-id').value,
+    api_key: card.querySelector('.lpc-api-key').value,
+    timeout: parseInt(card.querySelector('.lpc-timeout').value, 10) || 30,
+    max_retries: parseInt(card.querySelector('.lpc-max-retries').value, 10) || 2,
+  };
+  try {
+    const res = await fetch('/api/llm/profiles/test', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const err = await errorFrom(res, 'Test failed');
+      showToast(`${name}: ${err}`, 'error');
+      return;
+    }
+    const data = await res.json();
+    showToast(`${name}: ${data.message || 'Test passed: got a response'}`, 'success');
+  } catch(e) {
+    showToast(`${name}: ${e.message || 'Test failed'}`, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = origText; }
   }
 }
 
