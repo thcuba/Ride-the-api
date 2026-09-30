@@ -355,7 +355,7 @@ class TLSDecryptConfig(BaseModel):
     """TLS Decryption / MITM engine configuration."""
 
     enabled: bool = False  # disabled by default
-    listen_ports: list[int] = Field(default_factory=lambda: [443, 8883, 5684, 8443])
+    listen_ports: list[int] = Field(default_factory=lambda: [443, 8443, 8883, 5684, 802])
     ca_cert_path: str = "./certs/ca.pem"
     ca_key_path: str = "./certs/ca.key"
     device_certs_dir: str = "./data/device_certs"
@@ -371,7 +371,7 @@ class TLSDecryptConfig(BaseModel):
 class MQTTServerConfig(BaseModel):
     """MQTT broker server configuration."""
 
-    enabled: bool = False
+    enabled: bool = True
     host: str = "0.0.0.0"
     port: int = 1883
     port_tls: int = 8883
@@ -383,7 +383,7 @@ class MQTTServerConfig(BaseModel):
 class CoAPServerConfig(BaseModel):
     """CoAP server configuration."""
 
-    enabled: bool = False
+    enabled: bool = True
     host: str = "0.0.0.0"
     port: int = 5683
     dtls_enabled: bool = False
@@ -394,7 +394,7 @@ class CoAPServerConfig(BaseModel):
 class ModbusServerConfig(BaseModel):
     """Modbus TCP server configuration."""
 
-    enabled: bool = False
+    enabled: bool = True
     host: str = "0.0.0.0"
     port: int = 502
     unit_id: int = 1
@@ -407,7 +407,7 @@ class ModbusServerConfig(BaseModel):
 class WebSocketServerConfig(BaseModel):
     """WebSocket server configuration."""
 
-    enabled: bool = False
+    enabled: bool = True
     host: str = "0.0.0.0"
     port: int = 9000
     path: str = "/ws"
@@ -417,7 +417,7 @@ class WebSocketServerConfig(BaseModel):
 class RawTCPServerConfig(BaseModel):
     """Raw TCP server configuration."""
 
-    enabled: bool = False
+    enabled: bool = True
     host: str = "0.0.0.0"
     port: int = 9100
     buffer_size: int = 4096

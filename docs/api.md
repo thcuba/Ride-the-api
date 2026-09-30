@@ -814,27 +814,14 @@ by the TLS handler, not yet renamed).
 
 ### List TLS Ports: `GET /api/tls/ports`
 
-Currently active TLS listening ports.
+Currently active TLS listening ports. **Read-only**: the monitored set is
+configured *only* in `config.yaml` (`tls_decrypt.listen_ports`) and is never
+added/removed at runtime — edit config.yaml and restart the service to change it.
 
-**Response** `{"ports": [443, 8883, 8443], "enabled": true}`
+**Response** `{"ports": [443, 8443, 8883, 5684, 802], "enabled": true}`
 
----
-
-### Add TLS Port: `POST /api/tls/ports`
-
-Dynamically adds a TLS listening port (persists in config.yaml).
-
-**JSON Body** `{"port": 8443}`
-
-**Response** `{"status": "ok", "port": 8443, "listen_ports": [443, 8883, 8443]}`
-
----
-
-### Remove TLS Port: `DELETE /api/tls/ports/{port}`
-
-Removes a TLS listening port.
-
-**Response** `{"status": "ok", "port": 8443, "listen_ports": [443, 8883]}`
+> Removed: `POST /api/tls/ports` and `DELETE /api/tls/ports/{port}` (runtime
+> port management). All listening ports are controlled from config.yaml only.
 
 ---
 

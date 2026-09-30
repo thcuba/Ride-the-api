@@ -313,10 +313,15 @@ class TestRootConfig:
 
     def test_protocol_server_defaults(self):
         c = Config()
-        assert c.protocol_servers.mqtt.enabled is False
-        assert c.protocol_servers.coap.enabled is False
-        assert c.protocol_servers.modbus.enabled is False
-        assert c.protocol_servers.websocket.enabled is False
+        # Non-TLS protocol servers listen by default so ANY redirected device
+        # on one of their ports is recognized automatically.
+        assert c.protocol_servers.mqtt.enabled is True
+        assert c.protocol_servers.coap.enabled is True
+        assert c.protocol_servers.modbus.enabled is True
+        assert c.protocol_servers.websocket.enabled is True
+        assert c.protocol_servers.raw_tcp.enabled is True
+        # Bridges and HTTP/2 stay off (HTTP/2 port 443 collides with the MITM).
+        assert c.protocol_servers.http2.enabled is False
         assert c.protocol_servers.zigbee_bridge.enabled is False
         assert c.protocol_servers.zwave_bridge.enabled is False
         assert c.protocol_servers.matter_bridge.enabled is False

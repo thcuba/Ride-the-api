@@ -311,7 +311,7 @@ llm_decipher:
 protocol_servers:
   # MQTT Broker (port 1883 / 8883 TLS)
   mqtt:
-    enabled: false
+    enabled: true
     host: "0.0.0.0"
     port: 1883
     port_tls: 8883
@@ -321,7 +321,7 @@ protocol_servers:
 
   # CoAP Server (port 5683 UDP / 5684 DTLS)
   coap:
-    enabled: false
+    enabled: true
     host: "0.0.0.0"
     port: 5683
     dtls_enabled: false
@@ -330,7 +330,7 @@ protocol_servers:
 
   # Modbus TCP Server (port 502)
   modbus:
-    enabled: false
+    enabled: true
     host: "0.0.0.0"
     port: 502
     unit_id: 1
@@ -339,7 +339,7 @@ protocol_servers:
 
   # WebSocket Server (port 9000)
   websocket:
-    enabled: false
+    enabled: true
     host: "0.0.0.0"
     port: 9000
     path: "/ws"
@@ -347,7 +347,7 @@ protocol_servers:
 
   # Raw TCP Server (port 9100)
   raw_tcp:
-    enabled: false
+    enabled: true
     host: "0.0.0.0"
     port: 9100
     buffer_size: 4096
@@ -355,6 +355,8 @@ protocol_servers:
     protocol_detect: true
 
   # HTTP/2 Server (port 443 TLS / 8080 cleartext)
+  # STAYS disabled: port 443 collides with the TLS MITM listener. HTTP/2
+  # traffic is handled by the MITM instead.
   http2:
     enabled: false
     host: "0.0.0.0"
@@ -396,11 +398,14 @@ tls_decrypt:
   # Ports to listen on for TLS interception
   # The proxy accepts TLS connections on ALL these ports simultaneously.
   # Device identity is determined by SOURCE IP, not by port.
+  # This is the COMPLETE list of TLS/encrypted ports the platform can serve —
+  # it is controlled ONLY here (config.yaml), never added at runtime.
   listen_ports:
     - 443
+    - 8443
     - 8883
     - 5684
-    - 8443
+    - 802
 
   # CA certificate for MITM (auto-generated on first run in ./certs/)
   ca_cert_path: "./certs/ca.pem"
