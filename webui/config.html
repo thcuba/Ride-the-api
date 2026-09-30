@@ -160,7 +160,7 @@
   <div class="header-actions">
     <span class="path-chip" id="configPath">…</span>
     <a class="btn btn-ghost" href="/">← Dashboard</a>
-    <button class="btn btn-primary" id="saveBtn" onclick="saveConfig()" title="No unsaved changes" disabled>&#x2714; Save All</button>
+    <button class="btn btn-primary" id="saveBtn" onclick="saveConfig()" title="No unsaved changes (Ctrl+S)" disabled>&#x2714; Save All</button>
   </div>
 </div>
 
@@ -172,7 +172,7 @@
     <div id="fields"></div>
     <div class="save-bar">
       <span class="status" id="saveStatus"></span>
-      <button class="btn btn-primary" id="saveBtn2" onclick="saveConfig()" title="No unsaved changes" disabled>&#x2714; Save All</button>
+      <button class="btn btn-primary" id="saveBtn2" onclick="saveConfig()" title="No unsaved changes (Ctrl+S)" disabled>&#x2714; Save All</button>
     </div>
   </main>
 </div>
@@ -796,11 +796,11 @@ function updateSaveBtn() {
   const saveBtn2 = document.getElementById('saveBtn2');
   if (saveBtn) {
     saveBtn.disabled = !has;
-    saveBtn.title = has ? 'Save configuration changes' : 'No unsaved changes';
+    saveBtn.title = has ? 'Save configuration changes (Ctrl+S)' : 'No unsaved changes (Ctrl+S)';
   }
   if (saveBtn2) {
     saveBtn2.disabled = !has;
-    saveBtn2.title = has ? 'Save configuration changes' : 'No unsaved changes';
+    saveBtn2.title = has ? 'Save configuration changes (Ctrl+S)' : 'No unsaved changes (Ctrl+S)';
   }
 
   document.querySelectorAll('.section-item[data-section]').forEach(btn => {
@@ -907,6 +907,17 @@ window.addEventListener('beforeunload', (event) => {
   if (dirty.size > 0) {
     event.preventDefault();
     event.returnValue = '';
+  }
+});
+
+document.addEventListener('keydown', (event) => {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+    event.preventDefault();
+    if (dirty.size > 0) {
+      saveConfig();
+    } else {
+      showToast('No unsaved changes', 'info');
+    }
   }
 });
 
