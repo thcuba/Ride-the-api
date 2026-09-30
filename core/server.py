@@ -687,6 +687,42 @@ async def tls_unidentified():
     return {"unidentified": unidentified}
 
 
+@app.put("/api/devices/{device_id}/tls-config")
+async def tls_update_device_config(device_id: str, request: Request):
+    """Update TLS config for a specific device (name, vendor, passthrough, pinning_bypass)."""
+    if not db_manager:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    try:
+        body = await request.json()
+        async with db_manager.core_session() as session:
+            result = await session.execute(
+                select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
+            )
+            device = result.scalar_one_or_none()
+            if not device:
+                return JSONResponse(status_code=404, content={"error": "Device not found"})
+
+            # Update editable fields
+            if "name" in body and body["name"]:
+                device.name = body["name"]
+            if "vendor" in body and body["vendor"]:
+                device.vendor = body["vendor"]
+            # passthrough and pinning_bypass stored in extra_attributes
+            extra = dict(device.extra_attributes or {})
+            if "passthrough" in body:
+                extra["tls_passthrough"] = body["passthrough"]
+            if "pinning_bypass" in body:
+                extra["tls_pinning_bypass"] = body["pinning_bypass"]
+            device.extra_attributes = extra
+
+            session.add(device)
+            await session.commit()
+            return {"status": "ok", "device_id": device_id}
+
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+
+
 @app.get("/api/tls/ports")
 async def tls_list_ports():
     """List all currently active TLS listen ports (read-only).
