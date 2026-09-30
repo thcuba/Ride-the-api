@@ -8,7 +8,7 @@
 # data/, certs/ and logs/ (only the bundled binary is replaced).
 #
 # Usage:
-#   ./install.sh [--version <tag>] [--dir <path>] [--systemd]
+#   ./rideapi [--version <tag>] [--dir <path>] [--systemd]
 #
 # Options:
 #   --version <tag>   Install a specific release tag (default: latest).

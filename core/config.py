@@ -556,6 +556,23 @@ class ConfigManager:
             cfg.security.readonly_api_key = readonly_api_key
         return self._write()
 
+    def set_protocol_server_enabled(self, name: str, enabled: bool) -> bool:
+        """Set/clear ``protocol_servers.<name>.enabled`` and persist to disk.
+
+        Called by the protocol-server start/stop API so a server toggled on in
+        the dashboard survives a restart (``start_all()`` boots whatever has
+        ``enabled: true``). Mutates the in-memory config, writes the file
+        atomically and leaves the hot-reload watcher to reconcile the running
+        plugins. Returns True on success.
+        """
+        cfg = self.config
+        sub = getattr(cfg.protocol_servers, name, None)
+        if sub is None:
+            return False
+        with self._lock:
+            sub.enabled = bool(enabled)
+        return self._write()
+
     def update_config(self, data: dict) -> bool:
         """Replace the full config after validation; atomically persist.
 

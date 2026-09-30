@@ -1040,7 +1040,7 @@ async def protocol_servers_status():
 
 @app.post("/api/protocol-servers/{name}/start")
 async def protocol_server_start(name: str):
-    """Start a specific protocol server."""
+    """Start a specific protocol server and persist enabled=true in config."""
 
     manager = get_protocol_server_manager()
     success = await manager.start_plugin(name)
@@ -1049,12 +1049,20 @@ async def protocol_server_start(name: str):
         if plugin is None:
             return JSONResponse(status_code=404, content={"error": f"Server '{name}' not found"})
         return JSONResponse(status_code=500, content={"error": f"Failed to start '{name}'"})
-    return {"status": "ok", "server": name, "running": True}
+    # Persist the toggle so the server auto-starts on the next boot and the
+    # dashboard "config" view reflects it (start_all() boots enabled=true only).
+    plugin = manager.get_plugin(name)
+    if plugin is not None:
+        setattr(plugin.config, "enabled", True)
+    persisted = config_manager.set_protocol_server_enabled(name, True)
+    if not persisted:
+        logger.warning("Protocol server %s started but enabling it could not be persisted", name)
+    return {"status": "ok", "server": name, "running": True, "persisted": persisted}
 
 
 @app.post("/api/protocol-servers/{name}/stop")
 async def protocol_server_stop(name: str):
-    """Stop a specific protocol server."""
+    """Stop a specific protocol server and persist enabled=false in config."""
 
     manager = get_protocol_server_manager()
     success = await manager.stop_plugin(name)
@@ -1063,7 +1071,15 @@ async def protocol_server_stop(name: str):
         if plugin is None:
             return JSONResponse(status_code=404, content={"error": f"Server '{name}' not found"})
         return JSONResponse(status_code=500, content={"error": f"Failed to stop '{name}'"})
-    return {"status": "ok", "server": name, "running": False}
+    # Persist the toggle so the server stays stopped after a restart and the
+    # dashboard "config" view reflects it.
+    plugin = manager.get_plugin(name)
+    if plugin is not None:
+        setattr(plugin.config, "enabled", False)
+    persisted = config_manager.set_protocol_server_enabled(name, False)
+    if not persisted:
+        logger.warning("Protocol server %s stopped but disabling it could not be persisted", name)
+    return {"status": "ok", "server": name, "running": False, "persisted": persisted}
 
 
 @app.get("/api/protocol-servers/{name}/config")

@@ -33,10 +33,10 @@ preserving `config/`, `data/`, `certs/` and `logs/`**):
 
 ```bash
 # Linux (x64) or Raspberry Pi (arm64) / macOS (arm64)
-curl -sSL https://raw.githubusercontent.com/thcuba/Ride-the-api/main/deploy/install.sh -o install.sh
-bash install.sh            # → ~/ride-the-api
-bash install.sh --systemd  # optional: run as a user service
-# Optionally choose dir/version:  bash install.sh --dir /opt/ride-the-api --version 1.1
+curl -sSL https://raw.githubusercontent.com/thcuba/Ride-the-api/main/deploy/rideapi -o rideapi
+bash rideapi                    # → ~/ride-the-api
+bash rideapi --systemd          # optional: run as a user service
+# Optionally choose dir/version:  bash rideapi --dir /opt/ride-the-api --version 1.1
 ```
 
 ```powershell
