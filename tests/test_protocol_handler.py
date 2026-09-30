@@ -13,8 +13,18 @@ from core.pattern_db.schemas import ObservationKind, TransportMeta
 
 
 class _FakeDB:
+    def __init__(self, ip_index: dict[str, str] | None = None) -> None:
+        # Maps a bound IP -> known device_id (reverse lookup result).
+        self.ip_index = ip_index or {}
+
     async def get_or_create_device(self, device_id: str, vendor: str) -> None:
         pass
+
+    async def resolve_device_id(self, ip_address: str) -> str | None:
+        return self.ip_index.get(ip_address)
+
+    async def is_ips_bypassed(self, _ip: str) -> bool:
+        return False
 
     async def resolve_device_protocol(self, _device_id: str, ingress_default: str = "http") -> str:
         # No ip_profiles/device_meta in the fake: the hierarchy resolves to the
@@ -140,3 +150,71 @@ def test_apply_response_modifications_wrapper():
         engine._rules = []
     assert out["status_code"] == HTTPStatus.OK
     assert out["body"] == {"status": "modified"}
+
+
+@pytest.mark.asyncio
+async def test_known_ip_resolves_to_existing_device(monkeypatch):
+    """Recognition: a bound IP must win over the per-protocol generated id."""
+    db = _FakeDB(ip_index={"192.168.1.50": "temp-pool-01"})
+    orch = _FakeOrchestrator()
+    monkeypatch.setattr(server_mod, "db_manager", db)
+    monkeypatch.setattr(server_mod, "orchestrator", orch)
+
+    # Device arrives on a WebSocket port: id would normally be "ws-192-168-1-50".
+    req = InterceptedRequest(
+        device_id="ws-192-168-1-50",
+        timestamp=0,
+        protocol=ProtocolType.WEBSOCKET,
+        client_ip="192.168.1.50",
+        method="WS",
+        path="/ws",
+        body=None,
+    )
+    await server_mod.handle_protocol_request(req)
+
+    call = orch.calls[0]
+    assert call["device_id"] == "temp-pool-01"
+
+
+@pytest.mark.asyncio
+async def test_unknown_ip_keeps_generated_id(monkeypatch):
+    """Recognition: an unbound IP keeps the per-protocol generated id."""
+    db = _FakeDB(ip_index={})  # no IP bound to a known device
+    orch = _FakeOrchestrator()
+    monkeypatch.setattr(server_mod, "db_manager", db)
+    monkeypatch.setattr(server_mod, "orchestrator", orch)
+
+    req = InterceptedRequest(
+        device_id="raw-10-0-0-3",
+        timestamp=0,
+        protocol=ProtocolType.TCPIP,
+        client_ip="10.0.0.3",
+        method="RAW",
+        path="/",
+        body=None,
+    )
+    await server_mod.handle_protocol_request(req)
+
+    call = orch.calls[0]
+    assert call["device_id"] == "raw-10-0-0-3"
+
+
+@pytest.mark.asyncio
+async def test_no_client_ip_keeps_generated_id(monkeypatch):
+    """Recognition: an IP-less protocol (MQTT/Modbus) never resolves by IP."""
+    db = _FakeDB(ip_index={"10.0.0.3": "temp-pool-01"})
+    orch = _FakeOrchestrator()
+    monkeypatch.setattr(server_mod, "db_manager", db)
+    monkeypatch.setattr(server_mod, "orchestrator", orch)
+
+    req = InterceptedRequest(
+        device_id="some-mqtt-device",
+        timestamp=0,
+        protocol=ProtocolType.MQTT,
+        topic="home/sensors/temp",
+        body={"t": 22.5},
+    )
+    await server_mod.handle_protocol_request(req)
+
+    call = orch.calls[0]
+    assert call["device_id"] == "some-mqtt-device"

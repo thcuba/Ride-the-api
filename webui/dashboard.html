@@ -457,11 +457,6 @@
     Monitored Ports
   </span>
   <span id="tlsBadges" role="list" aria-label="Active ports"></span>
-  <span class="tb-add">
-    <label for="newPortInput">Add port number</label>
-    <input type="number" id="newPortInput" placeholder="Port" min="1" max="65535" aria-required="false" onkeydown="if(event.key==='Enter'){event.preventDefault();addTlsPort();}">
-    <button class="btn btn-ghost" onclick="addTlsPort()" style="padding:4px 10px;font-size:12px;" aria-label="Add TLS port">+ Add</button>
-  </span>
   <span class="tb-status" id="tlsStatus">loading…</span>
 </div>
 
@@ -1321,41 +1316,12 @@ async function loadTlsBar() {
       return;
     }
     const ports = data.ports || [];
-    container.innerHTML = ports.map(p => `<span class="tb-badge tb-active" role="listitem">${p} <button class="tb-btn" onclick="removeTlsPort(${p})" aria-label="Remove port ${p}">&times;</button></span>`).join('');
+    // Ports are read-only: they are configured in config.yaml only.
+    container.innerHTML = ports.map(p => `<span class="tb-badge tb-active" role="listitem">${p}</span>`).join('');
     status.textContent = `${ports.length} port${ports.length !== 1 ? 's' : ''}`;
   } catch(e) {
     document.getElementById('tlsBadges').innerHTML = '<span class="tb-badge tb-inactive">error</span>';
   }
-}
-
-async function addTlsPort() {
-  const input = document.getElementById('newPortInput');
-  const port = parseInt(input.value);
-  if (!port || port < 1 || port > 65535) { showToast('Invalid port', 'error'); return; }
-  try {
-    const res = await fetch('/api/tls/ports', {
-      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({port}),
-    });
-    if (!res.ok) {
-      showToast(await errorFrom(res, `Failed to add port (HTTP ${res.status})`), 'error');
-      return;
-    }
-    showToast('Added port ' + port, 'success');
-    input.value = '';
-    loadTlsBar();
-  } catch(e) { showToast(await errorFrom(e, 'Failed to add port'), 'error'); }
-}
-
-async function removeTlsPort(port) {
-  try {
-    const res = await fetch(`/api/tls/ports/${port}`, { method: 'DELETE' });
-    if (!res.ok) {
-      showToast(await errorFrom(res, `Failed to remove port (HTTP ${res.status})`), 'error');
-      return;
-    }
-    showToast('Removed port ' + port, 'success');
-    loadTlsBar();
-  } catch(e) { showToast(await errorFrom(e, 'Failed to remove port'), 'error'); }
 }
 
 let certFiles = [];

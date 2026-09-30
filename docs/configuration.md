@@ -662,7 +662,7 @@ TLS decryption (MITM) to intercept encrypted traffic.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enabled` | `boolean` | `false` | Enable TLS decryption (disabled by default) |
-| `listen_ports` | `array[integer]` | `[443, 8883, 5684, 8443]` | Ports on which to intercept TLS traffic |
+| `listen_ports` | `array[integer]` | `[443, 8443, 8883, 5684, 802]` | Ports on which to intercept TLS traffic. **Read-only at runtime**: configured only here, never added/removed via the API |
 | `ca_cert_path` | `string` | `"./certs/ca.pem"` | Path to the CA certificate used to sign MITM certificates |
 | `ca_key_path` | `string` | `"./certs/ca.key"` | Path to the CA private key |
 | `device_certs_dir` | `string` | `"./data/device_certs"` | Directory for per-device generated certificates |
@@ -704,7 +704,10 @@ tls_decrypt:
 
 ## protocol_servers
 
-Servers for additional protocols beyond HTTP. Each server is disabled by default.
+Servers for additional protocols beyond HTTP. The non-TLS servers below
+(MQTT, CoAP, Modbus, WebSocket, Raw TCP) listen **by default** so that any
+device redirected onto one of their ports is recognized automatically. Bridges
+and HTTP/2 stay disabled (HTTP/2's default port 443 collides with the TLS MITM).
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -726,7 +729,7 @@ Embedded MQTT broker server.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `enabled` | `boolean` | `false` | Enable the MQTT server |
+| `enabled` | `boolean` | `true` | Enable the MQTT server |
 | `host` | `string` | `"0.0.0.0"` | Listen address |
 | `port` | `integer` | `1883` | Unencrypted MQTT port |
 | `port_tls` | `integer` | `8883` | MQTT TLS port |
@@ -742,7 +745,7 @@ CoAP (Constrained Application Protocol) server.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `enabled` | `boolean` | `false` | Enable the CoAP server |
+| `enabled` | `boolean` | `true` | Enable the CoAP server |
 | `host` | `string` | `"0.0.0.0"` | Listen address |
 | `port` | `integer` | `5683` | Unencrypted CoAP port |
 | `dtls_enabled` | `boolean` | `false` | Enable DTLS for CoAP |
@@ -757,7 +760,7 @@ Modbus TCP server.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `enabled` | `boolean` | `false` | Enable the Modbus server |
+| `enabled` | `boolean` | `true` | Enable the Modbus server |
 | `host` | `string` | `"0.0.0.0"` | Listen address |
 | `port` | `integer` | `502` | Modbus TCP port |
 | `unit_id` | `integer` | `1` | Default Modbus unit ID |
@@ -774,7 +777,7 @@ WebSocket server.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `enabled` | `boolean` | `false` | Enable the WebSocket server |
+| `enabled` | `boolean` | `true` | Enable the WebSocket server |
 | `host` | `string` | `"0.0.0.0"` | Listen address |
 | `port` | `integer` | `9000` | WebSocket port |
 | `path` | `string` | `"/ws"` | WebSocket endpoint path |
@@ -788,7 +791,7 @@ Raw TCP server for non-standard protocols.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `enabled` | `boolean` | `false` | Enable the raw TCP server |
+| `enabled` | `boolean` | `true` | Enable the raw TCP server |
 | `host` | `string` | `"0.0.0.0"` | Listen address |
 | `port` | `integer` | `9100` | Raw TCP port |
 | `buffer_size` | `integer` | `4096` | Read buffer size in bytes |

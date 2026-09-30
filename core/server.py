@@ -169,6 +169,21 @@ def _select_handler_adapter(
     return matched[0] if matched else None
 
 
+async def _resolve_device_for_ip(db, client_ip: str | None) -> str | None:
+    """Resolve a source IP to a known device id, when it is bound.
+
+    Automatic device recognition: if ``client_ip`` is exposed by the producer
+    and already appears in some device's ``ip_addresses``, return that device
+    id so an already-recognized device keeps ONE identity across ports and
+    protocols (and reuses its learned protocol/vendor). Returns ``None`` for
+    unbound IPs, ``"unknown"`` placeholders, or IP-less protocols so the caller
+    falls back to its own generated id.
+    """
+    if not client_ip or client_ip == "unknown":
+        return None
+    return await db.resolve_device_id(client_ip)
+
+
 async def handle_tls_decrypted_request(req: DecryptedRequest) -> dict | None:
     """Handle a decrypted TLS request — find/create device and run through pipeline.
 
@@ -183,7 +198,11 @@ async def handle_tls_decrypted_request(req: DecryptedRequest) -> dict | None:
         return None
 
     config = config_manager.config
-    device_id = device_id_from_ip("ip", req.client_ip)
+    # Automatic device recognition: if this source IP is already bound to a
+    # known device (device.ip_addresses), use THAT device instead of a fresh
+    # per-IP id. The same physical device keeps one identity across ports.
+    recognized = await _resolve_device_for_ip(db_manager, req.client_ip)
+    device_id = recognized or device_id_from_ip("ip", req.client_ip)
 
     try:
         # Create or find device by IP
@@ -300,6 +319,16 @@ async def handle_protocol_request(request: InterceptedRequest) -> dict | None:
         return None
 
     device_id = request.device_id or "unknown"
+
+    # Automatic device recognition: a plugin-exposed source IP bound to a known
+    # device wins over the per-protocol generated id, so an already-recognized
+    # device keeps ONE identity across ports/protocols (and reuses its learned
+    # protocol/vendor). IP-less protocols (MQTT/Modbus/bridges) and unbound IPs
+    # keep the generated id.
+    device_id = (
+        await _resolve_device_for_ip(db_manager, getattr(request, "client_ip", None))
+    ) or device_id
+
     protocol = (
         request.protocol.value
         if hasattr(request.protocol, "value")
@@ -687,75 +716,6 @@ async def tls_unidentified():
     return {"unidentified": unidentified}
 
 
-@app.post("/api/tls/ports")
-async def tls_add_port(request: Request):
-    """Dynamically add a TLS listen port."""
-    try:
-        body = await request.json()
-    except Exception:
-        return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
-    try:
-        port = int(body.get("port", 0))
-    except (TypeError, ValueError):
-        return JSONResponse(status_code=400, content={"error": "Invalid port number"})
-    if port < 1 or port > 65535:  # noqa: PLR2004
-        return JSONResponse(status_code=400, content={"error": "Invalid port number"})
-
-    # The MITM server only starts at boot when TLS decryption is enabled in
-    # config (off by default). If it is not running yet, start it on demand so
-    # "add port" works immediately (this is the common case on Windows, where
-    # DNS/iptables redirection is not set up so TLS never got enabled).
-    global tls_mitm_server  # noqa: PLW0603
-    if not tls_mitm_server:
-        try:
-            config = config_manager.config
-            server = get_tls_mitm_server(
-                cert_manager=cert_manager,
-                listen_ports=config.tls_decrypt.listen_ports,
-            )
-            server.request_handler = handle_tls_decrypted_request
-            await server.start()
-            tls_mitm_server = server
-            config.tls_decrypt.enabled = True
-        except Exception as e:  # noqa: BLE001
-            # Log the full exception server-side; the client only gets a
-            # generic message (CodeQL: information exposure through exception).
-            logger.error("TLS MITM: on-demand start failed: %s", e)  # noqa: TRY400
-            return JSONResponse(
-                status_code=503,
-                content={"error": "TLS MITM could not be started"},
-            )
-
-    error = await tls_mitm_server.add_port(port)
-    if error is None:
-        # Persist to config
-        config = config_manager.config
-        if port not in config.tls_decrypt.listen_ports:
-            config.tls_decrypt.listen_ports.append(port)
-        return {
-            "status": "ok",
-            "port": port,
-            "listen_ports": tls_mitm_server.listen_ports.copy(),
-        }
-    logger.warning("TLS MITM: add port %d failed: %s", port, error)
-    return JSONResponse(status_code=500, content={"error": f"Failed to add port: {error}"})
-
-
-@app.delete("/api/tls/ports/{port}")
-async def tls_remove_port(port: int):
-    """Dynamically remove a TLS listen port."""
-    if not tls_mitm_server:
-        return JSONResponse(status_code=503, content={"error": "TLS MITM not running"})
-    success = await tls_mitm_server.remove_port(port)
-    if success:
-        # Update config
-        config = config_manager.config
-        if port in config.tls_decrypt.listen_ports:
-            config.tls_decrypt.listen_ports.remove(port)
-        return {"status": "ok", "port": port, "listen_ports": tls_mitm_server.listen_ports.copy()}
-    return JSONResponse(status_code=404, content={"error": "Port not found"})
-
-
 @app.put("/api/devices/{device_id}/tls-config")
 async def tls_update_device_config(device_id: str, request: Request):
     """Update TLS config for a specific device (name, vendor, passthrough, pinning_bypass)."""
@@ -794,7 +754,12 @@ async def tls_update_device_config(device_id: str, request: Request):
 
 @app.get("/api/tls/ports")
 async def tls_list_ports():
-    """List all currently active TLS listen ports."""
+    """List all currently active TLS listen ports (read-only).
+
+    Ports are configured ONLY in config.yaml (``tls_decrypt.listen_ports``)
+    and are never added/removed at runtime. Edit config.yaml and restart the
+    service to change the set of monitored ports.
+    """
     if not tls_mitm_server:
         return {"ports": [], "enabled": False}
     return {"ports": tls_mitm_server.listen_ports.copy(), "enabled": True}
