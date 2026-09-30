@@ -9,18 +9,19 @@
 
 1. [core](#core) — Database and context
 2. [proxy](#proxy) — HTTP proxy, TLS and fallback
-3. [vendors](#vendors) — IoT vendor configuration
-4. [models](#models) — ML models and inference
-5. [control](#control) — Control, policy and online learning
-6. [observability](#observability) — Logging, metrics, tracing and health check
-7. [dns](#dns) — DNS integration (Pi-hole, AdGuard)
-8. [traffic_selection](#traffic_selection) — Traffic selection rules
-9. [llm_decipher](#llm_decipher) — LLM-based deciphering
-10. [modification](#modification) — Request/response modification rules
-11. [correlation](#correlation) — Request-response correlation
-12. [learning](#learning) — Learning and production modes
-13. [tls_decrypt](#tls_decrypt) — TLS decryption/MITM
-14. [protocol_servers](#protocol_servers) — Multi-protocol servers
+3. [security](#security) — Control-plane authentication
+4. [vendors](#vendors) — IoT vendor configuration
+5. [models](#models) — ML models and inference
+6. [control](#control) — Control, policy and online learning
+7. [observability](#observability) — Logging, metrics, tracing and health check
+8. [dns](#dns) — DNS integration (Pi-hole, AdGuard)
+9. [traffic_selection](#traffic_selection) — Traffic selection rules
+10. [llm_decipher](#llm_decipher) — LLM-based deciphering
+11. [modification](#modification) — Request/response modification rules
+12. [correlation](#correlation) — Request-response correlation
+13. [learning](#learning) — Learning and production modes
+14. [tls_decrypt](#tls_decrypt) — TLS decryption/MITM
+15. [protocol_servers](#protocol_servers) — Multi-protocol servers
 
 ---
 
@@ -128,6 +129,31 @@ proxy:
     timeout: 10
     retry_count: 2
     confidence_threshold: 0.7
+```
+
+---
+
+## security
+
+Control-plane authentication. The FastAPI server doubles as the administrative
+control plane (`/api/*`). When `auth_enabled` is true (default), every `/api/*`
+route requires a **single password** that grants full access (reads and
+writes) — there is no read-only vs admin distinction.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `auth_enabled` | `boolean` | `true` | Require the password for every `/api/*` route |
+| `password` | `string` | `""` | The control-plane password. Sent via the `X-API-Key` header or `Authorization: Bearer <password>` |
+
+> **Empty password:** if `auth_enabled` is true but `password` is empty, the
+> control plane is **locked** — every `/api/*` request is rejected with a clear
+> message asking you to set `security.password` in `config.yaml` and restart.
+> No keys are generated automatically.
+
+```yaml
+security:
+  auth_enabled: true
+  password: "your-password-here"
 ```
 
 ---
