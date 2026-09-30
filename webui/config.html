@@ -62,31 +62,37 @@
   }
   .section-item:hover { background: var(--surface2); }
   .section-item.active { background: var(--accent); color: #fff; }
-  .section-item .count { font-size: 11px; font-weight: 500; opacity: .75; background: rgba(255,255,255,.12); padding: 1px 7px; border-radius: 10px; }
+  .section-item-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+  .section-item-name { font-size: 13px; font-weight: 600; line-height: 1.15; }
+  .section-item-key { font-size: 10px; font-weight: 400; opacity: .62; font-family: ui-monospace, monospace; }
+  .section-item.active .section-item-key { opacity: .85; }
+  .section-item .count { font-size: 11px; font-weight: 500; opacity: .75; background: rgba(255,255,255,.12); padding: 1px 7px; border-radius: 10px; flex-shrink: 0; }
   .section-item:not(.active) .count { background: var(--surface2); color: var(--text2); }
   .section-item.dirty-section .count { background: rgba(251,191,36,.25); color: var(--yellow); font-weight: 700; opacity: 1; }
   .section-item.dirty-section:not(.active) { border-left: 3px solid var(--yellow); }
 
   /* Content */
   .content { flex: 1; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; }
-  .content h2 { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
-  .content .sec-desc { font-size: 13px; color: var(--text2); margin-bottom: 20px; }
-  .field-group { border-top: 1px solid var(--border); padding: 16px 0; }
+  .content h2 { font-size: 20px; font-weight: 700; margin-bottom: 4px; text-transform: capitalize; }
+  .content .sec-desc { font-size: 13px; color: var(--text2); margin-bottom: 22px; line-height: 1.5; }
+  .field-group { border-top: 1px solid var(--border); padding: 18px 0; }
   .field-group:first-of-type { border-top: none; padding-top: 0; }
-  .field-group-title { font-size: 13px; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: .4px; margin-bottom: 12px; }
+  .field-group-title { font-size: 13px; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: .4px; margin-bottom: 14px; }
+  .field-group-title span.chev { display: inline-block; width: 14px; }
 
-  .field { display: flex; justify-content: space-between; align-items: center; gap: 20px; margin-bottom: 14px; }
-  .field .f-info { min-width: 0; }
+  .field { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; margin-bottom: 16px; }
+  .field .f-info { min-width: 0; flex: 1; padding-top: 6px; }
   .field .f-name { font-size: 13px; font-weight: 600; }
-  .field .f-desc { font-size: 12px; color: var(--text2); margin-top: 2px; }
+  .field .f-desc { font-size: 11px; color: var(--text2); margin-top: 3px; line-height: 1.4; word-break: break-all; }
   .field .f-control { flex-shrink: 0; }
   .field input[type="text"], .field input[type="number"], .field textarea, .field select {
     background: var(--surface2); color: var(--text); border: 1px solid var(--border); border-radius: 8px;
-    padding: 7px 10px; font-size: 13px; font-family: inherit; min-width: 220px;
+    padding: 8px 11px; font-size: 13px; font-family: inherit; min-width: 220px; transition: border-color .15s, box-shadow .15s;
   }
   .field input[type="text"] { width: 280px; }
   .field input[type="number"] { width: 160px; }
-  .field input:focus, .field textarea:focus, .field select:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+  .field textarea { width: 420px; resize: vertical; line-height: 1.4; }
+  .field input:focus, .field textarea:focus, .field select:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(108,140,255,.12); }
   .field select { min-width: 220px; cursor: pointer; }
 
   input[type="checkbox"].switch { appearance: none; width: 40px; height: 22px; background: var(--border); border-radius: 22px; position: relative; cursor: pointer; transition: background .2s; border: none; }
@@ -134,8 +140,10 @@
     .section-item { width: auto; flex: 1 1 auto; min-width: 42%; }
     .content { padding: 14px; }
     .content h2 { font-size: 18px; }
-    .field { flex-direction: column; align-items: flex-start; gap: 8px; }
-    .field .f-control, .field .f-control input, .field .f-control select { width: 100%; }
+    .field { flex-direction: column; align-items: stretch; gap: 8px; }
+    .field .f-info { padding-top: 0; }
+    .field .f-control, .field .f-control input, .field .f-control select, .field .f-control textarea { width: 100%; }
+    .field .f-control textarea { width: 100%; }
     .field input[type="text"], .field input[type="number"], .field textarea, .field select { width: 100%; min-width: 0; }
     .save-bar { flex-wrap: wrap; justify-content: stretch; }
     .save-bar .btn { flex: 1; }
@@ -160,6 +168,7 @@
   <div class="header-actions">
     <span class="path-chip" id="configPath">…</span>
     <a class="btn btn-ghost" href="/">← Dashboard</a>
+    <button class="btn btn-ghost" id="updateBtn" onclick="updateSoftware()" title="Update ride-the-api to the latest release (restarts the service)">&#x21bb; Update</button>
     <button class="btn btn-primary" id="saveBtn" onclick="saveConfig()" title="No unsaved changes (Ctrl+S)" disabled>&#x2714; Save All</button>
   </div>
 </div>
@@ -172,6 +181,7 @@
     <div id="fields"></div>
     <div class="save-bar">
       <span class="status" id="saveStatus"></span>
+      <button class="btn btn-ghost" id="updateBtn2" onclick="updateSoftware()" title="Update ride-the-api to the latest release (restarts the service)">&#x21bb; Update</button>
       <button class="btn btn-primary" id="saveBtn2" onclick="saveConfig()" title="No unsaved changes (Ctrl+S)" disabled>&#x2714; Save All</button>
     </div>
   </main>
@@ -304,17 +314,57 @@ function showToast(msg, type) {
 }
 
 // ── Sidebar ─────────────────────────────────────────────────────────────────
+// Ordered, human-readable section metadata: friendly label + one-line hint.
+const SECTION_ORDER = [
+  'core', 'buffer', 'proxy', 'security', 'vendors', 'models', 'control',
+  'observability', 'dns', 'traffic_selection', 'llm_decipher', 'modification',
+  'correlation', 'learning', 'tls_decrypt', 'protocol_servers',
+];
+const SECTION_LABELS = {
+  core: 'Core', buffer: 'Buffer', proxy: 'Proxy', security: 'Security',
+  vendors: 'Vendors', models: 'Models', control: 'Control',
+  observability: 'Observability', dns: 'DNS', traffic_selection: 'Traffic Selection',
+  llm_decipher: 'LLM Decipher', modification: 'Modification', correlation: 'Correlation',
+  learning: 'Learning', tls_decrypt: 'TLS Decrypt', protocol_servers: 'Protocol Servers',
+};
+const SECTION_DETAILS = {
+  core: 'DB paths, per-IP overrides',
+  buffer: 'Transient capture buffer',
+  proxy: 'HTTP bind & port',
+  security: 'Control-plane auth',
+  vendors: 'Cloud endpoints & adapters',
+  models: 'Local model registry',
+  control: 'Policy & online learning',
+  observability: 'Logs, metrics, tracing',
+  dns: 'Upstream DNS servers',
+  traffic_selection: 'Intercept vs passthrough',
+  llm_decipher: 'LLM service profiles',
+  modification: 'Request/response rules',
+  correlation: 'Request/response matching',
+  learning: 'Mode & match threshold',
+  tls_decrypt: 'TLS MITM engine',
+  protocol_servers: 'MQTT, CoAP, Modbus, WS…',
+};
+
 function buildSidebar() {
   const sidebar = document.getElementById('sidebar');
   const label = document.createElement('div');
   label.className = 'sidebar-label';
   label.textContent = 'Sections';
   sidebar.appendChild(label);
-  Object.keys(cfg).forEach(key => {
+  const keys = SECTION_ORDER.filter(k => k in cfg)
+    .concat(Object.keys(cfg).filter(k => !SECTION_ORDER.includes(k)));
+  keys.forEach(key => {
     const btn = document.createElement('button');
     btn.className = 'section-item';
     btn.dataset.section = key;
-    btn.innerHTML = `<span>${escapeHtml(key)}</span><span class="count"></span>`;
+    btn.title = SECTION_DETAILS[key] || 'Configuration section';
+    btn.innerHTML = `
+      <span class="section-item-text">
+        <span class="section-item-name">${escapeHtml(SECTION_LABELS[key] || key)}</span>
+        <span class="section-item-key">${escapeHtml(key)}</span>
+      </span>
+      <span class="count"></span>`;
     btn.addEventListener('click', () => selectSection(key));
     sidebar.appendChild(btn);
   });
@@ -322,7 +372,8 @@ function buildSidebar() {
   const raw = document.createElement('button');
   raw.className = 'section-item';
   raw.dataset.section = '__raw__';
-  raw.innerHTML = `<span>Raw YAML/JSON</span>`;
+  raw.title = 'Full configuration as raw JSON';
+  raw.innerHTML = `<span class="section-item-text"><span class="section-item-name">Raw</span><span class="section-item-key">JSON / YAML</span></span>`;
   raw.addEventListener('click', () => selectSection('__raw__'));
   sidebar.appendChild(raw);
 }
@@ -348,14 +399,14 @@ function selectSection(key) {
     desc.textContent = 'Full config as JSON — edit carefully, validated on save.';
     const ta = document.createElement('textarea');
     ta.id = 'raw-editor';
-    ta.style.cssText = 'width:100%;min-height:60vh;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:12px;font-family:ui-monospace,monospace;font-size:12px;';
+    ta.style.cssText = 'width:100%;min-height:60vh;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:12px;font-family:ui-monospace,monospace;font-size:12px;resize:vertical;';
     ta.value = JSON.stringify(cfg, null, 2);
-            ta.addEventListener('input', () => { fields.classList.add('dirty'); setDirty('__raw__'); });
-        fields.innerHTML = '';
-        fields.appendChild(ta);
-        setDirty('__raw__');
-        if (title) title.focus();
-        return;
+    ta.addEventListener('input', () => { fields.classList.add('dirty'); setDirty('__raw__'); });
+    fields.innerHTML = '';
+    fields.appendChild(ta);
+    setDirty('__raw__');
+    if (title) title.focus();
+    return;
   }
   title.textContent = key;
   desc.textContent = HINTS[key] || 'Configuration section';
@@ -451,10 +502,13 @@ function renderObject(container, obj, path) {
       group.dataset.path = childPath;
       const head = document.createElement('div');
       head.className = 'field-group-title';
-      head.textContent = k;
-      head.style.cssText = 'cursor:pointer;user-select:none;';
+      head.dataset.path = childPath;
+      head.textContent = '';
       const chevron = document.createElement('span');
+      chevron.className = 'chev';
       chevron.textContent = '▾ ';
+      const nameSpan = document.createElement('span');
+      nameSpan.textContent = k;
       const body = document.createElement('div');
       renderObject(body, v, childPath);
       head.addEventListener('click', () => {
@@ -462,7 +516,8 @@ function renderObject(container, obj, path) {
         body.style.display = hidden ? '' : 'none';
         chevron.textContent = hidden ? '▾ ' : '▸ ';
       });
-      head.prepend(chevron);
+      head.appendChild(chevron);
+      head.appendChild(nameSpan);
       group.appendChild(head);
       group.appendChild(body);
       container.appendChild(group);
@@ -488,6 +543,7 @@ function renderField(path, label, value) {
   row.appendChild(info);
   const ctrl = document.createElement('div');
   ctrl.className = 'f-control';
+
   if (typeof value === 'boolean') {
     const input = document.createElement('input');
     input.type = 'checkbox'; input.className = 'switch';
@@ -496,68 +552,69 @@ function renderField(path, label, value) {
     input.setAttribute('aria-checked', value ? 'true' : 'false');
     input.setAttribute('aria-label', label);
     input.addEventListener('change', () => {
-        input.setAttribute('aria-checked', input.checked ? 'true' : 'false');
-        setAt(cfg, path, input.checked);
-        setDirty(path);
-        markFieldDirty(path);
+      input.setAttribute('aria-checked', input.checked ? 'true' : 'false');
+      setAt(cfg, path, input.checked);
+      setDirty(path);
+      markFieldDirty(path);
+    });
+    ctrl.appendChild(input);
+  } else if (typeof value === 'number') {
+    const input = document.createElement('input');
+    input.type = 'number'; input.id = id; input.value = value;
+    input.step = 'any';
+    input.addEventListener('change', () => {
+      const n = parseFloat(input.value);
+      setAt(cfg, path, Number.isNaN(n) ? null : n);
+      setDirty(path); markFieldDirty(path);
+    });
+    ctrl.appendChild(input);
+  } else if (value === null) {
+    const input = document.createElement('input');
+    input.type = 'text'; input.id = id; input.value = '';
+    input.placeholder = 'null';
+    input.addEventListener('change', () => {
+      setAt(cfg, path, input.value === '' ? null : input.value);
+      setDirty(path); markFieldDirty(path);
+    });
+    ctrl.appendChild(input);
+  } else if (typeof value === 'string') {
+    const enumOpts = enumOptionsFor(path);
+    if (enumOpts) {
+      const select = document.createElement('select');
+      select.id = id;
+      enumOpts.forEach(opt => {
+        const o = document.createElement('option');
+        o.value = opt; o.textContent = opt;
+        if (opt === value) o.selected = true;
+        select.appendChild(o);
       });
-      ctrl.appendChild(input);
-    } else if (typeof value === 'number') {
-      const input = document.createElement('input');
-      input.type = 'number'; input.id = id; input.value = value;
-      input.step = 'any';
-      input.addEventListener('change', () => {
-        const n = parseFloat(input.value);
-        setAt(cfg, path, Number.isNaN(n) ? null : n);
+      select.addEventListener('change', () => {
+        setAt(cfg, path, select.value);
         setDirty(path); markFieldDirty(path);
       });
-      ctrl.appendChild(input);
-    } else if (value === null) {
-      const input = document.createElement('input');
-      input.type = 'text'; input.id = id; input.value = '';
-      input.placeholder = 'null';
-      input.addEventListener('change', () => {
-        setAt(cfg, path, input.value === '' ? null : input.value);
-        setDirty(path); markFieldDirty(path);
-      });
-      ctrl.appendChild(input);
-        } else if (typeof value === 'string') {
-          const enumOpts = enumOptionsFor(path);
-          if (enumOpts) {
-            const select = document.createElement('select');
-            select.id = id;
-            enumOpts.forEach(opt => {
-              const o = document.createElement('option');
-              o.value = opt; o.textContent = opt;
-              if (opt === value) o.selected = true;
-              select.appendChild(o);
-            });
-            select.addEventListener('change', () => {
-              setAt(cfg, path, select.value);
-              setDirty(path); markFieldDirty(path);
-            });
-            ctrl.appendChild(select);
-          } else {
-            const isLong = typeof value === 'string' && value.length > 80;
-            if (isLong) {
-              const ta = document.createElement('textarea');
-              ta.id = id; ta.value = value; ta.rows = 4; ta.style.cssText = 'width:420px;';
-              ta.addEventListener('input', () => {
-                setAt(cfg, path, ta.value);
-                setDirty(path); markFieldDirty(path);
-              });
-              ctrl.appendChild(ta);
-            } else {
-              const input = document.createElement('input');
-              input.type = 'text'; input.id = id; input.value = value;
-              input.addEventListener('change', () => {
-                setAt(cfg, path, input.value === '' ? null : input.value);
-                setDirty(path); markFieldDirty(path);
-              });
-              ctrl.appendChild(input);
-            }
-          }
-        }
+      ctrl.appendChild(select);
+    } else {
+      const isLong = typeof value === 'string' && value.length > 80;
+      if (isLong) {
+        const ta = document.createElement('textarea');
+        ta.id = id; ta.value = value; ta.rows = 4;
+        ta.addEventListener('input', () => {
+          setAt(cfg, path, ta.value);
+          setDirty(path); markFieldDirty(path);
+        });
+        ctrl.appendChild(ta);
+      } else {
+        const input = document.createElement('input');
+        input.type = 'text'; input.id = id; input.value = value;
+        input.addEventListener('change', () => {
+          setAt(cfg, path, input.value === '' ? null : input.value);
+          setDirty(path); markFieldDirty(path);
+        });
+        ctrl.appendChild(input);
+      }
+    }
+  }
+
   row.appendChild(ctrl);
   return row;
 }
@@ -568,17 +625,20 @@ function renderArray(path, label, arr) {
   group.dataset.path = path;
   const head = document.createElement('div');
   head.className = 'field-group-title';
-  head.textContent = label + ' (' + arr.length + ')';
-  head.style.cssText = 'cursor:pointer;user-select:none;';
+  head.textContent = '';
   const chevron = document.createElement('span');
+  chevron.className = 'chev';
   chevron.textContent = '▾ ';
+  const nameSpan = document.createElement('span');
+  nameSpan.textContent = label + ' (' + arr.length + ')';
   const body = document.createElement('div');
   head.addEventListener('click', () => {
     const hidden = body.style.display === 'none';
     body.style.display = hidden ? '' : 'none';
     chevron.textContent = hidden ? '▾ ' : '▸ ';
   });
-  head.prepend(chevron);
+  head.appendChild(chevron);
+  head.appendChild(nameSpan);
   group.appendChild(head);
   group.appendChild(body);
   // Primitive arrays → editable comma-separated list
@@ -622,10 +682,12 @@ function renderArray(path, label, arr) {
         itemGroup.dataset.path = itemPath;
         const itemHead = document.createElement('div');
         itemHead.className = 'field-group-title';
-        itemHead.textContent = '#' + idx;
-        itemHead.style.cssText = 'cursor:pointer;user-select:none;';
+        itemHead.textContent = '';
         const itemChevron = document.createElement('span');
+        itemChevron.className = 'chev';
         itemChevron.textContent = '▾ ';
+        const itemName = document.createElement('span');
+        itemName.textContent = '#' + idx;
         const itemBody = document.createElement('div');
         renderObject(itemBody, item, itemPath);
         itemHead.addEventListener('click', () => {
@@ -633,7 +695,8 @@ function renderArray(path, label, arr) {
           itemBody.style.display = hidden ? '' : 'none';
           itemChevron.textContent = hidden ? '▾ ' : '▸ ';
         });
-        itemHead.prepend(itemChevron);
+        itemHead.appendChild(itemChevron);
+        itemHead.appendChild(itemName);
         const removeBtn = document.createElement('button');
         removeBtn.className = 'btn btn-ghost';
         removeBtn.textContent = 'Remove';
@@ -796,12 +859,42 @@ async function saveConfig() {
     // Rebuild current view from canonical config
     selectSection(key);
   } catch (e) {
-      status.textContent = String(e.message || e);
-      status.className = 'status err';
-      showToast('Save failed', 'error');
-      updateSaveBtn();
-    }
+    status.textContent = String(e.message || e);
+    status.className = 'status err';
+    showToast('Save failed', 'error');
+    updateSaveBtn();
   }
+}
+
+async function updateSoftware() {
+  if (!confirm('Aggiornare ride-the-api all\'ultima release?\n\nIl servizio verrà riavviato; le modifiche non salvate andranno perse.')) return;
+  const btn = document.getElementById('updateBtn');
+  const btn2 = document.getElementById('updateBtn2');
+  const status = document.getElementById('saveStatus');
+  const restore = () => { if (btn) btn.disabled = false; if (btn2) btn2.disabled = false; };
+  if (btn) btn.disabled = true;
+  if (btn2) btn2.disabled = true;
+  if (status) { status.textContent = 'Aggiornamento in corso…'; status.className = 'status'; }
+  try {
+    const res = await fetch('/api/system/update', { method: 'POST' });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      const msg = (data && data.error) ? data.error : ('HTTP ' + res.status);
+      if (status) { status.textContent = 'Update failed: ' + msg; status.className = 'status err'; }
+      showToast('Update failed', 'error');
+      restore();
+      return;
+    }
+    if (status) { status.textContent = data.message || 'Update started'; status.className = 'status ok'; }
+    showToast('Update started — il servizio si riavvia', 'success');
+    // The service restarts; remind the user to reload after a short wait.
+    setTimeout(() => { try { location.reload(); } catch (e) {} }, 6000);
+  } catch (e) {
+    if (status) { status.textContent = String(e.message || e); status.className = 'status err'; }
+    showToast('Update failed', 'error');
+    restore();
+  }
+}
 
 function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));

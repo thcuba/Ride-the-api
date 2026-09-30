@@ -9,6 +9,7 @@ import asyncio  # noqa: TC003
 import base64
 import json
 import logging
+import subprocess
 import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -1888,6 +1889,46 @@ async def test_llm_profile(request: Request):
     if not result.get("success"):
         return JSONResponse(status_code=502, content=result)
     return result
+
+
+@app.post("/api/system/update")
+async def system_update():
+    """Update the software to the latest state and restart the service.
+
+    Detects the install type and runs the bundled ``deploy/update.sh``
+    **detached** so the HTTP response is delivered before the service
+    restarts. The update log is written to ``<install-dir>/update.log``.
+    """
+    if not db_manager:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    script = Path(__file__).resolve().parent.parent / "deploy" / "update.sh"
+    if not script.exists():
+        script = Path(__file__).resolve().parent.parent / "deploy" / "rideapi"
+    if not script.exists():
+        return JSONResponse(
+            status_code=500, content={"error": "Updater script not found in this install"}
+        )
+    install_dir = Path(__file__).resolve().parent.parent
+    # Detached: start_new_session + explicit stdio to /dev/null so the child
+    # survives the parent's restart and the daemon never blocks on a pipe.
+    try:
+        subprocess.Popen(
+            ["bash", str(script), "--dir", str(install_dir), "--restart", "systemd"],
+            start_new_session=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            cwd=str(install_dir),
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.exception("Failed to launch updater")
+        return JSONResponse(status_code=500, content={"error": f"Failed to start update: {e}"})
+    return {
+        "status": "started",
+        "message": "Update started in the background. The service will restart — "
+        "wait a moment and reload.",
+        "log": str(install_dir / "update.log"),
+    }
 
 
 @app.post("/api/llm/settings/profiles")
