@@ -168,6 +168,7 @@
   <div class="header-actions">
     <span class="path-chip" id="configPath">…</span>
     <a class="btn btn-ghost" href="/">← Dashboard</a>
+    <button class="btn btn-ghost" id="updateBtn" onclick="updateSoftware()" title="Update ride-the-api to the latest release (restarts the service)">&#x21bb; Update</button>
     <button class="btn btn-primary" id="saveBtn" onclick="saveConfig()" title="No unsaved changes (Ctrl+S)" disabled>&#x2714; Save All</button>
   </div>
 </div>
@@ -180,6 +181,7 @@
     <div id="fields"></div>
     <div class="save-bar">
       <span class="status" id="saveStatus"></span>
+      <button class="btn btn-ghost" id="updateBtn2" onclick="updateSoftware()" title="Update ride-the-api to the latest release (restarts the service)">&#x21bb; Update</button>
       <button class="btn btn-primary" id="saveBtn2" onclick="saveConfig()" title="No unsaved changes (Ctrl+S)" disabled>&#x2714; Save All</button>
     </div>
   </main>
@@ -857,12 +859,42 @@ async function saveConfig() {
     // Rebuild current view from canonical config
     selectSection(key);
   } catch (e) {
-      status.textContent = String(e.message || e);
-      status.className = 'status err';
-      showToast('Save failed', 'error');
-      updateSaveBtn();
-    }
+    status.textContent = String(e.message || e);
+    status.className = 'status err';
+    showToast('Save failed', 'error');
+    updateSaveBtn();
   }
+}
+
+async function updateSoftware() {
+  if (!confirm('Aggiornare ride-the-api all\'ultima release?\n\nIl servizio verrà riavviato; le modifiche non salvate andranno perse.')) return;
+  const btn = document.getElementById('updateBtn');
+  const btn2 = document.getElementById('updateBtn2');
+  const status = document.getElementById('saveStatus');
+  const restore = () => { if (btn) btn.disabled = false; if (btn2) btn2.disabled = false; };
+  if (btn) btn.disabled = true;
+  if (btn2) btn2.disabled = true;
+  if (status) { status.textContent = 'Aggiornamento in corso…'; status.className = 'status'; }
+  try {
+    const res = await fetch('/api/system/update', { method: 'POST' });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      const msg = (data && data.error) ? data.error : ('HTTP ' + res.status);
+      if (status) { status.textContent = 'Update failed: ' + msg; status.className = 'status err'; }
+      showToast('Update failed', 'error');
+      restore();
+      return;
+    }
+    if (status) { status.textContent = data.message || 'Update started'; status.className = 'status ok'; }
+    showToast('Update started — il servizio si riavvia', 'success');
+    // The service restarts; remind the user to reload after a short wait.
+    setTimeout(() => { try { location.reload(); } catch (e) {} }, 6000);
+  } catch (e) {
+    if (status) { status.textContent = String(e.message || e); status.className = 'status err'; }
+    showToast('Update failed', 'error');
+    restore();
+  }
+}
 
 function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));

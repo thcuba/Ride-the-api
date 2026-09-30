@@ -132,3 +132,28 @@ def test_assign_device_database_valid_name_accepted(client):
     )
     assert resp.status_code == _HTTP_OK
     assert resp.json()["database_name"] == "valid_db_name"
+
+
+def test_system_update_starts_detached_updater(client, monkeypatch):
+    """POST /api/system/update launches the updater detached and reports started."""
+    launched: dict = {}
+    devnull = object()
+
+    class _SP:
+        DEVNULL = devnull
+
+        @staticmethod
+        def Popen(*args, **kwargs) -> object:  # noqa: ANN001
+            launched["args"] = args
+            launched["kwargs"] = kwargs
+            return object()
+
+    monkeypatch.setattr(server_mod, "subprocess", _SP)
+    resp = client.post("/api/system/update")
+    assert resp.status_code == _HTTP_OK
+    body = resp.json()
+    assert body["status"] == "started"
+    kwargs = launched["kwargs"]
+    assert kwargs["start_new_session"] is True
+    assert launched["args"][0][1].endswith("update.sh")
+    assert kwargs["cwd"].endswith(("ride-the-api", "Ride-the-api"))
