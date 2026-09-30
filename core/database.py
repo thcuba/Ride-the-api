@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
+from cachetools import TTLCache
 from sqlalchemy import (
     JSON,
     DateTime,
@@ -495,6 +496,19 @@ class DatabaseManager:
         self._device_locks: dict[str, asyncio.Lock] = {}
         self._ip_lookup_cache: dict[str, str] | None = None
 
+        # Bounded in-memory caches for device connection mode and device meta header (5-min TTL)
+        self._device_connection_cache: TTLCache[str, str] = TTLCache(maxsize=2048, ttl=300)
+        self._device_meta_cache: TTLCache[str, dict | None] = TTLCache(maxsize=2048, ttl=300)
+
+    def invalidate_device_cache(self, device_id: str | None = None) -> None:
+        """Invalidate in-memory caches for a device or all devices."""
+        if device_id is None:
+            self._device_connection_cache.clear()
+            self._device_meta_cache.clear()
+        else:
+            self._device_connection_cache.pop(device_id, None)
+            self._device_meta_cache.pop(device_id, None)
+
     async def initialize(self) -> None:
         """Initialize all databases."""
         self._core_engine = create_configured_engine(self.core_db_url, echo=self.echo)
@@ -588,6 +602,7 @@ class DatabaseManager:
                 del self._device_sessions[device_id]
             if database_url:
                 self._device_db_urls[device_id] = database_url
+            self.invalidate_device_cache(device_id)
             logger.info(f"Device {device_id} database assigned: {database_url or database_name}")
             return True
 
@@ -743,22 +758,31 @@ class DatabaseManager:
                 extra["connection"] = connection.value
             device.extra_attributes = extra
             await session.commit()
+            if connection is not None:
+                self._device_connection_cache[device_id] = connection.value
+
+        conn_val = connection.value if connection else "auto"
 
         if profile.database:
             await self.assign_device_database(device_id, database_url=profile.database)
 
-        return profile.connection.value
+        if connection is not None:
+            self._device_connection_cache[device_id] = conn_val
+
+        return conn_val
 
     async def get_device_connection(self, device_id: str) -> str:
         """Return the stored connection type for a device (default ``auto``)."""
+        if device_id in self._device_connection_cache:
+            return self._device_connection_cache[device_id]
         async with await self.get_core_session() as session:
             result = await session.execute(
                 select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
             )
             device = result.scalar_one_or_none()
-            if not device:
-                return "auto"
-            return (device.extra_attributes or {}).get("connection", "auto")
+            conn = (device.extra_attributes or {}).get("connection", "auto") if device else "auto"
+            self._device_connection_cache[device_id] = conn
+            return conn
 
     async def is_ips_bypassed(self, ip: str) -> bool:
         """Return True if the IP is in per-IP bypass mode.
@@ -783,12 +807,17 @@ class DatabaseManager:
         flush. A ``None`` return means the protocol has not been decided yet
         (the device is still in ``auto`` / pre-first-flush).
         """
+        if device_id in self._device_meta_cache:
+            cached = self._device_meta_cache[device_id]
+            return dict(cached) if cached is not None else None
         async with self.device_session(device_id) as session:
             result = await session.execute(
                 select(DeviceMetaRow).where(DeviceMetaRow.device_id == device_id)
             )
             row = result.scalar_one_or_none()
-            return dict(row.meta) if row else None
+            meta = dict(row.meta) if row else None
+            self._device_meta_cache[device_id] = meta
+            return dict(meta) if meta is not None else None
 
     async def write_device_meta(self, device_id: str, meta: dict) -> dict:
         """Persist (or update) the device header, validating the standard shape.
@@ -808,7 +837,8 @@ class DatabaseManager:
             else:
                 row.meta = payload
             await session.commit()
-        return payload
+        self._device_meta_cache[device_id] = payload
+        return dict(payload)
 
     async def resolve_device_protocol(self, device_id: str, ingress_default: str = "http") -> str:
         """Resolve the operational protocol for a device on ingress.
@@ -1099,6 +1129,8 @@ class DatabaseManager:
             await self._core_engine.dispose()
         for engine in self._device_engines.values():
             await engine.dispose()
+        self._device_connection_cache.clear()
+        self._device_meta_cache.clear()
         logger.info("All database connections closed")
 
 

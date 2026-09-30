@@ -1395,6 +1395,7 @@ async def update_device_connection(device_id: str, request: Request):
         device.extra_attributes = extra
         session.add(device)
         await session.commit()
+        db_manager.invalidate_device_cache(device_id)
     return {"device_id": device_id, "connection": connection.value}
 
 
