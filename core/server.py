@@ -183,7 +183,12 @@ async def handle_tls_decrypted_request(req: DecryptedRequest) -> dict | None:
         return None
 
     config = config_manager.config
-    device_id = device_id_from_ip("ip", req.client_ip)
+    # Automatic device recognition: if this source IP is already bound to a
+    # known device (device.ip_addresses), use THAT device instead of a fresh
+    # per-IP id. The same physical device keeps one identity across ports.
+    device_id = await db_manager.resolve_device_id(req.client_ip) or device_id_from_ip(
+        "ip", req.client_ip
+    )
 
     try:
         # Create or find device by IP
@@ -300,6 +305,18 @@ async def handle_protocol_request(request: InterceptedRequest) -> dict | None:
         return None
 
     device_id = request.device_id or "unknown"
+
+    # Automatic device recognition: if the plugin exposed a source IP and that
+    # IP is already bound to a known device (device.ip_addresses), use THAT
+    # device — not a fresh per-protocol id. The same physical device then keeps
+    # one identity even if it arrives on a different port/protocol. Unbound IPs
+    # (and IP-less protocols like MQTT/Modbus bridges) keep the generated id.
+    cli_ip = getattr(request, "client_ip", None)
+    if cli_ip and cli_ip != "unknown":
+        known = await db_manager.resolve_device_id(cli_ip)
+        if known:
+            device_id = known
+
     protocol = (
         request.protocol.value
         if hasattr(request.protocol, "value")
