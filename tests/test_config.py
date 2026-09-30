@@ -519,6 +519,29 @@ class TestGlobalHelpers:
         assert reloaded.security.admin_api_key == "admin-key"
         assert reloaded.security.readonly_api_key == "readonly-key"
 
+    def test_set_protocol_server_enabled_persists(self, tmp_path):
+        path = tmp_path / "config.yaml"
+        data = {"protocol_servers": {"mqtt": {"enabled": False, "host": "127.0.0.1", "port": 1883}}}
+        with path.open("w") as f:
+            yaml.dump(data, f)
+
+        cm = ConfigManager(config_path=path)
+        cm.load()
+        assert cm.config.protocol_servers.mqtt.enabled is False
+        # Enable → persisted so it auto-starts on the next boot.
+        ok = cm.set_protocol_server_enabled("mqtt", True)
+        assert ok is True
+        assert cm.config.protocol_servers.mqtt.enabled is True
+        reloaded = ConfigManager(config_path=path).load()
+        assert reloaded.protocol_servers.mqtt.enabled is True
+        # Disable → persists so it stays stopped after a restart.
+        ok = cm.set_protocol_server_enabled("mqtt", False)
+        assert ok is True
+        reloaded = ConfigManager(config_path=path).load()
+        assert reloaded.protocol_servers.mqtt.enabled is False
+        # Unknown server name → not found, nothing persisted.
+        assert cm.set_protocol_server_enabled("no_such_server", True) is False
+
     def test_update_config_preserves_api_keys(self, tmp_path):
         path = tmp_path / "config.yaml"
         data = {
