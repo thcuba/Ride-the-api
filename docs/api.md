@@ -64,6 +64,24 @@
 
 ---
 
+## Authentication
+
+Every `/api/*` route requires the control-plane **password** when
+`security.auth_enabled` is `true` (default). The password grants full access
+(reads and writes) — there is no read-only vs admin distinction.
+
+Send it via the `X-API-Key` header or `Authorization: Bearer <password>`:
+
+```bash
+curl -H "X-API-Key: your-password" http://<server>:8911/api/devices
+```
+
+If auth is enabled but `security.password` is empty in `config.yaml`, the
+control plane is **locked** and every `/api/*` request returns `503` with a
+message asking you to set the password and restart.
+
+---
+
 ## Health Check
 
 ### `GET /health`
@@ -949,11 +967,26 @@ Status of all protocol servers (MQTT, CoAP, Modbus, WebSocket, etc.).
 
 ### `POST /api/protocol-servers/{name}/start`
 
-Starts a specific protocol server.
+Starts a specific protocol server **and persists `enabled: true`** in
+`config.yaml`, so it auto-starts on the next boot and the dashboard "config"
+view reflects it.
+
+**Response `200 OK`**
+
+```json
+{ "status": "ok", "server": "mqtt", "running": true, "persisted": true }
+```
 
 ### `POST /api/protocol-servers/{name}/stop`
 
-Stops a protocol server.
+Stops a protocol server **and persists `enabled: false`** in `config.yaml`, so
+it stays stopped after a restart.
+
+**Response `200 OK`**
+
+```json
+{ "status": "ok", "server": "mqtt", "running": false, "persisted": true }
+```
 
 ### `GET /api/protocol-servers/{name}/config`
 

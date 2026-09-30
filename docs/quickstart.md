@@ -244,11 +244,19 @@ Open in your browser:
 http://<server-ip>:8911/
 ```
 
+Enter the control-plane **password** (the `security.password` value from
+`config.yaml`) in the field at the top of the page. It is saved on your
+machine for automatic entry on later visits.
+
 You will see:
 - List of detected devices
 - Match rate and number of learned patterns for each device
 - Buttons to switch between learning/production modes
 - Buffer fill level
+
+> **No password set?** If `security.password` is empty in `config.yaml`, the
+> control plane is locked and the UI tells you to set it there and restart —
+> no keys are generated automatically.
 
 ### API health check
 
