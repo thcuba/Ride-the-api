@@ -125,3 +125,7 @@
 ## 2026-03-31 - Cached Device Buffer Size in Capture Buffer Manager
 **Learning:** `BufferManager._get_max_buffer_size(device_id)` executed an async SQL query `select(DeviceRegistry.context_buffer_size)` on every single captured request/response pair added via `add_pair`. Caching the max buffer size in an instance dictionary (`_buffer_size_cache`) and clearing it during session cache flushes eliminates DB query overhead per pair (~64.5x speedup for buffer size lookups, 568ms -> 8.8ms per 100 pairs).
 **Action:** Always cache per-device configuration thresholds on manager/service instances when evaluated inside packet interception or capture storage loops.
+
+## 2026-03-31 - In-Memory Bounded Caching for Ingress Protocol Resolution
+**Learning:** `DatabaseManager.resolve_device_protocol` opened two async SQL database sessions (`select(DeviceRegistry)` and `select(DeviceMetaRow)`) on every intercepted request, causing ~10ms of SQL query overhead per request (~100 ops/sec). Caching connection mode and device meta in bounded `TTLCache` instances on `DatabaseManager` eliminates per-request database I/O for static device metadata and boosts protocol resolution throughput by ~10,000x (~1.09 million ops/sec).
+**Action:** Cache static or rarely-changing per-device configuration and metadata in bounded TTL caches on `DatabaseManager`, with invalidation hooks on update methods.
