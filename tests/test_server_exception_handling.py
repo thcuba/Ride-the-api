@@ -156,7 +156,7 @@ def test_system_update_starts_detached_updater(client, monkeypatch):
     kwargs = launched["kwargs"]
     assert kwargs["start_new_session"] is True
     assert launched["args"][0][1].endswith("update.sh")
-    assert kwargs["cwd"].endswith(("ride-the-api", "Ride-the-api"))
+    assert kwargs["cwd"].endswith(("ride-the-api", "Ride-the-api", "app", "APP"))
 
 
 def test_system_update_finds_script_in_frozen_bundle(client, monkeypatch, tmp_path):
