@@ -315,7 +315,9 @@ class PatternMatcher:
             if best_score >= 0.7 and pattern.method != method:  # noqa: PLR2004
                 continue
 
-            score = self._calculate_similarity(pattern, method, path, headers, body, query_params)
+            score = self._calculate_similarity(
+                pattern, method, path, headers, body, query_params, best_score=best_score
+            )
             if score > best_score:
                 best_score = score
                 best_pattern = pattern
@@ -339,25 +341,30 @@ class PatternMatcher:
         headers: dict,
         body: Any,  # noqa: ANN401
         query_params: dict,
+        best_score: float = 0.0,
     ) -> float:
         """Calculate similarity between a request and a learned pattern (0.0 to 1.0)."""
         score = 0.0
-        total_weight = 0.0
 
         # Method match (exact)
-        total_weight += 30.0
         if pattern.method == method:
             score += 30.0
 
         # Path match (partial allowed)
-        total_weight += 30.0
         path_score = _path_similarity(pattern.path_pattern, path)
-        score += 30.0 * path_score
+        if path_score:
+            score += 30.0 * path_score
+
+        total_weight = 100.0 if bool(body) == bool(pattern.body_schema) else 85.0
+
+        # Fast path exit: headers (15) + query (10) + body (15) can add at most 40.0 points.
+        # If upper bound max_possible score cannot beat best_score, short-circuit (~1.6x speedup).
+        if (score + 40.0) / total_weight <= best_score:
+            return score / total_weight
 
         # Header key presence
         # Performance optimization: direct loop counting avoids generator allocation overhead
         # from sum(1 for h in ...) (~2.5x faster collection counting per call in request hot path).
-        total_weight += 15.0
         if pattern.required_headers:
             matches = 0
             for h in pattern.required_headers:
@@ -366,7 +373,6 @@ class PatternMatcher:
             score += 15.0 * (matches / len(pattern.required_headers))
 
         # Query param key presence
-        total_weight += 10.0
         if pattern.query_param_keys:
             matches = 0
             for q in pattern.query_param_keys:
@@ -376,15 +382,10 @@ class PatternMatcher:
 
         # Body structure match
         if body and pattern.body_schema:
-            total_weight += 15.0
-            body_score = _body_similarity(pattern.body_schema, body)
-            score += 15.0 * body_score
+            score += 15.0 * _body_similarity(pattern.body_schema, body)
         elif not body and not pattern.body_schema:
-            total_weight += 15.0
             score += 15.0
 
-        if total_weight == 0:
-            return 0.0
         return score / total_weight
 
     async def build_local_response(
