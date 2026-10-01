@@ -1,3 +1,7 @@
+## 2026-10-01 - [Password Input Visibility Toggles & Focus States]
+**Learning:** Masked password fields without a visibility toggle increase entry errors and user frustration. Adding an inline overlay toggle button (`type="button"`) requires updating both visual icon states (eye vs eye-off) and accessible attributes (`aria-label` and `title` changing between "Show password" and "Hide password") along with explicit `:focus-visible` styling to maintain keyboard navigation clarity without obscuring input text.
+**Action:** Wrap password inputs requiring user visual verification in relative containers with right-padded inputs (`padding-right: 28px`), and dynamically update `type`, `aria-label`, `title`, and inner SVG paths in the toggle click handler.
+
 ## 2026-08-30 - [Dynamic Form Field Label Association & SPA Section Focus]
 **Learning:** In dynamically constructed JavaScript UI forms, rendering field names in `<div>` tags instead of `<label for="${id}">` breaks explicit label association in assistive technologies and disables native click-to-focus mouse behavior. In SPA section switching, setting `tabindex="-1"` and programmatically calling `.focus()` on the section title or heading re-orients focus and alerts screen reader users to newly loaded views.
 **Action:** Always generate `<label for="${id}" class="...">` linked directly to control element IDs in dynamic form builders, and programmatically shift focus to the view heading when switching SPA tabs or sections.

@@ -250,6 +250,9 @@
     .header-right .ram-toggle input:checked + .ram-slider { background: var(--accent); }
     .header-right .ram-toggle input:checked + .ram-slider::before { transform: translateX(18px); }
     .header-right .ram-toggle input:focus-visible + .ram-slider { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .pw-toggle-btn { position: absolute; right: 6px; background: none; border: none; color: var(--text2); cursor: pointer; padding: 2px; display: flex; align-items: center; justify-content: center; border-radius: 4px; transition: color .2s; }
+    .pw-toggle-btn:hover { color: var(--text); }
+    .pw-toggle-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
     .header-right .ram-label { font-size: 13px; color: var(--text2); display: flex; align-items: center; gap: 6px; cursor: pointer; }
     .header-right .ram-label span { white-space: nowrap; }
     @media (prefers-reduced-motion: reduce) {
@@ -422,12 +425,20 @@
       <span class="subtitle">Local Cloud Replacement — Device Protocol Learning &amp; Response Dashboard</span>
     </div>
   <div class="header-right">
-      <input type="password" id="apiKeyInput" placeholder="Password" autocomplete="off"
-                   aria-label="Control-plane password"
-                         title="Control-plane password."
-                  style="padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:12px;width:150px;"
-                         onkeydown="if(event.key==='Enter'){event.preventDefault();saveApiKeyFromInput();}">
-                  <button class="btn btn-ghost" onclick="saveApiKeyFromInput()" style="padding:6px 10px;font-size:12px;" aria-label="Save password">Save</button>
+      <div style="position:relative;display:inline-flex;align-items:center;">
+        <input type="password" id="apiKeyInput" placeholder="Password" autocomplete="off"
+               aria-label="Control-plane password"
+               title="Control-plane password."
+               style="padding:6px 28px 6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:12px;width:150px;"
+               onkeydown="if(event.key==='Enter'){event.preventDefault();saveApiKeyFromInput();}">
+        <button type="button" class="pw-toggle-btn" id="togglePasswordBtn" onclick="togglePasswordVisibility()"
+                aria-label="Show password" title="Show password">
+          <svg class="icon-svg-sm" id="togglePasswordIcon" aria-hidden="true" viewBox="0 0 24 24">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+          </svg>
+        </button>
+      </div>
+      <button class="btn btn-ghost" onclick="saveApiKeyFromInput()" style="padding:6px 10px;font-size:12px;" aria-label="Save password">Save</button>
       <div class="ram-label" title="Buffer request/response pairs in RAM instead of disk (volatile)">
         <label for="ram-buffer-toggle" style="cursor:pointer;">RAM Buffer</label>
         <label class="ram-toggle" aria-label="Toggle RAM buffer">
@@ -651,6 +662,20 @@
 
   // Save the key from the header input. The first time a key is entered, ask
   // whether to remember it on this machine for automatic entry.
+  window.togglePasswordVisibility = function () {
+    const input = document.getElementById('apiKeyInput');
+    const btn = document.getElementById('togglePasswordBtn');
+    const icon = document.getElementById('togglePasswordIcon');
+    if (!input || !btn || !icon) return;
+    const isPass = input.type === 'password';
+    input.type = isPass ? 'text' : 'password';
+    btn.setAttribute('aria-label', isPass ? 'Hide password' : 'Show password');
+    btn.title = isPass ? 'Hide password' : 'Show password';
+    icon.innerHTML = isPass
+      ? '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>'
+      : '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>';
+  };
+
   window.saveApiKeyFromInput = function () {
     const input = keyInput();
     const key = (input ? input.value : '').trim();
