@@ -1323,6 +1323,8 @@ async def get_device_by_ip(ip_address: str):
     """Look up a device by its IP address."""
     if not db_manager:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    if not db_manager._is_ip(ip_address):
+        return JSONResponse(status_code=400, content={"error": "Invalid IP address format"})
     device_id = await db_manager.resolve_device_id(ip_address)
     if not device_id:
         return JSONResponse(status_code=404, content={"error": "Device not found for this IP"})
@@ -1383,6 +1385,8 @@ async def get_ip_bypass(ip_address: str):
     """Get the bypass mode for an IP (from ip_profiles config, default False)."""
     if not db_manager:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    if not db_manager._is_ip(ip_address):
+        return JSONResponse(status_code=400, content={"error": "Invalid IP address format"})
     return {"ip_address": ip_address, "bypass": await db_manager.is_ips_bypassed(ip_address)}
 
 
@@ -1391,6 +1395,8 @@ async def set_ip_bypass(ip_address: str, request: Request):
     """Set/clear bypass for an IP, persisting to the config file."""
     if not db_manager:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    if not db_manager._is_ip(ip_address):
+        return JSONResponse(status_code=400, content={"error": "Invalid IP address format"})
     body = await request.json()
     if not isinstance(body, dict) or "bypass" not in body:
         return JSONResponse(
@@ -1416,6 +1422,8 @@ async def register_device_ip(device_id: str, request: Request):
     ip_address = body.get("ip_address")
     if not ip_address:
         return JSONResponse(status_code=400, content={"error": "Provide 'ip_address'"})
+    if not isinstance(ip_address, str) or not db_manager._is_ip(ip_address):
+        return JSONResponse(status_code=400, content={"error": "Invalid IP address format"})
     async with db_manager.core_session() as session:
         result = await session.execute(
             select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
