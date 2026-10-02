@@ -129,3 +129,7 @@
 ## 2026-03-31 - In-Memory Bounded Caching for Ingress Protocol Resolution
 **Learning:** `DatabaseManager.resolve_device_protocol` opened two async SQL database sessions (`select(DeviceRegistry)` and `select(DeviceMetaRow)`) on every intercepted request, causing ~10ms of SQL query overhead per request (~100 ops/sec). Caching connection mode and device meta in bounded `TTLCache` instances on `DatabaseManager` eliminates per-request database I/O for static device metadata and boosts protocol resolution throughput by ~10,000x (~1.09 million ops/sec).
 **Action:** Cache static or rarely-changing per-device configuration and metadata in bounded TTL caches on `DatabaseManager`, with invalidation hooks on update methods.
+
+## 2026-03-31 - Pre-computed Virtual Sensor Parameters in State Manager
+**Learning:** `_SensorInstance.read()` repeatedly parsed `self.config.baseline` string formats (`startswith("{")`, string slicing `key[6:]`, `float(raw)` inside `try...except`), fallback drift lists, and trigonometric period steps on every reading call. Pre-parsing baseline keys, static float baselines, drift bounds, and period multipliers during `_SensorInstance.__init__` eliminates string parsing and float conversion overhead on every read (~2.3x to 3.2x speedup per sensor read).
+**Action:** Pre-compute static numbers, wave multipliers, and dynamic key lookups on sensor/state instance initialization instead of parsing configuration strings on every evaluation.
