@@ -9,6 +9,7 @@ Covers:
 
 from __future__ import annotations
 
+import ipaddress
 import json
 from pathlib import Path
 
@@ -29,12 +30,12 @@ class _FakeDB:
 
     @staticmethod
     def _is_ip(value: str) -> bool:
-        import ipaddress
         try:
             ipaddress.ip_address(value)
-            return True
         except ValueError:
             return False
+        else:
+            return True
 
     async def update_device_mode(self, device_id: str, mode: str) -> bool:
         self.updated.append((device_id, mode))
@@ -50,6 +51,7 @@ class _FakeDB:
         return "dev-1" if ip_address == "192.168.1.100" else None
 
     async def is_ips_bypassed(self, ip_address: str) -> bool:
+        _ = ip_address  # params consumed (fake DB contract)
         return False
 
 
