@@ -1389,7 +1389,18 @@ async function loadTlsCerts() {
   if (!container) return;
   try {
     const res = await fetch('/api/tls/certs');
-    if (!res.ok) { container.innerHTML = '<span class="tb-badge tb-inactive">error</span>'; return; }
+    if (!res.ok) {
+      // Fail loudly and specifically: a silent "error" badge hides whether the
+      // cause is a missing/invalid control-plane password (401) or a server fault.
+      if (res.status === 401) {
+        container.innerHTML = '<span class="tb-badge tb-inactive">not authenticated</span> <span style="font-size:12px;color:var(--red);">Save the control-plane password (header top-right) first, then reload.</span>';
+      } else {
+        const msg = await errorFrom(res, `Load failed (HTTP ${res.status})`);
+        container.innerHTML = `<span class="tb-badge tb-inactive">error ${res.status}</span> <span style="font-size:12px;color:var(--red);">${escapeHtml(msg)}</span>`;
+      }
+      if (status) status.textContent = '';
+      return;
+    }
     const data = await res.json();
     const certs = data.certs || [];
     if (!certs.length) {
@@ -1411,7 +1422,8 @@ async function loadTlsCerts() {
     }).join('');
     if (status) status.textContent = `${certs.length} certificate${certs.length!==1?'s':''} imported`;
   } catch(_e) {
-    container.innerHTML = '<span class="tb-badge tb-inactive">error</span>';
+    container.innerHTML = '<span class="tb-badge tb-inactive">load error</span> <span style="font-size:12px;color:var(--red);">Could not reach the TLS certs endpoint — is the server up?</span>';
+    if (status) status.textContent = '';
   }
 }
 
@@ -1454,7 +1466,19 @@ async function uploadCert() {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({hostname: hostname.trim(), cert_base64: b64(certPem), key_base64: b64(keyPem)}),
     });
-    if (!res.ok) { showToast(await errorFrom(res, 'Failed to upload certificate'), 'error'); return; }
+    if (!res.ok) {
+      // Reflect the real cause: a 401 means the control-plane password is
+      // missing/stale (the request never authenticated), anything else is a
+      // validation/server error whose message the backend already returned.
+      let msg = await errorFrom(res, 'Failed to upload certificate');
+      if (res.status === 401) {
+        msg = 'Not authenticated. Save the control-plane password (header top-right), then try again. (' + msg + ')';
+      } else if (res.status === 400) {
+        msg = 'Certificate rejected by the server: ' + msg;
+      }
+      showToast(msg, 'error');
+      return;
+    }
     showToast('Certificate imported for ' + hostname.trim(), 'success');
     certFiles = [];
     document.getElementById('certFileInput').value = '';
@@ -1467,7 +1491,14 @@ async function deleteCert(hostname) {
   if (!confirm('Delete imported certificate for "' + hostname + '"? It will revert to the auto-generated cert.')) return;
   try {
     const res = await fetch('/api/tls/certs/' + encodeURIComponent(hostname), { method: 'DELETE' });
-    if (!res.ok) { showToast(await errorFrom(res, 'Failed to delete certificate'), 'error'); return; }
+    if (!res.ok) {
+      let msg = await errorFrom(res, 'Failed to delete certificate');
+      if (res.status === 401) {
+        msg = 'Not authenticated. Save the control-plane password (header top-right), then try again. (' + msg + ')';
+      }
+      showToast(msg, 'error');
+      return;
+    }
     showToast('Certificate deleted for ' + hostname, 'success');
     loadTlsCerts();
   } catch(e) { showToast(await errorFrom(e, 'Failed to delete certificate'), 'error'); }
