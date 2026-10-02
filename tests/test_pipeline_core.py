@@ -14,6 +14,7 @@ from core.database import DatabaseManager, LLMContextBuffer, RequestPattern, Ses
 from core.pipeline import (
     ContextBuffer,
     CorrelatedPair,
+    LearningOrchestrator,
     LearningPipeline,
     MatchRateTracker,
     MatchResult,
@@ -61,9 +62,32 @@ class TestPipelineMode:
         assert PipelineMode.LEARNING.value == "learning"
         assert PipelineMode.PRODUCTION.value == "production"
         assert PipelineMode.HYBRID.value == "hybrid"
+        assert PipelineMode.PASSTHROUGH.value == "passthrough"
 
     def test_enum_len(self):
-        assert len(PipelineMode) == 3  # noqa: PLR2004
+        assert len(PipelineMode) == 4  # noqa: PLR2004
+
+
+class TestPassthroughMode:
+    @pytest.mark.asyncio
+    async def test_handle_request_passthrough_forwards_without_analysis(self, db_manager):
+        # Passthrough mode short-circuits handle_request to a straight cloud
+        # forward, before any buffering/LLM/local-match path runs.
+        await db_manager.get_or_create_device("dev-pt", "shelly")
+        assert await db_manager.update_device_mode("dev-pt", "passthrough") is True
+
+        orch = LearningOrchestrator(db_manager)
+        result = await orch.handle_request(
+            "dev-pt",
+            "shelly",
+            "http",
+            "POST",
+            "/rpc/Switch.GetStatus",
+            {"content-type": "application/json"},
+            {"id": 1},
+            {},
+        )
+        assert result == {"action": "forward", "reason": "passthrough"}
 
 
 class TestCorrelatedPair:
