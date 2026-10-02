@@ -128,10 +128,7 @@ class _SensorInstance:
 
     def read(self, state: dict[str, Any]) -> Any:  # noqa: ANN401
         now = time.time()
-        if (
-            now - self._last_read < self._update_interval_s
-            and self._current_value is not None
-        ):
+        if now - self._last_read < self._update_interval_s and self._current_value is not None:
             return self._current_value
 
         self._last_read = now
