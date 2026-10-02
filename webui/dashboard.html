@@ -729,7 +729,7 @@
 function rateClass(pct) { return pct >= 80 ? 'good' : pct >= 50 ? 'warning' : 'danger'; }
 function rateColor(pct) { return pct >= 80 ? '#34d399' : pct >= 50 ? '#fbbf24' : '#f87171'; }
 function modeBadge(mode) {
-  const cls = mode === 'production' ? 'badge-production' : mode === 'hybrid' ? 'badge-hybrid' : 'badge-learning';
+  const cls = mode === 'production' ? 'badge-production' : mode === 'hybrid' ? 'badge-hybrid' : mode === 'passthrough' ? 'badge-hybrid' : 'badge-learning';
   return `<span class="badge ${cls}">${mode}</span>`;
 }
 function shortId(id) { return id && id.length > 30 ? id.slice(0, 12) + '…' : id || 'unknown'; }
@@ -934,6 +934,7 @@ async function loadDeviceStats(deviceId) {
     detail.innerHTML = `<div class="detail-card">
       <div class="detail-header">
             <h2 id="details-title" tabindex="-1">${escapeHtml(s.name || deviceId)} — Details</h2>
+        <button class="btn btn-danger" style="padding:4px 10px;font-size:12px;margin-right:8px;" onclick="deleteDevice('${escapeJs(deviceId)}')" aria-label="Delete device ${escapeHtml(deviceId)}">Delete</button>
         <button class="close-btn" onclick="closeDetails()" aria-label="Close details panel">&times;</button>
       </div>
       ${ring}
@@ -958,6 +959,7 @@ async function loadDeviceStats(deviceId) {
           <option value="learning" ${s.mode === 'learning' ? 'selected' : ''} title="Forward all requests to cloud and record response patterns">Cloud — Learn All</option>
           <option value="production" ${s.mode === 'production' ? 'selected' : ''} title="Serve all matched requests locally without cloud forwarding">Local — Serve All</option>
           <option value="hybrid" ${s.mode === 'hybrid' ? 'selected' : ''} title="Serve local matches first, fallback to cloud for misses">Hybrid — Local then Cloud</option>
+          <option value="passthrough" ${s.mode === 'passthrough' ? 'selected' : ''} title="Forward all requests to cloud without analysis or buffering">Passthrough — Cloud only</option>
         </select>
         <button class="btn btn-primary" id="apply-mode-btn-${escapeHtml(deviceId)}" onclick="switchMode('${escapeJs(deviceId)}')" title="Apply selected routing mode" aria-label="Apply mode change">Apply</button>
       </div>
@@ -1217,6 +1219,21 @@ async function switchMode(deviceId) {
     loadDevices();
   } catch(e) { showToast('Failed to switch mode', 'error'); }
   finally { if (btn) { btn.disabled = false; btn.textContent = origText; } }
+}
+
+async function deleteDevice(deviceId) {
+  if (!confirm('Delete device "' + deviceId + '" and all its learned data? This cannot be undone.')) return;
+  try {
+    const res = await fetch(`/api/devices/${deviceId}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      showToast((data.error || 'Failed to delete device') + ' (HTTP ' + res.status + ')', 'error');
+      return;
+    }
+    showToast('Device deleted', 'success');
+    closeDetails();
+    loadDevices();
+  } catch(e) { showToast('Failed to delete device', 'error'); }
 }
 
   async function toggleAutoSwitch(deviceId, enabled) {

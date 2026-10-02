@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import ipaddress
 import logging
 import re
@@ -934,6 +935,49 @@ class DatabaseManager:
             await session.commit()
             logger.info(f"Device {device_id} switched to {mode} mode")
             return True
+
+    async def delete_device(self, device_id: str) -> bool:
+        """Remove a device and its on-disk data (per-device DB + pattern file).
+
+        Deletes the registry row, the per-device SQLite database and the
+        portable ``.ride-pattern.json`` export, then drops the in-memory
+        engine/session caches for that device. Returns ``False`` if the
+        device does not exist.
+        """
+        async with await self.get_core_session() as session:
+            result = await session.execute(
+                select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
+            )
+            device = result.scalar_one_or_none()
+            if not device:
+                return False
+            await session.delete(device)
+            await session.commit()
+
+        db_path = self.device_db_dir / self._safe_db_name(device_id)
+        if db_path.exists():
+            try:
+                db_path.unlink()
+            except OSError as e:  # pragma: no cover - best-effort cleanup
+                logger.warning(f"Could not remove device DB {db_path}: {e}")
+
+        pattern_file = (
+            self.device_db_dir.parent
+            / "patterns"
+            / f"{hashlib.sha256(device_id.encode('utf-8')).hexdigest()}.ride-pattern.json"
+        )
+        if pattern_file.exists():
+            try:
+                pattern_file.unlink()
+            except OSError as e:  # pragma: no cover - best-effort cleanup
+                logger.warning(f"Could not remove pattern file {pattern_file}: {e}")
+
+        self._device_engines.pop(device_id, None)
+        self._device_sessions.pop(device_id, None)
+        self._device_locks.pop(device_id, None)
+        self._device_db_urls.pop(device_id, None)
+        logger.info(f"Deleted device {device_id}")
+        return True
 
     async def update_device_llm_config(
         self,

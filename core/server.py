@@ -1076,8 +1076,19 @@ async def get_device_stats(device_id: str):
     return {"stats": stats}
 
 
+@app.delete("/api/devices/{device_id}")
+async def delete_device(device_id: str):
+    """Delete a device and its data (registry row, per-device DB, pattern file)."""
+    if not db_manager:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    success = await db_manager.delete_device(device_id)
+    if not success:
+        return JSONResponse(status_code=404, content={"error": "Device not found"})
+    return {"device_id": device_id, "status": "deleted"}
+
+
 @app.get("/api/devices/{device_id}/match-rate")
-async def get_match_rate(device_id: str):
+async def get_match_rate(device_id: str):  # noqa: PLR0911
     """Get current match rate percentage."""
     if not orchestrator:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
@@ -1102,10 +1113,12 @@ async def set_device_mode(device_id: str, request: Request):
             status_code=400, content={"error": "Invalid JSON body: expected an object"}
         )
     mode = body.get("mode", "learning")
-    if mode not in ("learning", "production", "hybrid"):
+    if mode not in ("learning", "production", "hybrid", "passthrough"):
         return JSONResponse(
             status_code=400,
-            content={"error": "Invalid mode. Use 'learning', 'production', or 'hybrid'"},
+            content={
+                "error": "Invalid mode. Use 'learning', 'production', 'hybrid', or 'passthrough'"
+            },
         )
     success = await db_manager.update_device_mode(device_id, mode)
     if not success:

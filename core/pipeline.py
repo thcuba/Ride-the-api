@@ -116,6 +116,7 @@ class PipelineMode(StrEnum):
     LEARNING = "learning"
     PRODUCTION = "production"
     HYBRID = "hybrid"
+    PASSTHROUGH = "passthrough"
 
 
 class MatchResult(StrEnum):
@@ -1593,6 +1594,10 @@ class LearningOrchestrator:
             PipelineMode.PRODUCTION.value: self._handle_production,
             PipelineMode.HYBRID.value: self._handle_hybrid,
         }.get(device.mode, self._handle_learning)
+        # Passthrough mode short-circuits: forward straight to the cloud with
+        # no buffering, LLM analysis or local match. No handler is needed.
+        if device.mode == PipelineMode.PASSTHROUGH.value:
+            return {"action": "forward", "reason": "passthrough"}
         return await handler(
             device, protocol, method, path, headers, body, query_params, enrichment
         )
@@ -1796,6 +1801,10 @@ class LearningOrchestrator:
                 "pair_id": pair.pair_id,
                 "buffer_flushed": needs_flush,
             }
+        # Passthrough mode: never buffer or learn from the response — the
+        # traffic was forwarded untouched.
+        if device.mode == PipelineMode.PASSTHROUGH.value:
+            return {"action": "ignored", "reason": "passthrough"}
         # Production/hybrid mode: learn from the miss. The CLOUD_MISS is NOT
         # recorded again here ÃƒÆ'Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â it was already counted once when the request  # noqa: E501
         # was forwarded (_handle_production/_handle_hybrid record it at
