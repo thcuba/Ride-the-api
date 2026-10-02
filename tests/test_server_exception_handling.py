@@ -9,6 +9,7 @@ Covers:
 
 from __future__ import annotations
 
+import ipaddress
 import json
 from pathlib import Path
 
@@ -27,6 +28,15 @@ class _FakeDB:
         self.updated = []
         self.device_db_dir = Path("/tmp/test_db_dir")
 
+    @staticmethod
+    def _is_ip(value: str) -> bool:
+        try:
+            ipaddress.ip_address(value)
+        except ValueError:
+            return False
+        else:
+            return True
+
     async def update_device_mode(self, device_id: str, mode: str) -> bool:
         self.updated.append((device_id, mode))
         return True
@@ -36,6 +46,13 @@ class _FakeDB:
     ) -> bool:
         _ = (device_id, database_url, database_name)  # params consumed (fake DB contract)
         return True
+
+    async def resolve_device_id(self, ip_address: str) -> str | None:
+        return "dev-1" if ip_address == "192.168.1.100" else None
+
+    async def is_ips_bypassed(self, ip_address: str) -> bool:
+        _ = ip_address  # params consumed (fake DB contract)
+        return False
 
 
 @pytest.fixture
@@ -132,6 +149,44 @@ def test_assign_device_database_valid_name_accepted(client):
     )
     assert resp.status_code == _HTTP_OK
     assert resp.json()["database_name"] == "valid_db_name"
+
+
+def test_register_device_ip_invalid_format_rejected(client):
+    """Invalid IP format in register_device_ip must be rejected with 400."""
+    resp = client.post(
+        "/api/devices/some-device/ip",
+        json={"ip_address": "invalid_ip_format"},
+    )
+    assert resp.status_code == _HTTP_BAD_REQUEST
+    assert resp.json() == {"error": "Invalid IP address format"}
+
+
+def test_get_device_by_ip_invalid_format_rejected(client):
+    """Invalid IP format in get_device_by_ip must be rejected with 400."""
+    resp = client.get("/api/devices/by-ip/not-an-ip")
+    assert resp.status_code == _HTTP_BAD_REQUEST
+    assert resp.json() == {"error": "Invalid IP address format"}
+
+
+def test_get_ip_bypass_invalid_format_rejected(client):
+    """Invalid IP format in get_ip_bypass must be rejected with 400."""
+    resp = client.get("/api/ip-profiles/not-an-ip/bypass")
+    assert resp.status_code == _HTTP_BAD_REQUEST
+    assert resp.json() == {"error": "Invalid IP address format"}
+
+
+def test_set_ip_bypass_invalid_format_rejected(client):
+    """Invalid IP format in set_ip_bypass must be rejected with 400."""
+    resp = client.put("/api/ip-profiles/not-an-ip/bypass", json={"bypass": True})
+    assert resp.status_code == _HTTP_BAD_REQUEST
+    assert resp.json() == {"error": "Invalid IP address format"}
+
+
+def test_get_device_by_ip_valid_format_accepted(client):
+    """Valid IP format in get_device_by_ip is accepted."""
+    resp = client.get("/api/devices/by-ip/192.168.1.100")
+    assert resp.status_code == _HTTP_OK
+    assert resp.json() == {"device_id": "dev-1", "ip_address": "192.168.1.100"}
 
 
 def test_system_update_starts_detached_updater(client, monkeypatch):
