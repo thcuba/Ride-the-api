@@ -133,3 +133,7 @@
 ## 2026-03-31 - Pre-computed Virtual Sensor Parameters in State Manager
 **Learning:** `_SensorInstance.read()` repeatedly parsed `self.config.baseline` string formats (`startswith("{")`, string slicing `key[6:]`, `float(raw)` inside `try...except`), fallback drift lists, and trigonometric period steps on every reading call. Pre-parsing baseline keys, static float baselines, drift bounds, and period multipliers during `_SensorInstance.__init__` eliminates string parsing and float conversion overhead on every read (~2.3x to 3.2x speedup per sensor read).
 **Action:** Pre-compute static numbers, wave multipliers, and dynamic key lookups on sensor/state instance initialization instead of parsing configuration strings on every evaluation.
+
+## 2026-03-31 - Identity Enum Checks and Local Variable Binding in Traffic Selector Hot Path
+**Learning:** `TrafficRule.matches` checked `self.scope == TrafficScope.LOCAL` and `self.match_type == MatchType.CIDR` using `==` equality and accessed `request_info` attributes repeatedly in every match branch. Using identity comparisons (`self.scope is TrafficScope.LOCAL`) on singleton `Enum` instances and binding local variables (`mtype = self.match_type`, `is_local = request_info.is_local`) reduces `LOAD_ATTR` bytecode overhead and speeds up rule matching evaluation by ~1.5x (~0.95s vs ~1.46s per 1,000,000 evaluations).
+**Action:** In rule evaluation loops using Enum constants, use `is` identity checks rather than `==` equality, and bind frequently-accessed object attributes to local variables.
