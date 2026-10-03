@@ -1,3 +1,7 @@
+## 2026-10-03 - [JSON Textarea Validation & Data Loss Prevention]
+**Learning:** In pattern or config editors with freeform JSON `<textarea>` inputs, silently catching JSON `SyntaxError`s during form payload assembly wipes user input by defaulting to empty objects `{}`. Throwing descriptive validation errors with field labels before network requests prevents data loss and informs users of the exact JSON syntax error.
+**Action:** Wrap JSON template parsing in named helper functions that throw labelled errors (`Invalid JSON in ${label}: ${err.message}`), catch them in submit handlers, and display actionable error toasts while keeping form controls enabled.
+
 ## 2026-10-01 - [Password Input Visibility Toggles & Focus States]
 **Learning:** Masked password fields without a visibility toggle increase entry errors and user frustration. Adding an inline overlay toggle button (`type="button"`) requires updating both visual icon states (eye vs eye-off) and accessible attributes (`aria-label` and `title` changing between "Show password" and "Hide password") along with explicit `:focus-visible` styling to maintain keyboard navigation clarity without obscuring input text.
 **Action:** Wrap password inputs requiring user visual verification in relative containers with right-padded inputs (`padding-right: 28px`), and dynamically update `type`, `aria-label`, `title`, and inner SVG paths in the toggle click handler.
