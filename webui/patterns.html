@@ -18,6 +18,7 @@
   a { color: inherit; text-decoration: none; }
   .header { display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; }
   .btn { padding:8px 14px; border-radius:8px; border:none; cursor:pointer; font-weight:600; }
+  .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .btn-ghost { background:var(--surface2); border:1px solid var(--border); color:var(--text); }
   .btn-primary { background:linear-gradient(135deg,var(--accent),var(--accent2)); color:#fff; }
   .container { max-width:1100px; margin:0 auto; }
@@ -359,7 +360,7 @@
           showToast('Pattern saved','success');
           loadPatterns();
         }catch(err){
-          showToast('Save failed','error');
+          showToast(err.message || 'Save failed','error');
           saveBtn.disabled = false;
           saveBtn.textContent = origText;
         }
@@ -458,6 +459,16 @@
       const enumVals = inputText('enum_values', Array.isArray(m.enum_values) ? m.enum_values.join(', ') : (m.enum_values||'')); enumVals.placeholder = 'Enum values (comma-sep)'; enumVals.setAttribute('aria-label', 'Enum values');
       const rem = el('button',{class:'btn btn-ghost',type:'button','aria-label':'Remove field mapping'},'Remove'); rem.addEventListener('click', ()=> div.remove()); div.appendChild(src); div.appendChild(srcType); div.appendChild(dst); div.appendChild(dstType); div.appendChild(tr); div.appendChild(enumVals); div.appendChild(rem); return div; }
 
+  function parseJsonField(form, name, label) {
+    const el = form.querySelector(`textarea[name=${name}]`);
+    if (!el || !el.value.trim()) return {};
+    try {
+      return JSON.parse(el.value);
+    } catch (e) {
+      throw new Error(`Invalid JSON in ${label}: ${e.message}`);
+    }
+  }
+
   function collectPayload(form){ const payload = {};
       const methodEl = form.querySelector('select[name=method]'); if(methodEl) payload.method = methodEl.value;
       const pathEl = form.querySelector('input[name=path_pattern]'); if(pathEl) payload.path_pattern = pathEl.value;
@@ -467,12 +478,12 @@
         const tagWraps = form.querySelectorAll('.tags');
         tagWraps.forEach(w => { if(w.dataset.name === 'required_headers' && typeof w.getValue === 'function') payload.required_headers = w.getValue(); });
         tagWraps.forEach(w => { if(w.dataset.name === 'query_param_keys' && typeof w.getValue === 'function') payload.query_param_keys = w.getValue(); });
-        const bodySchemaEl = form.querySelector('textarea[name=body_schema]'); if(bodySchemaEl) try{ payload.body_schema = JSON.parse(bodySchemaEl.value); }catch(e){ payload.body_schema = {}; }
+        payload.body_schema = parseJsonField(form, 'body_schema', 'Body schema');
         // response
         payload.response_template = {};
         const statusEl = form.querySelector('input[name=status_code]'); if(statusEl) payload.response_template.status_code = Number(statusEl.value||200);
-        const headersTpl = form.querySelector('textarea[name=headers_template]'); if(headersTpl) try{ payload.response_template.headers_template = JSON.parse(headersTpl.value); }catch(e){ payload.response_template.headers_template = {}; }
-        const bodyTpl = form.querySelector('textarea[name=body_template]'); if(bodyTpl) try{ payload.response_template.body_template = JSON.parse(bodyTpl.value); }catch(e){ payload.response_template.body_template = {}; }
+        payload.response_template.headers_template = parseJsonField(form, 'headers_template', 'Headers template');
+        payload.response_template.body_template = parseJsonField(form, 'body_template', 'Body template');
         tagWraps.forEach(w => { if(w.dataset.name === 'expected_variables' && typeof w.getValue === 'function') payload.response_template.expected_variables = w.getValue(); });
         // field mappings
         const fmDiv = form.querySelector('.fm-list'); const mappings = [];
@@ -550,7 +561,7 @@
           showToast('Pattern created','success');
           loadPatterns();
         }catch(err){
-          showToast('Save failed','error');
+          showToast(err.message || 'Save failed','error');
           saveBtn.disabled = false;
           saveBtn.textContent = origText;
         }
