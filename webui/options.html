@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ride the API — Options</title>
+<script>
+  // Apply persisted theme as early as possible to avoid a flash of colour.
+  (function () {
+    try {
+      var t = localStorage.getItem('rta-theme');
+      if (t) document.documentElement.setAttribute('data-theme', t);
+    } catch (e) {}
+  })();
+</script>
+<link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+<link rel="apple-touch-icon" href="/static/logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0b0e14; --surface: #141820; --surface2: #1a1f2b; --border: #2d3648;
+    --text: #e1e6ed; --text2: #9ca8ba; --accent: #6c8cff; --accent2: #5b7ad0;
+    --green: #34d399; --yellow: #fbbf24; --red: #f87171; --blue: #60a5fa;
+    --radius: 12px; --shadow: 0 8px 32px rgba(0,0,0,.3);
+  }
+  [data-theme="light"] {
+    --bg: #f4f6fb; --surface: #ffffff; --surface2: #eef1f7; --border: #d2dae8;
+    --text: #1b2233; --text2: #5a6577; --accent: #4a63e0; --accent2: #3f55c2;
+    --green: #16a34a; --yellow: #d97706; --red: #dc2626; --blue: #2563eb;
+    --radius: 12px; --shadow: 0 8px 32px rgba(20,30,60,.12);
+  }
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    background: var(--bg); color: var(--text); padding: 24px; min-height: 100vh;
+    background-image: radial-gradient(ellipse at 20% 10%, rgba(108,140,255,.08) 0%, transparent 50%),
+                      radial-gradient(ellipse at 80% 90%, rgba(52,211,153,.06) 0%, transparent 50%);
+  }
+  .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
+  .header-left h1 { font-size: 28px; font-weight: 800; color: var(--accent); letter-spacing: -.5px; }
+  .header-left .subtitle { font-size: 14px; color: var(--text2); margin-top: 2px; }
+  .brand-row { display: flex; align-items: center; gap: 10px; }
+  .brand-row img { border-radius: 8px; }
+  .header-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .btn {
+    padding: 8px 18px; border: none; border-radius: 8px; font-family: inherit; font-size: 13px;
+    font-weight: 600; cursor: pointer; transition: all .2s; display: inline-flex; align-items: center; gap: 6px;
+    text-decoration: none;
+  }
+  .btn-primary { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff; box-shadow: 0 4px 14px rgba(108,140,255,.25); }
+  .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(108,140,255,.35); }
+  .btn-primary:disabled { opacity: .5; cursor: not-allowed; transform: none; box-shadow: none; }
+  .btn-primary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .btn-ghost { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+  .btn-ghost:hover { border-color: var(--accent); background: rgba(108,140,255,.1); }
+  .btn-ghost:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .cards { display: grid; gap: 14px; max-width: 760px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; box-shadow: var(--shadow); }
+  .card h2 { font-size: 17px; font-weight: 700; color: var(--accent); margin-bottom: 4px; }
+  .card .desc { font-size: 13px; color: var(--text2); margin-bottom: 14px; }
+  .opt-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .opt-row label { font-size: 14px; font-weight: 600; min-width: 120px; }
+  .opt-row select {
+    background: var(--surface2); border: 1px solid var(--border); color: var(--text);
+    padding: 8px 12px; border-radius: 8px; font-family: inherit; font-size: 13px; cursor: pointer;
+  }
+  .opt-row select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .status { display: block; font-size: 13px; margin-top: 12px; }
+  .status.ok { color: var(--green); }
+  .status.err { color: var(--red); }
+  .meta { font-size: 12px; color: var(--text2); margin-top: 10px; }
+</style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to content</a>
+
+  <div class="header">
+    <div class="header-left">
+      <div class="brand-row">
+        <img src="/static/logo.png" alt="Icona ride-the-api" width="40" height="40">
+        <h1>Options</h1>
+      </div>
+      <span class="subtitle">Display theme and software maintenance</span>
+    </div>
+    <div class="header-actions">
+      <a class="btn btn-ghost" href="/">← Dashboard</a>
+      <a class="btn btn-ghost" href="/config">Configuration</a>
+    </div>
+  </div>
+
+  <main id="main-content">
+    <div class="cards">
+      <section class="card" aria-labelledby="theme-title">
+        <h2 id="theme-title">Display</h2>
+        <p class="desc">Choose the colour theme. Applied across all pages and saved on this device.</p>
+        <div class="opt-row">
+          <label for="themeSelect">Theme</label>
+          <select id="themeSelect" onchange="setTheme(this.value)" aria-label="Colour theme">
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+          </select>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="update-title">
+        <h2 id="update-title">Software update</h2>
+        <p class="desc">Update ride-the-api to the latest release. The service will be restarted.</p>
+        <div class="opt-row">
+          <button class="btn btn-primary" id="updateBtn" onclick="updateSoftware()">&#x21bb; Update now</button>
+        </div>
+        <span class="status" id="updateStatus"></span>
+        <div class="meta" id="versionInfo">Checking version…</div>
+      </section>
+    </div>
+  </main>
+
+<script>
+  // ── Theme ───────────────────────────────────────────────────────────────────
+  function setTheme(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+    try { localStorage.setItem('rta-theme', theme); } catch (e) {}
+  }
+
+  (function () {
+    var sel = document.getElementById('themeSelect');
+    if (!sel) return;
+    var current = 'dark';
+    try { current = localStorage.getItem('rta-theme') || 'dark'; } catch (e) {}
+    sel.value = ['dark', 'light'].indexOf(current) >= 0 ? current : 'dark';
+  })();
+
+  // ── Version info ────────────────────────────────────────────────────────────
+  (function () {
+    var el = document.getElementById('versionInfo');
+    if (!el) return;
+    fetch('/health')
+      .then(function (r) { return r.json(); })
+      .then(function (d) { el.textContent = 'Version ' + (d.version || 'unknown'); })
+      .catch(function () { el.textContent = 'Version unavailable'; });
+  })();
+
+  // ── Update ──────────────────────────────────────────────────────────────────
+  async function updateSoftware() {
+    if (!confirm('Aggiornare ride-the-api all\'ultima release?\n\nIl servizio verrà riavviato.')) return;
+    var btn = document.getElementById('updateBtn');
+    var status = document.getElementById('updateStatus');
+    if (btn) btn.disabled = true;
+    if (status) { status.textContent = 'Aggiornamento in corso…'; status.className = 'status'; }
+    try {
+      var res = await fetch('/api/system/update', { method: 'POST' });
+      var data = await res.json().catch(function () { return null; });
+      if (!res.ok) {
+        var msg = (data && data.error) ? data.error : ('HTTP ' + res.status);
+        if (status) { status.textContent = 'Update failed: ' + msg; status.className = 'status err'; }
+        if (btn) btn.disabled = false;
+        return;
+      }
+      if (status) { status.textContent = (data && data.message) || 'Update started'; status.className = 'status ok'; }
+      // The service restarts; reload after a short wait.
+      setTimeout(function () { try { location.reload(); } catch (e) {} }, 6000);
+    } catch (e) {
+      if (status) { status.textContent = String((e && e.message) || e); status.className = 'status err'; }
+      if (btn) btn.disabled = false;
+    }
+  }
+</script>
+</body>
+</html>

@@ -8,6 +8,15 @@
 <link rel="apple-touch-icon" href="/static/logo.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script>
+  // Apply persisted theme as early as possible to avoid a flash of colour.
+  (function () {
+    try {
+      var t = localStorage.getItem('rta-theme');
+      if (t) document.documentElement.setAttribute('data-theme', t);
+    } catch (e) {}
+  })();
+</script>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   :root {
@@ -15,6 +24,12 @@
     --text: #e1e6ed; --text2: #9ca8ba; --accent: #6c8cff; --accent2: #5b7ad0;
     --green: #34d399; --yellow: #fbbf24; --red: #f87171; --blue: #60a5fa;
     --radius: 12px; --shadow: 0 8px 32px rgba(0,0,0,.3);
+  }
+  [data-theme="light"] {
+    --bg: #f4f6fb; --surface: #ffffff; --surface2: #eef1f7; --border: #d2dae8;
+    --text: #1b2233; --text2: #5a6577; --accent: #4a63e0; --accent2: #3f55c2;
+    --green: #16a34a; --yellow: #d97706; --red: #dc2626; --blue: #2563eb;
+    --radius: 12px; --shadow: 0 8px 32px rgba(20,30,60,.12);
   }
   body {
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
@@ -454,6 +469,10 @@
       <svg class="icon-svg" aria-hidden="true" viewBox="0 0 24 24"><circle cx="4" cy="4" r="2"/><circle cx="20" cy="4" r="2"/><circle cx="4" cy="20" r="2"/><circle cx="20" cy="20" r="2"/><rect x="6" y="2" width="12" height="4" rx="1"/><rect x="6" y="9" width="12" height="4" rx="1"/><rect x="6" y="16" width="12" height="4" rx="1"/><path d="M8 4h2M16 4h2M8 11h2M16 11h2M8 18h2M16 18h2"/></svg>
       <span>Config</span>
     </a>
+    <a class="btn btn-ghost" href="/options" aria-label="Open options page">
+    <svg class="icon-svg" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    <span>Options</span>
+  </a>
       <button class="btn btn-ghost" id="refreshBtn" onclick="loadDevices()" aria-label="Refresh device list">
       <svg class="icon-svg" aria-hidden="true" viewBox="0 0 24 24"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
       <span>Refresh</span>
