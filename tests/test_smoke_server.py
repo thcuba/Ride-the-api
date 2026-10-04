@@ -36,6 +36,7 @@ def test_server_app_imports() -> None:
     assert "/api/devices" in paths
     assert "/api/config" in paths
     assert "/config" in paths
+    assert "/options" in paths
 
 
 def test_config_endpoint_returns_config() -> None:

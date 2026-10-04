@@ -94,6 +94,7 @@ WEBUI_DIR = resource_path("webui")
 DASHBOARD_HTML = WEBUI_DIR / "dashboard.html"
 PATTERNS_HTML = WEBUI_DIR / "patterns.html"
 CONFIG_HTML = WEBUI_DIR / "config.html"
+OPTIONS_HTML = WEBUI_DIR / "options.html"
 
 # Configure logging
 setup_logging(level="INFO", fmt="json")
@@ -2393,6 +2394,20 @@ async def config_page():
         html = (
             "<!DOCTYPE html><html><body><h1>Config page not found</h1>"
             "<p>Expected at webui/config.html</p></body></html>"
+        )
+    return HTMLResponse(content=html, status_code=200)
+
+
+@app.get("/options", response_class=HTMLResponse)
+async def options_page():
+    """Serve the Options web UI (theme + software update)."""
+    try:
+        html = OPTIONS_HTML.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        logger.warning("Options HTML not found at %s", OPTIONS_HTML)
+        html = (
+            "<!DOCTYPE html><html><body><h1>Options page not found</h1>"
+            "<p>Expected at webui/options.html</p></body></html>"
         )
     return HTMLResponse(content=html, status_code=200)
 
