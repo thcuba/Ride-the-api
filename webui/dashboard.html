@@ -1617,7 +1617,7 @@ async function loadDeviceLLMConfig(deviceId) {
     const data = await res.json();
     const current = sel.getAttribute('data-current') || 'default';
     sel.innerHTML = (data.profiles || []).map(p => {
-      const name = p.name || '';
+      const name = typeof p === 'string' ? p : (p.name || '');
       const isSel = (name === current);
       return `<option value="${escapeHtml(name)}"${isSel ? ' selected' : ''}>${escapeHtml(name)}</option>`;
     }).join('');
