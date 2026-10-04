@@ -445,10 +445,12 @@
 
   function tagInput(name, items){ const wrap = document.createElement('div'); wrap.className='tags'; wrap.dataset.name = name; items = Array.isArray(items)?items.slice():[];
       const input = document.createElement('input'); input.type='text'; input.placeholder='Add...'; input.setAttribute('aria-label', `Add ${name.replace(/_/g, ' ')}`);
-      function render(){ wrap.innerHTML=''; items.forEach((it,idx)=>{ const t = el('span',{class:'tag'}, [it, el('button',{type:'button','aria-label':`Remove ${it}`},'×')]); t.querySelector('button').addEventListener('click', ()=>{ items.splice(idx,1); render(); }); wrap.appendChild(t); }); wrap.appendChild(input); }
-      input.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); const v = input.value.trim(); if(v){ items.push(v); input.value=''; render(); } } });
+      function render(focusInput = false){ wrap.innerHTML=''; items.forEach((it,idx)=>{ const removeBtn = el('button',{type:'button','aria-label':`Remove ${it}`},'×'); removeBtn.addEventListener('click', ()=>{ items.splice(idx,1); render(true); }); const t = el('span',{class:'tag'}, [it, removeBtn]); wrap.appendChild(t); }); wrap.appendChild(input); if(focusInput) input.focus(); }
+      function addTag(val, focusInput = true){ const v = val.trim().replace(/^,|,$/g, ''); if(v){ items.push(v); input.value=''; render(focusInput); } }
+      input.addEventListener('keydown', (e)=>{ if(e.key==='Enter' || e.key===','){ e.preventDefault(); addTag(input.value, true); } else if(e.key==='Backspace' && input.value==='' && items.length > 0){ e.preventDefault(); items.pop(); render(true); } });
+      input.addEventListener('blur', ()=>{ if(input.value.trim()) addTag(input.value, false); });
       wrap.getValue = () => items.slice();
-      render(); return wrap; }
+      render(false); return wrap; }
 
   function mappingItem(m){ const div = el('div',{class:'fm-item'});
     const src = inputText('request_field', m.request_field||''); src.placeholder = 'Request field (e.g. body.state)'; src.setAttribute('aria-label', 'Request field');
