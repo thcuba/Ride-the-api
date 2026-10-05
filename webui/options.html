@@ -70,10 +70,28 @@
   .status.ok { color: var(--green); }
   .status.err { color: var(--red); }
   .meta { font-size: 12px; color: var(--text2); margin-top: 10px; }
+  .skip-link { position: absolute; top: -100%; left: 8px; padding: 8px 16px; background: var(--accent); color: #fff; border-radius: 0 0 8px 8px; font-size: 14px; font-weight: 600; z-index: 9999; text-decoration: none; }
+  .skip-link:focus { top: 0; }
+  .toast-container { position: fixed; top: 20px; right: 20px; z-index: 1000; display: flex; flex-direction: column; gap: 8px; }
+  .toast {
+    padding: 12px 20px; border-radius: 10px; background: var(--surface); border: 1px solid var(--border);
+    box-shadow: 0 8px 24px rgba(0,0,0,.4); font-size: 13px; font-weight: 500;
+    display: flex; align-items: center; gap: 8px; max-width: 360px;
+  }
+  .toast.success { border-color: var(--green); }
+  .toast.error { border-color: var(--red); }
+  .toast.warning { border-color: var(--yellow); }
+  .toast.info { border-color: var(--blue); }
+  .toast-icon { font-weight: 700; font-size: 14px; flex-shrink: 0; }
+  .toast.success .toast-icon { color: var(--green); }
+  .toast.error .toast-icon { color: var(--red); }
+  .toast.warning .toast-icon { color: var(--yellow); }
+  .toast.info .toast-icon { color: var(--blue); }
 </style>
 </head>
 <body>
   <a href="#main-content" class="skip-link">Skip to content</a>
+  <div class="toast-container" id="toasts" role="status" aria-live="polite" aria-atomic="true"></div>
 
   <div class="header">
     <div class="header-left">
@@ -116,10 +134,31 @@
   </main>
 
 <script>
+  // ── Toast ────────────────────────────────────────────────────────────────────
+  function showToast(msg, type) {
+    var c = document.getElementById('toasts');
+    if (!c) return;
+    var t = document.createElement('div');
+    var toastType = type || 'info';
+    t.className = 'toast ' + toastType;
+    var icons = { success: '✓', error: '✕', warning: '⚠', info: 'ℹ' };
+    var iconSpan = document.createElement('span');
+    iconSpan.className = 'toast-icon';
+    iconSpan.setAttribute('aria-hidden', 'true');
+    iconSpan.textContent = icons[toastType] || 'ℹ';
+    var textSpan = document.createElement('span');
+    textSpan.textContent = msg;
+    t.appendChild(iconSpan);
+    t.appendChild(textSpan);
+    c.appendChild(t);
+    setTimeout(function () { t.style.opacity = '0'; t.style.transition = 'opacity .3s'; setTimeout(function () { t.remove(); }, 300); }, 3000);
+  }
+
   // ── Theme ───────────────────────────────────────────────────────────────────
   function setTheme(theme) {
     document.documentElement.setAttribute('data-theme', theme);
     try { localStorage.setItem('rta-theme', theme); } catch (e) {}
+    showToast('Theme updated to ' + (theme.charAt(0).toUpperCase() + theme.slice(1)), 'info');
   }
 
   (function () {
@@ -142,26 +181,32 @@
 
   // ── Update ──────────────────────────────────────────────────────────────────
   async function updateSoftware() {
-    if (!confirm('Aggiornare ride-the-api all\'ultima release?\n\nIl servizio verrà riavviato.')) return;
+    if (!confirm('Update ride-the-api to the latest release?\n\nThe service will restart.')) return;
     var btn = document.getElementById('updateBtn');
     var status = document.getElementById('updateStatus');
-    if (btn) btn.disabled = true;
-    if (status) { status.textContent = 'Aggiornamento in corso…'; status.className = 'status'; }
+    var origText = btn ? btn.textContent : '↻ Update now';
+    if (btn) { btn.disabled = true; btn.textContent = 'Updating…'; }
+    if (status) { status.textContent = 'Update in progress…'; status.className = 'status'; }
     try {
       var res = await fetch('/api/system/update', { method: 'POST' });
       var data = await res.json().catch(function () { return null; });
       if (!res.ok) {
         var msg = (data && data.error) ? data.error : ('HTTP ' + res.status);
         if (status) { status.textContent = 'Update failed: ' + msg; status.className = 'status err'; }
-        if (btn) btn.disabled = false;
+        showToast('Update failed: ' + msg, 'error');
+        if (btn) { btn.disabled = false; btn.textContent = origText; }
         return;
       }
-      if (status) { status.textContent = (data && data.message) || 'Update started'; status.className = 'status ok'; }
+      var okMsg = (data && data.message) || 'Update started';
+      if (status) { status.textContent = okMsg; status.className = 'status ok'; }
+      showToast(okMsg, 'success');
       // The service restarts; reload after a short wait.
       setTimeout(function () { try { location.reload(); } catch (e) {} }, 6000);
     } catch (e) {
-      if (status) { status.textContent = String((e && e.message) || e); status.className = 'status err'; }
-      if (btn) btn.disabled = false;
+      var errStr = String((e && e.message) || e);
+      if (status) { status.textContent = errStr; status.className = 'status err'; }
+      showToast('Update failed: ' + errStr, 'error');
+      if (btn) { btn.disabled = false; btn.textContent = origText; }
     }
   }
 </script>
