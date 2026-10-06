@@ -590,12 +590,12 @@
     </div>
 
     <div class="pm-row" style="display:flex;gap:8px;justify-content:flex-end;">
-      <button class="btn btn-ghost" onclick="addLLMProfile()">+ Add Profile</button>
+      <button type="button" class="btn btn-ghost" onclick="addLLMProfile()" aria-label="Add new LLM profile">+ Add Profile</button>
     </div>
 
     <div class="profile-modal-actions">
-      <button class="btn btn-ghost" onclick="closeLLMSettings()">Cancel</button>
-      <button class="btn btn-primary" onclick="saveLLMSettings()">&#x2714; Save</button>
+      <button type="button" class="btn btn-ghost" onclick="closeLLMSettings()" aria-label="Cancel LLM settings changes">Cancel</button>
+      <button type="button" class="btn btn-primary" onclick="saveLLMSettings()" aria-label="Save LLM settings">&#x2714; Save</button>
     </div>
   </div>
 </div>
@@ -1071,17 +1071,17 @@ async function loadDeviceStats(deviceId) {
           <div style="flex:1;display:flex;gap:6px;align-items:center;">
             <input type="number" id="dc-threshold-${escapeHtml(deviceId)}" value="${(s.match_threshold * 100).toFixed(0)}" min="0" max="100" step="1" style="flex:1;" aria-label="Match threshold percent">
             <span style="font-size:11px;color:var(--text2);">%</span>
-            <button class="btn btn-ghost" onclick="saveDeviceThreshold('${escapeJs(deviceId)}')" style="padding:4px 10px;font-size:12px;">Save</button>
+            <button type="button" class="btn btn-ghost" onclick="saveDeviceThreshold('${escapeJs(deviceId)}')" style="padding:4px 10px;font-size:12px;" aria-label="Save match threshold for ${escapeHtml(s.name || deviceId)}">Save</button>
           </div>
         </div>
         <div class="tc-row">
           <label for="dc-buffer-${escapeHtml(deviceId)}" class="tc-label">Context Buffer</label>
           <div style="flex:1;display:flex;gap:6px;align-items:center;">
-            <select id="dc-buffer-${escapeHtml(deviceId)}">
+            <select id="dc-buffer-${escapeHtml(deviceId)}" aria-label="Context buffer size">
               ${[131072, 262144, 524288, 1048576, 2097152, 5242880, 10485760].map(sz => `<option value="${sz}" ${s.context_buffer_size === sz ? 'selected' : ''}>${(sz/1024).toFixed(0)} KB${sz===1048576?' (1MB)':''}</option>`).join('')}
               <option value="${s.context_buffer_size}" ${![131072, 262144, 524288, 1048576, 2097152, 5242880, 10485760].includes(s.context_buffer_size) ? 'selected' : ''}>Custom (${(s.context_buffer_size/1024).toFixed(0)} KB)</option>
             </select>
-            <button class="btn btn-ghost" onclick="saveDeviceBuffer('${escapeJs(deviceId)}')" style="padding:4px 10px;font-size:12px;">Save</button>
+            <button type="button" class="btn btn-ghost" onclick="saveDeviceBuffer('${escapeJs(deviceId)}')" style="padding:4px 10px;font-size:12px;" aria-label="Save context buffer size for ${escapeHtml(s.name || deviceId)}">Save</button>
           </div>
         </div>
 
@@ -1123,9 +1123,9 @@ async function loadDeviceStats(deviceId) {
         <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px;gap:8px;">
           <span style="font-size:11px;color:var(--text2);" id="dc-status-${escapeHtml(deviceId)}"></span>
           <div style="text-align:right;display:flex;gap:8px;">
-            <button class="btn btn-ghost" onclick="saveDeviceConnection('${escapeJs(deviceId)}')" style="padding:6px 12px;font-size:12px;">Save Connection</button>
-            <button class="btn btn-ghost" onclick="saveDeviceLLM('${escapeJs(deviceId)}')" style="padding:6px 12px;font-size:12px;">Save LLM</button>
-            <button class="btn btn-primary" onclick="assignDeviceDatabase('${escapeJs(deviceId)}')" style="padding:6px 16px;font-size:12px;">Assign Database</button>
+            <button type="button" class="btn btn-ghost" onclick="saveDeviceConnection('${escapeJs(deviceId)}')" style="padding:6px 12px;font-size:12px;" aria-label="Save connection type for ${escapeHtml(s.name || deviceId)}">Save Connection</button>
+            <button type="button" class="btn btn-ghost" onclick="saveDeviceLLM('${escapeJs(deviceId)}')" style="padding:6px 12px;font-size:12px;" aria-label="Save LLM configuration for ${escapeHtml(s.name || deviceId)}">Save LLM</button>
+            <button type="button" class="btn btn-primary" onclick="assignDeviceDatabase('${escapeJs(deviceId)}')" style="padding:6px 16px;font-size:12px;" aria-label="Assign database for ${escapeHtml(s.name || deviceId)}">Assign Database</button>
           </div>
         </div>
       </div>
@@ -1908,7 +1908,7 @@ function renderLLMProfileCards(settings) {
             <input type="checkbox" class="lpc-enabled" ${p.enabled ? 'checked' : ''}> Enabled
           </label>
           <button class="btn" style="padding:2px 8px;font-size:11px;" onclick="testLLMProfile('${escapeJs(name)}')" aria-label="Test ${escapeHtml(name)} LLM connection">Test</button>
-          <button class="btn btn-danger" style="padding:2px 8px;font-size:11px;" onclick="deleteLLMProfile('${escapeJs(name)}')">Delete</button>
+          <button type="button" class="btn btn-danger" style="padding:2px 8px;font-size:11px;" onclick="deleteLLMProfile('${escapeJs(name)}')" aria-label="Delete ${escapeHtml(name)} LLM profile">Delete</button>
         </div>
       </div>
       <div class="lpc-fields">
@@ -1961,7 +1961,7 @@ function addLLMProfile() {
           <input type="checkbox" class="lpc-enabled" checked> Enabled
         </label>
         <button class="btn" style="padding:2px 8px;font-size:11px;" onclick="testLLMProfile('${escapeJs(name.trim())}')" aria-label="Test ${escapeHtml(name.trim())} LLM connection">Test</button>
-        <button class="btn btn-danger" style="padding:2px 8px;font-size:11px;" onclick="deleteLLMProfile('${escapeJs(name.trim())}')">Delete</button>
+        <button type="button" class="btn btn-danger" style="padding:2px 8px;font-size:11px;" onclick="deleteLLMProfile('${escapeJs(name.trim())}')" aria-label="Delete ${escapeHtml(name.trim())} LLM profile">Delete</button>
       </div>
     </div>
     <div class="lpc-fields">
