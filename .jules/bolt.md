@@ -141,3 +141,7 @@
 ## 2026-03-31 - Fast Tuple Iteration for Request Inspection and Lowercased Header Dictionary Normalization
 **Learning:** Replacing generator expressions (`any(p in path_lower for p in _FW_PATHS)`) in base adapter request inspection methods with explicit `for` loops eliminates generator allocation overhead (~2.58x speedup). Lowercasing dictionary keys upfront in HTTP header normalization (`_norm_headers`) turns linear string-lowercasing scans (`if not any(k.lower() == "content-type" for k in headers)`) into fast $O(1)$ dictionary key membership checks (`"content-type" not in headers`).
 **Action:** Replace `any(...)` generator expressions with explicit `for` loops in request inspection hot paths, and normalize HTTP header keys to lowercase at entry to enable $O(1)$ dictionary lookups.
+
+## 2026-03-31 - Fast O(1) Bounded Storage for Modification Audit Log
+**Learning:** `ModificationEngine._audit_log` stored entries in a standard list, performing `self._audit_log = self._audit_log[-10000:]` on every logged modification once full, creating a new 10,000-element list on every call (~365us per append). Replacing the list with a bounded `collections.deque(maxlen=10000)` automatically evicts the oldest entry in $O(1)$ time without copying (~55x speedup per append).
+**Action:** Use bounded `collections.deque(maxlen=N)` for fixed-size sliding history logs instead of list slicing `lst = lst[-N:]`.
