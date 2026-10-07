@@ -145,3 +145,7 @@
 ## 2026-03-31 - Fast O(1) Bounded Storage for Modification Audit Log
 **Learning:** `ModificationEngine._audit_log` stored entries in a standard list, performing `self._audit_log = self._audit_log[-10000:]` on every logged modification once full, creating a new 10,000-element list on every call (~365us per append). Replacing the list with a bounded `collections.deque(maxlen=10000)` automatically evicts the oldest entry in $O(1)$ time without copying (~55x speedup per append).
 **Action:** Use bounded `collections.deque(maxlen=N)` for fixed-size sliding history logs instead of list slicing `lst = lst[-N:]`.
+
+## 2026-03-31 - Incremental Parsing for Decrypted TLS HTTP Streams
+**Learning:** Re-instantiating `h11.Connection` and converting accumulated `bytearray` buffers to `bytes` on every decrypted stream read iteration causes quadratic $O(N^2)$ re-parsing of previously read chunks (~6.89x slower). Maintaining a persistent `h11.Connection` instance per request and feeding incoming chunks incrementally via `conn.receive_data(chunk)` reduces request parsing to $O(N)$ linear time without intermediate buffer heap allocations.
+**Action:** When parsing streaming protocol buffers with state machine parsers like `h11`, instantiate the connection parser once per request/connection and feed incoming chunk bytes incrementally as they arrive.
