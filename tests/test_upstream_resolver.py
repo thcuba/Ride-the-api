@@ -10,8 +10,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from dns.exception import DNSException
 
+import core.upstream_resolver as ur
+from core.config import Config, DNSConfig
 from core.upstream_resolver import (
     _addr_family,
+    _apply_config,
+    _build_resolver,
     _last_dns_servers,
     _last_dns_servers_v6,
     _resolver_cache,
@@ -321,6 +325,79 @@ async def test_cache_hit_respects_prefer_ipv6_ordering():
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONFIGURATION TESTS
 # ═══════════════════════════════════════════════════════════════════════════════
+
+@pytest.fixture
+def restore_dns_globals():
+    """Restore module-level DNS server lists after test execution."""
+    orig_v4 = list(ur._last_dns_servers)
+    orig_v6 = list(ur._last_dns_servers_v6)
+    try:
+        yield
+    finally:
+        ur._last_dns_servers = orig_v4
+        ur._last_dns_servers_v6 = orig_v6
+
+
+@pytest.mark.usefixtures("restore_dns_globals")
+def test_apply_config_updates_dns_servers():
+    """_apply_config updates module DNS servers and _build_resolver uses them."""
+    config = Config(
+        dns=DNSConfig(
+            dns_servers=["9.9.9.9", "149.112.112.112"],
+            dns_servers_v6=["2620:fe::fe"],
+        )
+    )
+    _apply_config(config)
+
+    assert ur._last_dns_servers == ["9.9.9.9", "149.112.112.112"]
+    assert ur._last_dns_servers_v6 == ["2620:fe::fe"]
+
+    resolver = _build_resolver()
+    assert resolver.nameservers == ["9.9.9.9", "149.112.112.112", "2620:fe::fe"]
+
+
+@pytest.mark.usefixtures("restore_dns_globals")
+def test_apply_config_ignores_empty_dns_servers():
+    """_apply_config preserves existing DNS server lists if config attributes are empty."""
+    config1 = Config(
+        dns=DNSConfig(
+            dns_servers=["1.1.1.1"],
+            dns_servers_v6=["2606:4700:4700::1111"],
+        )
+    )
+    _apply_config(config1)
+
+    config2 = Config(dns=DNSConfig(dns_servers=[], dns_servers_v6=[]))
+    _apply_config(config2)
+
+    assert ur._last_dns_servers == ["1.1.1.1"]
+    assert ur._last_dns_servers_v6 == ["2606:4700:4700::1111"]
+
+
+@pytest.mark.usefixtures("restore_dns_globals")
+def test_apply_config_partial_updates():
+    """_apply_config updates only the provided IPv4 or IPv6 list."""
+    initial_config = Config(
+        dns=DNSConfig(
+            dns_servers=["8.8.8.8"],
+            dns_servers_v6=["2001:4860:4860::8888"],
+        )
+    )
+    _apply_config(initial_config)
+
+    # Update only IPv4
+    config_v4_only = Config(dns=DNSConfig(dns_servers=["9.9.9.9"], dns_servers_v6=[]))
+    _apply_config(config_v4_only)
+
+    assert ur._last_dns_servers == ["9.9.9.9"]
+    assert ur._last_dns_servers_v6 == ["2001:4860:4860::8888"]
+
+    # Update only IPv6
+    config_v6_only = Config(dns=DNSConfig(dns_servers=[], dns_servers_v6=["2620:fe::fe"]))
+    _apply_config(config_v6_only)
+
+    assert ur._last_dns_servers == ["9.9.9.9"]
+    assert ur._last_dns_servers_v6 == ["2620:fe::fe"]
 
 
 def test_upstream_dns_default_servers():
