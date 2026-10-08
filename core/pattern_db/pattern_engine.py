@@ -307,6 +307,8 @@ class PatternEngine:
         self.db_manager = db_manager
         self._state_stores: dict[str, DeviceStateStore] = {}
         self._cached_patterns: dict[str, PatternDB] = {}
+        # Pre-compiled endpoint tuple tuples for fast request matching in find_best_match
+        self._compiled_endpoints: dict[str, list[tuple]] = {}
         # Pre-computed trigger -> response maps for fast O(1) response lookup in find_best_match
         self._response_trigger_maps: dict[str, dict[str, Any]] = {}
         # F-12: per-device locks serialize state load/persist.
@@ -339,6 +341,23 @@ class PatternEngine:
         store.apply_virtual_sensors(pattern_db.server.virtual_sensors)
         self._cached_patterns[device_id] = pattern_db
         self._response_trigger_maps.pop(device_id, None)
+
+        compiled = []
+        if pattern_db.client and pattern_db.client.endpoints:
+            for ep in pattern_db.client.endpoints:
+                path_pat = ep.path_pattern or ep.path
+                proto = getattr(ep, "protocol", "") or ""
+                h_req = (
+                    ep.headers.get("required", _EMPTY_TUPLE)
+                    if isinstance(ep.headers, dict)
+                    else _EMPTY_TUPLE
+                )
+                b_schema = ep.body_schema or _EMPTY_DICT
+                q_params = ep.query_params or _EMPTY_TUPLE
+                compiled.append(
+                    (ep, ep.method, path_pat, proto, h_req, b_schema, q_params, ep.intent)
+                )
+        self._compiled_endpoints[device_id] = compiled
         self._get_trigger_map(device_id, pattern_db)
 
     async def load_state(self, device_id: str) -> None:
@@ -418,37 +437,33 @@ class PatternEngine:
         if cached:
             # Fast O(1) response template lookup by intent instead of O(N) list search (~21x faster)
             trigger_map = self._get_trigger_map(device_id, cached)
-            for ep in cached.client.endpoints:
+            compiled = self._compiled_endpoints.get(device_id, [])
+            for ep, ep_method, ep_path, ep_proto, h_req, b_schema, q_params, intent in compiled:
                 # Fast path early exits: max score is 1.0; method mismatch caps score at 0.70 (~10x faster)  # noqa: E501
                 if best_score >= 1.0:
                     break
-                if best_score >= _METHOD_MISMATCH_SCORE_CAP and ep.method != method:
+                if best_score >= _METHOD_MISMATCH_SCORE_CAP and ep_method != method:
                     continue
-                if not _protocol_matches(getattr(ep, "protocol", "")):
+                if not _protocol_matches(ep_proto):
                     continue
 
-                headers_req = (
-                    ep.headers.get("required", _EMPTY_TUPLE)
-                    if isinstance(ep.headers, dict)
-                    else _EMPTY_TUPLE
-                )
                 score = self._calculate_similarity(
                     method,
-                    ep.method,
-                    ep.path_pattern or ep.path,
+                    ep_method,
+                    ep_path,
                     path,
-                    headers_req,
+                    h_req,
                     headers,
-                    ep.body_schema or _EMPTY_DICT,
+                    b_schema,
                     body,
-                    ep.query_params or _EMPTY_TUPLE,
+                    q_params,
                     query_params,
                     best_score=best_score,
                 )
                 if score > best_score:
                     best_score = score
                     best_pattern = ep
-                    best_template = trigger_map.get(ep.intent)
+                    best_template = trigger_map.get(intent)
             return best_pattern, best_template, best_score
 
         # Fall back to database patterns (only when no cached pattern file exists
