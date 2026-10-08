@@ -20,6 +20,7 @@ from core.pipeline import (
     MatchResult,
     PatternMatcher,
     PipelineMode,
+    ScoringInput,
 )
 
 
@@ -258,7 +259,8 @@ class TestPatternMatcher:
             required_headers=[],
             query_param_keys=[],
         )
-        score = matcher._calculate_similarity(pattern, "POST", "/other", {}, {}, {})
+        req_input = ScoringInput(method="POST", path="/other", headers={}, body={}, query_params={})
+        score = matcher._calculate_similarity(pattern, req_input)
         assert 0.2 < score < 0.8  # noqa: PLR2004
 
     @pytest.mark.asyncio
@@ -272,7 +274,8 @@ class TestPatternMatcher:
             required_headers=[],
             query_param_keys=[],
         )
-        score = matcher._calculate_similarity(pattern, "GET", "/status", {}, {}, {})
+        req_input = ScoringInput(method="GET", path="/status", headers={}, body={}, query_params={})
+        score = matcher._calculate_similarity(pattern, req_input)
         assert score >= 0.75  # noqa: PLR2004
 
     @pytest.mark.asyncio
@@ -286,7 +289,8 @@ class TestPatternMatcher:
             required_headers=[],
             query_param_keys=[],
         )
-        score = matcher._calculate_similarity(pattern, "GET", "/other", {}, {}, {})
+        req_input = ScoringInput(method="GET", path="/other", headers={}, body={}, query_params={})
+        score = matcher._calculate_similarity(pattern, req_input)
         assert score < 0.30  # noqa: PLR2004
 
 

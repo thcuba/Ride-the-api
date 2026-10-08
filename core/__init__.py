@@ -22,6 +22,7 @@ from core.pipeline import (
     LearningOrchestrator,
     MatchRateTracker,
     PatternMatcher,
+    ScoringInput,
     PipelineMode,
     get_orchestrator,
 )
@@ -45,6 +46,7 @@ __all__ = [
     "init_db_manager",
     "LearningOrchestrator",
     "PatternMatcher",
+    "ScoringInput",
     "MatchRateTracker",
     "ContextBuffer",
     "PipelineMode",
