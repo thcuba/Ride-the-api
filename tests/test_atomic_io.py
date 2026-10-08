@@ -2,7 +2,16 @@
 
 import json
 
-from core.atomic_io import append_jsonl, write_json, write_text
+import pytest
+
+from core.atomic_io import (
+    append_atomic,
+    append_atomic_async,
+    append_jsonl,
+    append_jsonl_async,
+    write_json,
+    write_text,
+)
 
 
 def test_write_text_creates_dirs_and_content(tmp_path):
@@ -34,6 +43,28 @@ def test_write_json_overwrites_completely(tmp_path):
     assert json.loads(dest.read_text(encoding="utf-8")) == {"c": 3}
 
 
+def test_append_atomic_appends_multiple_strings(tmp_path):
+    dest = tmp_path / "log.txt"
+    append_atomic(dest, "line 1\n")
+    append_atomic(dest, "line 2\n")
+    assert dest.read_text(encoding="utf-8") == "line 1\nline 2\n"
+
+
+def test_append_atomic_creates_parent_dirs(tmp_path):
+    dest = tmp_path / "nested" / "sub" / "log.txt"
+    append_atomic(dest, "test data\n")
+    assert dest.exists()
+    assert dest.read_text(encoding="utf-8") == "test data\n"
+
+
+@pytest.mark.asyncio
+async def test_append_atomic_async(tmp_path):
+    dest = tmp_path / "async.txt"
+    await append_atomic_async(dest, "async line 1\n")
+    await append_atomic_async(dest, "async line 2\n")
+    assert dest.read_text(encoding="utf-8") == "async line 1\nasync line 2\n"
+
+
 def test_append_jsonl_appends_multiple_lines(tmp_path):
     log = tmp_path / "modifications.jsonl"
     append_jsonl(log, {"id": 1})
@@ -46,6 +77,15 @@ def test_append_jsonl_creates_parent_dirs(tmp_path):
     log = tmp_path / "logs" / "deep" / "audit.jsonl"
     append_jsonl(log, {"ok": True})
     assert log.exists()
+
+
+@pytest.mark.asyncio
+async def test_append_jsonl_async(tmp_path):
+    log = tmp_path / "async_audit.jsonl"
+    await append_jsonl_async(log, {"id": 100})
+    await append_jsonl_async(log, {"id": 200})
+    lines = [json.loads(x) for x in log.read_text(encoding="utf-8").splitlines() if x]
+    assert [line["id"] for line in lines] == [100, 200]
 
 
 def test_write_text_utf8_bytes(tmp_path):

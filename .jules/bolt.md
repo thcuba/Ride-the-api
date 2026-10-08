@@ -149,3 +149,7 @@
 ## 2026-03-31 - Incremental Parsing for Decrypted TLS HTTP Streams
 **Learning:** Re-instantiating `h11.Connection` and converting accumulated `bytearray` buffers to `bytes` on every decrypted stream read iteration causes quadratic $O(N^2)$ re-parsing of previously read chunks (~6.89x slower). Maintaining a persistent `h11.Connection` instance per request and feeding incoming chunks incrementally via `conn.receive_data(chunk)` reduces request parsing to $O(N)$ linear time without intermediate buffer heap allocations.
 **Action:** When parsing streaming protocol buffers with state machine parsers like `h11`, instantiate the connection parser once per request/connection and feed incoming chunk bytes incrementally as they arrive.
+
+## 2026-03-31 - Async Thread Offloading for Atomic File I/O
+**Learning:** Synchronous file operations with disk syncs (`open()`, `write()`, `flush()`, and `os.fsync()`) executed directly on an `asyncio` event loop block event loop execution and stall concurrent background tasks. Providing thread-offloaded async variants (`append_atomic_async` / `append_jsonl_async`) via `asyncio.to_thread` prevents event loop stalls while maintaining crash-safe file write guarantees.
+**Action:** Use `asyncio.to_thread` to offload blocking file operations and disk syncs when appending audit logs or state in async request handling contexts.
