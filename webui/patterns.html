@@ -247,6 +247,38 @@
     setTimeout(()=> t.remove(), 4000);
   }
 
+  function fallbackCopyText(text, onSuccess, onError) {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      ta.style.top = '-9999px';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      if (ok) onSuccess(); else onError();
+    } catch (e) {
+      onError();
+    }
+  }
+
+  function copyToClipboard(text, label) {
+    if (!text) return;
+    const onSuccess = () => showToast((label || 'Text') + ' copied to clipboard', 'success');
+    const onError = () => showToast('Failed to copy ' + (label || 'text'), 'error');
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(onSuccess).catch(() => {
+        fallbackCopyText(text, onSuccess, onError);
+      });
+    } else {
+      fallbackCopyText(text, onSuccess, onError);
+    }
+  }
+
   function el(tag,attrs={},children=[]){ const e=document.createElement(tag); for(const k in attrs){ if(k==='html') e.innerHTML=attrs[k]; else e.setAttribute(k,attrs[k]); } (Array.isArray(children)?children:[children]).forEach(c=>{ if(typeof c==='string') e.appendChild(document.createTextNode(c)); else if(c) e.appendChild(c); }); return e; }
 
   async function loadPatterns(){
@@ -443,15 +475,7 @@
         'aria-label': `Copy ${labelText} to clipboard`
       }, 'Copy JSON');
       copyBtn.addEventListener('click', ()=>{
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(inputEl.value).then(()=>{
-            showToast(`${labelText} copied to clipboard`, 'success');
-          }).catch(()=>{
-            showToast('Failed to copy text', 'error');
-          });
-        } else {
-          showToast('Clipboard API not available', 'warning');
-        }
+        copyToClipboard(inputEl.value, labelText);
       });
       labelHeader.appendChild(copyBtn);
     }

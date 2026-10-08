@@ -775,16 +775,35 @@ function deviceIcon() {
   return '<svg class="icon-svg-sm" aria-hidden="true" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>';
 }
 
+function fallbackCopyText(text, onSuccess, onError) {
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    ta.style.top = '-9999px';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    if (ok) onSuccess(); else onError();
+  } catch (e) {
+    onError();
+  }
+}
+
 function copyToClipboard(text, label) {
   if (!text) return;
+  const onSuccess = () => showToast((label || 'Text') + ' copied to clipboard', 'success');
+  const onError = () => showToast('Failed to copy ' + (label || 'text'), 'error');
+
   if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(text).then(() => {
-      showToast((label || 'Text') + ' copied to clipboard', 'success');
-    }).catch(() => {
-      showToast('Failed to copy ' + (label || 'text'), 'error');
+    navigator.clipboard.writeText(text).then(onSuccess).catch(() => {
+      fallbackCopyText(text, onSuccess, onError);
     });
   } else {
-    showToast('Clipboard API not available', 'warning');
+    fallbackCopyText(text, onSuccess, onError);
   }
 }
 
