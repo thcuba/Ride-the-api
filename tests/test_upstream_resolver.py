@@ -326,6 +326,7 @@ async def test_cache_hit_respects_prefer_ipv6_ordering():
 # CONFIGURATION TESTS
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 @pytest.fixture
 def restore_dns_globals():
     """Restore module-level DNS server lists after test execution."""
