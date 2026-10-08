@@ -1,3 +1,7 @@
+## 2026-10-08 - [Clipboard Copy Fallbacks for Non-HTTPS Local Deployments]
+**Learning:** In local network HTTP deployments (e.g., `http://192.168.1.x:8911`), modern browsers disable `navigator.clipboard.writeText` due to Secure Context restrictions. Relying solely on `navigator.clipboard` causes one-click copy buttons (for device IDs or JSON templates) to fail with "Clipboard API not available" toast warnings.
+**Action:** Provide a transparent fallback function using a temporary off-screen `<textarea>` and `document.execCommand('copy')` whenever `navigator.clipboard` is missing or fails, ensuring copy actions succeed across all HTTP/HTTPS local network contexts.
+
 ## 2026-10-03 - [JSON Textarea Validation & Data Loss Prevention]
 **Learning:** In pattern or config editors with freeform JSON `<textarea>` inputs, silently catching JSON `SyntaxError`s during form payload assembly wipes user input by defaulting to empty objects `{}`. Throwing descriptive validation errors with field labels before network requests prevents data loss and informs users of the exact JSON syntax error.
 **Action:** Wrap JSON template parsing in named helper functions that throw labelled errors (`Invalid JSON in ${label}: ${err.message}`), catch them in submit handlers, and display actionable error toasts while keeping form controls enabled.
