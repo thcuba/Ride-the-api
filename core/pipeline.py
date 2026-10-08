@@ -127,7 +127,6 @@ class MatchResult(StrEnum):
     ERROR = "error"  # Processing error
 
 
-
 @dataclass
 class ScoringInput:
     """Inputs required for calculating request pattern similarity scores."""

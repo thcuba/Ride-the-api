@@ -22,8 +22,8 @@ from core.pipeline import (
     LearningOrchestrator,
     MatchRateTracker,
     PatternMatcher,
-    ScoringInput,
     PipelineMode,
+    ScoringInput,
     get_orchestrator,
 )
 
