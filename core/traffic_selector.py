@@ -338,28 +338,32 @@ def is_local_ip(ip: str) -> bool:
     return False
 
 
-def create_request_info(  # noqa: PLR0913, PLR0917
-    client_ip: str,
-    hostname: str | None = None,
-    vendor: str | None = None,
-    device_id: str | None = None,
-    url: str | None = None,
-    path: str | None = None,
-    is_local: bool | None = None,
-) -> TrafficRequestInfo:
-    """Create TrafficRequestInfo with automatic local detection."""
-    req_info = TrafficRequestInfo(
-        client_ip=client_ip,
-        hostname=hostname,
-        vendor=vendor,
-        device_id=device_id,
-        is_local=False,
-        url=url,
-        path=path,
-    )
-    if is_local is None:
-        req_info.is_local = is_local_ip(client_ip)
-    else:
-        req_info.is_local = is_local
+@dataclass
+class TrafficRequestOptions:
+    """Optional parameters for creating TrafficRequestInfo."""
 
-    return req_info
+    hostname: str | None = None
+    vendor: str | None = None
+    device_id: str | None = None
+    url: str | None = None
+    path: str | None = None
+    is_local: bool | None = None
+
+
+def create_request_info(
+    client_ip: str,
+    options: TrafficRequestOptions | None = None,
+) -> TrafficRequestInfo:
+    """Create TrafficRequestInfo with automatic local detection from request options."""
+    opts = options or TrafficRequestOptions()
+    is_local = is_local_ip(client_ip) if opts.is_local is None else opts.is_local
+
+    return TrafficRequestInfo(
+        client_ip=client_ip,
+        hostname=opts.hostname,
+        vendor=opts.vendor,
+        device_id=opts.device_id,
+        is_local=is_local,
+        url=opts.url,
+        path=opts.path,
+    )

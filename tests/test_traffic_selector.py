@@ -8,6 +8,7 @@ from core.traffic_selector import (
     MatchType,
     TrafficAction,
     TrafficRequestInfo,
+    TrafficRequestOptions,
     TrafficRule,
     TrafficScope,
     TrafficSelector,
@@ -321,17 +322,21 @@ class TestTrafficSelector:
             assert info.is_local is False
 
         def test_explicit_is_local_overrides(self):
-            info = create_request_info(client_ip="8.8.8.8", is_local=True)
+            info = create_request_info(
+                client_ip="8.8.8.8", options=TrafficRequestOptions(is_local=True)
+            )
             assert info.is_local is True
 
         def test_all_fields(self):
             info = create_request_info(
                 client_ip="10.0.0.5",
-                hostname="device.local",
-                vendor="shelly",
-                device_id="shelly-001",
-                url="http://device.local/rpc/Switch.Set",
-                path="/rpc/Switch.Set",
+                options=TrafficRequestOptions(
+                    hostname="device.local",
+                    vendor="shelly",
+                    device_id="shelly-001",
+                    url="http://device.local/rpc/Switch.Set",
+                    path="/rpc/Switch.Set",
+                ),
             )
             assert info.client_ip == "10.0.0.5"
             assert info.hostname == "device.local"
