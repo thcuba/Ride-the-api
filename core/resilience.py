@@ -163,20 +163,13 @@ class CloudIndependenceVerifier:
         Only switches if auto_switch_enabled is True for the device
         and match rate meets the threshold (default 99%).
         """
-        # Check if auto-switch is enabled for this device
-        async with self.db_manager.core_session() as session:
-            result = await session.execute(
-                select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
-            )
-            device = result.scalar_one_or_none()
-            if not device:
-                logger.warning(f"Auto-switch: device {device_id} not found")
-                return False
-            if not device.auto_switch_enabled:
-                logger.info(f"Auto-switch disabled for device {device_id}")
-                return False
-
         status = await self.check_cloud_independence(device_id)
+        if status.get("reason") == "device_not_found":
+            logger.warning(f"Auto-switch: device {device_id} not found")
+            return False
+        if not status.get("auto_switch_enabled", False):
+            logger.info(f"Auto-switch disabled for device {device_id}")
+            return False
         patterns = status.get("patterns_learned", 0)
         match_rate = status.get("match_rate", 0)
         total_reqs = status.get("total_requests", 0)
