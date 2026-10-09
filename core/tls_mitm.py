@@ -270,7 +270,7 @@ class TLSMITMServer:
         self.listen_ports = (
             list(listen_ports) if listen_ports is not None else [443, 8883, 5684, 8443]
         )
-        self.cert_manager = cert_manager or CertManager()
+        self.cert_manager = cert_manager or CertManager(None)
         self.device_certs_dir = Path(device_certs_dir)
         self.device_certs_dir.mkdir(parents=True, exist_ok=True)
 
