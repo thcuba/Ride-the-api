@@ -321,9 +321,7 @@ class CloudIndependenceVerifier:
         return count
 
 
-async def _get_existing_ids(
-    session, id_column, items: list[dict], key_name: str
-) -> set[str]:
+async def _get_existing_ids(session, id_column, items: list[dict], key_name: str) -> set[str]:
     """Bulk query existing candidate IDs in chunks of 500 to avoid N+1 SELECT overhead."""
     if not items:
         return set()
