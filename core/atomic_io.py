@@ -6,12 +6,15 @@ Guarantees that data on disk is never left in a half-written state:
 - ``write_text`` / ``write_json`` write to a temp file in the same directory,
   fsync it, then ``os.replace`` over the destination (atomic on POSIX and
   Windows). Readers either see the old complete file or the new complete file.
-- ``append_jsonl`` appends a JSON line with a flush+fsync so an audit /
+- ``append_atomic`` / ``append_jsonl`` appends with a flush+fsync so an audit /
   capture log survives abrupt termination without losing the last record.
+- Async variants ``append_atomic_async`` / ``append_jsonl_async`` offload I/O
+  to worker threads via ``asyncio.to_thread`` to prevent event loop blocking.
 """
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import os
@@ -84,12 +87,27 @@ def write_json(path: Path | str, obj: Any, indent: int | None = 2) -> None:  # n
     write_text(path, json.dumps(obj, indent=indent, default=str) + "\n")
 
 
-def append_jsonl(path: Path | str, obj: Any) -> None:  # noqa: ANN401
-    """Crash-safe append of a single JSON line to a JSONL audit log."""
-    dest = _validate_destination(Path(path))
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    line = json.dumps(obj, default=str)
-    with open(dest, "a", encoding="utf-8", newline="\n") as f:  # noqa: PTH123
-        f.write(line + "\n")
+def append_atomic(dest: Path | str, data: str, encoding: str = "utf-8") -> None:
+    """Crash-safe append of string data to destination with flush+fsync."""
+    path = _validate_destination(Path(dest))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding=encoding, newline="\n") as f:  # noqa: PTH123
+        f.write(data)
         f.flush()
         os.fsync(f.fileno())
+
+
+async def append_atomic_async(dest: Path | str, data: str, encoding: str = "utf-8") -> None:
+    """Asynchronously append string data without blocking the asyncio event loop."""
+    await asyncio.to_thread(append_atomic, dest, data, encoding)
+
+
+def append_jsonl(path: Path | str, obj: Any) -> None:  # noqa: ANN401
+    """Crash-safe append of a single JSON line to a JSONL audit log."""
+    line = json.dumps(obj, default=str) + "\n"
+    append_atomic(path, line)
+
+
+async def append_jsonl_async(path: Path | str, obj: Any) -> None:  # noqa: ANN401
+    """Asynchronously append a JSON line without blocking the asyncio event loop."""
+    await asyncio.to_thread(append_jsonl, path, obj)
