@@ -161,12 +161,14 @@ class TestKeyPermissions:
     """Private key files must be created with mode 0o600 (owner read/write only)."""
 
     def _manager(self, tmp_path):
-        return CertManager(CertManagerConfig(
-            ca_cert_path=str(tmp_path / "certs" / "ca.pem"),
-            ca_key_path=str(tmp_path / "certs" / "ca.key"),
-            device_certs_dir=str(tmp_path / "device_certs"),
-            external_certs_dir=str(tmp_path / "external_certs"),
-        ))
+        return CertManager(
+            CertManagerConfig(
+                ca_cert_path=str(tmp_path / "certs" / "ca.pem"),
+                ca_key_path=str(tmp_path / "certs" / "ca.key"),
+                device_certs_dir=str(tmp_path / "device_certs"),
+                external_certs_dir=str(tmp_path / "external_certs"),
+            )
+        )
 
     def test_ca_key_file_permissions(self, tmp_path):
         cm = self._manager(tmp_path)
@@ -202,12 +204,14 @@ class TestDeleteCertEndpoint:
 
     def test_delete_non_existent_cert_returns_404(self, monkeypatch, tmp_path):
         """Attempting to delete a cert that does not exist returns HTTP 404."""
-        cm = CertManager(CertManagerConfig(
-            ca_cert_path=str(tmp_path / "certs" / "ca.pem"),
-            ca_key_path=str(tmp_path / "certs" / "ca.key"),
-            device_certs_dir=str(tmp_path / "device_certs"),
-            external_certs_dir=str(tmp_path / "external_certs"),
-        ))
+        cm = CertManager(
+            CertManagerConfig(
+                ca_cert_path=str(tmp_path / "certs" / "ca.pem"),
+                ca_key_path=str(tmp_path / "certs" / "ca.key"),
+                device_certs_dir=str(tmp_path / "device_certs"),
+                external_certs_dir=str(tmp_path / "external_certs"),
+            )
+        )
         monkeypatch.setattr(server_mod, "cert_manager", cm)
         monkeypatch.setattr(
             server_mod.config_manager.config.security,
@@ -227,12 +231,14 @@ class TestDeleteCertEndpoint:
 
     def test_delete_existing_cert_returns_200(self, monkeypatch, tmp_path):
         """Deleting an existing imported certificate returns HTTP 200."""
-        cm = CertManager(CertManagerConfig(
-            ca_cert_path=str(tmp_path / "certs" / "ca.pem"),
-            ca_key_path=str(tmp_path / "certs" / "ca.key"),
-            device_certs_dir=str(tmp_path / "device_certs"),
-            external_certs_dir=str(tmp_path / "external_certs"),
-        ))
+        cm = CertManager(
+            CertManagerConfig(
+                ca_cert_path=str(tmp_path / "certs" / "ca.pem"),
+                ca_key_path=str(tmp_path / "certs" / "ca.key"),
+                device_certs_dir=str(tmp_path / "device_certs"),
+                external_certs_dir=str(tmp_path / "external_certs"),
+            )
+        )
         cert_pem, key_pem = cm._generate_leaf_cert("existing.example.com")
         cm.import_cert("existing.example.com", cert_pem, key_pem)
 

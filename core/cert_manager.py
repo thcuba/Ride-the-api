@@ -29,7 +29,6 @@ from cryptography.x509.oid import NameOID
 logger = logging.getLogger(__name__)
 
 
-
 @dataclass
 class CertManagerConfig:
     ca_cert_path: str = "./certs/ca.pem"
@@ -39,6 +38,7 @@ class CertManagerConfig:
     ca_key_size: int = 4096
     leaf_key_size: int = 2048
     cert_validity_days: int = 730
+
 
 class CertManager:
     """Manages CA and per-hostname leaf certificates for TLS interception.

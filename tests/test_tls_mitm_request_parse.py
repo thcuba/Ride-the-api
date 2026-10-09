@@ -31,12 +31,14 @@ from core.tls_mitm import (
 def _make_test_server() -> TLSMITMServer:
     """Build a TLSMITMServer with a throwaway CA for SSL context caching tests."""
     tmp = tempfile.mkdtemp()
-    cm = CertManager(CertManagerConfig(
+    cm = CertManager(
+        CertManagerConfig(
             ca_cert_path=f"{tmp}/ca.pem",
             ca_key_path=f"{tmp}/ca.key",
             device_certs_dir=f"{tmp}/device_certs",
             external_certs_dir=f"{tmp}/external_certs",
-        ))
+        )
+    )
     cm.ensure_ca()
     server = TLSMITMServer(cert_manager=cm)
     # Purge the default port list so no sockets are bound.
