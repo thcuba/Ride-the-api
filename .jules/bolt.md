@@ -153,3 +153,7 @@
 ## 2026-03-31 - Async Thread Offloading for Atomic File I/O
 **Learning:** Synchronous file operations with disk syncs (`open()`, `write()`, `flush()`, and `os.fsync()`) executed directly on an `asyncio` event loop block event loop execution and stall concurrent background tasks. Providing thread-offloaded async variants (`append_atomic_async` / `append_jsonl_async`) via `asyncio.to_thread` prevents event loop stalls while maintaining crash-safe file write guarantees.
 **Action:** Use `asyncio.to_thread` to offload blocking file operations and disk syncs when appending audit logs or state in async request handling contexts.
+
+## 2025-02-23 - Eliminate redundant DB Query in Device Auto-switch Check
+**Learning:** In `CloudIndependenceVerifier.auto_switch_to_production`, querying `DeviceRegistry` directly before calling `check_cloud_independence` resulted in a redundant DB query since `check_cloud_independence` already queries `DeviceRegistry` and returns the `auto_switch_enabled` status and missing device state.
+**Action:** Always inspect downstream/helper method queries when adding pre-checks to avoid executing identical ORM queries twice in the same code path.
