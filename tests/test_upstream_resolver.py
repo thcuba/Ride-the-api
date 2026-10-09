@@ -164,6 +164,56 @@ async def test_resolve_upstream_both_fail_then_fallback(mock_build):
 
 @pytest.mark.asyncio
 @patch("core.upstream_resolver._build_resolver")
+async def test_resolve_upstream_a_record_dns_exception(mock_build, caplog):
+    """When A-record query raises DNSException, it logs a warning and proceeds to AAAA."""
+    resolver = AsyncMock()
+    dns_exc = DNSException("A record lookup failure")
+
+    async def resolve_side(_hostname, rtype):
+        if rtype == "A":
+            raise dns_exc
+        if rtype == "AAAA":
+            return FakeDNSAnswer(["2606:2800:220:1:248:1893:25c8:1946"])
+        raise ValueError(f"Unexpected query type: {rtype}")
+
+    resolver.resolve = resolve_side
+    mock_build.return_value = resolver
+
+    with caplog.at_level("WARNING"):
+        result = await resolve_upstream("api.example.com", skip_cache=True)
+
+    assert result == ["2606:2800:220:1:248:1893:25c8:1946"]
+    assert (
+        "Upstream A-record resolution failed for api.example.com: A record lookup failure"
+        in caplog.text
+    )
+
+
+@pytest.mark.asyncio
+@patch("core.upstream_resolver._build_resolver")
+@patch("asyncio.get_running_loop")
+async def test_resolve_upstream_system_resolver_fallback_failure(mock_get_loop, mock_build, caplog):
+    """When both upstream and system resolver fallback fail, error is logged."""
+    resolver = AsyncMock()
+    resolver.resolve.side_effect = DNSException("Upstream failed")
+    mock_build.return_value = resolver
+
+    mock_loop = MagicMock()
+    mock_loop.getaddrinfo = AsyncMock(side_effect=RuntimeError("System resolver failed"))
+    mock_get_loop.return_value = mock_loop
+
+    with caplog.at_level("ERROR"):
+        result = await resolve_upstream("api.example.com", skip_cache=True)
+
+    assert result == []
+    assert (
+        "System resolver fallback also failed for api.example.com: System resolver failed"
+        in caplog.text
+    )
+
+
+@pytest.mark.asyncio
+@patch("core.upstream_resolver._build_resolver")
 async def test_resolve_upstream_cache(mock_build):
     """Cached results are returned without re-resolving."""
 
@@ -253,6 +303,28 @@ async def test_batch_resolve(mock_build):
     assert set(result) == {"api.example.com", "mqtt.example.com"}
     assert len(result["api.example.com"]) == 1
     assert len(result["mqtt.example.com"]) == 1
+
+
+@pytest.mark.asyncio
+@patch("core.upstream_resolver.resolve_upstream")
+async def test_batch_resolve_upstream_exception_handling(mock_resolve, caplog):
+    """batch_resolve_upstream handles exceptions raised by resolve_upstream for a host."""
+    async def side_effect(hostname, **_kwargs):
+        if hostname == "bad.example.com":
+            raise RuntimeError("Resolution error")
+        return ["93.184.216.34"]
+
+    mock_resolve.side_effect = side_effect
+
+    with caplog.at_level("ERROR"):
+        results = await batch_resolve_upstream(
+            ["good.example.com", "bad.example.com"],
+            skip_cache=True,
+        )
+
+    assert results["good.example.com"] == ["93.184.216.34"]
+    assert results["bad.example.com"] == []
+    assert "Batch resolve failed for bad.example.com: Resolution error" in caplog.text
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
