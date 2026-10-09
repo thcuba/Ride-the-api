@@ -565,3 +565,43 @@ class TestLearningOrchestratorExtended:
             orch1 = get_orchestrator()
             orch2 = get_orchestrator()
             assert orch1 is orch2
+
+    @pytest.mark.asyncio
+    async def test_record_result_batching(self, db_manager):
+        tracker = MatchRateTracker(db_manager)
+        dev_id = "dev-batch-test"
+
+        # We will patch db_manager.device_session to count calls
+        original_device_session = db_manager.device_session
+
+        session_calls = 0
+
+        def mock_device_session(device_id):
+            nonlocal session_calls
+            session_calls += 1
+            return original_device_session(device_id)
+
+        with patch.object(db_manager, "device_session", side_effect=mock_device_session):
+            # Tracker batches 50 requests
+            for _ in range(49):
+                await tracker.record_result(dev_id, MatchResult.LOCAL_HIT)
+
+            # Ensure no DB session was created yet for the updates
+            assert session_calls == 0
+
+            # Hitting threshold should trigger a flush
+            await tracker.record_result(dev_id, MatchResult.LOCAL_HIT)
+
+            # Ensure a DB session was created exactly once for the flush
+            assert session_calls == 1
+
+            # Verify stats in DB
+            stats = await tracker.get_stats(dev_id)
+            # get_stats will also trigger device_session to read the stats
+            # get_stats triggers _flush_cache but returns early
+            # But get_stats uses device_session to read
+            assert session_calls == 2  # noqa: PLR2004
+
+            assert stats["total_requests"] == 50  # noqa: PLR2004
+            assert stats["local_hits"] == 50  # noqa: PLR2004
+            assert stats["match_rate_pct"] == 100.0  # noqa: PLR2004

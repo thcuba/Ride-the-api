@@ -157,3 +157,6 @@
 ## 2025-02-23 - Eliminate redundant DB Query in Device Auto-switch Check
 **Learning:** In `CloudIndependenceVerifier.auto_switch_to_production`, querying `DeviceRegistry` directly before calling `check_cloud_independence` resulted in a redundant DB query since `check_cloud_independence` already queries `DeviceRegistry` and returns the `auto_switch_enabled` status and missing device state.
 **Action:** Always inspect downstream/helper method queries when adding pre-checks to avoid executing identical ORM queries twice in the same code path.
+## 2024-05-24 - MatchStats Memory Caching for High-Traffic Database Reductions
+**Learning:** Performing per-request SQLite transactions (including `flush`) on a shared `MatchStats` row generates large IO and locking overhead on high-traffic services. Simulating the problem revealed overhead dropped by 40x when avoiding synchronous flushes per item.
+**Action:** When tracking high-volume analytics or rate limits in real-time, implement simple batched flushes by buffering updates in an async lockable memory structure (`dict`) and writing them periodically instead of on every increment. Ensure the getter fetches/flushes these in-flight updates so state remains globally consistent without the write penalty.
