@@ -899,7 +899,12 @@ async def tls_delete_cert(hostname: str):
     if not cert_manager:
         return JSONResponse(status_code=503, content={"error": "Cert manager not ready"})
     try:
-        cert_manager.delete_cert(hostname)
+        deleted = cert_manager.delete_cert(hostname)
+        if not deleted:
+            return JSONResponse(
+                status_code=404,
+                content={"error": f"No imported certificate found for '{hostname}'"},
+            )
         return {  # noqa: TRY300
             "status": "ok",
             "hostname": hostname,
