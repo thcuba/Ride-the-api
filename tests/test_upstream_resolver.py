@@ -309,6 +309,7 @@ async def test_batch_resolve(mock_build):
 @patch("core.upstream_resolver.resolve_upstream")
 async def test_batch_resolve_upstream_exception_handling(mock_resolve, caplog):
     """batch_resolve_upstream handles exceptions raised by resolve_upstream for a host."""
+
     async def side_effect(hostname, **_kwargs):
         if hostname == "bad.example.com":
             raise RuntimeError("Resolution error")
