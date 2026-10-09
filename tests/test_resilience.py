@@ -111,6 +111,80 @@ class TestCloudIndependenceVerifier:
         assert result.get("independent") is False
         assert result.get("patterns_learned") >= 1
 
+    @pytest.mark.asyncio
+    async def test_import_device_patterns(self, db_manager, registered_device):
+        verifier = CloudIndependenceVerifier(db_manager)
+        data = {
+            "patterns": [
+                {
+                    "pattern_id": "p1",
+                    "method": "GET",
+                    "path_pattern": "/status",
+                    "protocol": "http",
+                    "intent": "status",
+                },
+                {
+                    "pattern_id": "p2",
+                    "method": "POST",
+                    "path_pattern": "/set",
+                    "protocol": "http",
+                    "intent": "set",
+                },
+            ],
+            "templates": [
+                {
+                    "template_id": "t1",
+                    "pattern_id": "p1",
+                    "status_code": 200,
+                }
+            ],
+            "field_mappings": [
+                {
+                    "mapping_id": "m1",
+                    "request_field": "val",
+                    "request_type": "string",
+                    "response_field": "val",
+                    "response_type": "string",
+                    "transform": "direct",
+                    "intent": "set",
+                }
+            ],
+        }
+
+        # First import adds 2 patterns
+        imported = await verifier.import_device_patterns(registered_device, data)
+        assert imported == 2
+
+        # Re-importing identical data skips duplicates and returns 0
+        re_imported = await verifier.import_device_patterns(registered_device, data)
+        assert re_imported == 0
+
+        # Partial import adds only new patterns
+        partial_data = {
+            "patterns": [
+                {
+                    "pattern_id": "p1",
+                    "method": "GET",
+                    "path_pattern": "/status",
+                    "protocol": "http",
+                    "intent": "status",
+                },
+                {
+                    "pattern_id": "p3",
+                    "method": "GET",
+                    "path_pattern": "/info",
+                    "protocol": "http",
+                    "intent": "info",
+                },
+            ]
+        }
+        partial_imported = await verifier.import_device_patterns(registered_device, partial_data)
+        assert partial_imported == 1
+
+        # Empty import
+        empty_imported = await verifier.import_device_patterns(registered_device, {})
+        assert empty_imported == 0
+
 
 class TestAutoSwitchScheduler:
     @pytest.mark.asyncio

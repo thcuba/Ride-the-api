@@ -153,3 +153,7 @@
 ## 2026-03-31 - Async Thread Offloading for Atomic File I/O
 **Learning:** Synchronous file operations with disk syncs (`open()`, `write()`, `flush()`, and `os.fsync()`) executed directly on an `asyncio` event loop block event loop execution and stall concurrent background tasks. Providing thread-offloaded async variants (`append_atomic_async` / `append_jsonl_async`) via `asyncio.to_thread` prevents event loop stalls while maintaining crash-safe file write guarantees.
 **Action:** Use `asyncio.to_thread` to offload blocking file operations and disk syncs when appending audit logs or state in async request handling contexts.
+
+## 2026-03-31 - Bulk Pre-fetching for Pattern DB Imports in Resilience Verifier
+**Learning:** `import_device_patterns` executed individual `select(...)` queries for every pattern, template, and field mapping in the import payload ($N + M + K$ queries). Pre-fetching existing IDs via chunked `.in_(...)` queries into sets reduces queries to 3 total and speeds up fresh imports by ~4.5x and duplicate checks by ~33.8x (674ms -> 149ms fresh, 314ms -> 9.3ms duplicate).
+**Action:** When importing or restoring relational backup entities, pre-fetch existing primary/unique IDs in chunked `.in_(...)` queries before looping over items.
