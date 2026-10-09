@@ -128,6 +128,17 @@ class MatchResult(StrEnum):
 
 
 @dataclass
+class ScoringInput:
+    """Inputs required for calculating request pattern similarity scores."""
+
+    method: str
+    path: str
+    headers: dict
+    body: Any  # noqa: ANN401
+    query_params: dict
+
+
+@dataclass
 class CorrelatedPair:
     """A correlated request/response pair ready for buffer and analysis."""
 
@@ -309,6 +320,14 @@ class PatternMatcher:
         best_pattern = None
         best_template = None
 
+        req_input = ScoringInput(
+            method=method,
+            path=path,
+            headers=headers,
+            body=body,
+            query_params=query_params,
+        )
+
         for pattern in patterns:
             # Fast path early exits: max score is 1.0; method mismatch caps score at 0.70 (~10x faster)  # noqa: E501
             if best_score >= 1.0:
@@ -316,9 +335,7 @@ class PatternMatcher:
             if best_score >= 0.7 and pattern.method != method:  # noqa: PLR2004
                 continue
 
-            score = self._calculate_similarity(
-                pattern, method, path, headers, body, query_params, best_score=best_score
-            )
+            score = self._calculate_similarity(pattern, req_input, best_score=best_score)
             if score > best_score:
                 best_score = score
                 best_pattern = pattern
@@ -334,29 +351,25 @@ class PatternMatcher:
 
         return best_pattern, best_template, best_score
 
-    def _calculate_similarity(  # noqa: PLR0913, C901, PLR0917
+    def _calculate_similarity(  # noqa: C901
         self,
         pattern: RequestPattern,
-        method: str,
-        path: str,
-        headers: dict,
-        body: Any,  # noqa: ANN401
-        query_params: dict,
+        req_input: ScoringInput,
         best_score: float = 0.0,
     ) -> float:
         """Calculate similarity between a request and a learned pattern (0.0 to 1.0)."""
         score = 0.0
 
         # Method match (exact)
-        if pattern.method == method:
+        if pattern.method == req_input.method:
             score += 30.0
 
         # Path match (partial allowed)
-        path_score = _path_similarity(pattern.path_pattern, path)
+        path_score = _path_similarity(pattern.path_pattern, req_input.path)
         if path_score:
             score += 30.0 * path_score
 
-        total_weight = 100.0 if bool(body) == bool(pattern.body_schema) else 85.0
+        total_weight = 100.0 if bool(req_input.body) == bool(pattern.body_schema) else 85.0
 
         # Fast path exit: headers (15) + query (10) + body (15) can add at most 40.0 points.
         # If upper bound max_possible score cannot beat best_score, short-circuit (~1.6x speedup).
@@ -369,7 +382,7 @@ class PatternMatcher:
         if pattern.required_headers:
             matches = 0
             for h in pattern.required_headers:
-                if h in headers:
+                if h in req_input.headers:
                     matches += 1
             score += 15.0 * (matches / len(pattern.required_headers))
 
@@ -377,14 +390,14 @@ class PatternMatcher:
         if pattern.query_param_keys:
             matches = 0
             for q in pattern.query_param_keys:
-                if q in query_params:
+                if q in req_input.query_params:
                     matches += 1
             score += 10.0 * (matches / len(pattern.query_param_keys))
 
         # Body structure match
-        if body and pattern.body_schema:
-            score += 15.0 * _body_similarity(pattern.body_schema, body)
-        elif not body and not pattern.body_schema:
+        if req_input.body and pattern.body_schema:
+            score += 15.0 * _body_similarity(pattern.body_schema, req_input.body)
+        elif not req_input.body and not pattern.body_schema:
             score += 15.0
 
         return score / total_weight
