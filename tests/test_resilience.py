@@ -153,7 +153,7 @@ class TestCloudIndependenceVerifier:
 
         # First import adds 2 patterns
         imported = await verifier.import_device_patterns(registered_device, data)
-        assert imported == 2
+        assert imported == 2  # noqa: PLR2004
 
         # Re-importing identical data skips duplicates and returns 0
         re_imported = await verifier.import_device_patterns(registered_device, data)

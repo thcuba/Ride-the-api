@@ -288,70 +288,54 @@ class CloudIndependenceVerifier:
 
         async with self.db_manager.device_session(device_id) as session:
             # Performance optimization: Bulk pre-fetching candidate IDs via .in_(...)
-            # replaces individual SELECT queries inside loops with bulk queries (~4.5x to 33.8x faster).
-            if patterns_data:
-                p_ids = [p["pattern_id"] for p in patterns_data if "pattern_id" in p]
-                existing_patterns = set()
-                if p_ids:
-                    for i in range(0, len(p_ids), 500):
-                        chunk = p_ids[i : i + 500]
-                        res = await session.execute(
-                            select(RequestPattern.pattern_id).where(
-                                RequestPattern.pattern_id.in_(chunk)
-                            )
-                        )
-                        existing_patterns.update(res.scalars().all())
+            # replaces N SELECT queries inside loops with bulk queries (~4.5x-33.8x faster).
+            existing_patterns = await _get_existing_ids(
+                session, RequestPattern.pattern_id, patterns_data, "pattern_id"
+            )
+            for p_data in patterns_data:
+                pid = p_data.get("pattern_id")
+                if pid and pid not in existing_patterns:
+                    session.add(RequestPattern(**p_data))
+                    existing_patterns.add(pid)
+                    count += 1
 
-                for p_data in patterns_data:
-                    pid = p_data.get("pattern_id")
-                    if pid and pid not in existing_patterns:
-                        pattern = RequestPattern(**p_data)
-                        session.add(pattern)
-                        existing_patterns.add(pid)
-                        count += 1
+            existing_templates = await _get_existing_ids(
+                session, ResponseTemplate.template_id, templates_data, "template_id"
+            )
+            for t_data in templates_data:
+                tid = t_data.get("template_id")
+                if tid and tid not in existing_templates:
+                    session.add(ResponseTemplate(**t_data))
+                    existing_templates.add(tid)
 
-            if templates_data:
-                t_ids = [t["template_id"] for t in templates_data if "template_id" in t]
-                existing_templates = set()
-                if t_ids:
-                    for i in range(0, len(t_ids), 500):
-                        chunk = t_ids[i : i + 500]
-                        res = await session.execute(
-                            select(ResponseTemplate.template_id).where(
-                                ResponseTemplate.template_id.in_(chunk)
-                            )
-                        )
-                        existing_templates.update(res.scalars().all())
-
-                for t_data in templates_data:
-                    tid = t_data.get("template_id")
-                    if tid and tid not in existing_templates:
-                        template = ResponseTemplate(**t_data)
-                        session.add(template)
-                        existing_templates.add(tid)
-
-            if mappings_data:
-                m_ids = [m["mapping_id"] for m in mappings_data if "mapping_id" in m]
-                existing_mappings = set()
-                if m_ids:
-                    for i in range(0, len(m_ids), 500):
-                        chunk = m_ids[i : i + 500]
-                        res = await session.execute(
-                            select(FieldMapping.mapping_id).where(
-                                FieldMapping.mapping_id.in_(chunk)
-                            )
-                        )
-                        existing_mappings.update(res.scalars().all())
-
-                for m_data in mappings_data:
-                    mid = m_data.get("mapping_id")
-                    if mid and mid not in existing_mappings:
-                        mapping = FieldMapping(**m_data)
-                        session.add(mapping)
-                        existing_mappings.add(mid)
+            existing_mappings = await _get_existing_ids(
+                session, FieldMapping.mapping_id, mappings_data, "mapping_id"
+            )
+            for m_data in mappings_data:
+                mid = m_data.get("mapping_id")
+                if mid and mid not in existing_mappings:
+                    session.add(FieldMapping(**m_data))
+                    existing_mappings.add(mid)
 
         logger.info(f"Imported {count} patterns for device {device_id}")
         return count
+
+
+async def _get_existing_ids(
+    session, id_column, items: list[dict], key_name: str
+) -> set[str]:
+    """Bulk query existing candidate IDs in chunks of 500 to avoid N+1 SELECT overhead."""
+    if not items:
+        return set()
+    ids = [item[key_name] for item in items if key_name in item]
+    if not ids:
+        return set()
+    existing = set()
+    for i in range(0, len(ids), 500):
+        chunk = ids[i : i + 500]
+        res = await session.execute(select(id_column).where(id_column.in_(chunk)))
+        existing.update(res.scalars().all())
+    return existing
 
 
 # API endpoint handlers for resilience endpoints
