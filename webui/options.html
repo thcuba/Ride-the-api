@@ -87,6 +87,12 @@
   .toast.error .toast-icon { color: var(--red); }
   .toast.warning .toast-icon { color: var(--yellow); }
   .toast.info .toast-icon { color: var(--blue); }
+  @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+  .btn-spinning { opacity: .75; cursor: wait !important; }
+  .btn-spinning::before { content: '↻'; display: inline-block; animation: spin .75s linear infinite; margin-right: 4px; }
+  @media (prefers-reduced-motion: reduce) {
+    .btn-spinning::before { animation: none; }
+  }
 </style>
 </head>
 <body>
@@ -127,8 +133,8 @@
         <div class="opt-row">
           <button class="btn btn-primary" id="updateBtn" onclick="updateSoftware()">&#x21bb; Update now</button>
         </div>
-        <span class="status" id="updateStatus"></span>
-        <div class="meta" id="versionInfo">Checking version…</div>
+        <span class="status" id="updateStatus" role="status" aria-live="polite"></span>
+        <div class="meta" id="versionInfo" role="status" aria-live="polite">Checking version…</div>
       </section>
     </div>
   </main>
@@ -185,7 +191,7 @@
     var btn = document.getElementById('updateBtn');
     var status = document.getElementById('updateStatus');
     var origText = btn ? btn.textContent : '↻ Update now';
-    if (btn) { btn.disabled = true; btn.textContent = 'Updating…'; }
+    if (btn) { btn.disabled = true; btn.classList.add('btn-spinning'); btn.textContent = 'Updating…'; }
     if (status) { status.textContent = 'Update in progress…'; status.className = 'status'; }
     try {
       var res = await fetch('/api/system/update', { method: 'POST' });
@@ -194,7 +200,7 @@
         var msg = (data && data.error) ? data.error : ('HTTP ' + res.status);
         if (status) { status.textContent = 'Update failed: ' + msg; status.className = 'status err'; }
         showToast('Update failed: ' + msg, 'error');
-        if (btn) { btn.disabled = false; btn.textContent = origText; }
+        if (btn) { btn.disabled = false; btn.classList.remove('btn-spinning'); btn.textContent = origText; }
         return;
       }
       var okMsg = (data && data.message) || 'Update started';
@@ -206,7 +212,7 @@
       var errStr = String((e && e.message) || e);
       if (status) { status.textContent = errStr; status.className = 'status err'; }
       showToast('Update failed: ' + errStr, 'error');
-      if (btn) { btn.disabled = false; btn.textContent = origText; }
+      if (btn) { btn.disabled = false; btn.classList.remove('btn-spinning'); btn.textContent = origText; }
     }
   }
 </script>
