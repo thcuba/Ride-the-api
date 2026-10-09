@@ -17,6 +17,7 @@ import json
 import logging
 import re
 import shutil
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -28,6 +29,17 @@ from cryptography.x509.oid import NameOID
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class CertManagerConfig:
+    ca_cert_path: str = "./certs/ca.pem"
+    ca_key_path: str = "./certs/ca.key"
+    device_certs_dir: str = "./data/device_certs"
+    external_certs_dir: str = "./data/external_certs"
+    ca_key_size: int = 4096
+    leaf_key_size: int = 2048
+    cert_validity_days: int = 730
+
+
 class CertManager:
     """Manages CA and per-hostname leaf certificates for TLS interception.
 
@@ -36,23 +48,15 @@ class CertManager:
     unauthorized local reading of sensitive key material.
     """
 
-    def __init__(  # noqa: PLR0913, PLR0917
-        self,
-        ca_cert_path: str = "./certs/ca.pem",
-        ca_key_path: str = "./certs/ca.key",
-        device_certs_dir: str = "./data/device_certs",
-        external_certs_dir: str = "./data/external_certs",
-        ca_key_size: int = 4096,
-        leaf_key_size: int = 2048,
-        cert_validity_days: int = 730,  # 2 years
-    ) -> None:
-        self.ca_cert_path = Path(ca_cert_path)
-        self.ca_key_path = Path(ca_key_path)
-        self.device_certs_dir = Path(device_certs_dir)
-        self.external_certs_dir = Path(external_certs_dir)
-        self.ca_key_size = ca_key_size
-        self.leaf_key_size = leaf_key_size
-        self.cert_validity_days = cert_validity_days
+    def __init__(self, config: CertManagerConfig | None = None) -> None:
+        self.config = config or CertManagerConfig()
+        self.ca_cert_path = Path(self.config.ca_cert_path)
+        self.ca_key_path = Path(self.config.ca_key_path)
+        self.device_certs_dir = Path(self.config.device_certs_dir)
+        self.external_certs_dir = Path(self.config.external_certs_dir)
+        self.ca_key_size = self.config.ca_key_size
+        self.leaf_key_size = self.config.leaf_key_size
+        self.cert_validity_days = self.config.cert_validity_days
 
         self._ca_cert: x509.Certificate | None = None
         self._ca_key: rsa.RSAPrivateKey | None = None
@@ -572,10 +576,11 @@ def get_cert_manager(
     """Get or create the global CertManager instance."""
     global _cert_manager  # noqa: PLW0603
     if _cert_manager is None:
-        _cert_manager = CertManager(
+        config = CertManagerConfig(
             ca_cert_path=ca_cert_path or "./certs/ca.pem",
             ca_key_path=ca_key_path or "./certs/ca.key",
             device_certs_dir=device_certs_dir or "./data/device_certs",
             external_certs_dir=external_certs_dir or "./data/external_certs",
         )
+        _cert_manager = CertManager(config)
     return _cert_manager

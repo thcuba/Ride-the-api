@@ -20,7 +20,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
-from core.cert_manager import CertManager
+from core.cert_manager import CertManager, CertManagerConfig
 from core.tls_mitm import (
     TLSMITMServer,
     parse_decrypted_http_request,
@@ -32,10 +32,12 @@ def _make_test_server() -> TLSMITMServer:
     """Build a TLSMITMServer with a throwaway CA for SSL context caching tests."""
     tmp = tempfile.mkdtemp()
     cm = CertManager(
-        ca_cert_path=f"{tmp}/ca.pem",
-        ca_key_path=f"{tmp}/ca.key",
-        device_certs_dir=f"{tmp}/device_certs",
-        external_certs_dir=f"{tmp}/external_certs",
+        CertManagerConfig(
+            ca_cert_path=f"{tmp}/ca.pem",
+            ca_key_path=f"{tmp}/ca.key",
+            device_certs_dir=f"{tmp}/device_certs",
+            external_certs_dir=f"{tmp}/external_certs",
+        )
     )
     cm.ensure_ca()
     server = TLSMITMServer(cert_manager=cm)

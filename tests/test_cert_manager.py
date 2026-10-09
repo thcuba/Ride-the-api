@@ -16,7 +16,7 @@ from cryptography.x509.oid import NameOID
 from fastapi.testclient import TestClient
 
 import core.server as server_mod
-from core.cert_manager import CertManager
+from core.cert_manager import CertManager, CertManagerConfig
 
 
 class TestSafeFilename:
@@ -162,10 +162,12 @@ class TestKeyPermissions:
 
     def _manager(self, tmp_path):
         return CertManager(
-            ca_cert_path=str(tmp_path / "certs" / "ca.pem"),
-            ca_key_path=str(tmp_path / "certs" / "ca.key"),
-            device_certs_dir=str(tmp_path / "device_certs"),
-            external_certs_dir=str(tmp_path / "external_certs"),
+            CertManagerConfig(
+                ca_cert_path=str(tmp_path / "certs" / "ca.pem"),
+                ca_key_path=str(tmp_path / "certs" / "ca.key"),
+                device_certs_dir=str(tmp_path / "device_certs"),
+                external_certs_dir=str(tmp_path / "external_certs"),
+            )
         )
 
     def test_ca_key_file_permissions(self, tmp_path):
@@ -203,10 +205,12 @@ class TestDeleteCertEndpoint:
     def test_delete_non_existent_cert_returns_404(self, monkeypatch, tmp_path):
         """Attempting to delete a cert that does not exist returns HTTP 404."""
         cm = CertManager(
-            ca_cert_path=str(tmp_path / "certs" / "ca.pem"),
-            ca_key_path=str(tmp_path / "certs" / "ca.key"),
-            device_certs_dir=str(tmp_path / "device_certs"),
-            external_certs_dir=str(tmp_path / "external_certs"),
+            CertManagerConfig(
+                ca_cert_path=str(tmp_path / "certs" / "ca.pem"),
+                ca_key_path=str(tmp_path / "certs" / "ca.key"),
+                device_certs_dir=str(tmp_path / "device_certs"),
+                external_certs_dir=str(tmp_path / "external_certs"),
+            )
         )
         monkeypatch.setattr(server_mod, "cert_manager", cm)
         monkeypatch.setattr(
@@ -228,10 +232,12 @@ class TestDeleteCertEndpoint:
     def test_delete_existing_cert_returns_200(self, monkeypatch, tmp_path):
         """Deleting an existing imported certificate returns HTTP 200."""
         cm = CertManager(
-            ca_cert_path=str(tmp_path / "certs" / "ca.pem"),
-            ca_key_path=str(tmp_path / "certs" / "ca.key"),
-            device_certs_dir=str(tmp_path / "device_certs"),
-            external_certs_dir=str(tmp_path / "external_certs"),
+            CertManagerConfig(
+                ca_cert_path=str(tmp_path / "certs" / "ca.pem"),
+                ca_key_path=str(tmp_path / "certs" / "ca.key"),
+                device_certs_dir=str(tmp_path / "device_certs"),
+                external_certs_dir=str(tmp_path / "external_certs"),
+            )
         )
         cert_pem, key_pem = cm._generate_leaf_cert("existing.example.com")
         cm.import_cert("existing.example.com", cert_pem, key_pem)
