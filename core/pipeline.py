@@ -487,17 +487,23 @@ class MatchRateTracker:
         self._rolling_window = 1000
         # F-12: per-device locks serialize MatchStats updates.
         self._locks: dict[str, asyncio.Lock] = {}
+        # Performance optimization: cache stats in memory and flush periodically
+        self._stats_cache: dict[str, dict] = {}
+        self._flush_threshold = 50
 
-    async def record_result(self, device_id: str, match_result: MatchResult):
-        """Record a match result and update stats."""
-        # F-12: serialize per-device updates so concurrent requests cannot
-        # lose increments on the shared MatchStats row.
+    async def _flush_cache(self, device_id: str):
+        """Flush in-memory stats cache to the database."""
+        cache = self._stats_cache.get(device_id)
+        if not cache or cache["updates_pending"] == 0:
+            return
+
         lock = self._locks.setdefault(device_id, asyncio.Lock())
         async with lock, self.db_manager.device_session(device_id) as session:
             result_obj = await session.execute(
                 select(MatchStats).where(MatchStats.device_id == device_id)
             )
             stats = result_obj.scalar_one_or_none()
+
             if not stats:
                 stats = MatchStats(
                     device_id=device_id,
@@ -514,14 +520,10 @@ class MatchRateTracker:
                 session.add(stats)
                 await session.flush()
 
-            stats.total_requests += 1
-
-            if match_result == MatchResult.LOCAL_HIT:
-                stats.local_hits += 1
-            elif match_result == MatchResult.CLOUD_MISS:
-                stats.cloud_misses += 1
-            else:
-                stats.errors += 1
+            stats.total_requests += cache["updates_pending"]
+            stats.local_hits += cache["local_hits"]
+            stats.cloud_misses += cache["cloud_misses"]
+            stats.errors += cache["errors"]
 
             # Recalculate match rate
             total_attempted = stats.local_hits + stats.cloud_misses
@@ -530,20 +532,59 @@ class MatchRateTracker:
                 2,
             )
 
-            # Rolling window
+            # Rolling window for recent results
             recent = list(stats.recent_results or [])
-            recent.append(
-                {
-                    "result": match_result.value,
-                    "timestamp": datetime.now(UTC).isoformat(),
-                }
-            )
+            recent.extend(cache["recent_results"])
             if len(recent) > self._rolling_window:
                 recent = recent[-self._rolling_window :]
             stats.recent_results = recent
 
+            # Reset cache
+            cache["updates_pending"] = 0
+            cache["local_hits"] = 0
+            cache["cloud_misses"] = 0
+            cache["errors"] = 0
+            cache["recent_results"] = []
+
+    async def record_result(self, device_id: str, match_result: MatchResult):
+        """Record a match result and update stats."""
+        cache = self._stats_cache.setdefault(
+            device_id,
+            {
+                "updates_pending": 0,
+                "local_hits": 0,
+                "cloud_misses": 0,
+                "errors": 0,
+                "recent_results": [],
+            },
+        )
+
+        cache["updates_pending"] += 1
+
+        if match_result == MatchResult.LOCAL_HIT:
+            cache["local_hits"] += 1
+        elif match_result == MatchResult.CLOUD_MISS:
+            cache["cloud_misses"] += 1
+        else:
+            cache["errors"] += 1
+
+        cache["recent_results"].append(
+            {
+                "result": match_result.value,
+                "timestamp": datetime.now(UTC).isoformat(),
+            }
+        )
+
+        if len(cache["recent_results"]) > self._rolling_window * 2:
+            cache["recent_results"] = cache["recent_results"][-self._rolling_window :]
+
+        if cache["updates_pending"] >= self._flush_threshold:
+            await self._flush_cache(device_id)
+
     async def get_stats(self, device_id: str) -> dict:
         """Get current match stats for a device."""
+        await self._flush_cache(device_id)
+
         async with self.db_manager.device_session(device_id) as session:
             result = await session.execute(
                 select(MatchStats).where(MatchStats.device_id == device_id)
