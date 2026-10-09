@@ -13,7 +13,9 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
+from fastapi.testclient import TestClient
 
+import core.server as server_mod
 from core.cert_manager import CertManager
 
 
@@ -200,9 +202,6 @@ class TestDeleteCertEndpoint:
 
     def test_delete_non_existent_cert_returns_404(self, monkeypatch, tmp_path):
         """Attempting to delete a cert that does not exist returns HTTP 404."""
-        from fastapi.testclient import TestClient
-        import core.server as server_mod
-
         cm = CertManager(
             ca_cert_path=str(tmp_path / "certs" / "ca.pem"),
             ca_key_path=str(tmp_path / "certs" / "ca.key"),
@@ -221,16 +220,13 @@ class TestDeleteCertEndpoint:
             "/api/tls/certs/nonexistent.example.com",
             headers={"X-API-Key": "testpass"},
         )
-        assert response.status_code == 404
+        assert response.status_code == 404  # noqa: PLR2004
         assert response.json() == {
             "error": "No imported certificate found for 'nonexistent.example.com'"
         }
 
     def test_delete_existing_cert_returns_200(self, monkeypatch, tmp_path):
         """Deleting an existing imported certificate returns HTTP 200."""
-        from fastapi.testclient import TestClient
-        import core.server as server_mod
-
         cm = CertManager(
             ca_cert_path=str(tmp_path / "certs" / "ca.pem"),
             ca_key_path=str(tmp_path / "certs" / "ca.key"),
@@ -252,6 +248,6 @@ class TestDeleteCertEndpoint:
             "/api/tls/certs/existing.example.com",
             headers={"X-API-Key": "testpass"},
         )
-        assert response.status_code == 200
+        assert response.status_code == 200  # noqa: PLR2004
         assert response.json()["status"] == "ok"
         assert response.json()["hostname"] == "existing.example.com"
