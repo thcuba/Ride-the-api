@@ -15,6 +15,7 @@ import json
 import logging
 import random
 import re
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -41,6 +42,39 @@ _METHOD_MISMATCH_SCORE_CAP = 0.7
 # Pre-allocated immutable default objects to avoid heap allocations in request matching loops
 _EMPTY_DICT: dict[str, Any] = {}
 _EMPTY_TUPLE: tuple = ()
+
+
+@dataclass(slots=True)
+class PatternTarget:
+    """Target pattern parameters for similarity calculation."""
+
+    method: str
+    path_pattern: str
+    required_headers: list | tuple = _EMPTY_TUPLE
+    body_schema: dict = field(default_factory=dict)
+    query_param_keys: list | tuple = _EMPTY_TUPLE
+
+
+@dataclass(slots=True)
+class CompiledEndpoint:
+    """Pre-compiled endpoint details for fast request matching in find_best_match."""
+
+    endpoint: Any
+    target: PatternTarget
+    protocol: str
+    intent: str
+
+
+@dataclass(slots=True)
+class RequestInput:
+    """Incoming request inputs for pattern similarity calculation."""
+
+    method: str
+    path: str
+    headers: dict
+    body: Any
+    query_params: dict
+
 
 logger = logging.getLogger(__name__)
 
@@ -308,7 +342,7 @@ class PatternEngine:
         self._state_stores: dict[str, DeviceStateStore] = {}
         self._cached_patterns: dict[str, PatternDB] = {}
         # Pre-compiled endpoint tuple tuples for fast request matching in find_best_match
-        self._compiled_endpoints: dict[str, list[tuple]] = {}
+        self._compiled_endpoints: dict[str, list[CompiledEndpoint]] = {}
         # Pre-computed trigger -> response maps for fast O(1) response lookup in find_best_match
         self._response_trigger_maps: dict[str, dict[str, Any]] = {}
         # F-12: per-device locks serialize state load/persist.
@@ -354,9 +388,14 @@ class PatternEngine:
                 )
                 b_schema = ep.body_schema or _EMPTY_DICT
                 q_params = ep.query_params or _EMPTY_TUPLE
-                compiled.append(
-                    (ep, ep.method, path_pat, proto, h_req, b_schema, q_params, ep.intent)
+                target = PatternTarget(
+                    method=ep.method,
+                    path_pattern=path_pat,
+                    required_headers=h_req,
+                    body_schema=b_schema,
+                    query_param_keys=q_params,
                 )
+                compiled.append(CompiledEndpoint(ep, target, proto, ep.intent))
         self._compiled_endpoints[device_id] = compiled
         self._get_trigger_map(device_id, pattern_db)
 
@@ -433,37 +472,37 @@ class PatternEngine:
         # for the device, so when it is present it is used exclusively and the
         # per-request DB scan below is skipped (avoids a redundant device DB
         # round-trip on every production/hybrid request).
+        req_input = RequestInput(
+            method=method,
+            path=path,
+            headers=headers,
+            body=body,
+            query_params=query_params,
+        )
+
         cached = self._cached_patterns.get(device_id)
         if cached:
             # Fast O(1) response template lookup by intent instead of O(N) list search (~21x faster)
             trigger_map = self._get_trigger_map(device_id, cached)
             compiled = self._compiled_endpoints.get(device_id, [])
-            for ep, ep_method, ep_path, ep_proto, h_req, b_schema, q_params, intent in compiled:
+            for item in compiled:
                 # Fast path early exits: max score is 1.0; method mismatch caps score at 0.70 (~10x faster)  # noqa: E501
                 if best_score >= 1.0:
                     break
-                if best_score >= _METHOD_MISMATCH_SCORE_CAP and ep_method != method:
+                if best_score >= _METHOD_MISMATCH_SCORE_CAP and item.target.method != method:
                     continue
-                if not _protocol_matches(ep_proto):
+                if not _protocol_matches(item.protocol):
                     continue
 
                 score = self._calculate_similarity(
-                    method,
-                    ep_method,
-                    ep_path,
-                    path,
-                    h_req,
-                    headers,
-                    b_schema,
-                    body,
-                    q_params,
-                    query_params,
+                    item.target,
+                    req_input,
                     best_score=best_score,
                 )
                 if score > best_score:
                     best_score = score
-                    best_pattern = ep
-                    best_template = trigger_map.get(intent)
+                    best_pattern = item.endpoint
+                    best_template = trigger_map.get(item.intent)
             return best_pattern, best_template, best_score
 
         # Fall back to database patterns (only when no cached pattern file exists
@@ -481,17 +520,16 @@ class PatternEngine:
                 if not _protocol_matches(getattr(pat, "protocol", "")):
                     continue
 
+                target = PatternTarget(
+                    method=pat.method,
+                    path_pattern=pat.path_pattern,
+                    required_headers=pat.required_headers or _EMPTY_TUPLE,
+                    body_schema=pat.body_schema or _EMPTY_DICT,
+                    query_param_keys=pat.query_param_keys or _EMPTY_TUPLE,
+                )
                 score = self._calculate_similarity(
-                    method,
-                    pat.method,
-                    pat.path_pattern,
-                    path,
-                    pat.required_headers or [],
-                    headers,
-                    pat.body_schema or {},
-                    body,
-                    pat.query_param_keys or [],
-                    query_params,
+                    target,
+                    req_input,
                     best_score=best_score,
                 )
                 if score > best_score:
@@ -507,33 +545,25 @@ class PatternEngine:
 
         return best_pattern, best_template, best_score
 
-    def _calculate_similarity(  # noqa: PLR0913, C901, PLR0917
+    def _calculate_similarity(  # noqa: C901
         self,
-        method_a: str,
-        method_b: str,
-        path_pattern: str,
-        actual_path: str,
-        required_headers: list | tuple,
-        actual_headers: dict,
-        body_schema: dict,
-        actual_body: Any,  # noqa: ANN401
-        query_param_keys: list | tuple,
-        actual_query: dict,
+        target: PatternTarget,
+        req_input: RequestInput,
         best_score: float = 0.0,
     ) -> float:
         """Calculate similarity score (0.0 to 1.0)."""
         score = 0.0
 
         # Method match
-        if method_a == method_b:
+        if req_input.method == target.method:
             score += 30.0
 
         # Path match
-        path_score = _path_similarity(path_pattern, actual_path)
+        path_score = _path_similarity(target.path_pattern, req_input.path)
         if path_score:
             score += 30.0 * path_score
 
-        total_weight = 100.0 if bool(actual_body) == bool(body_schema) else 85.0
+        total_weight = 100.0 if bool(req_input.body) == bool(target.body_schema) else 85.0
 
         # Fast path exit: headers (15) + query (10) + body (15) can add at most 40.0 points.
         # If upper bound max_possible score cannot beat best_score, short-circuit (~1.64x speedup).
@@ -543,25 +573,25 @@ class PatternEngine:
         # Headers
         # Performance optimization: direct loop counting avoids generator allocation overhead
         # from sum(1 for h in ...) (~2.5x faster collection counting per call in request hot path).
-        if required_headers:
+        if target.required_headers:
             matches = 0
-            for h in required_headers:
-                if h in actual_headers:
+            for h in target.required_headers:
+                if h in req_input.headers:
                     matches += 1
-            score += 15.0 * (matches / len(required_headers))
+            score += 15.0 * (matches / len(target.required_headers))
 
         # Query params
-        if query_param_keys:
+        if target.query_param_keys:
             matches = 0
-            for q in query_param_keys:
-                if q in actual_query:
+            for q in target.query_param_keys:
+                if q in req_input.query_params:
                     matches += 1
-            score += 10.0 * (matches / len(query_param_keys))
+            score += 10.0 * (matches / len(target.query_param_keys))
 
         # Body match
-        if actual_body and body_schema:
-            score += 15.0 * self._body_similarity(body_schema, actual_body)
-        elif not actual_body and not body_schema:
+        if req_input.body and target.body_schema:
+            score += 15.0 * self._body_similarity(target.body_schema, req_input.body)
+        elif not req_input.body and not target.body_schema:
             score += 15.0
 
         return score / total_weight

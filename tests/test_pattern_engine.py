@@ -11,7 +11,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.pattern_db.pattern_engine import PatternEngine, _normalize_field_mappings
+from core.pattern_db.pattern_engine import (
+    PatternEngine,
+    PatternTarget,
+    RequestInput,
+    _normalize_field_mappings,
+)
 from core.pattern_db.schemas import (
     ClientConfig,
     ClientEndpoint,
@@ -84,116 +89,137 @@ def test_apply_pattern_db(engine):
 
 # Test: similarity scoring
 def test_calculate_similarity_full_match(engine):
-    score = engine._calculate_similarity(
-        "GET",
-        "GET",
-        "/api/v1/status",
-        "/api/v1/status",
-        ["Authorization"],
-        {"Authorization": "Bearer xxx"},
-        {"type": "object", "properties": {"key": {"type": "string"}}},
-        {"key": "value"},
-        ["page"],
-        {"page": "1"},
+    target = PatternTarget(
+        method="GET",
+        path_pattern="/api/v1/status",
+        required_headers=["Authorization"],
+        body_schema={"type": "object", "properties": {"key": {"type": "string"}}},
+        query_param_keys=["page"],
     )
+    req_input = RequestInput(
+        method="GET",
+        path="/api/v1/status",
+        headers={"Authorization": "Bearer xxx"},
+        body={"key": "value"},
+        query_params={"page": "1"},
+    )
+    score = engine._calculate_similarity(target, req_input)
     assert score == pytest.approx(1.0)
 
 
 def test_calculate_similarity_path_with_params(engine):
-    score = engine._calculate_similarity(
-        "POST",
-        "POST",
-        "/api/v1/devices/{id}/command",
-        "/api/v1/devices/abc123/command",
-        [],
-        {},
-        None,
-        None,
-        [],
-        {},
+    target = PatternTarget(
+        method="POST",
+        path_pattern="/api/v1/devices/{id}/command",
+        required_headers=[],
+        body_schema={},
+        query_param_keys=[],
     )
+    req_input = RequestInput(
+        method="POST",
+        path="/api/v1/devices/abc123/command",
+        headers={},
+        body=None,
+        query_params={},
+    )
+    score = engine._calculate_similarity(target, req_input)
     assert score == pytest.approx(0.75)
 
 
 def test_calculate_similarity_method_mismatch(engine):
-    score = engine._calculate_similarity(
-        "GET",
-        "POST",
-        "/status",
-        "/status",
-        [],
-        {},
-        None,
-        None,
-        [],
-        {},
+    target = PatternTarget(
+        method="POST",
+        path_pattern="/status",
+        required_headers=[],
+        body_schema={},
+        query_param_keys=[],
     )
+    req_input = RequestInput(
+        method="GET",
+        path="/status",
+        headers={},
+        body=None,
+        query_params={},
+    )
+    score = engine._calculate_similarity(target, req_input)
     assert score == pytest.approx(0.45)
 
 
 def test_calculate_similarity_path_length_mismatch(engine):
-    score = engine._calculate_similarity(
-        "GET",
-        "GET",
-        "/a/b/c",
-        "/a/b/c/d/e",
-        [],
-        {},
-        None,
-        None,
-        [],
-        {},
+    target = PatternTarget(
+        method="GET",
+        path_pattern="/a/b/c",
+        required_headers=[],
+        body_schema={},
+        query_param_keys=[],
     )
+    req_input = RequestInput(
+        method="GET",
+        path="/a/b/c/d/e",
+        headers={},
+        body=None,
+        query_params={},
+    )
+    score = engine._calculate_similarity(target, req_input)
     assert score == pytest.approx(0.45)
 
 
 def test_calculate_similarity_path_close_mismatch(engine):
-    score = engine._calculate_similarity(
-        "GET",
-        "GET",
-        "/a/b/c",
-        "/a/b/c/d",
-        [],
-        {},
-        None,
-        None,
-        [],
-        {},
+    target = PatternTarget(
+        method="GET",
+        path_pattern="/a/b/c",
+        required_headers=[],
+        body_schema={},
+        query_param_keys=[],
     )
+    req_input = RequestInput(
+        method="GET",
+        path="/a/b/c/d",
+        headers={},
+        body=None,
+        query_params={},
+    )
+    score = engine._calculate_similarity(target, req_input)
     # total=100, score=30(method)+9(path)+15(body)=54
     assert score == pytest.approx(0.54)
 
 
 def test_calculate_similarity_no_body_both_empty(engine):
-    score = engine._calculate_similarity(
-        "GET",
-        "GET",
-        "/",
-        "/",
-        [],
-        {},
-        {},
-        {},
-        [],
-        {},
+    target = PatternTarget(
+        method="GET",
+        path_pattern="/",
+        required_headers=[],
+        body_schema={},
+        query_param_keys=[],
     )
+    req_input = RequestInput(
+        method="GET",
+        path="/",
+        headers={},
+        body={},
+        query_params={},
+    )
+    score = engine._calculate_similarity(target, req_input)
     # total=100, score=30+30+15=75
     assert score == pytest.approx(0.75)
 
 
 def test_calculate_similarity_body_partial_match(engine):
-    score = engine._calculate_similarity(
-        "POST",
-        "POST",
-        "/",
-        "/",
-        [],
-        {},
-        {"properties": {"a": {}, "b": {}, "c": {}}},
-        {"a": 1, "b": 2},
-        [],
-        {},
+    target = PatternTarget(
+        method="POST",
+        path_pattern="/",
+        required_headers=[],
+        body_schema={"properties": {"a": {}, "b": {}, "c": {}}},
+        query_param_keys=[],
     )
+    req_input = RequestInput(
+        method="POST",
+        path="/",
+        headers={},
+        body={"a": 1, "b": 2},
+        query_params={},
+    )
+    score = engine._calculate_similarity(target, req_input)
     # total=100, score=30+30+15*(2/3)=70
     assert score == pytest.approx(0.7)
 
