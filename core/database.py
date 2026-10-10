@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
+from dataclasses import dataclass
+
 from cachetools import TTLCache
 from sqlalchemy import (
     JSON,
@@ -472,6 +474,12 @@ class DeviceMetaRow(Base):
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•  # noqa: E501
 
 
+@dataclass
+class DeviceSettings:
+    mode: str
+    context_buffer_size: int
+
+
 class DatabaseManager:
     """Manages core DB + per-device DBs."""
 
@@ -498,17 +506,23 @@ class DatabaseManager:
         self._ip_lookup_cache: dict[str, str] | None = None
 
         # Bounded in-memory caches for device connection mode and device meta header (5-min TTL)
+
         self._device_connection_cache: TTLCache[str, str] = TTLCache(maxsize=2048, ttl=300)
         self._device_meta_cache: TTLCache[str, dict | None] = TTLCache(maxsize=2048, ttl=300)
+        self._device_settings_cache: TTLCache[str, DeviceSettings | None] = TTLCache(
+            maxsize=2048, ttl=300
+        )
 
     def invalidate_device_cache(self, device_id: str | None = None) -> None:
         """Invalidate in-memory caches for a device or all devices."""
         if device_id is None:
             self._device_connection_cache.clear()
             self._device_meta_cache.clear()
+            self._device_settings_cache.clear()
         else:
             self._device_connection_cache.pop(device_id, None)
             self._device_meta_cache.pop(device_id, None)
+            self._device_settings_cache.pop(device_id, None)
 
     async def initialize(self) -> None:
         """Initialize all databases."""
@@ -785,6 +799,25 @@ class DatabaseManager:
             self._device_connection_cache[device_id] = conn
             return conn
 
+    async def get_device_settings(self, device_id: str) -> DeviceSettings | None:
+        """Get device settings (mode and buffer size) with caching."""
+        if device_id in self._device_settings_cache:
+            return self._device_settings_cache[device_id]
+
+        async with await self.get_core_session() as session:
+            result = await session.execute(
+                select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
+            )
+            device = result.scalar_one_or_none()
+            if not device:
+                return None
+
+            settings = DeviceSettings(
+                mode=device.mode, context_buffer_size=device.context_buffer_size
+            )
+            self._device_settings_cache[device_id] = settings
+            return settings
+
     async def is_ips_bypassed(self, ip: str) -> bool:
         """Return True if the IP is in per-IP bypass mode.
 
@@ -933,6 +966,7 @@ class DatabaseManager:
                 return False
             device.mode = mode
             await session.commit()
+            self.invalidate_device_cache(device_id)
             logger.info(f"Device {device_id} switched to {mode} mode")
             return True
 
@@ -976,6 +1010,7 @@ class DatabaseManager:
         self._device_sessions.pop(device_id, None)
         self._device_locks.pop(device_id, None)
         self._device_db_urls.pop(device_id, None)
+        self.invalidate_device_cache(device_id)
         logger.info(f"Deleted device {device_id}")
         return True
 
@@ -1001,6 +1036,7 @@ class DatabaseManager:
             if profile_name is not None:
                 device.llm_profile_name = profile_name
             await session.commit()
+            self.invalidate_device_cache(device_id)
             return True
 
     async def update_device_auto_switch(self, device_id: str, enabled: bool) -> bool:
@@ -1014,6 +1050,7 @@ class DatabaseManager:
                 return False
             device.auto_switch_enabled = enabled
             await session.commit()
+            self.invalidate_device_cache(device_id)
             logger.info(f"Device {device_id} auto-switch {'enabled' if enabled else 'disabled'}")
             return True
 
@@ -1028,6 +1065,7 @@ class DatabaseManager:
                 return False
             device.match_threshold = threshold
             await session.commit()
+            self.invalidate_device_cache(device_id)
             logger.info(f"Device {device_id} match_threshold set to {threshold}")
             return True
 
@@ -1042,6 +1080,7 @@ class DatabaseManager:
                 return False
             device.context_buffer_size = size
             await session.commit()
+            self.invalidate_device_cache(device_id)
             logger.info(f"Device {device_id} context_buffer_size set to {size}")
             return True
 
@@ -1058,6 +1097,7 @@ class DatabaseManager:
                 return False
             device.llm_context_notes = notes
             await session.commit()
+            self.invalidate_device_cache(device_id)
             return True
 
     async def get_device_context_notes(self, device_id: str) -> str | None:

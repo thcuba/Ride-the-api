@@ -1797,17 +1797,13 @@ class LearningOrchestrator:
             return {"action": "ignored", "reason": "no_correlation"}
 
         # Get device for mode
-        async with self.db_manager.core_session() as session:
-            result = await session.execute(
-                select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
-            )
-            device = result.scalar_one_or_none()
-            if not device:
-                return {"action": "ignored", "reason": "device_not_found"}
+        device_settings = await self.db_manager.get_device_settings(device_id)
+        if not device_settings:
+            return {"action": "ignored", "reason": "device_not_found"}
 
-        if device.mode == PipelineMode.LEARNING.value:
+        if device_settings.mode == PipelineMode.LEARNING.value:
             needs_flush = await self.pipeline.process_learning_pair(
-                device_id, pair, device.context_buffer_size
+                device_id, pair, device_settings.context_buffer_size
             )
             return {
                 "action": "buffered_for_learning",
@@ -1816,7 +1812,7 @@ class LearningOrchestrator:
             }
         # Passthrough mode: never buffer or learn from the response — the
         # traffic was forwarded untouched.
-        if device.mode == PipelineMode.PASSTHROUGH.value:
+        if device_settings.mode == PipelineMode.PASSTHROUGH.value:
             return {"action": "ignored", "reason": "passthrough"}
         # Production/hybrid mode: learn from the miss. The CLOUD_MISS is NOT
         # recorded again here ÃƒÆ'Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â it was already counted once when the request  # noqa: E501
@@ -1824,7 +1820,7 @@ class LearningOrchestrator:
         # request time). Recording it again on the response would double-count
         # total_requests/cloud_misses and understate the real match rate.
         needs_flush = await self.pipeline.process_learning_pair(
-            device_id, pair, device.context_buffer_size
+            device_id, pair, device_settings.context_buffer_size
         )
         return {
             "action": "learned_from_miss",
