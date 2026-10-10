@@ -1594,14 +1594,10 @@ class LearningOrchestrator:
         enrichment: dict | None = None,
     ) -> dict:
         """Main entry point: handle an incoming request. Returns response info."""
-        # Get device mode
-        async with self.db_manager.core_session() as session:
-            result = await session.execute(
-                select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
-            )
-            device = result.scalar_one_or_none()
-            if not device:
-                return {"action": "forward", "reason": "device_not_found"}
+        # Get device mode (cached)
+        device = await self.db_manager.get_device(device_id)
+        if not device:
+            return {"action": "forward", "reason": "device_not_found"}
 
         handler = {
             PipelineMode.PRODUCTION.value: self._handle_production,

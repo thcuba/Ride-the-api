@@ -157,3 +157,6 @@
 ## 2025-02-23 - Eliminate redundant DB Query in Device Auto-switch Check
 **Learning:** In `CloudIndependenceVerifier.auto_switch_to_production`, querying `DeviceRegistry` directly before calling `check_cloud_independence` resulted in a redundant DB query since `check_cloud_independence` already queries `DeviceRegistry` and returns the `auto_switch_enabled` status and missing device state.
 **Action:** Always inspect downstream/helper method queries when adding pre-checks to avoid executing identical ORM queries twice in the same code path.
+## 2024-10-09 - Caching DeviceRegistry Models using TTLCache
+**Learning:** Returning fully hydrated SQLAlchemy models from a TTLCache eliminates N+1 queries effectively. However, objects retrieved via session.execute must be expunged (`session.expunge(device)`) before placing them in the cache. Otherwise, accessing them outside their original session context throws a DetachedInstanceError. Negative caching (caching None when devices aren't found) further protects the database from bad traffic.
+**Action:** Always `session.expunge()` ORM objects before caching them in memory for cross-request usage.
