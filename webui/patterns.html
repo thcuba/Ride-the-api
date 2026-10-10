@@ -86,6 +86,16 @@
     position: absolute; left: 10px; color: var(--text2); pointer-events: none; width: 16px; height: 16px;
     fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
   }
+  .pattern-filter-bar .search-kbd {
+    position: absolute; right: 10px; pointer-events: none;
+    background: var(--surface2); border: 1px solid var(--border); border-radius: 4px;
+    color: var(--text2); font-family: inherit; font-size: 11px; font-weight: 600;
+    padding: 1px 6px; line-height: 1.4; transition: opacity .2s;
+  }
+  .pattern-filter-bar input:focus ~ .search-kbd,
+  .pattern-filter-bar input:not(:placeholder-shown) ~ .search-kbd {
+    opacity: 0;
+  }
   .pattern-filter-bar .clear-search-btn {
     position: absolute; right: 10px; background: none; border: none; color: var(--text2);
     font-size: 16px; cursor: pointer; padding: 2px 6px; border-radius: 4px; line-height: 1;
@@ -118,7 +128,8 @@
 
     <div class="pattern-filter-bar">
       <svg class="search-icon" aria-hidden="true" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-      <input type="search" id="patternSearchInput" placeholder="Filter patterns by method, path, intent... (Press '/' to search)" aria-label="Filter patterns" oninput="filterPatterns()" onkeydown="if(event.key==='Escape'){clearPatternSearch();event.stopPropagation();}">
+      <input type="search" id="patternSearchInput" placeholder="Filter patterns by method, path, intent..." aria-label="Filter patterns" oninput="filterPatterns()" onkeydown="if(event.key==='Escape'){clearPatternSearch();event.stopPropagation();}">
+      <kbd class="search-kbd" aria-hidden="true">/</kbd>
       <button type="button" class="clear-search-btn" id="clearPatternSearchBtn" aria-label="Clear pattern search filter" onclick="clearPatternSearch()">&times;</button>
       <span class="sr-only" id="patternFilterStatus" aria-live="polite"></span>
     </div>
