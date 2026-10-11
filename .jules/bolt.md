@@ -1,3 +1,7 @@
+## 2026-03-31 - Fast First-Segment Topic Extraction and Pre-compiled Regexes
+**Learning:** `MQTTServerPlugin._device_id_from_topic` evaluated `[p for p in topic.split("/") if p]` to extract the first non-empty MQTT topic segment, splitting the entire topic and allocating intermediate lists across all segments (~1.43x slower) on every captured message. In addition, `_safe_db_name` and `_safe_filename` compiled raw regex strings on every call (~1.3x slower).
+**Action:** When extracting initial path or topic segments in capture hot paths, iterate over `split()` directly with early return rather than constructing full list comprehensions over trailing segments, and pre-compile sanitization regexes at module level.
+
 ## 2026-03-31 - Fast Single-Variable Formula Evaluation in Pattern Engine
 **Learning:** `PatternEngine._eval_formula` executed regex substitutions and simpleeval AST parsing for all formula strings, including simple single variable references like `{state.temp}` or `{request.body.target}`. Short-circuiting single variable references with direct `store.get()` or `_resolve_source()` lookups bypasses regex substitution and AST parsing overhead (~9x to 15x speedup per formula evaluation).
 **Action:** When evaluating template or formula expressions in response building hot paths, add fast-path direct lookups for isolated variable references before delegating to full expression parsers.

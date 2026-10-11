@@ -546,8 +546,10 @@ class CertManager:
         else:
             return key_public == cert_public
 
-    @staticmethod
-    def _safe_filename(hostname: str) -> str:
+    _SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
+
+    @classmethod
+    def _safe_filename(cls, hostname: str) -> str:
         """Convert a hostname to a safe, single-segment filename.
 
         Replaces every character that is not a DNS-safe letter/digit/dot/dash/
@@ -555,11 +557,14 @@ class CertManager:
         separators (``/``, ``\\\\``), ``..`` or any metacharacter. Combined with
         ``_validate_hostname`` (an allowlist regex that runs first), the value
         that reaches ``Path`` is unambiguously a plain relative filename.
+
+        Performance optimization: use pre-compiled regex `_SAFE_FILENAME_RE` to
+        avoid regex string compilation overhead on every call.
         """
         if not hostname:
             return "unknown"
         # Fold to a single valid path segment: drop everything not DNS-safe.
-        return re.sub(r"[^A-Za-z0-9._-]+", "_", hostname).lstrip("._").rstrip(".") or "unknown"
+        return cls._SAFE_FILENAME_RE.sub("_", hostname).lstrip("._").rstrip(".") or "unknown"
 
 
 # ── Global instance ─────────────────────────────────────────────────────────
