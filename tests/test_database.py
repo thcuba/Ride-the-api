@@ -218,6 +218,98 @@ class TestDeviceRegistry:
 
 
 # ---------------------------------------------------------------------------
+#  Device cache (get_device / invalidate_device_cache)
+# ---------------------------------------------------------------------------
+
+
+class TestDeviceCache:
+    @pytest.mark.asyncio
+    async def test_get_device_caches_lookup(self, db_manager):
+        """get_device returns the device and serves it from the TTL cache."""
+        await db_manager.get_or_create_device(
+            device_id="device-cache-1", vendor="shelly", device_type="plug"
+        )
+
+        d1 = await db_manager.get_device("device-cache-1")
+        assert d1 is not None
+        assert d1.mode == "learning"
+
+        # Second call is served from cache — same (expunged) object instance.
+        d2 = await db_manager.get_device("device-cache-1")
+        assert d2 is not None
+        assert d2 is d1
+
+    @pytest.mark.asyncio
+    async def test_get_device_caches_missing(self, db_manager):
+        """A missing device is cached as None to avoid repeated lookups."""
+        assert await db_manager.get_device("no-such-device") is None
+        # Cached None so the next call does not hit the DB again.
+        assert await db_manager.get_device("no-such-device") is None
+
+    @pytest.mark.asyncio
+    async def test_get_device_reflected_after_mode_switch(self, db_manager):
+        """Changing device mode invalidates the cache so get_device sees it."""
+        await db_manager.get_or_create_device(
+            device_id="device-cache-2", vendor="tapo", device_type="plug"
+        )
+        assert (await db_manager.get_device("device-cache-2")).mode == "learning"
+
+        assert await db_manager.update_device_mode("device-cache-2", "production")
+        assert (await db_manager.get_device("device-cache-2")).mode == "production"
+
+    @pytest.mark.asyncio
+    async def test_get_device_matches_db_reference(self, db_manager):
+        """get_device row equals the registry row (all fields preserved)."""
+        await db_manager.get_or_create_device(
+            device_id="device-cache-3",
+            vendor="hue",
+            device_type="light",
+            name="Liv 1",
+        )
+        d = await db_manager.get_device("device-cache-3")
+        assert d is not None
+        assert d.vendor == "hue"
+        assert d.device_type == "light"
+        assert d.name == "Liv 1"
+
+    @pytest.mark.asyncio
+    async def test_invalidate_device_cache_to_targeted(self, db_manager):
+        """invalidate_device_cache(device_id) drops only that device's entry."""
+        for i in (1, 2):
+            await db_manager.get_or_create_device(
+                device_id=f"inv-{i}", vendor="tapo", device_type="plug"
+            )
+        d1a = await db_manager.get_device("inv-1")
+        d2a = await db_manager.get_device("inv-2")
+        assert d1a is not None
+        assert d2a is not None
+
+        db_manager.invalidate_device_cache("inv-1")
+        assert await db_manager.get_device("inv-2") is d2a  # still cached
+        d1b = await db_manager.get_device("inv-1")
+        assert d1b is not None
+        assert d1b is not d1a  # re-fetched
+
+    @pytest.mark.asyncio
+    async def test_invalidate_device_cache_all(self, db_manager):
+        """invalidate_device_cache() with no arg clears every device entry."""
+        for i in (1, 2):
+            await db_manager.get_or_create_device(
+                device_id=f"invall-{i}", vendor="tapo", device_type="plug"
+            )
+        d1a = await db_manager.get_device("invall-1")
+        d2a = await db_manager.get_device("invall-2")
+        assert d1a is not None
+        assert d2a is not None
+
+        db_manager.invalidate_device_cache()
+        d1b = await db_manager.get_device("invall-1")
+        d2b = await db_manager.get_device("invall-2")
+        assert d1b is not d1a
+        assert d2b is not d2a
+
+
+# ---------------------------------------------------------------------------
 #  Device Session (per-device DB)
 # ---------------------------------------------------------------------------
 
