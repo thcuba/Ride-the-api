@@ -375,15 +375,11 @@ def test_set_device_threshold_validation(validation_client):
     assert resp.status_code == HTTPStatus.BAD_REQUEST
 
     # Out of range (< 0)
-    resp = validation_client.put(
-        "/api/devices/valid-dev/threshold", json={"match_threshold": -0.1}
-    )
+    resp = validation_client.put("/api/devices/valid-dev/threshold", json={"match_threshold": -0.1})
     assert resp.status_code == HTTPStatus.BAD_REQUEST
 
     # Out of range (> 1.0)
-    resp = validation_client.put(
-        "/api/devices/valid-dev/threshold", json={"match_threshold": 1.5}
-    )
+    resp = validation_client.put("/api/devices/valid-dev/threshold", json={"match_threshold": 1.5})
     assert resp.status_code == HTTPStatus.BAD_REQUEST
 
     # Device not found
@@ -393,9 +389,7 @@ def test_set_device_threshold_validation(validation_client):
     assert resp.status_code == HTTPStatus.NOT_FOUND
 
     # Valid
-    resp = validation_client.put(
-        "/api/devices/valid-dev/threshold", json={"match_threshold": 0.85}
-    )
+    resp = validation_client.put("/api/devices/valid-dev/threshold", json={"match_threshold": 0.85})
     assert resp.status_code == HTTPStatus.OK
     assert resp.json() == {"device_id": "valid-dev", "match_threshold": 0.85}
 

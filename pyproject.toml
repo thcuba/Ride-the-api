@@ -47,6 +47,7 @@ dependencies = [
     "amqtt>=0.11.0",
     "h2>=4.1.0",
     "pymodbus>=3.5.0",
+    "pyserial>=3.5",
     "python-multipart>=0.0.9",
     
     # Model Serving (optional — see extras "inference" below)
