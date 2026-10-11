@@ -674,10 +674,16 @@ class DatabaseManager:
             logger.info(f"Device database '{device_id}' initialized at {db_url}")
             return engine
 
-    @staticmethod
-    def _safe_db_name(device_id: str) -> str:
-        """Sanitize a device_id into a safe SQLite filename segment."""
-        sanitized = re.sub(r"[^A-Za-z0-9_.-]", "_", device_id)
+    _SAFE_DB_NAME_RE = re.compile(r"[^A-Za-z0-9_.-]")
+
+    @classmethod
+    def _safe_db_name(cls, device_id: str) -> str:
+        """Sanitize a device_id into a safe SQLite filename segment.
+
+        Performance optimization: use pre-compiled regex `_SAFE_DB_NAME_RE` to
+        avoid raw regex compilation overhead on every database path resolution.
+        """
+        sanitized = cls._SAFE_DB_NAME_RE.sub("_", device_id)
         sanitized = sanitized.strip("._")
         return f"{sanitized or 'device'}.db"
 
