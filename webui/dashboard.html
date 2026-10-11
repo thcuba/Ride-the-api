@@ -706,6 +706,22 @@
       : '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>';
   };
 
+  window.toggleLpcKeyVisibility = function (suffix) {
+    const input = document.getElementById('lpc-api-key-' + suffix);
+    const btn = document.getElementById('toggle-lpc-api-key-' + suffix);
+    if (!input || !btn) return;
+    const isPass = input.type === 'password';
+    input.type = isPass ? 'text' : 'password';
+    btn.setAttribute('aria-label', isPass ? 'Hide API key' : 'Show API key');
+    btn.title = isPass ? 'Hide API key' : 'Show API key';
+    const svg = btn.querySelector('svg');
+    if (svg) {
+      svg.innerHTML = isPass
+        ? '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>'
+        : '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>';
+    }
+  };
+
   window.saveApiKeyFromInput = function () {
     const input = keyInput();
     const key = (input ? input.value : '').trim();
@@ -1171,7 +1187,7 @@ async function loadDeviceStats(deviceId) {
 
                   <!-- Profile selector -->
                   <div class="llm-row">
-                    <label>Template</label>
+                    <label for="profile-select-${escapeHtml(deviceId)}">Template</label>
                     <select id="profile-select-${escapeHtml(deviceId)}" style="flex:1;" onchange="onProfileChange('${escapeJs(deviceId)}')">
                       <option value="default">Default</option>
                     </select>
@@ -1184,7 +1200,7 @@ async function loadDeviceStats(deviceId) {
 
                   <!-- Context notes -->
                   <div class="llm-row" style="flex-direction:column;align-items:stretch;">
-                    <label style="min-width:0;margin-bottom:4px;">Context Notes</label>
+                    <label for="context-notes-${escapeHtml(deviceId)}" style="min-width:0;margin-bottom:4px;">Context Notes</label>
                     <textarea id="context-notes-${escapeHtml(deviceId)}" placeholder="Add context for LLM analysis&#10;e.g.: &#34;This endpoint controls device pairing&#34;"></textarea>
                     <div style="display:flex;gap:6px;margin-top:4px;justify-content:flex-end;">
                       <button class="btn btn-ghost" id="save-notes-btn-${escapeHtml(deviceId)}" style="padding:4px 10px;font-size:11px;" onclick="saveContextNotes('${escapeJs(deviceId)}')">Save Notes</button>
@@ -1925,11 +1941,12 @@ function renderLLMProfileCards(settings) {
   if (!list) return;
   list.innerHTML = '';
   const profiles = settings.profiles || {};
-  Object.keys(profiles).forEach(name => {
+  Object.keys(profiles).forEach((name, idx) => {
     const p = profiles[name];
     const card = document.createElement('div');
     card.className = 'llm-profile-card';
     card.dataset.name = name;
+    const safeKey = 'p' + idx + '-' + String(name).replace(/[^a-zA-Z0-9_-]/g, '_');
     card.innerHTML = `
       <div class="lpc-head">
         <span class="lpc-name">${escapeHtml(name)}</span>
@@ -1943,28 +1960,35 @@ function renderLLMProfileCards(settings) {
       </div>
       <div class="lpc-fields">
         <div class="lpc-field">
-          <label>Base URL</label>
-          <input type="text" class="lpc-base-url" value="${escapeHtml(p.base_url || '')}">
+          <label for="lpc-base-url-${safeKey}">Base URL</label>
+          <input type="text" id="lpc-base-url-${safeKey}" class="lpc-base-url" value="${escapeHtml(p.base_url || '')}">
         </div>
         <div class="lpc-field">
-          <label>Model ID</label>
-          <input type="text" class="lpc-model-id" value="${escapeHtml(p.model_id || '')}">
+          <label for="lpc-model-id-${safeKey}">Model ID</label>
+          <input type="text" id="lpc-model-id-${safeKey}" class="lpc-model-id" value="${escapeHtml(p.model_id || '')}">
         </div>
         <div class="lpc-field full">
-          <label>API Key</label>
-          <input type="password" class="lpc-api-key" value="${escapeHtml(p.api_key || '')}" autocomplete="off">
+          <label for="lpc-api-key-${safeKey}">API Key</label>
+          <div style="position:relative;display:flex;align-items:center;">
+            <input type="password" id="lpc-api-key-${safeKey}" class="lpc-api-key" value="${escapeHtml(p.api_key || '')}" autocomplete="off" style="padding-right:28px;">
+            <button type="button" class="pw-toggle-btn" id="toggle-lpc-api-key-${safeKey}" onclick="toggleLpcKeyVisibility('${safeKey}')" aria-label="Show API key" title="Show API key">
+              <svg class="icon-svg-sm" aria-hidden="true" viewBox="0 0 24 24">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+              </svg>
+            </button>
+          </div>
         </div>
         <div class="lpc-field">
-          <label>Timeout (s)</label>
-          <input type="number" class="lpc-timeout" value="${escapeHtml(p.timeout ?? 30)}" min="1">
+          <label for="lpc-timeout-${safeKey}">Timeout (s)</label>
+          <input type="number" id="lpc-timeout-${safeKey}" class="lpc-timeout" value="${escapeHtml(p.timeout ?? 30)}" min="1">
         </div>
         <div class="lpc-field">
-          <label>Max Retries</label>
-          <input type="number" class="lpc-max-retries" value="${escapeHtml(p.max_retries ?? 2)}" min="0">
+          <label for="lpc-max-retries-${safeKey}">Max Retries</label>
+          <input type="number" id="lpc-max-retries-${safeKey}" class="lpc-max-retries" value="${escapeHtml(p.max_retries ?? 2)}" min="0">
         </div>
         <div class="lpc-field full">
-          <label>Prompt Template</label>
-          <textarea class="lpc-prompt-template">${escapeHtml(p.prompt_template || '')}</textarea>
+          <label for="lpc-prompt-template-${safeKey}">Prompt Template</label>
+          <textarea id="lpc-prompt-template-${safeKey}" class="lpc-prompt-template">${escapeHtml(p.prompt_template || '')}</textarea>
         </div>
       </div>`;
     list.appendChild(card);
@@ -1983,6 +2007,7 @@ function addLLMProfile() {
   const card = document.createElement('div');
   card.className = 'llm-profile-card';
   card.dataset.name = name.trim();
+  const safeKey = 'new-' + Date.now() + '-' + String(name.trim()).replace(/[^a-zA-Z0-9_-]/g, '_');
   card.innerHTML = `
     <div class="lpc-head">
       <span class="lpc-name">${escapeHtml(name.trim())}</span>
@@ -1996,28 +2021,35 @@ function addLLMProfile() {
     </div>
     <div class="lpc-fields">
       <div class="lpc-field">
-        <label>Base URL</label>
-        <input type="text" class="lpc-base-url" value="https://api.openai.com/v1">
+        <label for="lpc-base-url-${safeKey}">Base URL</label>
+        <input type="text" id="lpc-base-url-${safeKey}" class="lpc-base-url" value="https://api.openai.com/v1">
       </div>
       <div class="lpc-field">
-        <label>Model ID</label>
-        <input type="text" class="lpc-model-id" value="gpt-4o-mini">
+        <label for="lpc-model-id-${safeKey}">Model ID</label>
+        <input type="text" id="lpc-model-id-${safeKey}" class="lpc-model-id" value="gpt-4o-mini">
       </div>
       <div class="lpc-field full">
-        <label>API Key</label>
-        <input type="password" class="lpc-api-key" autocomplete="off">
+        <label for="lpc-api-key-${safeKey}">API Key</label>
+        <div style="position:relative;display:flex;align-items:center;">
+          <input type="password" id="lpc-api-key-${safeKey}" class="lpc-api-key" autocomplete="off" style="padding-right:28px;">
+          <button type="button" class="pw-toggle-btn" id="toggle-lpc-api-key-${safeKey}" onclick="toggleLpcKeyVisibility('${safeKey}')" aria-label="Show API key" title="Show API key">
+            <svg class="icon-svg-sm" aria-hidden="true" viewBox="0 0 24 24">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+            </svg>
+          </button>
+        </div>
       </div>
       <div class="lpc-field">
-        <label>Timeout (s)</label>
-        <input type="number" class="lpc-timeout" value="30" min="1">
+        <label for="lpc-timeout-${safeKey}">Timeout (s)</label>
+        <input type="number" id="lpc-timeout-${safeKey}" class="lpc-timeout" value="30" min="1">
       </div>
       <div class="lpc-field">
-        <label>Max Retries</label>
-        <input type="number" class="lpc-max-retries" value="2" min="0">
+        <label for="lpc-max-retries-${safeKey}">Max Retries</label>
+        <input type="number" id="lpc-max-retries-${safeKey}" class="lpc-max-retries" value="2" min="0">
       </div>
       <div class="lpc-field full">
-        <label>Prompt Template</label>
-        <textarea class="lpc-prompt-template"></textarea>
+        <label for="lpc-prompt-template-${safeKey}">Prompt Template</label>
+        <textarea id="lpc-prompt-template-${safeKey}" class="lpc-prompt-template"></textarea>
       </div>
     </div>`;
   list.appendChild(card);
