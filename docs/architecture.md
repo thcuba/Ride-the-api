@@ -128,6 +128,18 @@ device. Coordinates BufferManager → LLMRouter → DecipherIngest → PatternEn
   learning mode.
 - **Real-time match rate tracking**: `hits / (hits + misses) × 100%`.
 
+**Device lookup is cached (anti-N+1).** `handle_request()` resolves the device
+via `DatabaseManager.get_device()`, which serves `DeviceRegistry` rows from a
+bounded `TTLCache` (5-minute TTL, 2048 entries, in `core/database.py`) instead
+of issuing a SELECT per request. The cache is purely **lazy/on-demand**: it only
+queries the core DB when a request first arrives, and the expired TTL is only
+re-checked on the next access (no background reload). When a device is silent
+no DB access happens. The cache is invalidated on every mutation that changes
+a registry row (`update_device_mode`, `update_device_llm_config`,
+`update_device_auto_switch`, `update_device_match_threshold`,
+`update_device_context_buffer_size`, `update_device_context_notes`,
+`delete_device`) — see `invalidate_device_cache()`.
+
 #### 2.3.1 BufferManager (`core/pattern_db/buffer_manager.py`)
 
 **Role**: accumulates correlated request/response pairs in a sliding window buffer until
