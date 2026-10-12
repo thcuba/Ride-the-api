@@ -479,6 +479,23 @@
       el('label', labelAttrs, labelText)
     ]);
     if (inputEl && inputEl.tagName === 'TEXTAREA') {
+      const actionsGroup = el('div', {style:'display:flex;gap:6px;'});
+      const formatBtn = el('button',{
+        type:'button',
+        class:'btn btn-ghost',
+        style:'padding:2px 8px;font-size:11px;line-height:1.2;',
+        'aria-label': `Format ${labelText} JSON`
+      }, 'Format JSON');
+      formatBtn.addEventListener('click', ()=>{
+        if (!inputEl.value.trim()) return;
+        try {
+          const parsed = JSON.parse(inputEl.value);
+          inputEl.value = JSON.stringify(parsed, null, 2);
+          showToast(`${labelText} formatted`, 'success');
+        } catch (err) {
+          showToast(`Invalid JSON in ${labelText}: ${err.message}`, 'error');
+        }
+      });
       const copyBtn = el('button',{
         type:'button',
         class:'btn btn-ghost',
@@ -488,7 +505,9 @@
       copyBtn.addEventListener('click', ()=>{
         copyToClipboard(inputEl.value, labelText);
       });
-      labelHeader.appendChild(copyBtn);
+      actionsGroup.appendChild(formatBtn);
+      actionsGroup.appendChild(copyBtn);
+      labelHeader.appendChild(actionsGroup);
     }
     col.appendChild(labelHeader);
     col.appendChild(inputEl);
