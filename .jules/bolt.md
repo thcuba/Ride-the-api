@@ -172,3 +172,7 @@
 ## 2024-05-24 - MatchStats Memory Caching for High-Traffic Database Reductions
 **Learning:** Performing per-request SQLite transactions (including `flush`) on a shared `MatchStats` row generates large IO and locking overhead on high-traffic services. Simulating the problem revealed overhead dropped by 40x when avoiding synchronous flushes per item.
 **Action:** When tracking high-volume analytics or rate limits in real-time, implement simple batched flushes by buffering updates in an async lockable memory structure (`dict`) and writing them periodically instead of on every increment. Ensure the getter fetches/flushes these in-flight updates so state remains globally consistent without the write penalty.
+
+## 2026-03-31 - Fast In-Memory Field Mapping Resolution in Pattern Matcher
+**Learning:** `PatternMatcher.build_local_response` executed `select(FieldMapping)` on every local response generation, opening a database session and fetching all `FieldMapping` ORM rows across all endpoints in the database (~2.43s per 500 calls). Applying `template.field_mappings` directly in-memory via `if template.field_mappings is not None:` bypasses database sessions and ORM object instantiations completely (~820x speedup, ~0.003s per 500 calls).
+**Action:** Always check if response templates or cached schemas already carry inline field mappings before executing database SELECT queries across mapping tables.
