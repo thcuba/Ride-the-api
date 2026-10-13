@@ -511,7 +511,7 @@
       <input type="text" id="certHostnameInput" placeholder="hostname (e.g. api.cloud.com)" aria-label="Certificate hostname" style="padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:12px;width:200px;">
       <input type="file" id="certFileInput" accept=".pem,.crt,.cer,.key" multiple aria-label="Certificate (PEM) and key files" style="display:none;">
       <button class="btn btn-ghost" onclick="pickCertFiles()" style="padding:4px 10px;font-size:12px;" aria-label="Choose certificate files">Choose files…</button>
-      <button class="btn btn-primary" onclick="uploadCert()" style="padding:4px 12px;font-size:12px;" aria-label="Upload certificate">Upload</button>
+      <button class="btn btn-primary" onclick="uploadCert(this)" style="padding:4px 12px;font-size:12px;" aria-label="Upload certificate">Upload</button>
     </span>
     <span style="font-size:11px;color:var(--text2);" id="tlsCertsStatus"></span>
   </div>
@@ -999,7 +999,7 @@ async function loadDeviceStats(deviceId) {
     detail.innerHTML = `<div class="detail-card">
       <div class="detail-header">
             <h2 id="details-title" tabindex="-1">${escapeHtml(s.name || deviceId)} — Details</h2>
-        <button class="btn btn-danger" style="padding:4px 10px;font-size:12px;margin-right:8px;" onclick="deleteDevice('${escapeJs(deviceId)}')" aria-label="Delete device ${escapeHtml(deviceId)}">Delete</button>
+        <button class="btn btn-danger" style="padding:4px 10px;font-size:12px;margin-right:8px;" onclick="deleteDevice('${escapeJs(deviceId)}', this)" aria-label="Delete device ${escapeHtml(deviceId)}">Delete</button>
         <button class="close-btn" onclick="closeDetails()" aria-label="Close details panel">&times;</button>
       </div>
       ${ring}
@@ -1117,7 +1117,7 @@ async function loadDeviceStats(deviceId) {
           <div style="flex:1;display:flex;gap:6px;align-items:center;">
             <input type="number" id="dc-threshold-${escapeHtml(deviceId)}" value="${(s.match_threshold * 100).toFixed(0)}" min="0" max="100" step="1" style="flex:1;" aria-label="Match threshold percent">
             <span style="font-size:11px;color:var(--text2);">%</span>
-            <button type="button" class="btn btn-ghost" onclick="saveDeviceThreshold('${escapeJs(deviceId)}')" style="padding:4px 10px;font-size:12px;" aria-label="Save match threshold for ${escapeHtml(s.name || deviceId)}">Save</button>
+            <button type="button" class="btn btn-ghost" onclick="saveDeviceThreshold('${escapeJs(deviceId)}', this)" style="padding:4px 10px;font-size:12px;" aria-label="Save match threshold for ${escapeHtml(s.name || deviceId)}">Save</button>
           </div>
         </div>
         <div class="tc-row">
@@ -1127,7 +1127,7 @@ async function loadDeviceStats(deviceId) {
               ${[131072, 262144, 524288, 1048576, 2097152, 5242880, 10485760].map(sz => `<option value="${sz}" ${s.context_buffer_size === sz ? 'selected' : ''}>${(sz/1024).toFixed(0)} KB${sz===1048576?' (1MB)':''}</option>`).join('')}
               <option value="${s.context_buffer_size}" ${![131072, 262144, 524288, 1048576, 2097152, 5242880, 10485760].includes(s.context_buffer_size) ? 'selected' : ''}>Custom (${(s.context_buffer_size/1024).toFixed(0)} KB)</option>
             </select>
-            <button type="button" class="btn btn-ghost" onclick="saveDeviceBuffer('${escapeJs(deviceId)}')" style="padding:4px 10px;font-size:12px;" aria-label="Save context buffer size for ${escapeHtml(s.name || deviceId)}">Save</button>
+            <button type="button" class="btn btn-ghost" onclick="saveDeviceBuffer('${escapeJs(deviceId)}', this)" style="padding:4px 10px;font-size:12px;" aria-label="Save context buffer size for ${escapeHtml(s.name || deviceId)}">Save</button>
           </div>
         </div>
 
@@ -1161,7 +1161,7 @@ async function loadDeviceStats(deviceId) {
             </div>
             <div style="display:flex;gap:6px;">
               <input type="text" id="dc-ip-new-${escapeHtml(deviceId)}" placeholder="e.g. 192.168.1.50" style="flex:1;" aria-label="New IP address for device">
-              <button class="btn btn-ghost" onclick="addDeviceIp('${escapeJs(deviceId)}')" style="padding:4px 12px;font-size:12px;">+ Add IP</button>
+              <button class="btn btn-ghost" onclick="addDeviceIp('${escapeJs(deviceId)}', this)" style="padding:4px 12px;font-size:12px;">+ Add IP</button>
             </div>
           </div>
         </div>
@@ -1169,9 +1169,9 @@ async function loadDeviceStats(deviceId) {
         <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px;gap:8px;">
           <span style="font-size:11px;color:var(--text2);" id="dc-status-${escapeHtml(deviceId)}"></span>
           <div style="text-align:right;display:flex;gap:8px;">
-            <button type="button" class="btn btn-ghost" onclick="saveDeviceConnection('${escapeJs(deviceId)}')" style="padding:6px 12px;font-size:12px;" aria-label="Save connection type for ${escapeHtml(s.name || deviceId)}">Save Connection</button>
-            <button type="button" class="btn btn-ghost" onclick="saveDeviceLLM('${escapeJs(deviceId)}')" style="padding:6px 12px;font-size:12px;" aria-label="Save LLM configuration for ${escapeHtml(s.name || deviceId)}">Save LLM</button>
-            <button type="button" class="btn btn-primary" onclick="assignDeviceDatabase('${escapeJs(deviceId)}')" style="padding:6px 16px;font-size:12px;" aria-label="Assign database for ${escapeHtml(s.name || deviceId)}">Assign Database</button>
+            <button type="button" class="btn btn-ghost" onclick="saveDeviceConnection('${escapeJs(deviceId)}', this)" style="padding:6px 12px;font-size:12px;" aria-label="Save connection type for ${escapeHtml(s.name || deviceId)}">Save Connection</button>
+            <button type="button" class="btn btn-ghost" onclick="saveDeviceLLM('${escapeJs(deviceId)}', this)" style="padding:6px 12px;font-size:12px;" aria-label="Save LLM configuration for ${escapeHtml(s.name || deviceId)}">Save LLM</button>
+            <button type="button" class="btn btn-primary" onclick="assignDeviceDatabase('${escapeJs(deviceId)}', this)" style="padding:6px 16px;font-size:12px;" aria-label="Assign database for ${escapeHtml(s.name || deviceId)}">Assign Database</button>
           </div>
         </div>
       </div>
@@ -1286,8 +1286,11 @@ async function switchMode(deviceId) {
   finally { if (btn) { btn.disabled = false; btn.textContent = origText; } }
 }
 
-async function deleteDevice(deviceId) {
+async function deleteDevice(deviceId, btn) {
   if (!confirm('Delete device "' + deviceId + '" and all its learned data? This cannot be undone.')) return;
+  const targetBtn = btn instanceof HTMLElement ? btn : (btn?.target?.closest('button') || null);
+  const origText = targetBtn ? targetBtn.textContent : '';
+  if (targetBtn) { targetBtn.disabled = true; targetBtn.textContent = 'Deleting...'; }
   try {
     const res = await fetch(`/api/devices/${deviceId}`, { method: 'DELETE' });
     if (!res.ok) {
@@ -1299,6 +1302,7 @@ async function deleteDevice(deviceId) {
     closeDetails();
     loadDevices();
   } catch(e) { showToast('Failed to delete device', 'error'); }
+  finally { if (targetBtn) { targetBtn.disabled = false; targetBtn.textContent = origText; } }
 }
 
   async function toggleAutoSwitch(deviceId, enabled) {
@@ -1482,7 +1486,7 @@ async function loadTlsCerts() {
         ${c.label ? `<span style="opacity:.8">${escapeHtml(c.label)}</span>` : ''}
         ${notAfter ? `<span style="opacity:.8;${expired ? 'color:var(--red);' : ''}">exp ${expired ? '⚠ ' : ''}${new Date(notAfter).toLocaleDateString()}</span>` : ''}
         ${(c.sans && c.sans.length) ? `<span style="opacity:.6">${escapeHtml(c.sans.slice(0,2).join(', '))}${c.sans.length>2?'…':''}</span>` : ''}
-        <button class="tb-btn" onclick="deleteCert('${escapeJs(host)}')" aria-label="Delete certificate for ${escapeHtml(host)}" title="Delete imported cert (reverts to auto-generated)">&times;</button>
+        <button class="tb-btn" onclick="deleteCert('${escapeJs(host)}', this)" aria-label="Delete certificate for ${escapeHtml(host)}" title="Delete imported cert (reverts to auto-generated)">&times;</button>
       </div>`;
     }).join('');
     if (status) status.textContent = `${certs.length} certificate${certs.length!==1?'s':''} imported`;
@@ -1492,10 +1496,13 @@ async function loadTlsCerts() {
   }
 }
 
-async function uploadCert() {
+async function uploadCert(btn) {
   const hostname = (document.getElementById('certHostnameInput') || {}).value || '';
   if (!hostname.trim()) { showToast('Hostname required', 'warning'); return; }
   if (!certFiles.length) { showToast('Choose a certificate (PEM) and key file', 'warning'); return; }
+  const targetBtn = btn instanceof HTMLElement ? btn : (btn?.target?.closest('button') || null);
+  const origText = targetBtn ? targetBtn.textContent : '';
+  if (targetBtn) { targetBtn.disabled = true; targetBtn.textContent = 'Uploading...'; }
   // Reuse the JSON endpoint: read PEM files as text, base64-encode, POST /upload-json.
   const readAsText = (file) => new Promise((resolve, reject) => {
     const r = new FileReader();
@@ -1550,10 +1557,13 @@ async function uploadCert() {
     document.getElementById('certHostnameInput').value = '';
     loadTlsCerts();
   } catch(e) { showToast(await errorFrom(e, 'Failed to upload certificate'), 'error'); }
+  finally { if (targetBtn) { targetBtn.disabled = false; targetBtn.textContent = origText; } }
 }
 
-async function deleteCert(hostname) {
+async function deleteCert(hostname, btn) {
   if (!confirm('Delete imported certificate for "' + hostname + '"? It will revert to the auto-generated cert.')) return;
+  const targetBtn = btn instanceof HTMLElement ? btn : (btn?.target?.closest('button') || null);
+  if (targetBtn) targetBtn.disabled = true;
   try {
     const res = await fetch('/api/tls/certs/' + encodeURIComponent(hostname), { method: 'DELETE' });
     if (!res.ok) {
@@ -1567,6 +1577,7 @@ async function deleteCert(hostname) {
     showToast('Certificate deleted for ' + hostname, 'success');
     loadTlsCerts();
   } catch(e) { showToast(await errorFrom(e, 'Failed to delete certificate'), 'error'); }
+  finally { if (targetBtn) targetBtn.disabled = false; }
 }
 
 // ── Protocol Servers ──────────────────────────────────────────────────────────
@@ -1601,7 +1612,7 @@ async function loadProtoServers() {
         <strong>${escapeHtml(display)}</strong>
         <span style="opacity:.85;text-transform:lowercase;">${running ? 'running' : 'stopped'}</span>
         ${s.error ? `<span style="color:var(--red);font-size:11px;" title="${escapeHtml(s.error)}">⚠</span>` : ''}
-        <button class="tb-btn" onclick="toggleProtoServer('${escapeJs(name)}', ${running})" aria-label="${running ? 'Stop' : 'Start'} ${escapeHtml(display)} server">${running ? '■ Stop' : '▶ Start'}</button>
+        <button class="tb-btn" onclick="toggleProtoServer('${escapeJs(name)}', ${running}, this)" aria-label="${running ? 'Stop' : 'Start'} ${escapeHtml(display)} server">${running ? '■ Stop' : '▶ Start'}</button>
       </span>`;
     }).join('');
     if (hint) hint.textContent = '';
@@ -1610,14 +1621,18 @@ async function loadProtoServers() {
   }
 }
 
-async function toggleProtoServer(name, running) {
+async function toggleProtoServer(name, running, btn) {
   const action = running ? 'stop' : 'start';
+  const targetBtn = btn instanceof HTMLElement ? btn : (btn?.target?.closest('button') || null);
+  const origText = targetBtn ? targetBtn.textContent : '';
+  if (targetBtn) { targetBtn.disabled = true; targetBtn.textContent = running ? 'Stopping...' : 'Starting...'; }
   try {
     const res = await fetch(`/api/protocol-servers/${encodeURIComponent(name)}/${action}`, { method: 'POST' });
     if (!res.ok) { showToast(await errorFrom(res, `Failed to ${action} ${name}`), 'error'); return; }
     showToast(`${(PROTO_DISPLAY[name] || name)} ${running ? 'stopped' : 'started'}`, 'success');
     loadProtoServers();
   } catch(e) { showToast(await errorFrom(e, `Failed to ${action} ${name}`), 'error'); }
+  finally { if (targetBtn) { targetBtn.disabled = false; targetBtn.textContent = origText; } }
 }
 
 // Extract a human-readable message from a failed fetch Response (or an Error).
@@ -1689,9 +1704,12 @@ async function loadDeviceLLMConfig(deviceId) {
   } catch(_e) { /* ignore */ }
 }
 
-async function saveDeviceConnection(deviceId) {
+async function saveDeviceConnection(deviceId, btn) {
   const sel = document.getElementById('dc-connection-' + deviceId);
   const connection = sel ? sel.value : 'auto';
+  const targetBtn = btn instanceof HTMLElement ? btn : (btn?.target?.closest('button') || null);
+  const origText = targetBtn ? targetBtn.textContent : '';
+  if (targetBtn) { targetBtn.disabled = true; targetBtn.textContent = 'Saving...'; }
   try {
     const res = await fetch(`/api/devices/${deviceId}/connection`, {
       method: 'PUT', headers: {'Content-Type': 'application/json'},
@@ -1701,13 +1719,17 @@ async function saveDeviceConnection(deviceId) {
     showToast('Connection set to ' + connection, 'success');
     loadDeviceStats(deviceId);
   } catch(e) { showToast(await errorFrom(e, 'Failed to save connection'), 'error'); }
+  finally { if (targetBtn) { targetBtn.disabled = false; targetBtn.textContent = origText; } }
 }
 
-async function saveDeviceThreshold(deviceId) {
+async function saveDeviceThreshold(deviceId, btn) {
   const el = document.getElementById('dc-threshold-' + deviceId);
   const pct = parseFloat(el ? el.value : '');
   if (isNaN(pct) || pct < 0 || pct > 100) { showToast('Threshold must be 0–100%', 'warning'); return; }
   const threshold = pct / 100;
+  const targetBtn = btn instanceof HTMLElement ? btn : (btn?.target?.closest('button') || null);
+  const origText = targetBtn ? targetBtn.textContent : '';
+  if (targetBtn) { targetBtn.disabled = true; targetBtn.textContent = 'Saving...'; }
   try {
     const res = await fetch(`/api/devices/${deviceId}/threshold`, {
       method: 'PUT', headers: {'Content-Type': 'application/json'},
@@ -1717,12 +1739,16 @@ async function saveDeviceThreshold(deviceId) {
     showToast('Match threshold set to ' + pct + '%', 'success');
     loadDeviceStats(deviceId);
   } catch(e) { showToast(await errorFrom(e, 'Failed to save threshold'), 'error'); }
+  finally { if (targetBtn) { targetBtn.disabled = false; targetBtn.textContent = origText; } }
 }
 
-async function saveDeviceBuffer(deviceId) {
+async function saveDeviceBuffer(deviceId, btn) {
   const el = document.getElementById('dc-buffer-' + deviceId);
   const size = parseInt(el ? el.value : '', 10);
   if (!size || size <= 0) { showToast('Invalid buffer size', 'warning'); return; }
+  const targetBtn = btn instanceof HTMLElement ? btn : (btn?.target?.closest('button') || null);
+  const origText = targetBtn ? targetBtn.textContent : '';
+  if (targetBtn) { targetBtn.disabled = true; targetBtn.textContent = 'Saving...'; }
   try {
     const res = await fetch(`/api/devices/${deviceId}/context-buffer`, {
       method: 'PUT', headers: {'Content-Type': 'application/json'},
@@ -1732,12 +1758,16 @@ async function saveDeviceBuffer(deviceId) {
     showToast('Context buffer set to ' + (size / 1024) + ' KB', 'success');
     loadDeviceStats(deviceId);
   } catch(e) { showToast(await errorFrom(e, 'Failed to save buffer size'), 'error'); }
+  finally { if (targetBtn) { targetBtn.disabled = false; targetBtn.textContent = origText; } }
 }
 
-async function saveDeviceLLM(deviceId) {
+async function saveDeviceLLM(deviceId, btn) {
   const profile = (document.getElementById('dc-profile-' + deviceId) || {}).value || 'default';
   const baseUrl = (document.getElementById('dc-base-url-' + deviceId) || {}).value || '';
   const model = (document.getElementById('dc-model-' + deviceId) || {}).value || '';
+  const targetBtn = btn instanceof HTMLElement ? btn : (btn?.target?.closest('button') || null);
+  const origText = targetBtn ? targetBtn.textContent : '';
+  if (targetBtn) { targetBtn.disabled = true; targetBtn.textContent = 'Saving...'; }
   try {
     const res = await fetch(`/api/devices/${deviceId}/llm`, {
       method: 'PUT', headers: {'Content-Type': 'application/json'},
@@ -1747,13 +1777,17 @@ async function saveDeviceLLM(deviceId) {
     showToast('LLM config saved', 'success');
     loadDeviceStats(deviceId);
   } catch(e) { showToast(await errorFrom(e, 'Failed to save LLM config'), 'error'); }
+  finally { if (targetBtn) { targetBtn.disabled = false; targetBtn.textContent = origText; } }
 }
 
-async function addDeviceIp(deviceId) {
+async function addDeviceIp(deviceId, btn) {
   const input = document.getElementById('dc-ip-new-' + deviceId);
   if (!input) return;
   const ip = input.value.trim();
   if (!ip) { showToast('IP address required', 'warning'); return; }
+  const targetBtn = btn instanceof HTMLElement ? btn : (btn?.target?.closest('button') || null);
+  const origText = targetBtn ? targetBtn.textContent : '';
+  if (targetBtn) { targetBtn.disabled = true; targetBtn.textContent = 'Adding...'; }
   try {
     const res = await fetch(`/api/devices/${deviceId}/ip`, {
       method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -1764,15 +1798,19 @@ async function addDeviceIp(deviceId) {
     input.value = '';
     loadDeviceStats(deviceId);
   } catch(e) { showToast(await errorFrom(e, 'Failed to add IP'), 'error'); }
+  finally { if (targetBtn) { targetBtn.disabled = false; targetBtn.textContent = origText; } }
 }
 
-async function assignDeviceDatabase(deviceId) {
+async function assignDeviceDatabase(deviceId, btn) {
   const name = (document.getElementById('dc-db-name-' + deviceId) || {}).value || '';
   const url = (document.getElementById('dc-db-url-' + deviceId) || {}).value || '';
   if (!name && !url) {
     showToast('Provide a database name or URL', 'warning');
     return;
   }
+  const targetBtn = btn instanceof HTMLElement ? btn : (btn?.target?.closest('button') || null);
+  const origText = targetBtn ? targetBtn.textContent : '';
+  if (targetBtn) { targetBtn.disabled = true; targetBtn.textContent = 'Assigning...'; }
   const statusEl = document.getElementById('dc-status-' + deviceId);
   if (statusEl) statusEl.textContent = 'Assigning...';
   try {
@@ -1787,6 +1825,8 @@ async function assignDeviceDatabase(deviceId) {
   } catch(e) {
     showToast(await errorFrom(e, 'Failed to assign database'), 'error');
     if (statusEl) statusEl.textContent = '';
+  } finally {
+    if (targetBtn) { targetBtn.disabled = false; targetBtn.textContent = origText; }
   }
 }
 
