@@ -73,8 +73,11 @@
   .global-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 24px; }
   .global-stat {
     background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px;
-    position: relative; overflow: hidden;
+    position: relative; overflow: hidden; cursor: pointer; transition: all .2s;
   }
+  .global-stat:hover { border-color: var(--accent); transform: translateY(-1px); }
+  .global-stat:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .global-stat.active { border-color: var(--accent); background: var(--surface2); box-shadow: 0 0 0 1px var(--accent); }
   .global-stat .gs-num { font-size: 26px; font-weight: 700; }
   .global-stat .gs-lbl { font-size: 13px; color: var(--text2); margin-top: 2px; text-transform: uppercase; letter-spacing: .5px; }
   .global-stat.gs-blue .gs-num { color: var(--blue); }
@@ -533,22 +536,22 @@
 
 <!-- Global stats bar -->
 <div class="global-stats" id="globalStats" role="region" aria-label="Global device statistics">
-  <div class="global-stat gs-blue">
+  <div class="global-stat gs-blue" tabindex="0" role="button" aria-pressed="false" aria-label="Filter by all devices" onclick="filterByMode(null)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();filterByMode(null);}">
     <svg class="icon-svg" aria-hidden="true" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
     <div class="gs-num" aria-live="polite">0</div>
     <div class="gs-lbl">Total Devices</div>
   </div>
-  <div class="global-stat gs-green">
+  <div class="global-stat gs-green" tabindex="0" role="button" aria-pressed="false" aria-label="Filter by learning mode devices" onclick="filterByMode('learning')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();filterByMode('learning');}">
     <svg class="icon-svg" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
     <div class="gs-num" aria-live="polite">0</div>
     <div class="gs-lbl">Learning</div>
   </div>
-  <div class="global-stat gs-yellow">
+  <div class="global-stat gs-yellow" tabindex="0" role="button" aria-pressed="false" aria-label="Filter by production mode devices" onclick="filterByMode('production')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();filterByMode('production');}">
     <svg class="icon-svg" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
     <div class="gs-num" aria-live="polite">0</div>
     <div class="gs-lbl">Production</div>
   </div>
-  <div class="global-stat gs-red">
+  <div class="global-stat gs-red" tabindex="0" role="button" aria-pressed="false" aria-label="Filter by hybrid mode devices" onclick="filterByMode('hybrid')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();filterByMode('hybrid');}">
     <svg class="icon-svg" aria-hidden="true" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/></svg>
     <div class="gs-num" aria-live="polite">0</div>
     <div class="gs-lbl">Hybrid</div>
@@ -885,7 +888,7 @@ async function loadDevices() {
       const unkClass = isUnknown ? ' unidentified' : '';
       const unkBadge = isUnknown ? '<span class="badge badge-hybrid">⚠ Unidentified</span>' : modeBadge(d.mode);
             const devName = d.name || d.device_id || 'unknown';
-            return `<div class="device-card${unkClass}" tabindex="0" role="button" aria-label="View details for ${escapeHtml(devName)}" onclick="loadDeviceStats('${escapeJs(d.device_id)}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();loadDeviceStats('${escapeJs(d.device_id)}')}">
+            return `<div class="device-card${unkClass}" data-mode="${escapeHtml(d.mode || 'learning')}" tabindex="0" role="button" aria-label="View details for ${escapeHtml(devName)}" onclick="loadDeviceStats('${escapeJs(d.device_id)}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();loadDeviceStats('${escapeJs(d.device_id)}')}">
               <div class="dc-top">
                 <div><div class="dc-name">${escapeHtml(d.name || shortId(d.device_id))}</div><div class="dc-id">${escapeHtml(shortId(d.device_id))}</div></div>
                 ${unkBadge}
@@ -908,33 +911,57 @@ async function loadDevices() {
   }
 }
 
+let activeModeFilter = null;
+
+function filterByMode(mode) {
+  activeModeFilter = (activeModeFilter === mode) ? null : mode;
+  filterDevices();
+}
+
 function clearDeviceSearch() {
+  activeModeFilter = null;
   const input = document.getElementById('deviceSearchInput');
   if (input) {
     input.value = '';
     input.focus();
-    filterDevices();
   }
+  filterDevices();
 }
 
 // ── Real-time device filter ──────────────────────────────────────────────────
 function filterDevices() {
   const query = (document.getElementById('deviceSearchInput')?.value || '').trim().toLowerCase();
   const clearBtn = document.getElementById('clearSearchBtn');
-  if (clearBtn) clearBtn.style.display = query ? 'block' : 'none';
+  if (clearBtn) clearBtn.style.display = (query || activeModeFilter) ? 'block' : 'none';
+
+  // Update active state on global stat cards
+  const gsCards = document.querySelectorAll('#globalStats .global-stat');
+  const modes = [null, 'learning', 'production', 'hybrid'];
+  gsCards.forEach((card, i) => {
+    const isSelected = activeModeFilter === modes[i] || (modes[i] === null && activeModeFilter === null);
+    card.classList.toggle('active', isSelected);
+    card.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
+  });
 
   const cards = document.querySelectorAll('#devices .device-card');
   let visibleCount = 0;
   cards.forEach(card => {
     const text = card.textContent.toLowerCase();
-    const matches = !query || text.includes(query);
+    const cardMode = card.dataset.mode;
+    const matchesQuery = !query || text.includes(query);
+    const matchesMode = !activeModeFilter || cardMode === activeModeFilter;
+    const matches = matchesQuery && matchesMode;
     card.style.display = matches ? '' : 'none';
     if (matches) visibleCount++;
   });
 
   const statusEl = document.getElementById('filterStatus');
   if (statusEl && cards.length > 0) {
-    if (query) {
+    if (activeModeFilter && query) {
+      statusEl.textContent = `Showing ${visibleCount} of ${cards.length} devices (${activeModeFilter} mode, matching "${query}")`;
+    } else if (activeModeFilter) {
+      statusEl.textContent = `Showing ${visibleCount} of ${cards.length} devices (${activeModeFilter} mode)`;
+    } else if (query) {
       statusEl.textContent = `Showing ${visibleCount} of ${cards.length} devices`;
     } else {
       statusEl.textContent = '';
