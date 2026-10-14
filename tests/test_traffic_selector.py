@@ -4,6 +4,7 @@ Tests for Traffic Selection Engine.
 
 import ipaddress
 
+import core.traffic_selector
 from core.traffic_selector import (
     MatchType,
     TrafficAction,
@@ -13,6 +14,7 @@ from core.traffic_selector import (
     TrafficScope,
     TrafficSelector,
     create_request_info,
+    get_traffic_selector,
 )
 
 
@@ -345,3 +347,17 @@ class TestTrafficSelector:
             assert info.url == "http://device.local/rpc/Switch.Set"
             assert info.path == "/rpc/Switch.Set"
             assert info.is_local is True
+
+
+def test_get_traffic_selector(monkeypatch):
+    """Test global get_traffic_selector singleton."""
+    # Ensure starting from clean state
+    monkeypatch.setattr(core.traffic_selector, "_traffic_selector", None)
+
+    # First call should create a new instance
+    instance1 = get_traffic_selector()
+    assert isinstance(instance1, TrafficSelector)
+
+    # Second call should return the exact same instance
+    instance2 = get_traffic_selector()
+    assert instance1 is instance2
