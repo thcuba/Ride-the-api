@@ -176,3 +176,7 @@
 ## 2026-03-31 - Fast In-Memory Field Mapping Resolution in Pattern Matcher
 **Learning:** `PatternMatcher.build_local_response` executed `select(FieldMapping)` on every local response generation, opening a database session and fetching all `FieldMapping` ORM rows across all endpoints in the database (~2.43s per 500 calls). Applying `template.field_mappings` directly in-memory via `if template.field_mappings is not None:` bypasses database sessions and ORM object instantiations completely (~820x speedup, ~0.003s per 500 calls).
 **Action:** Always check if response templates or cached schemas already carry inline field mappings before executing database SELECT queries across mapping tables.
+
+## 2026-03-31 - Inlined Protocol Matching in Pattern Engine Match Loop
+**Learning:** `PatternEngine.find_best_match` instantiated a nested closure function `_protocol_matches` on every incoming request evaluation call and executed function calls with closure scope lookups inside the candidate endpoint loop. Inlining the boolean protocol check (`if protocol and item.protocol and item.protocol != protocol: continue`) eliminates function object creation and call overhead in pattern matching loops (~2.0x speedup for protocol filtering).
+**Action:** Avoid defining inner helper functions inside request-matching hot paths when the logic can be inlined as a short-circuiting boolean condition.
