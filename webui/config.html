@@ -414,12 +414,34 @@ function selectSection(key) {
   }
   if (key === '__raw__') {
     title.textContent = 'Raw Configuration';
-    desc.textContent = 'Full config as JSON — edit carefully, validated on save.';
+    desc.innerHTML = '<span>Full config as JSON — edit carefully, validated on save.</span>';
+    const fmtBtn = document.createElement('button');
+    fmtBtn.type = 'button';
+    fmtBtn.className = 'btn btn-ghost';
+    fmtBtn.style.cssText = 'margin-left:12px;padding:3px 10px;font-size:12px;';
+    fmtBtn.textContent = 'Format JSON';
+    fmtBtn.setAttribute('aria-label', 'Format Raw Configuration JSON');
+
     const ta = document.createElement('textarea');
     ta.id = 'raw-editor';
+    ta.setAttribute('aria-label', 'Raw configuration JSON');
     ta.style.cssText = 'width:100%;min-height:60vh;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:12px;font-family:ui-monospace,monospace;font-size:12px;resize:vertical;';
     ta.value = JSON.stringify(cfg, null, 2);
     ta.addEventListener('input', () => { fields.classList.add('dirty'); setDirty('__raw__'); });
+
+    fmtBtn.addEventListener('click', () => {
+      try {
+        const parsed = JSON.parse(ta.value);
+        ta.value = JSON.stringify(parsed, null, 2);
+        fields.classList.add('dirty');
+        setDirty('__raw__');
+        showToast('JSON formatted', 'success');
+      } catch (err) {
+        showToast('Invalid JSON in Raw Configuration: ' + err.message, 'error');
+      }
+    });
+
+    desc.appendChild(fmtBtn);
     fields.innerHTML = '';
     fields.appendChild(ta);
     setDirty('__raw__');
