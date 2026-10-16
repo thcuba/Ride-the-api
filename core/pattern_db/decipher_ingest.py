@@ -333,9 +333,7 @@ class DecipherIngest:
                         body_template=resp.body_template,
                         field_mappings={m.source: m.target for m in resp.field_mappings},
                         expected_variables=[
-                            m.target
-                            for m in resp.field_mappings
-                            if m.target.startswith("result.")
+                            m.target for m in resp.field_mappings if m.target.startswith("result.")
                         ],
                         confidence=0.9,
                     )
