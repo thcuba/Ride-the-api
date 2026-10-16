@@ -77,8 +77,27 @@ curl -H "X-API-Key: your-password" http://<server>:8911/api/devices
 ```
 
 If auth is enabled but `security.password` is empty in `config.yaml`, the
-control plane is **locked** and every `/api/*` request returns `503` with a
-message asking you to set the password and restart.
+control plane is **locked**: every `/api/*` request returns `503` with the
+header `X-Auth-Setup: required`, so the UI knows a password must be created
+before anything else.
+
+### First-run password setup: `POST /api/auth/password`
+
+On a fresh install (auth enabled, `security.password` empty) this is the **only**
+route reachable without credentials, so the UI can guide the operator to create
+the control-plane password from the browser instead of editing `config.yaml`.
+
+Body: `{"password": "<new password>"}` — must be at least 8 characters.
+
+| Case | Response |
+|------|----------|
+| No password set yet, valid body | `200` `{"status":"ok","config_updated":true}` |
+| Empty / too-short password | `400` |
+| A password is already configured | `403` "A password is already set" |
+| Non-JSON body | `400` |
+
+Once a password exists, this endpoint requires the normal password like every
+other `/api/*` route (it is not a bypass).
 
 ---
 

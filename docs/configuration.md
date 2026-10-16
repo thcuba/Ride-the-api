@@ -146,9 +146,13 @@ writes) — there is no read-only vs admin distinction.
 | `password` | `string` | `""` | The control-plane password. Sent via the `X-API-Key` header or `Authorization: Bearer <password>` |
 
 > **Empty password:** if `auth_enabled` is true but `password` is empty, the
-> control plane is **locked** — every `/api/*` request is rejected with a clear
-> message asking you to set `security.password` in `config.yaml` and restart.
-> No keys are generated automatically.
+> control plane is **locked** — every `/api/*` request is rejected with `503`
+> and the header `X-Auth-Setup: required`. On a fresh install the UI shows the
+> "Imposta la password di controllo" dialog, which calls `POST
+> /api/auth/password` (only route reachable without credentials while the
+> password is empty) so you can set it from the browser. Alternatively set
+> `security.password` in `config.yaml` and restart. No keys are generated
+> automatically.
 
 ```yaml
 security:
