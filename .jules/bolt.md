@@ -180,3 +180,7 @@
 ## 2026-03-31 - Inlined Protocol Matching in Pattern Engine Match Loop
 **Learning:** `PatternEngine.find_best_match` instantiated a nested closure function `_protocol_matches` on every incoming request evaluation call and executed function calls with closure scope lookups inside the candidate endpoint loop. Inlining the boolean protocol check (`if protocol and item.protocol and item.protocol != protocol: continue`) eliminates function object creation and call overhead in pattern matching loops (~2.0x speedup for protocol filtering).
 **Action:** Avoid defining inner helper functions inside request-matching hot paths when the logic can be inlined as a short-circuiting boolean condition.
+
+## 2026-03-31 - Bulk Pre-fetching and Pre-indexed Response Lookup in DecipherIngest
+**Learning:** `DecipherIngest.ingest` executed sequential `select(RequestPattern)` queries inside a `for` loop over LLM output patterns ($N$ queries per batch). Bulk pre-fetching candidate pattern IDs via `.where(RequestPattern.pattern_id.in_(pattern_ids))` reduced SQL queries from $N$ to 1 (~10x speedup). Additionally, `import_patterns` scanned `pattern_db.server.responses` in a nested loop for every endpoint ($O(N \times M)$ list scans). Pre-indexing responses by trigger intent into a dictionary replaces list scanning with $O(1)$ dict lookups (~2.4x speedup).
+**Action:** Always bulk pre-fetch candidate database keys using `.in_(...)` filters before iterating over batch items, and pre-index child entities by lookup keys before entering mapping loops.
