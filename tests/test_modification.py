@@ -545,3 +545,21 @@ class TestLegacyRuleTranslation:
         # requires temp > 20 via match_value match. Use MODIFY to observe.
         modified, was_modified = engine.process_request(req)
         assert isinstance(engine.get_rules(), list)
+
+
+def test_get_modification_engine_singleton():
+    """Test get_modification_engine returns a singleton instance."""
+    import core.modification as mod_module
+    from core.modification import ModificationEngine, get_modification_engine
+
+    original_engine = mod_module._modification_engine
+    try:
+        mod_module._modification_engine = None
+
+        engine1 = get_modification_engine()
+        assert isinstance(engine1, ModificationEngine)
+
+        engine2 = get_modification_engine()
+        assert engine1 is engine2
+    finally:
+        mod_module._modification_engine = original_engine
