@@ -2108,6 +2108,39 @@ async def put_config(request: Request):
     return {"config": config_manager.config.model_dump(mode="json"), "status": "saved"}
 
 
+_MIN_PASSWORD_LENGTH = 8
+
+
+@app.post("/api/auth/password")
+async def set_control_plane_password(request: Request):
+    """Set the control-plane ``security.password`` on first run.
+
+    Reachable without credentials only while the current password is empty
+    (the middleware lets ``SETUP_PATH`` through in that state). Once a
+    password is configured, this endpoint is protected like any other
+    ``/api/*`` route.
+    """
+    if config_manager.config.security.auth_enabled and config_manager.config.security.password:
+        return JSONResponse(status_code=403, content={"error": "A password is already set"})
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
+    password = (body.get("password") or "") if isinstance(body, dict) else ""
+    if not password:
+        return JSONResponse(status_code=400, content={"error": "password must be non-empty"})
+    if len(password) < _MIN_PASSWORD_LENGTH:
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"password must be at least {_MIN_PASSWORD_LENGTH} characters long"},
+        )
+    ok = config_manager.set_security_password(password)
+    if not ok:
+        return JSONResponse(status_code=500, content={"error": "Failed to persist password"})
+    logger.info("Control-plane password set via /api/auth/password (first run)")
+    return {"status": "ok", "config_updated": True}
+
+
 @app.get("/api/devices/{device_id}/context")
 async def get_device_context(device_id: str):
     """Get custom context notes for a device."""

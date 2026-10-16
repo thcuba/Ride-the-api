@@ -147,6 +147,86 @@ def test_empty_password_locks_control_plane_with_instruction(monkeypatch):
         cfg.security.auth_enabled, cfg.security.password = saved
 
 
+# ── First-run password setup (/api/auth/password) ───────────────────────────
+
+
+def test_empty_password_503_carries_x_auth_setup_header(monkeypatch):
+    """The locked 503 tells the frontend a password must be created."""
+    cfg = server_mod.config_manager.config
+    saved = (cfg.security.auth_enabled, cfg.security.password)
+    cfg.security.auth_enabled = True
+    cfg.security.password = ""
+    monkeypatch.setattr(server_mod, "db_manager", _FakeDB())
+    monkeypatch.setattr(server_mod, "orchestrator", object())
+    monkeypatch.setattr(server_mod, "cert_manager", _FakeCertManager())
+    try:
+        client = TestClient(app)
+        resp = client.get("/api/devices")
+        assert resp.status_code == 503  # noqa: PLR2004
+        assert resp.headers.get("X-Auth-Setup") == "required"
+    finally:
+        cfg.security.auth_enabled, cfg.security.password = saved
+
+
+def test_setup_password_allows_first_run_set(monkeypatch):
+    """With an empty password, /api/auth/password is reachable and sets it."""
+    cfg = server_mod.config_manager.config
+    saved = (cfg.security.auth_enabled, cfg.security.password)
+    cfg.security.auth_enabled = True
+    cfg.security.password = ""
+    monkeypatch.setattr(server_mod, "db_manager", _FakeDB())
+    monkeypatch.setattr(server_mod, "orchestrator", object())
+    monkeypatch.setattr(server_mod, "cert_manager", _FakeCertManager())
+    calls = []
+    monkeypatch.setattr(
+        server_mod.config_manager,
+        "set_security_password",
+        lambda pw: calls.append(pw) or True,
+    )
+    try:
+        client = TestClient(app)
+        resp = client.post("/api/auth/password", json={"password": "nuova-password-123"})
+        assert resp.status_code == 200  # noqa: PLR2004
+        assert calls == ["nuova-password-123"]
+    finally:
+        cfg.security.auth_enabled, cfg.security.password = saved
+
+
+def test_setup_password_rejects_short_or_mismatched(monkeypatch):
+    """Empty / too-short / non-dict bodies are rejected without touching config."""
+    cfg = server_mod.config_manager.config
+    saved = (cfg.security.auth_enabled, cfg.security.password)
+    cfg.security.auth_enabled = True
+    cfg.security.password = ""
+    monkeypatch.setattr(server_mod, "db_manager", _FakeDB())
+    monkeypatch.setattr(server_mod, "orchestrator", object())
+    monkeypatch.setattr(server_mod, "cert_manager", _FakeCertManager())
+    try:
+        client = TestClient(app)
+        assert client.post("/api/auth/password", json={"password": ""}).status_code == 400  # noqa: PLR2004
+        assert client.post("/api/auth/password", json={"password": "short"}).status_code == 400  # noqa: PLR2004
+        assert (
+            client.post(
+                "/api/auth/password",
+                content=b"not-json",
+                headers={"Content-Type": "application/json"},
+            ).status_code
+            == 400  # noqa: PLR2004
+        )
+    finally:
+        cfg.security.auth_enabled, cfg.security.password = saved
+
+
+def test_setup_password_forbidden_once_already_set(client):
+    """Once a password exists, the setup endpoint returns 403 (even with key)."""
+    resp = client.post(
+        "/api/auth/password",
+        json={"password": "overrides-123"},
+        headers={"X-API-Key": _PASSWORD},
+    )
+    assert resp.status_code == 403  # noqa: PLR2004
+
+
 # ── F-09: MaxBodySizeMiddleware ────────────────────────────────────────────────
 
 

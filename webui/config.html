@@ -270,6 +270,75 @@
   }
   window.askRememberKey = askRememberKey;
 
+  function setupFirstPassword() {
+    if (sessionStorage.getItem('ride-setup-shown')) return;
+    sessionStorage.setItem('ride-setup-shown', '1');
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:9500;';
+    const box = document.createElement('div');
+    box.style.cssText = 'background:#141820;border:1px solid #2d3648;border-radius:12px;padding:24px;max-width:440px;width:90%;color:#e1e6ed;font-family:Inter,system-ui,sans-serif;box-shadow:0 8px 32px rgba(0,0,0,.3);';
+    const title = document.createElement('h2');
+    title.textContent = 'Imposta la password di controllo';
+    title.style.cssText = 'margin:0 0 8px;font-size:16px;color:#6c8cff;';
+    const para = document.createElement('p');
+    para.style.cssText = 'margin:0 0 12px;font-size:13px;color:#9ca8ba;line-height:1.5;';
+    para.textContent = 'Nessuna password è configurata. Crea ora la password di controllo (minimo 8 caratteri): verrà usata per accedere a tutte le pagine.';
+    const pw = document.createElement('input');
+    pw.type = 'password';
+    pw.placeholder = 'Nuova password';
+    pw.style.cssText = 'width:100%;box-sizing:border-box;padding:10px 12px;border-radius:8px;border:1px solid #2d3648;background:#0e1116;color:#e1e6ed;font-family:inherit;font-size:14px;margin:8px 0;';
+    const pw2 = document.createElement('input');
+    pw2.type = 'password';
+    pw2.placeholder = 'Conferma password';
+    pw2.style.cssText = 'width:100%;box-sizing:border-box;padding:10px 12px;border-radius:8px;border:1px solid #2d3648;background:#0e1116;color:#e1e6ed;font-family:inherit;font-size:14px;margin:0 0 16px;';
+    const actions = document.createElement('div');
+    actions.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.textContent = 'Annulla';
+    cancelBtn.style.cssText = 'padding:8px 14px;border-radius:8px;border:1px solid #2d3648;background:#1a1f2b;color:#e1e6ed;font-family:inherit;font-size:13px;cursor:pointer;';
+    const saveBtn = document.createElement('button');
+    saveBtn.textContent = 'Salva';
+    saveBtn.style.cssText = 'padding:8px 14px;border-radius:8px;border:none;background:linear-gradient(135deg,#6c8cff,#5b7ad0);color:#fff;font-weight:600;font-family:inherit;font-size:13px;cursor:pointer;';
+    function err(msg) {
+      if (typeof showToast === 'function') showToast(msg, 'error');
+    }
+    saveBtn.addEventListener('click', function () {
+      if (!pw.value) { err('Inserisci una password'); pw.focus(); return; }
+      if (pw.value.length < 8) { err('Minimo 8 caratteri'); pw.focus(); return; }
+      if (pw.value !== pw2.value) { err('Le password non coincidono'); pw2.focus(); return; }
+      saveBtn.disabled = true;
+      saveBtn.textContent = 'Salvataggio…';
+      fetch('/api/auth/password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: pw.value }),
+      }).then(function (r) {
+        if (!r.ok) return r.json().then(function (j) { throw new Error(j && j.error ? j.error : 'Errore server'); });
+        const key = pw.value.trim();
+        apiKey = key;
+        storeKey(key, true);
+        overlay.remove();
+        location.reload();
+      }).catch(function (e) {
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'Salva';
+        err('Impossibile salvare: ' + (e && e.message ? e.message : e));
+      });
+    });
+    cancelBtn.addEventListener('click', function () { overlay.remove(); });
+    actions.appendChild(cancelBtn);
+    actions.appendChild(saveBtn);
+    box.appendChild(title);
+    box.appendChild(para);
+    box.appendChild(pw);
+    box.appendChild(pw2);
+    box.appendChild(actions);
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+    pw.focus();
+  }
+  window.setupFirstPassword = setupFirstPassword;
+
   const origFetch = window.fetch.bind(window);
   window.fetch = function (input, init) {
     init = init || {};
@@ -281,7 +350,12 @@
       init.headers = headers;
     }
     return origFetch(input, init).then(function (resp) {
-      if (resp.status === 401 && !sessionStorage.getItem('ride-config-401')) {
+      const needSetup = resp.status === 503 && resp.headers.get('X-Auth-Setup') === 'required';
+      if (needSetup && typeof setupFirstPassword === 'function') {
+      setupFirstPassword();
+      return resp;
+      }
+if (resp.status === 401 && !sessionStorage.getItem('ride-config-401')) {
         sessionStorage.setItem('ride-config-401', '1');
         const typed = window.prompt('Enter the control-plane password:');
         if (typed) {

@@ -12,8 +12,10 @@ read-only vs admin distinction. It is accepted via the ``X-API-Key`` header
 or ``Authorization: Bearer ***``.
 
 If ``password`` is left empty while auth is enabled, the control plane is
-locked: every protected request is rejected with a clear instruction to set
-``security.password`` in ``config.yaml`` (no ephemeral keys are generated).
+locked: every protected request is rejected with ``503`` + the
+``X-Auth-Setup: required`` header, so the UI can offer a first-run dialog
+that sets the password via ``POST /api/auth/password`` (the only route
+reachable without credentials in that state).
 """
 
 from __future__ import annotations
@@ -40,6 +42,11 @@ logger = logging.getLogger(__name__)
 # The CA certificate is downloaded by an operator to install on devices; it is
 # not secret, so it stays public to avoid breaking MITM onboarding.
 PUBLIC_PATHS = frozenset({"/api/tls/ca-cert"})
+
+# First-run setup endpoint. Reachable WITHOUT credentials ONLY while the
+# control-plane password is still empty so the operator can set one from the
+# UI; once a password exists it falls back to normal authentication.
+SETUP_PATH = "/api/auth/password"
 
 
 def _safe_eq(a: str, b: str) -> bool:
@@ -105,15 +112,22 @@ class ControlPlaneAuthMiddleware(BaseHTTPMiddleware):
         password = cfg.password
         if not password:
             self._log_once(password_ok=False)
+            if path == SETUP_PATH:
+                # First-run: the operator is provisioning the control-plane
+                # password. There is nothing to validate a credential against
+                # yet, so let the handler through.
+                return await call_next(request)
             return JSONResponse(
                 status_code=503,
                 content={
                     "error": (
                         "Control-plane auth is enabled but security.password is "
-                        "empty. Set your password in config.yaml and restart, "
-                        "or disable auth_enabled."
+                        "empty. Set your password via POST /api/auth/password "
+                        "or in config.yaml and restart, or disable "
+                        "auth_enabled."
                     )
                 },
+                headers={"X-Auth-Setup": "required"},
             )
 
         self._log_once(password_ok=True)
