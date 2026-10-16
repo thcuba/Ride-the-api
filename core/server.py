@@ -661,9 +661,9 @@ async def tls_download_ca():
             media_type="application/x-pem-file",
             headers={"Content-Disposition": "attachment; filename=ride-the-api-ca.pem"},
         )
-    except Exception as e:
+    except Exception:
         logger.exception("Handler error (500)")
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        return JSONResponse(status_code=500, content={"error": "An internal error occurred"})
 
 
 @app.get("/api/tls/stats")
@@ -826,9 +826,9 @@ async def tls_list_certs():
     try:
         imported = cert_manager.list_imported_certs()
         return {"certs": imported}  # noqa: TRY300
-    except Exception as e:
+    except Exception:
         logger.exception("Handler error (500)")
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        return JSONResponse(status_code=500, content={"error": "An internal error occurred"})
 
 
 @app.get("/api/tls/certs/{hostname}")
@@ -843,9 +843,9 @@ async def tls_get_cert_info(hostname: str):
                 status_code=404, content={"error": f"No certificate found for '{hostname}'"}
             )
         return {"cert": info}  # noqa: TRY300
-    except Exception as e:
+    except Exception:
         logger.exception("Handler error (500)")
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        return JSONResponse(status_code=500, content={"error": "An internal error occurred"})
 
 
 @app.post("/api/tls/certs/upload")
@@ -951,9 +951,9 @@ async def tls_download_root_ca():
             media_type="application/x-pem-file",
             headers={"Content-Disposition": "attachment; filename=ride-the-api-ca.pem"},
         )
-    except Exception as e:
+    except Exception:
         logger.exception("Handler error (500)")
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        return JSONResponse(status_code=500, content={"error": "An internal error occurred"})
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1518,9 +1518,9 @@ async def export_patterns(device_id: str):
             device_model = await ingester.export_device_model(device_id, vendor, device_type)
             return device_model.model_dump(by_alias=True, exclude_none=True)
         return pattern_db.model_dump(by_alias=True, exclude_none=True)
-    except Exception as e:
+    except Exception:
         logger.exception("Handler error (500)")
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        return JSONResponse(status_code=500, content={"error": "An internal error occurred"})
 
 
 @app.get("/api/devices/{device_id}/patterns/{pattern_id}")
@@ -2023,9 +2023,9 @@ async def list_buffer_entries(device_id: str):
             "total_entries": len(pairs),
             "total_size_bytes": total_size,
         }
-    except Exception as e:
+    except Exception:
         logger.exception("Handler error (500)")
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        return JSONResponse(status_code=500, content={"error": "An internal error occurred"})
 
 
 @app.delete("/api/devices/{device_id}/buffer/{entry_id}")
@@ -2041,9 +2041,9 @@ async def delete_buffer_entry(device_id: str, entry_id: int):
         if not success:
             return JSONResponse(status_code=404, content={"error": "Entry not found"})
         return {"device_id": device_id, "entry_id": entry_id, "status": "deleted"}  # noqa: TRY300
-    except Exception as e:
+    except Exception:
         logger.exception("Handler error (500)")
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        return JSONResponse(status_code=500, content={"error": "An internal error occurred"})
 
 
 @app.get("/api/settings/buffer-backend")
@@ -2347,9 +2347,9 @@ async def export_buffer(device_id: str):
             device_type = device.device_type if device else "unknown"
         capture = await manager.export_capture(device_id, vendor, device_type)
         return capture.model_dump(by_alias=True, exclude_none=True)
-    except Exception as e:
+    except Exception:
         logger.exception("Handler error (500)")
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        return JSONResponse(status_code=500, content={"error": "An internal error occurred"})
 
 
 @app.post("/api/devices/{device_id}/capture/import")
@@ -2698,7 +2698,7 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
         logger.error(f"Error processing request: {e}", exc_info=True)
         return JSONResponse(
             status_code=500,
-            content={"error": f"Internal error: {str(e)}"},
+            content={"error": "An internal error occurred"},
         )
 
 
