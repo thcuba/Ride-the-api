@@ -6,6 +6,7 @@ from core.redaction import (
     REDACTED,
     redact_body,
     redact_headers,
+    redact_pair_headers,
     redact_query,
     redact_value,
 )
@@ -40,6 +41,28 @@ def test_redact_headers_none():
 def test_redact_headers_keeps_empty_values():
     out = redact_headers({"Authorization": ""})
     assert out["Authorization"] == ""
+
+
+def test_redact_pair_headers_alias():
+    """Verify redact_pair_headers functions identically to redact_headers."""
+    headers = {
+        "Authorization": "Bearer secret_token",
+        "X-API-Key": "key_12345",
+        "User-Agent": "IoT-Device/1.0",
+    }
+    out = redact_pair_headers(headers)
+    assert out == redact_headers(headers)
+    assert out["Authorization"] == REDACTED
+    assert out["X-API-Key"] == REDACTED
+    assert out["User-Agent"] == "IoT-Device/1.0"
+    # Original untouched
+    assert headers["Authorization"] == "Bearer secret_token"
+
+
+def test_redact_pair_headers_none_and_empty():
+    assert redact_pair_headers(None) is None
+    assert redact_pair_headers({}) == {}
+    assert redact_pair_headers({"Authorization": ""}) == {"Authorization": ""}
 
 
 def test_redact_query_redacts_sensitive_params():
