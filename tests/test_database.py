@@ -8,7 +8,10 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import select
 
+import core.database
 from core.database import (
+    get_db_manager,
+    init_db_manager,
     DatabaseManager,
     DeviceRegistry,
     FieldMapping,
@@ -31,6 +34,33 @@ async def db_manager(tmp_path):
     await dm.initialize()
     yield dm
     await dm.close()
+
+
+# ---------------------------------------------------------------------------
+#  Global get_db_manager / init_db_manager
+# ---------------------------------------------------------------------------
+
+
+class TestGetDbManagerGlobal:
+    def test_get_db_manager_uninitialized(self, monkeypatch):
+        """get_db_manager raises RuntimeError when _db_manager is None."""
+        monkeypatch.setattr(core.database, "_db_manager", None)
+        with pytest.raises(RuntimeError, match="DatabaseManager not initialized. Call init_db_manager first."):
+            get_db_manager()
+
+    def test_get_db_manager_initialized(self, tmp_path, monkeypatch):
+        """init_db_manager sets global _db_manager and get_db_manager returns it."""
+        monkeypatch.setattr(core.database, "_db_manager", None)
+        core_db_path = tmp_path / "core.db"
+        device_db_dir = tmp_path / "device_dbs"
+
+        manager = init_db_manager(
+            core_db_url=f"sqlite+aiosqlite:///{core_db_path}",
+            device_db_dir=device_db_dir,
+        )
+
+        assert manager is not None
+        assert get_db_manager() is manager
 
 
 # ---------------------------------------------------------------------------
