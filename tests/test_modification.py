@@ -4,12 +4,14 @@ Tests for the On-the-Fly Modification Engine.
 
 from datetime import UTC, datetime
 
+import core.modification as mod_module
 from adapters.base import InterceptedRequest, ProtocolType
 from core.modification import (
     InterceptedMessage,
     ModificationAction,
     ModificationEngine,
     ModificationRule,
+    get_modification_engine,
 )
 
 # ---------------------------------------------------------------------------
@@ -549,9 +551,6 @@ class TestLegacyRuleTranslation:
 
 def test_get_modification_engine_singleton():
     """Test get_modification_engine returns a singleton instance."""
-    import core.modification as mod_module
-    from core.modification import ModificationEngine, get_modification_engine
-
     original_engine = mod_module._modification_engine
     try:
         mod_module._modification_engine = None
