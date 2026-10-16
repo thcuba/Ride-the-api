@@ -10,8 +10,6 @@ from sqlalchemy import select
 
 import core.database
 from core.database import (
-    get_db_manager,
-    init_db_manager,
     DatabaseManager,
     DeviceRegistry,
     FieldMapping,
@@ -21,6 +19,8 @@ from core.database import (
     RequestPattern,
     ResponseTemplate,
     SessionCache,
+    get_db_manager,
+    init_db_manager,
 )
 
 
@@ -45,7 +45,9 @@ class TestGetDbManagerGlobal:
     def test_get_db_manager_uninitialized(self, monkeypatch):
         """get_db_manager raises RuntimeError when _db_manager is None."""
         monkeypatch.setattr(core.database, "_db_manager", None)
-        with pytest.raises(RuntimeError, match="DatabaseManager not initialized. Call init_db_manager first."):
+        with pytest.raises(
+            RuntimeError, match="DatabaseManager not initialized. Call init_db_manager first."
+        ):
             get_db_manager()
 
     def test_get_db_manager_initialized(self, tmp_path, monkeypatch):
