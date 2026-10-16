@@ -888,9 +888,9 @@ async function loadDevices() {
       const unkClass = isUnknown ? ' unidentified' : '';
       const unkBadge = isUnknown ? '<span class="badge badge-hybrid">⚠ Unidentified</span>' : modeBadge(d.mode);
             const devName = d.name || d.device_id || 'unknown';
-            return `<div class="device-card${unkClass}" data-mode="${escapeHtml(d.mode || 'learning')}" tabindex="0" role="button" aria-label="View details for ${escapeHtml(devName)}" onclick="loadDeviceStats('${escapeJs(d.device_id)}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();loadDeviceStats('${escapeJs(d.device_id)}')}">
+            return `<div class="device-card${unkClass}" data-mode="${escapeHtml(d.mode || 'learning')}" data-device-id="${escapeHtml(d.device_id || '')}" tabindex="0" role="button" aria-label="View details for ${escapeHtml(devName)}" onclick="loadDeviceStats('${escapeJs(d.device_id)}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();loadDeviceStats('${escapeJs(d.device_id)}')}">
               <div class="dc-top">
-                <div><div class="dc-name">${escapeHtml(d.name || shortId(d.device_id))}</div><div class="dc-id">${escapeHtml(shortId(d.device_id))}</div></div>
+                <div><div class="dc-name">${escapeHtml(d.name || shortId(d.device_id))}</div><div class="dc-id" title="${escapeHtml(d.device_id || '')}">${escapeHtml(shortId(d.device_id))}</div></div>
                 ${unkBadge}
               </div>
               <div class="dc-meta">${escapeHtml(d.vendor || 'unknown')} · ${escapeHtml(d.device_type || 'generic')}</div>
@@ -947,8 +947,9 @@ function filterDevices() {
   let visibleCount = 0;
   cards.forEach(card => {
     const text = card.textContent.toLowerCase();
+    const deviceId = (card.dataset.deviceId || '').toLowerCase();
     const cardMode = card.dataset.mode;
-    const matchesQuery = !query || text.includes(query);
+    const matchesQuery = !query || text.includes(query) || deviceId.includes(query);
     const matchesMode = !activeModeFilter || cardMode === activeModeFilter;
     const matches = matchesQuery && matchesMode;
     card.style.display = matches ? '' : 'none';
