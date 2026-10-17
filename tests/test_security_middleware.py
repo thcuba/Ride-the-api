@@ -227,6 +227,65 @@ def test_setup_password_forbidden_once_already_set(client):
     assert resp.status_code == 403  # noqa: PLR2004
 
 
+def test_first_install_end_to_end_flow(monkeypatch):
+    """Reproduce the real Windows first-boot UX against a live app instance.
+
+    Starts in the pristine state (auth enabled, empty password), asserts the
+    UI sees the 503 + X-Auth-Setup signal, creates the password through the
+    API, and confirms the very next request is authorized with it — exactly
+    the flow a fresh install goes through. The set_security_password mock
+    mutates the in-memory config (the real method also persists to disk,
+    which we avoid here), so the middleware, which reads live config per
+    request, genuinely picks up the new password.
+    """
+    cfg = server_mod.config_manager.config
+    saved = (cfg.security.auth_enabled, cfg.security.password)
+    cfg.security.auth_enabled = True
+    cfg.security.password = ""
+
+    def _set_password(pw: str) -> bool:
+        """Mirror set_security_password but persist only to in-memory state."""
+        cfg.security.password = pw
+        return True
+
+    monkeypatch.setattr(server_mod.config_manager, "set_security_password", _set_password)
+    monkeypatch.setattr(server_mod, "db_manager", _FakeDB())
+    monkeypatch.setattr(server_mod, "orchestrator", object())
+    monkeypatch.setattr(server_mod, "cert_manager", _FakeCertManager())
+    try:
+        client = TestClient(app)
+
+        # 1) First boot: every protected call is locked and signals setup.
+        locked = client.get("/api/devices")
+        assert locked.status_code == 503  # noqa: PLR2004
+        assert locked.headers.get("X-Auth-Setup") == "required"
+
+        # 2) The UI creates the control-plane password via the API.
+        new_password = "prima-password-123"
+        created = client.post(
+            "/api/auth/password",
+            json={"password": new_password},
+        )
+        assert created.status_code == 200  # noqa: PLR2004
+
+        # 3) The next request, using the fresh password, is authorized.
+        authorized = client.get(
+            "/api/devices",
+            headers={"X-API-Key": new_password},
+        )
+        assert authorized.status_code == 200  # noqa: PLR2004
+
+        # 4) And the setup endpoint is no longer a bypass.
+        replay = client.post(
+            "/api/auth/password",
+            json={"password": "overrides-123"},
+            headers={"X-API-Key": new_password},
+        )
+        assert replay.status_code == 403  # noqa: PLR2004
+    finally:
+        cfg.security.auth_enabled, cfg.security.password = saved
+
+
 # ── F-09: MaxBodySizeMiddleware ────────────────────────────────────────────────
 
 
