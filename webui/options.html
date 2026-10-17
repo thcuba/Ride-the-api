@@ -117,10 +117,10 @@
     <div class="cards">
       <section class="card" aria-labelledby="theme-title">
         <h2 id="theme-title">Display</h2>
-        <p class="desc">Choose the colour theme. Applied across all pages and saved on this device.</p>
+        <p class="desc" id="theme-desc">Choose the colour theme. Applied across all pages and saved on this device.</p>
         <div class="opt-row">
           <label for="themeSelect">Theme</label>
-          <select id="themeSelect" onchange="setTheme(this.value)" aria-label="Colour theme">
+          <select id="themeSelect" onchange="setTheme(this.value)" aria-label="Colour theme" aria-describedby="theme-desc">
             <option value="dark">Dark</option>
             <option value="light">Light</option>
           </select>
@@ -129,9 +129,9 @@
 
       <section class="card" aria-labelledby="update-title">
         <h2 id="update-title">Software update</h2>
-        <p class="desc">Update ride-the-api to the latest release. The service will be restarted.</p>
+        <p class="desc" id="update-desc">Update ride-the-api to the latest release. The service will be restarted.</p>
         <div class="opt-row">
-          <button class="btn btn-primary" id="updateBtn" onclick="updateSoftware()">&#x21bb; Update now</button>
+          <button class="btn btn-primary" id="updateBtn" onclick="updateSoftware()" aria-label="Update software to latest release" aria-describedby="update-desc">&#x21bb; Update now</button>
         </div>
         <span class="status" id="updateStatus" role="status" aria-live="polite"></span>
         <div class="meta" id="versionInfo" role="status" aria-live="polite">Checking version…</div>
