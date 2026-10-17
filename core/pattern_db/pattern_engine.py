@@ -665,7 +665,7 @@ class PatternEngine:
                 else:
                     self._set_nested(body, target, val)
 
-        # Resolve template variables {state.xxx} in body (fast-path bypass when template has no placeholders)
+        # Resolve template variables {state.xxx} in body (bypass if no placeholders)
         if _template_has_vars(template):
             body = self._resolve_template_vars(body, store, original_request)
 
