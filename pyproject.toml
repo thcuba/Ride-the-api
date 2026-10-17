@@ -101,6 +101,12 @@ gpu = [
 tflite = [
     "tflite-runtime>=2.16.0",
 ]
+# Optional OpenTelemetry OTLP trace exporter. Not imported by any module by
+# default (console exporter is the base), so it is opt-in: install only when
+# pushing traces to a collector (Jaeger/OTLP). Keep the base light on the Pi.
+otlp = [
+    "opentelemetry-exporter-otlp-proto-grpc>=1.25.0",
+]
 # Optional CPU model-serving dependencies. onnxruntime/numpy are not imported
 # by any module and add ~100MB+ RAM when loaded, so they are opt-in — keep the
 # base install light on low-RAM devices (e.g. Raspberry Pi 4 2GB, HAOS).

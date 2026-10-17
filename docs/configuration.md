@@ -343,6 +343,14 @@ formatter), replacing a bare `logging.basicConfig`.
 | `port` | `integer` | `9090` | Metrics server port |
 | `path` | `string` | `"/metrics"` | Metrics endpoint path |
 
+When `enabled`, a small HTTP server is started on its **own port** (default
+`9090`, separate from the proxy's `8911`) serving the configured path in
+Prometheus text exposition format. It exposes the custom `ride_api_*` metrics
+listed in `api.md` (requests/local-hits/cloud-misses counters, device-count and
+buffer-size gauges) plus the standard `python_*` runtime metrics. The gauges are
+refreshed every few seconds from the device registry. When `enabled` is
+`false`, the server is not started (the port stays closed).
+
 ### observability.tracing
 
 | Field | Type | Default | Description |
@@ -351,6 +359,14 @@ formatter), replacing a bare `logging.basicConfig`.
 | `exporter` | `string` | `"console"` | Tracing exporter (`console`, `otlp`) |
 | `otlp_endpoint` | `string` | `"http://localhost:4317"` | OTLP gRPC endpoint for trace export |
 | `sample_rate` | `float` | `0.1` | Trace sampling rate (0.0 – 1.0) |
+
+When `enabled`, an OpenTelemetry `TracerProvider` is configured with the chosen
+exporter and a single-span, per-proxy-request trace is emitted (span
+`proxy.handle_request` with vendor/method/path/device-id/action attributes).
+`exporter=console` works out of the box. `exporter=otlp` requires the optional
+`[otlp]` extra (`opentelemetry-exporter-otlp-proto-grpc`); if that package is
+missing the exporter falls back to `console` and logs a warning. `sample_rate`
+sets the probability that a new trace is sampled (0.0 – 1.0).
 
 ### observability.health_check
 
