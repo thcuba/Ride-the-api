@@ -112,6 +112,9 @@ seed_dir logs
 
 chmod +x "${INSTALL_DIR}/ride-the-api/ride-the-api"
 
+# Record the installed release tag so the running server can report it.
+printf '%s\n' "${VERSION}" > "${INSTALL_DIR}/VERSION"
+
 echo "✔ Installed ride-the-api (${VERSION}) into ${INSTALL_DIR}"
 echo ""
 echo "  Launch:      cd ${INSTALL_DIR} && ./ride-the-api/ride-the-api"

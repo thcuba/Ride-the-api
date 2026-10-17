@@ -68,3 +68,24 @@ def test_health_endpoint_returns_healthy() -> None:
     body = resp.json()
     assert body["status"] == "healthy"
     assert body["service"] == "local-cloud-replacement-proxy"
+
+
+def test_runtime_version_falls_back_without_version_file(monkeypatch, tmp_path) -> None:
+    """Without a VERSION file, runtime_version() returns the hardcoded fallback."""
+    monkeypatch.chdir(tmp_path)
+    assert tmp_path.joinpath("VERSION").exists() is False
+    assert server_mod.runtime_version() == server_mod.APP_VERSION_FALLBACK
+
+
+def test_runtime_version_reads_version_file(monkeypatch, tmp_path) -> None:
+    """runtime_version() reads the tag from <cwd>/VERSION when present."""
+    tmp_path.joinpath("VERSION").write_text("1.2.6\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    assert server_mod.runtime_version() == "1.2.6"
+
+
+def test_runtime_version_ignores_blank_file(monkeypatch, tmp_path) -> None:
+    """A VERSION file with only whitespace falls back to the hardcoded version."""
+    tmp_path.joinpath("VERSION").write_text("   \n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    assert server_mod.runtime_version() == server_mod.APP_VERSION_FALLBACK

@@ -111,6 +111,29 @@ tls_mitm_server: TLSMITMServer | None = None
 cert_manager: CertManager | None = None
 auto_switch_scheduler: AutoSwitchScheduler | None = None
 
+APP_VERSION_FALLBACK = "0.2.0"
+
+
+def runtime_version() -> str:
+    """Return the installed release/tag version.
+
+    The deploy scripts (``deploy/rideapi``, ``bootstrap.sh``, ``update.sh``)
+    write the installed tag to ``<install-dir>/VERSION``; in both the source
+    tree and the frozen bundle the process CWD is the install root, so the
+    file is read from there. Falls back to the hardcoded app version when the
+    file is absent (e.g. a dev checkout without a version stamp).
+    """
+    try:
+        v = Path.cwd() / "VERSION"
+        if v.is_file():
+            text = v.read_text(encoding="utf-8").strip()
+            if text:
+                return text
+    except OSError:
+        pass
+    return APP_VERSION_FALLBACK
+
+
 # Protocol server instances (lazy-loaded on first access)
 protocol_servers: dict[str, object] = {}
 protocol_server_tasks: dict[str, asyncio.Task] = {}
@@ -1037,7 +1060,7 @@ async def health_check():
     return {
         "status": "healthy",
         "service": "local-cloud-replacement-proxy",
-        "version": "0.2.0",
+        "version": runtime_version(),
         "adapters": adapter_registry.list_vendors() if adapter_registry else [],
     }
 

@@ -105,7 +105,11 @@ other `/api/*` route (it is not a bypass).
 
 ### `GET /health`
 
-Checks the service status.
+Checks the service status. The `version` field reports the **installed release
+tag**: the deploy scripts (`deploy/rideapi`, `bootstrap.sh`, `update.sh`) write
+the installed tag to `<install-dir>/VERSION`, which the server reads from the
+process CWD (the install root in both source and frozen layouts). Falls back to
+the static app version when no `VERSION` file exists (dev checkout).
 
 **Response `200 OK`**
 

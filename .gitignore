@@ -31,7 +31,9 @@ data/
 *.db
 *.sqlite
 *.sqlite3
+# Runtime / local state
 logs/
+VERSION
 *.log
 runtime_settings.json
 
