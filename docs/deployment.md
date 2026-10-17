@@ -61,6 +61,15 @@ Options:
 > / git) the tag or short SHA is written the same way.
 | `RTA_VERSION` / `RTA_DIR` | Environment overrides for the same flags |
 
+> **Self-update from the UI.** The web "Update" button runs `deploy/update.sh`
+> detached. When launched from a **frozen bundle**, PyInstaller sets
+> `LD_LIBRARY_PATH` to `_internal/`, which shadows the system OpenSSL and makes
+> the bundle's spawned `curl` exit at startup ("libssl.so.3: version
+> `OPENSSL_3.x' not found") — the update silently failed with "Download release
+> fallito". The server now strips those loader-path vars from the updater's
+> environment (`updater_env()`), and the install/update scripts defensively
+> `unset` them too, so the update works from a bundle as it does from a shell.
+
 On any supported 64-bit Linux (Raspberry Pi OS, **Debian**, Ubuntu, Fedora,
 Arch), the recommended one-command install is **from source** via the unified
 bootstrap script — it detects the distro and package manager (via

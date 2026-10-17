@@ -89,3 +89,19 @@ def test_runtime_version_ignores_blank_file(monkeypatch, tmp_path) -> None:
     tmp_path.joinpath("VERSION").write_text("   \n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     assert server_mod.runtime_version() == server_mod.APP_VERSION_FALLBACK
+
+
+def test_updater_env_strips_loader_paths(monkeypatch) -> None:
+    """updater_env() drops PyInstaller loader-path vars but keeps the rest."""
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/home/pi4ride/ride-the-api/ride-the-api/_internal")
+    monkeypatch.setenv("LD_PRELOAD", "evil.so")
+    monkeypatch.setenv("DYLD_LIBRARY_PATH", "/bundle")
+    monkeypatch.setenv("KEEP_ME", "value")
+    env = server_mod.updater_env()
+    # The bundle loader-path vars must never reach a spawned updater/curl.
+    for var in server_mod._UPDATER_STRIP_ENV:
+        assert var not in env, f"updater_env() must strip {var}"
+    # Unrelated env is preserved.
+    assert env["KEEP_ME"] == "value"
+    # Sanity: PATH (needed by curl) survives.
+    assert "PATH" in env

@@ -23,6 +23,10 @@
 #   -h, --help     Show this help.
 
 set -euo pipefail
+# Strip PyInstaller loader-path vars that shadow system libssl/libcrypto and
+# break spawned curl/git (see core/server.py system_update). Defensive: works
+# even when this script runs under a frozen bundle's inherited environment.
+unset LD_LIBRARY_PATH LD_PRELOAD DYLD_LIBRARY_PATH DYLD_INSERT_LIBRARIES 2>/dev/null || true
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_DIR="$SCRIPT_DIR/.."     # repo root (source layout)

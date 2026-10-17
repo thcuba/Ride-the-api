@@ -9,6 +9,7 @@ import asyncio  # noqa: TC003
 import base64
 import json
 import logging
+import os
 import subprocess
 import uuid
 from contextlib import asynccontextmanager
@@ -95,6 +96,24 @@ DASHBOARD_HTML = WEBUI_DIR / "dashboard.html"
 PATTERNS_HTML = WEBUI_DIR / "patterns.html"
 CONFIG_HTML = WEBUI_DIR / "config.html"
 OPTIONS_HTML = WEBUI_DIR / "options.html"
+
+# Loader-path vars that PyInstaller sets to point at its bundled libssl/libcrypto.
+# Spawned curl/git would load the bundle copies and fail at startup ("libssl.so.3:
+# version `OPENSSL_3.x' not found"), killing the update download. Always stripped
+# from child-process environments.
+_UPDATER_STRIP_ENV = ("LD_LIBRARY_PATH", "LD_PRELOAD", "DYLD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES")
+
+
+def updater_env() -> dict[str, str]:
+    """Return the current environment without PyInstaller loader-path variables.
+
+    The update/installer scripts are launched as detached child processes; under a
+    frozen bundle the inherited ``LD_LIBRARY_PATH`` (pointing into ``_internal/``)
+    shadows the system OpenSSL and breaks ``curl``/``git``. Returns an env safe to
+    spawn the updater with (system dynamic libraries are used instead).
+    """
+    return {k: v for k, v in os.environ.items() if k not in _UPDATER_STRIP_ENV}
+
 
 # Configure logging
 setup_logging(level="INFO", fmt="json")
@@ -1937,6 +1956,12 @@ async def system_update():
         )
     # Detached: start_new_session + explicit stdio to /dev/null so the child
     # survives the parent's restart and the daemon never blocks on a pipe.
+    #
+    # CRITICAL: when frozen, PyInstaller sets LD_LIBRARY_PATH to _internal/ so
+    # the bundled libssl/libcrypto shadow the system ones. Spawned curl then
+    # fails at startup ("libssl.so.3: version `OPENSSL_3.x' not found") and the
+    # update download dies instantly. updater_env() strips the loader-path vars
+    # so the child uses the system dynamic libraries (curl/git work normally).
     try:
         subprocess.Popen(
             ["bash", str(script), "--dir", str(install_dir), "--restart", "systemd"],
@@ -1945,6 +1970,7 @@ async def system_update():
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             cwd=str(install_dir),
+            env=updater_env(),
         )
     except Exception:  # noqa: BLE001
         logger.exception("Failed to launch updater")

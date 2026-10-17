@@ -33,6 +33,9 @@
 # Env overrides: RTA_DIR.
 
 set -euo pipefail
+# Strip PyInstaller loader-path vars that shadow system libssl/libcrypto and
+# break spawned curl/git. Defensive: works even when inherited from a bundle.
+unset LD_LIBRARY_PATH LD_PRELOAD DYLD_LIBRARY_PATH DYLD_INSERT_LIBRARIES 2>/dev/null || true
 
 REPO="thcuba/Ride-the-api"
 REPO_URL="https://github.com/${REPO}.git"
