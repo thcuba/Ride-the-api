@@ -54,6 +54,11 @@ Options:
 | `--version <tag>` | Install a specific release tag (default: latest) |
 | `--dir <path>` | Install directory (default: `$HOME/ride-the-api`) |
 | `--systemd` | Write a systemd user unit that runs it as a service |
+
+> **Installed version:** the script writes the installed release tag to
+> `<install-dir>/VERSION`, which `GET /health` reports under `version` (the
+> dashboard "Software update" card reads it). For source installs (`bootstrap.sh`
+> / git) the tag or short SHA is written the same way.
 | `RTA_VERSION` / `RTA_DIR` | Environment overrides for the same flags |
 
 On any supported 64-bit Linux (Raspberry Pi OS, **Debian**, Ubuntu, Fedora,

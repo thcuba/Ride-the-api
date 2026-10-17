@@ -185,6 +185,26 @@
       .catch(function () { el.textContent = 'Version unavailable'; });
   })();
 
+  // ── Control-plane auth ──────────────────────────────────────────────────
+  // Attach the shared API key (X-API-Key) to every same-origin /api/* request.
+  // dashboard/config/patterns persist it in localStorage under 'rideApiKey',
+  // which this page reads too (same origin) so /api/* calls here are authorized.
+  (function () {
+    var apiKey = '';
+    try { apiKey = localStorage.getItem('rideApiKey') || sessionStorage.getItem('rideSessionKey') || ''; } catch (e) {}
+    var origFetch = window.fetch.bind(window);
+    window.fetch = function (input, init) {
+      init = init || {};
+      var url = (typeof input === 'string') ? input : (input && input.url);
+      if (typeof url === 'string' && url.indexOf('/api/') === 0 && apiKey) {
+        var headers = new Headers(init.headers || (input && input.headers) || {});
+        if (!headers.has('X-API-Key')) headers.set('X-API-Key', apiKey);
+        init.headers = headers;
+      }
+      return origFetch(input, init);
+    };
+  })();
+
   // ── Update ──────────────────────────────────────────────────────────────────
   async function updateSoftware() {
     if (!confirm('Update ride-the-api to the latest release?\n\nThe service will restart.')) return;

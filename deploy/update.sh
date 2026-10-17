@@ -52,6 +52,9 @@ if [[ -d "$INSTALL_DIR/.git" ]]; then
     cd "$INSTALL_DIR"
     git fetch --quiet origin || { log "git fetch fallito"; exit 1; }
     git pull --ff-only origin main || { log "git pull fallito"; exit 1; }
+    # Record the resolved version for /health (long describe if no tag).
+    git describe --tags --always 2>/dev/null > "$INSTALL_DIR/VERSION" \
+      || git rev-parse --short HEAD > "$INSTALL_DIR/VERSION"
   )
   if [[ -x "$INSTALL_DIR/.venv/bin/python" ]]; then
     "$INSTALL_DIR/.venv/bin/python" -m pip install --quiet -e "$INSTALL_DIR" \

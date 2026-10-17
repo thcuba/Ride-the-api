@@ -162,6 +162,10 @@ else
 fi
 ok "Sorgente in ${SRC_DIR}."
 
+# Record the resolved version (tag desc or short sha) for the running server.
+git -C "${SRC_DIR}" describe --tags --always 2>/dev/null > "${SRC_DIR}/VERSION" \
+  || git -C "${SRC_DIR}" rev-parse --short HEAD > "${SRC_DIR}/VERSION"
+
 # ── 4. venv + install dependencies ───────────────────────────────────────────
 echo; printf '\033[1m▸ 4/6  Creo il virtualenv e installo tutte le dipendenze\033[0m\n'
 if [[ ! -d "${VENV}/bin" ]]; then
