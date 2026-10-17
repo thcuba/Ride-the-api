@@ -52,6 +52,14 @@ from core.database import (
 from core.llm_decipher import LLMDecipherService, get_llm_decipher
 from core.logging_config import setup_logging
 from core.modification import get_modification_engine
+from core.observability import (
+    MetricsServer,
+    build_tracer,
+    get_tracer,
+)
+from core.observability import (
+    registry as metrics_registry,
+)
 from core.paths import bundle_root, is_frozen, resource_path
 from core.pattern_db import buffer_manager, decipher_ingest
 from core.pattern_db.schemas import CaptureDB, DeviceModel, PatternDB
@@ -129,8 +137,13 @@ config_manager = get_config_manager()
 tls_mitm_server: TLSMITMServer | None = None
 cert_manager: CertManager | None = None
 auto_switch_scheduler: AutoSwitchScheduler | None = None
+metrics_server: MetricsServer | None = None
+_metrics_scrape_task: asyncio.Task | None = None
 
 APP_VERSION_FALLBACK = "0.2.0"
+
+# How often the metrics gauge refreshing worker re-reads live state (seconds).
+_METRICS_SCRAPE_INTERVAL = 10
 
 
 def runtime_version() -> str:
@@ -597,6 +610,64 @@ async def lifespan(_app: FastAPI):  # noqa: C901, PLR0912, PLR0915
     await auto_switch_scheduler.start()
     logger.info("Auto-switch scheduler started")
 
+    # Start Prometheus metrics endpoint if enabled (documented in api.md:
+    # metrics live on their own port 9090, separate from the proxy's 8911,
+    # and expose ride_api_* plus python_* runtime metrics).
+    metrics_cfg = config.observability.metrics
+    if metrics_cfg.enabled:
+        try:
+
+            async def _refresh_gauges() -> None:
+                if db_manager is None:
+                    return
+                try:
+                    devices = await db_manager.list_devices()
+                except Exception:  # noqa: BLE001
+                    logger.exception("Metrics gauge refresh failed")
+                    return
+                metrics_registry.device_count.set(len(devices))
+                metrics_registry.buffer_size_bytes.set(
+                    sum(d.get("context_buffer_size", 0) for d in devices)
+                )
+
+            async def _scrape_worker() -> None:
+                while True:
+                    await _refresh_gauges()
+                    await asyncio.sleep(_METRICS_SCRAPE_INTERVAL)
+
+            global metrics_server, _metrics_scrape_task  # noqa: PLW0603
+            metrics_server = MetricsServer(metrics_cfg.port, metrics_cfg.path)
+            metrics_server.start()
+            # Refresh gauges periodically so Prometheus scrapes reflect live state.
+            _metrics_scrape_task = asyncio.create_task(_scrape_worker())
+            logger.info(
+                "Prometheus metrics enabled at 0.0.0.0:%s%s",
+                metrics_cfg.port,
+                metrics_cfg.path,
+            )
+        except Exception:
+            logger.exception("Failed to start metrics server, disabling metrics")
+            metrics_server = None
+
+    # Start OpenTelemetry tracing if enabled. The provider is wired so spans
+    # emitted by the proxy path are exported via the configured exporter
+    # (console default; otlp requires opentelemetry-exporter-otlp).
+    tracing_cfg = config.observability.tracing
+    if tracing_cfg.enabled:
+        try:
+            _otel_tracer = build_tracer(
+                exporter_name=tracing_cfg.exporter,
+                otlp_endpoint=tracing_cfg.otlp_endpoint,
+                sample_rate=tracing_cfg.sample_rate,
+            )
+            logger.info(
+                "OpenTelemetry tracing enabled (exporter=%s, sample_rate=%s)",
+                tracing_cfg.exporter,
+                tracing_cfg.sample_rate,
+            )
+        except Exception:
+            logger.exception("Failed to initialize tracing, disabled")
+
     logger.info(f"Server started on {config.proxy.host}:{config.proxy.port}")
     logger.info(f"Registered adapters: {adapter_registry.list_vendors()}")
 
@@ -613,6 +684,17 @@ async def lifespan(_app: FastAPI):  # noqa: C901, PLR0912, PLR0915
             logger.info("Auto-switch scheduler stopped")
         except Exception as e:
             logger.error("Error stopping auto-switch scheduler: %s", e)  # noqa: TRY400
+
+    # Stop the Prometheus metrics server and its gauge-refresh worker.
+    if metrics_server:
+        try:
+            metrics_server.stop()
+            logger.info("Metrics server stopped")
+        except Exception as e:
+            logger.error("Error stopping metrics server: %s", e)  # noqa: TRY400
+    if _metrics_scrape_task is not None:
+        _metrics_scrape_task.cancel()
+        _metrics_scrape_task = None
 
         # Stop protocol servers
     try:
@@ -2599,6 +2681,9 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
             },
         )
 
+    # Prometheus: count every proxied request.
+    metrics_registry.requests_total.inc()
+
     # Parse request body
     body = await _get_request_body(request)
 
@@ -2663,24 +2748,31 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
         get_modification_engine().process_request(intercepted)
 
         # Pass to pipeline for processing
-        result = await orchestrator.handle_request(
-            device_id=device_id,
-            vendor=vendor,
-            protocol="http",
-            method=intercepted.method or request.method,
-            path=intercepted.path or f"/{path}",
-            headers=dict(intercepted.headers) if intercepted.headers else dict(request.headers),
-            body=intercepted.body,
-            query_params=(
-                dict(intercepted.query_params)
-                if hasattr(intercepted, "query_params") and intercepted.query_params
-                else dict(request.query_params)
-            ),
-        )
+        with get_tracer().start_as_current_span("proxy.handle_request") as span:
+            span.set_attribute("http.vendor", vendor)
+            span.set_attribute("http.method", intercepted.method or request.method)
+            span.set_attribute("http.target", intercepted.path or f"/{path}")
+            span.set_attribute("http.device_id", device_id)
+            result = await orchestrator.handle_request(
+                device_id=device_id,
+                vendor=vendor,
+                protocol="http",
+                method=intercepted.method or request.method,
+                path=intercepted.path or f"/{path}",
+                headers=dict(intercepted.headers) if intercepted.headers else dict(request.headers),
+                body=intercepted.body,
+                query_params=(
+                    dict(intercepted.query_params)
+                    if hasattr(intercepted, "query_params") and intercepted.query_params
+                    else dict(request.query_params)
+                ),
+            )
+            span.set_attribute("proxy.action", result.get("action", ""))
 
         if result["action"] == "local_response":
             # Serve locally from learned patterns, applying on-the-fly
             # response modification rules.
+            metrics_registry.local_hits_total.inc()
             out_response = _apply_response_modifications(intercepted, result["response"])
             return JSONResponse(
                 status_code=out_response.get("status_code", 200),
@@ -2688,6 +2780,8 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
                 headers=out_response.get("headers", {}),
             )
         if result["action"] == "forward":
+            # Prometheus: count cloud forwards (requests not served locally).
+            metrics_registry.cloud_misses_total.inc()
             # Forward to cloud (passthrough).
             #
             # When signal_forward_to_cloud is enabled, the proxy tells nginx

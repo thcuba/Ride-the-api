@@ -163,7 +163,9 @@ Exposed metrics (from `prometheus-client` and custom metrics):
 | `ride_api_buffer_size_bytes` | Gauge | Total buffer size |
 | `python_*` | — | Standard Python runtime metrics |
 
-**Status codes**: `200` OK, `503` If metrics are not enabled
+**Status codes**: `200` OK. When `observability.metrics.enabled` is `false`,
+the metrics server is not started, so the port is closed (the endpoint is not
+served).
 
 ---
 
