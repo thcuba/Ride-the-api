@@ -605,3 +605,30 @@ class TestLearningOrchestratorExtended:
             assert stats["total_requests"] == 50  # noqa: PLR2004
             assert stats["local_hits"] == 50  # noqa: PLR2004
             assert stats["match_rate_pct"] == 100.0  # noqa: PLR2004
+
+
+# ============================================================================
+# 6. Regression: orchestrator must delegate flush/preview to the pipeline
+#    (routes call orchestrator.flush_and_learn / orchestrator.preview_analysis)
+# ============================================================================
+
+
+class TestOrchestratorPipelineDelegation:
+    @pytest.mark.asyncio
+    async def test_orchestrator_exposes_flush_and_learn(self, db_manager):
+        """Regression: LearningOrchestrator must expose flush_and_learn (route 500 otherwise)."""
+        orch = LearningOrchestrator(db_manager)
+        orch.initialize(MagicMock())
+        # Empty buffer -> clean "No buffer entries" result, NOT AttributeError.
+        res = await orch.flush_and_learn("dev-empty-orphan")
+        assert res["success"] is False
+        assert res["error"] == "No buffer entries to flush"
+
+    @pytest.mark.asyncio
+    async def test_orchestrator_exposes_preview_analysis(self, db_manager):
+        """Regression: LearningOrchestrator must expose preview_analysis (route 500 otherwise)."""
+        orch = LearningOrchestrator(db_manager)
+        orch.initialize(MagicMock())
+        res = await orch.preview_analysis("dev-preview-orphan")
+        assert res["success"] is False
+        assert res["error"] == "No buffer entries to analyze"
