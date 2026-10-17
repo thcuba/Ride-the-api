@@ -1838,6 +1838,42 @@ class LearningOrchestrator:
             "mode": "learning",
         }
 
+    async def _ensure_pipeline(self, device_id: str) -> LearningPipeline:
+        """Lazily build the LearningPipeline bound to this device's buffer."""
+        if not self.pipeline:
+            buffer = await self.ensure_buffer(device_id)
+            self.pipeline = LearningPipeline(
+                self.db_manager,
+                self.llm_decipher,
+                buffer,
+                self.matcher,
+                self.tracker,
+                self.engine,
+            )
+        return self.pipeline
+
+    async def flush_and_learn(  # noqa: PLR0913
+        self, device_id: str, pair_ids: list[int] | None = None, context_notes: str | None = None
+    ) -> dict:
+        """Flush the device buffer: LLM-analyse the pairs and persist patterns.
+
+        Delegate to the ``LearningPipeline`` (the public route hits
+        ``orchestrator.flush_and_learn``; the logic lives on the pipeline).
+        """
+        pipeline = await self._ensure_pipeline(device_id)
+        return await pipeline.flush_and_learn(
+            device_id, pair_ids=pair_ids, context_notes=context_notes
+        )
+
+    async def preview_analysis(
+        self, device_id: str, pair_ids: list[int] | None = None, context_notes: str | None = None
+    ) -> dict:
+        """Run LLM analysis WITHOUT saving patterns (for user review)."""
+        pipeline = await self._ensure_pipeline(device_id)
+        return await pipeline.preview_analysis(
+            device_id, pair_ids=pair_ids, context_notes=context_notes
+        )
+
     async def _register_for_learning(  # noqa: PLR0913, PLR0917
         self,
         device: DeviceRegistry,
