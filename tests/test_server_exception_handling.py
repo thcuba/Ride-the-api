@@ -238,3 +238,18 @@ def test_system_update_finds_script_in_frozen_bundle(client, monkeypatch, tmp_pa
     assert resp.status_code == _HTTP_OK
     assert launched["args"][0][1] == str(deploy / "update.sh")
     assert launched["args"][0][5] == "systemd"
+
+
+def test_internal_server_error_sanitized(client, monkeypatch):
+    """500 Internal Server Errors must return generic error message."""
+
+    class _FailingCertManager:
+        def ca_cert_pem(self) -> str:
+            err_msg = "Database connection string postgresql://user:secret_pass@127.0.0.1 failed"
+            raise RuntimeError(err_msg)
+
+    monkeypatch.setattr(server_mod, "cert_manager", _FailingCertManager())
+    resp = client.get("/api/tls/ca-cert")
+    assert resp.status_code == 500  # noqa: PLR2004
+    assert resp.json() == {"error": "An internal error occurred"}
+    assert "secret_pass" not in resp.text
