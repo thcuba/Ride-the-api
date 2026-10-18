@@ -144,7 +144,7 @@ class ZWaveProtocolAdapter(ProtocolAdapter):
             return CommandType.GET_STATE
 
         if cc == CC_SWITCH_MULTILEVEL:
-            if cmd == CMD_SET or cmd == CMD_SWITCH_MULTILEVEL_START or cmd is None:
+            if cmd in (CMD_SET, CMD_SWITCH_MULTILEVEL_START, None):
                 return CommandType.SET_MODE
             return CommandType.GET_STATE
 
