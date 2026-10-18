@@ -447,7 +447,7 @@
 <div class="header">
   <div class="header-left">
       <div class="brand-row">
-        <img src="/static/logo.png" alt="Icona ride-the-api" width="40" height="40">
+        <img src="/static/logo.png" alt="ride-the-api logo" width="40" height="40">
         <h1>Ride the API</h1>
       </div>
       <span class="subtitle">Local Cloud Replacement — Device Protocol Learning &amp; Response Dashboard</span>
@@ -650,10 +650,14 @@
   function askRememberKey(key) {
     return new Promise(function (resolve) {
       const overlay = document.createElement('div');
+      overlay.setAttribute('role', 'dialog');
+      overlay.setAttribute('aria-modal', 'true');
+      overlay.setAttribute('aria-labelledby', 'remember-key-title');
       overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:9500;';
       const box = document.createElement('div');
       box.style.cssText = 'background:#141820;border:1px solid #2d3648;border-radius:12px;padding:24px;max-width:440px;width:90%;color:#e1e6ed;font-family:Inter,system-ui,sans-serif;box-shadow:0 8px 32px rgba(0,0,0,.3);';
       const title = document.createElement('h2');
+      title.id = 'remember-key-title';
       title.textContent = 'Save the control-plane password?';
       title.style.cssText = 'margin:0 0 8px;font-size:16px;color:#6c8cff;';
       const para = document.createElement('p');
@@ -701,46 +705,52 @@
     if (sessionStorage.getItem('ride-setup-shown')) return;
     sessionStorage.setItem('ride-setup-shown', '1');
     const overlay = document.createElement('div');
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-labelledby', 'setup-pw-title');
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:9500;';
     const box = document.createElement('div');
     box.style.cssText = 'background:#141820;border:1px solid #2d3648;border-radius:12px;padding:24px;max-width:440px;width:90%;color:#e1e6ed;font-family:Inter,system-ui,sans-serif;box-shadow:0 8px 32px rgba(0,0,0,.3);';
     const title = document.createElement('h2');
-    title.textContent = 'Imposta la password di controllo';
+    title.id = 'setup-pw-title';
+    title.textContent = 'Set Control-Plane Password';
     title.style.cssText = 'margin:0 0 8px;font-size:16px;color:#6c8cff;';
     const para = document.createElement('p');
     para.style.cssText = 'margin:0 0 12px;font-size:13px;color:#9ca8ba;line-height:1.5;';
-    para.textContent = 'Nessuna password è configurata. Crea ora la password di controllo (minimo 8 caratteri): verrà usata per accedere a tutte le pagine.';
+    para.textContent = 'No password is configured. Set a control-plane password (minimum 8 characters) to secure administrative access:';
     const pw = document.createElement('input');
     pw.type = 'password';
-    pw.placeholder = 'Nuova password';
+    pw.placeholder = 'New password';
+    pw.setAttribute('aria-label', 'New password');
     pw.style.cssText = 'width:100%;box-sizing:border-box;padding:10px 12px;border-radius:8px;border:1px solid #2d3648;background:#0e1116;color:#e1e6ed;font-family:inherit;font-size:14px;margin:8px 0;';
     const pw2 = document.createElement('input');
     pw2.type = 'password';
-    pw2.placeholder = 'Conferma password';
+    pw2.placeholder = 'Confirm password';
+    pw2.setAttribute('aria-label', 'Confirm password');
     pw2.style.cssText = 'width:100%;box-sizing:border-box;padding:10px 12px;border-radius:8px;border:1px solid #2d3648;background:#0e1116;color:#e1e6ed;font-family:inherit;font-size:14px;margin:0 0 16px;';
     const actions = document.createElement('div');
     actions.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;';
     const cancelBtn = document.createElement('button');
-    cancelBtn.textContent = 'Annulla';
+    cancelBtn.textContent = 'Cancel';
     cancelBtn.style.cssText = 'padding:8px 14px;border-radius:8px;border:1px solid #2d3648;background:#1a1f2b;color:#e1e6ed;font-family:inherit;font-size:13px;cursor:pointer;';
     const saveBtn = document.createElement('button');
-    saveBtn.textContent = 'Salva';
+    saveBtn.textContent = 'Save';
     saveBtn.style.cssText = 'padding:8px 14px;border-radius:8px;border:none;background:linear-gradient(135deg,#6c8cff,#5b7ad0);color:#fff;font-weight:600;font-family:inherit;font-size:13px;cursor:pointer;';
     function err(msg) {
       if (typeof showToast === 'function') showToast(msg, 'error');
     }
     saveBtn.addEventListener('click', function () {
-      if (!pw.value) { err('Inserisci una password'); pw.focus(); return; }
-      if (pw.value.length < 8) { err('Minimo 8 caratteri'); pw.focus(); return; }
-      if (pw.value !== pw2.value) { err('Le password non coincidono'); pw2.focus(); return; }
+      if (!pw.value) { err('Please enter a password'); pw.focus(); return; }
+      if (pw.value.length < 8) { err('Minimum 8 characters required'); pw.focus(); return; }
+      if (pw.value !== pw2.value) { err('Passwords do not match'); pw2.focus(); return; }
       saveBtn.disabled = true;
-      saveBtn.textContent = 'Salvataggio…';
+      saveBtn.textContent = 'Saving…';
       fetch('/api/auth/password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password: pw.value }),
       }).then(function (r) {
-        if (!r.ok) return r.json().then(function (j) { throw new Error(j && j.error ? j.error : 'Errore server'); });
+        if (!r.ok) return r.json().then(function (j) { throw new Error(j && j.error ? j.error : 'Server error'); });
         const key = pw.value.trim();
         apiKey = key;
         storeKey(key, true);
@@ -748,8 +758,8 @@
         location.reload();
       }).catch(function (e) {
         saveBtn.disabled = false;
-        saveBtn.textContent = 'Salva';
-        err('Impossibile salvare: ' + (e && e.message ? e.message : e));
+        saveBtn.textContent = 'Save';
+        err('Failed to save password: ' + (e && e.message ? e.message : e));
       });
     });
     cancelBtn.addEventListener('click', function () { overlay.remove(); });
