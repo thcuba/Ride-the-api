@@ -6,11 +6,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import core.llm_decipher
 from core.llm_decipher import (
     DecipherResult,
     LLMDecipherService,
     LLMProfile,
     _parse_llm_json,
+    get_llm_decipher,
 )
 
 
@@ -434,10 +436,7 @@ class TestGetLLMDecipher:
     """Tests for get_llm_decipher singleton accessor."""
 
     def test_get_llm_decipher_returns_singleton(self, monkeypatch):
-        import core.llm_decipher
         monkeypatch.setattr(core.llm_decipher, "_llm_decipher", None)
-
-        from core.llm_decipher import get_llm_decipher, LLMDecipherService
 
         instance1 = get_llm_decipher()
         assert isinstance(instance1, LLMDecipherService)
