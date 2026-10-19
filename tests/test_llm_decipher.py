@@ -6,11 +6,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import core.llm_decipher
 from core.llm_decipher import (
     DecipherResult,
     LLMDecipherService,
     LLMProfile,
     _parse_llm_json,
+    get_llm_decipher,
 )
 
 
@@ -428,3 +430,16 @@ class TestHotReload:
         cm.config.llm_decipher.profiles = {}
         service._on_config_change(cm.config)
         assert service._profiles == {}
+
+
+class TestGetLLMDecipher:
+    """Tests for get_llm_decipher singleton accessor."""
+
+    def test_get_llm_decipher_returns_singleton(self, monkeypatch):
+        monkeypatch.setattr(core.llm_decipher, "_llm_decipher", None)
+
+        instance1 = get_llm_decipher()
+        assert isinstance(instance1, LLMDecipherService)
+
+        instance2 = get_llm_decipher()
+        assert instance1 is instance2
