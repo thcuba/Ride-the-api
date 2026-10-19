@@ -142,10 +142,18 @@ def redact_headers(headers: dict[str, Any] | None) -> dict[str, Any] | None:
     for name, value in headers.items():
         if value in (None, ""):
             continue
-        # Fast path lowercasing avoids str(name) on string keys (~1.12x speedup)
-        key = name.lower() if isinstance(name, str) else str(name).lower()
-        if key in SENSITIVE_HEADERS:
+        # Fast path exact match for lowercased keys avoids lowercasing overhead (~1.12x speedup)
+        if name in SENSITIVE_HEADERS:
             result[name] = REDACTED
+            continue
+        if isinstance(name, str):
+            key = name.lower()
+            if key != name and key in SENSITIVE_HEADERS:
+                result[name] = REDACTED
+        else:
+            key = str(name).lower()
+            if key in SENSITIVE_HEADERS:
+                result[name] = REDACTED
     return result
 
 
@@ -157,10 +165,18 @@ def redact_query(query_params: dict[str, Any] | None) -> dict[str, Any] | None:
     for name, value in query_params.items():
         if value in (None, ""):
             continue
-        # Fast path lowercasing avoids str(name) on string keys (~1.12x speedup)
-        key = name.lower() if isinstance(name, str) else str(name).lower()
-        if key in SENSITIVE_QUERY_PARAMS:
+        # Fast path exact match for lowercased keys avoids lowercasing overhead (~1.12x speedup)
+        if name in SENSITIVE_QUERY_PARAMS:
             result[name] = REDACTED
+            continue
+        if isinstance(name, str):
+            key = name.lower()
+            if key != name and key in SENSITIVE_QUERY_PARAMS:
+                result[name] = REDACTED
+        else:
+            key = str(name).lower()
+            if key in SENSITIVE_QUERY_PARAMS:
+                result[name] = REDACTED
     return result
 
 
@@ -175,6 +191,8 @@ def redact_body(body: Any, *, in_headers: bool = True) -> Any:  # noqa: ANN401
     Authorization header) is never enough to skip redaction.
     """
     del in_headers  # reserved for future header-aware decisions
+    if not body:
+        return body
     if isinstance(body, dict):
         return {k: redact_value(k, v) for k, v in body.items()}
     if isinstance(body, list):
@@ -186,11 +204,12 @@ def redact_body(body: Any, *, in_headers: bool = True) -> Any:  # noqa: ANN401
 
 def redact_value(key: Any, value: Any) -> Any:  # noqa: ANN401
     """Redact ``value`` if ``key`` names a sensitive field; else recurse."""
-    # Fast path: primitive non-strings return immediately without key lookups (~1.21x speedup)
-    if isinstance(value, str):
-        return REDACTED if _is_sensitive_key(key) else value
+    if _is_sensitive_key(key):
+        return REDACTED
     if isinstance(value, (dict, list)):
         return redact_body(value)
+    if isinstance(value, str) and value.startswith(("{", "[")):
+        return _redact_json_string(value)
     return value
 
 

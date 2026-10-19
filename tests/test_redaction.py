@@ -139,5 +139,19 @@ def test_redact_value_sensitive_key():
     assert redact_value("serial_number", "SN-123") == REDACTED
 
 
+def test_redact_body_non_string_sensitive_values():
+    body = {
+        "pin": 1234,
+        "security_code": 9876,
+        "otp": 555555,
+        "temperature": 21.5,
+    }
+    out = redact_body(body)
+    assert out["pin"] == REDACTED
+    assert out["security_code"] == REDACTED
+    assert out["otp"] == REDACTED
+    assert out["temperature"] == 21.5  # noqa: PLR2004
+
+
 def test_redact_value_innocuous_key():
     assert redact_value("name", "bob") == "bob"
