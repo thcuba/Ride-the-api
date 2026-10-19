@@ -150,7 +150,7 @@ def test_redact_body_non_string_sensitive_values():
     assert out["pin"] == REDACTED
     assert out["security_code"] == REDACTED
     assert out["otp"] == REDACTED
-    assert out["temperature"] == 21.5
+    assert out["temperature"] == 21.5  # noqa: PLR2004
 
 
 def test_redact_value_innocuous_key():
