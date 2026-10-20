@@ -6,7 +6,6 @@ of device requests and cloud responses based on configurable rules.
 from __future__ import annotations
 
 import copy
-import functools
 import json
 import logging
 import re
@@ -22,6 +21,7 @@ if TYPE_CHECKING:
     from adapters.base import InterceptedRequest
 
 from core.atomic_io import append_jsonl
+from core.pattern_utils import dot_to_dpath as _dot_to_dpath
 
 
 @dataclass
@@ -38,20 +38,6 @@ class ResponseRecord:
 
 
 logger = logging.getLogger(__name__)
-
-
-@functools.lru_cache(maxsize=2048)
-def _dot_to_dpath(path: str) -> str:
-    """Convert dot/bracket path notation ('a.b[0].c') to dpath slash notation.
-
-    dpath uses '/' as its default separator; map '.' and '[0]' → '/', and
-    drop the closing ']'. Array indexes become segments (e.g. ``items/0/name``).
-
-    Memoized with lru_cache for fast O(1) path conversion during rule evaluation.
-    """
-    p = path.lstrip("$")
-    p = p.replace("[", "/").replace("]", "")
-    return p.replace(".", "/")
 
 
 def _rule_field(data: Any, key: str, default: Any = None) -> Any:  # noqa: ANN401

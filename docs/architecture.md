@@ -185,7 +185,16 @@ analysis and field deciphering.
   exponential backoff (1s, 2s, …) driven by the [`tenacity`](https://github.com/jd/tenacity)
   library (shared helpers in `core/retry.py`).
 
-#### 2.3.3 DecipherIngest (`core/pattern_db/decipher_ingest.py`)
+#### 2.3.3 Shared helpers (`core/pattern_utils.py`)
+
+Small pure helpers reused across modules to avoid copy-paste divergence:
+- `dot_to_dpath(path)`: converts dot/bracket path notation (`a.b[0].c`) to dpath slash
+  notation. Used by `PatternEngine` and the modification engine. Memoized with `lru_cache`.
+- `safe_float(value, default=0.0)`: parses a float from untrusted LLM output (e.g. `"high"`,
+  `"90%"`, `0.9`) without raising, falling back to `default` on garbage. Used by
+  `LLMDecipherService` and `DecipherIngest` (callers pass their own default explicitly).
+
+#### 2.3.4 DecipherIngest (`core/pattern_db/decipher_ingest.py`)
 
 **Role**: takes the structured LLM output and transforms it into persistent patterns in the
 device-specific database.
@@ -204,7 +213,7 @@ device-specific database.
   format); `import_patterns()` loads patterns from a portable file, validating them
   against a JSON schema via `Validator`.
 
-#### 2.3.4 PatternEngine (`core/pattern_db/pattern_engine.py`)
+#### 2.3.5 PatternEngine (`core/pattern_db/pattern_engine.py`)
 
 **Role**: matches incoming requests against learned patterns and builds local responses
 with state variable resolution and safe formula evaluation.
