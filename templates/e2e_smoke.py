@@ -102,13 +102,11 @@ async def main() -> None:
         await dbm.get_or_create_device("dev-1", "shelly", "plug", "Shelly Plug")
 
         orch = LearningOrchestrator(dbm)
-        orch.initialize(None)  # sets engine, matcher, tracker
+        orch.initialize(None)  # sets engine, tracker
 
         # Build the real LearningPipeline exactly as _register_for_learning does.
         buf = await orch.ensure_buffer("dev-1", buffer_size=524288)
-        pipeline = LearningPipeline(
-            dbm, orch.llm_decipher, buf, orch.matcher, orch.tracker, orch.engine
-        )
+        pipeline = LearningPipeline(dbm, orch.llm_decipher, buf, orch.tracker, orch.engine)
         orch.pipeline = pipeline
 
         # ---- Buffer: inject the mocked LLM analysis at the flush point -----

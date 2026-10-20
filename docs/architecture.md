@@ -230,12 +230,9 @@ with state variable resolution and safe formula evaluation.
   and basic math functions — no `eval`/`exec`), replacing the hand-rolled
   AST interpreter — no attribute access, imports, or arbitrary calls, so code injection is prevented.
 - **Caching**: patterns can be loaded from `.ride-pattern.json` files into memory for
-  ultra-fast matching without touching the database.
-  **Note (verified):** the legacy `PatternMatcher` class (`pipeline.py`) is
-  instantiated by `LearningOrchestrator.initialize` but its `find_best_match`
-  is never called — all matching goes through `PatternEngine`. `PatternMatcher`
-  is effectively dead code and a candidate for removal once the engine path is
-  confirmed as the single source of truth.
+  ultra-fast matching without touching the database. Matching is handled entirely
+  by `PatternEngine`; the legacy `PatternMatcher` class was dead code and has been
+  removed (the engine path is the single source of truth).
 
 ---
 

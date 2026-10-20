@@ -2,8 +2,8 @@
 Pattern Engine â€” matches incoming requests against deciphered patterns,
 builds local responses, manages device state, and handles sensor simulation.
 
-This is step â‘£ in the Engine flow, extending the existing PatternMatcher
-with state management and .ride-pattern.json import/export.
+This is step â‘£ in the Engine flow, providing production-grade request
+matching, state management and .ride-pattern.json import/export.
 """
 
 from __future__ import annotations
@@ -351,7 +351,7 @@ class PatternEngine:
     """
     Matches incoming requests against learned patterns and builds local responses.
 
-    Extends the original PatternMatcher with:
+    Provides:
     - In-memory pattern caching from .ride-pattern.json
     - Device state management (state_variables)
     - Virtual sensor simulation
