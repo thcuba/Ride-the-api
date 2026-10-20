@@ -233,6 +233,11 @@ with state variable resolution and safe formula evaluation.
   ultra-fast matching without touching the database. Matching is handled entirely
   by `PatternEngine`; the legacy `PatternMatcher` class was dead code and has been
   removed (the engine path is the single source of truth).
+- **Web UI pages**: the static `webui/*.html` pages (`/`, `/config`, `/patterns/{id}`,
+  `/options`) are read from disk **once** and served from an in-memory cache
+  (`_WEBUI_HTML_CACHE`), avoiding repeated blocking file I/O inside the async
+  handlers. A page missing at first request is *not* cached, so it is picked up
+  if created later.
 
 ---
 

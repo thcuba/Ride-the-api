@@ -2525,60 +2525,52 @@ async def import_buffer(device_id: str, request: Request):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+# Web UI page cache. webui/*.html are static at runtime, so we read them once
+# and serve from memory on subsequent GETs, avoiding repeated blocking disk
+# I/O inside async handlers. Only successful reads are cached: a missing file
+# is not memoized so a later-created file is picked up.
+_WEBUI_HTML_CACHE: dict[Path, str] = {}
+
+
+async def _serve_webui(path: Path, page_name: str, expected: str) -> HTMLResponse:
+    """Serve a cached webui HTML page, reading from disk once if needed."""
+    html = _WEBUI_HTML_CACHE.get(path)
+    if html is None:
+        try:
+            html = await asyncio.to_thread(path.read_text, encoding="utf-8")
+        except FileNotFoundError:
+            logger.warning("%s HTML not found at %s", page_name, path)
+            html = (
+                f"<!DOCTYPE html><html><body><h1>{page_name} not found</h1>"
+                f"<p>Expected at {expected}</p></body></html>"
+            )
+        else:
+            _WEBUI_HTML_CACHE[path] = html
+    return HTMLResponse(content=html, status_code=200)
+
+
 @app.get("/", response_class=HTMLResponse)
 async def dashboard():
     """Simple web dashboard."""
-    try:
-        html = DASHBOARD_HTML.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        logger.warning("Dashboard HTML not found at %s", DASHBOARD_HTML)
-        html = (
-            "<!DOCTYPE html><html><body><h1>Dashboard not found</h1>"
-            "<p>Expected at webui/dashboard.html</p></body></html>"
-        )
-    return HTMLResponse(content=html, status_code=200)
+    return await _serve_webui(DASHBOARD_HTML, "Dashboard", "webui/dashboard.html")
 
 
 @app.get("/patterns/{device_id}", response_class=HTMLResponse)
 async def patterns_page(device_id: str):  # noqa: ARG001
     """Serve the Patterns web UI for a device."""
-    try:
-        html = PATTERNS_HTML.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        logger.warning("Patterns HTML not found at %s", PATTERNS_HTML)
-        html = (
-            "<!DOCTYPE html><html><body><h1>Patterns page not found</h1>"
-            "<p>Expected at webui/patterns.html</p></body></html>"
-        )
-    return HTMLResponse(content=html, status_code=200)
+    return await _serve_webui(PATTERNS_HTML, "Patterns page", "webui/patterns.html")
 
 
 @app.get("/config", response_class=HTMLResponse)
 async def config_page():
     """Serve the Configuration web UI."""
-    try:
-        html = CONFIG_HTML.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        logger.warning("Config HTML not found at %s", CONFIG_HTML)
-        html = (
-            "<!DOCTYPE html><html><body><h1>Config page not found</h1>"
-            "<p>Expected at webui/config.html</p></body></html>"
-        )
-    return HTMLResponse(content=html, status_code=200)
+    return await _serve_webui(CONFIG_HTML, "Config page", "webui/config.html")
 
 
 @app.get("/options", response_class=HTMLResponse)
 async def options_page():
     """Serve the Options web UI (theme + software update)."""
-    try:
-        html = OPTIONS_HTML.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        logger.warning("Options HTML not found at %s", OPTIONS_HTML)
-        html = (
-            "<!DOCTYPE html><html><body><h1>Options page not found</h1>"
-            "<p>Expected at webui/options.html</p></body></html>"
-        )
-    return HTMLResponse(content=html, status_code=200)
+    return await _serve_webui(OPTIONS_HTML, "Options page", "webui/options.html")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
