@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field, SecretStr, ValidationError, field_validat
 from core.config import get_config_manager
 from core.fallback_policy import FallbackChain, ProviderCircuitBreaker
 from core.llm_settings import load_llm_settings, save_llm_settings
+from core.pattern_utils import safe_float as _safe_float
 from core.retry import make_retryer
 
 logger = logging.getLogger(__name__)
@@ -32,26 +33,6 @@ logger = logging.getLogger(__name__)
 # capacity.
 _CACHE_MAX_SIZE = 512
 _CACHE_TTL = 3600  # 1 hour
-
-
-def _safe_float(value, default: float = 0.0) -> float:
-    """Parse a float from an untrusted LLM-returned value without raising.
-
-    LLMs often emit ``confidence`` as ``"high"``, ``"90%"`` or ``0.9``, which
-    would make a bare ``float(...)`` raise and abort the whole ingest batch.
-    """
-    if value is None:
-        return default
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        return float(value)
-    if isinstance(value, str):
-        cleaned = value.strip().rstrip("%")
-        try:
-            f = float(cleaned)
-        except ValueError:
-            return default
-        return f
-    return default
 
 
 def _parse_llm_json(content: str) -> dict | None:

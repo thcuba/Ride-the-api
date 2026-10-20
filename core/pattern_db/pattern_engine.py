@@ -33,6 +33,7 @@ from core.database import (
 )
 from core.pattern_db.schemas import DeviceModel, PatternDB
 from core.pattern_db.state_manager import DeviceStateStore
+from core.pattern_utils import dot_to_dpath as _dot_to_dpath
 
 # Fast-path scoring cap: an incoming request whose HTTP method differs from
 # the learned pattern can never exceed this match score, so we can skip the
@@ -147,20 +148,6 @@ def _split_clean_path(path: str) -> tuple[str, ...]:
     """
     clean = path[2:] if path.startswith("$.") else path
     return tuple(clean.split(".")) if clean and clean != "$" else ()
-
-
-@functools.lru_cache(maxsize=2048)
-def _dot_to_dpath(path: str) -> str:
-    """Convert dot/bracket path notation ('a.b[0].c') to dpath slash notation.
-
-    dpath uses '/' as its default separator; map '.' and '[0]' → '/', and
-    drop the closing ']'. Array indexes become segments (e.g. ``items/0/name``).
-
-    Memoized with lru_cache for fast O(1) path conversion during request/response mapping.
-    """
-    p = path.lstrip("$")
-    p = p.replace("[", "/").replace("]", "")
-    return p.replace(".", "/")
 
 
 def _dpath_set(d: dict, path: str, value: Any) -> None:  # noqa: ANN401, C901, PLR0912
