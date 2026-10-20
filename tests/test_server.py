@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pathlib
 from http import HTTPStatus
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -163,6 +164,46 @@ def test_web_ui_options_route(monkeypatch, tmp_path):
     resp = client.get("/options")
     assert resp.status_code == HTTPStatus.OK
     assert "Options UI" in resp.text
+
+
+def test_web_ui_caches_html_after_first_read(monkeypatch, tmp_path):
+    """Web UI HTML is read from disk once and served from memory afterwards."""
+    html_file = tmp_path / "dashboard.html"
+    html_file.write_text("<html>Dashboard cached</html>", encoding="utf-8")
+    monkeypatch.setattr(server_mod, "DASHBOARD_HTML", html_file)
+
+    reads: list[str] = []
+    original_read_text = pathlib.Path.read_text
+
+    def _counting_read_text(self, *a, **k):  # noqa: ANN001
+        reads.append(str(self))
+        return original_read_text(self, *a, **k)
+
+    with patch.object(pathlib.Path, "read_text", _counting_read_text):
+        client = TestClient(app)
+        first = client.get("/")
+        second = client.get("/")
+
+    assert first.status_code == HTTPStatus.OK
+    assert "Dashboard cached" in first.text
+    assert first.text == second.text
+    # one disk read for the first GET; the second GET is served from cache
+    assert len(reads) == 1
+
+
+def test_web_ui_missing_file_not_cached(monkeypatch, tmp_path):
+    """A missing file is not cached, so a later-created file is picked up."""
+    html_path = tmp_path / "dashboard.html"
+    monkeypatch.setattr(server_mod, "DASHBOARD_HTML", html_path)
+
+    client = TestClient(app)
+    missing = client.get("/")
+    assert missing.status_code == HTTPStatus.OK
+    assert "Dashboard not found" in missing.text
+
+    html_path.write_text("<html>Now exists</html>", encoding="utf-8")
+    found = client.get("/")
+    assert "Now exists" in found.text
 
 
 # ── Unready Service Guards Tests ───────────────────────────────────────────
