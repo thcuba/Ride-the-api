@@ -18,7 +18,6 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-import dpath
 from sqlalchemy import and_, delete, select, update
 
 from core.atomic_io import _SAFE_FILENAME_RE
@@ -38,11 +37,6 @@ from core.llm_decipher import LLMDecipherService, LLMProfile, _parse_llm_json
 from core.pattern_db import decipher_ingest
 from core.pattern_db.pattern_engine import (
     PatternEngine,
-    _body_similarity,
-    _dot_to_dpath,
-    _dpath_set,
-    _path_similarity,
-    _split_clean_path,
 )
 from core.pattern_db.schemas import DeviceModel, PatternDB, ProtocolInfo
 from core.redaction import redact_body, redact_headers, redact_query
@@ -293,251 +287,6 @@ class ContextBuffer:
         return total
 
 
-class PatternMatcher:
-    """Matches incoming requests against learned patterns and builds local responses."""
-
-    def __init__(self, db_manager: DatabaseManager) -> None:
-        self.db_manager = db_manager
-
-    async def find_best_match(  # noqa: PLR0913, PLR0917
-        self,
-        device_id: str,
-        method: str,
-        path: str,
-        headers: dict,
-        body: Any,  # noqa: ANN401
-        query_params: dict,
-    ) -> tuple:
-        """Find the best matching request pattern for an incoming request.
-
-        Returns: (pattern, response_template, similarity_score) or (None, None, 0)
-        """
-        async with self.db_manager.device_session(device_id) as session:
-            result = await session.execute(select(RequestPattern))
-            patterns = result.scalars().all()
-
-        best_score = 0.0
-        best_pattern = None
-        best_template = None
-
-        req_input = ScoringInput(
-            method=method,
-            path=path,
-            headers=headers,
-            body=body,
-            query_params=query_params,
-        )
-
-        for pattern in patterns:
-            # Fast path early exits: max score is 1.0; method mismatch caps score at 0.70 (~10x faster)  # noqa: E501
-            if best_score >= 1.0:
-                break
-            if best_score >= 0.7 and pattern.method != method:  # noqa: PLR2004
-                continue
-
-            score = self._calculate_similarity(pattern, req_input, best_score=best_score)
-            if score > best_score:
-                best_score = score
-                best_pattern = pattern
-
-        if best_pattern and best_score >= 0.5:  # noqa: PLR2004
-            async with self.db_manager.device_session(device_id) as session:
-                result = await session.execute(
-                    select(ResponseTemplate).where(
-                        ResponseTemplate.pattern_id == best_pattern.pattern_id
-                    )
-                )
-                best_template = result.scalar_one_or_none()
-
-        return best_pattern, best_template, best_score
-
-    def _calculate_similarity(  # noqa: C901
-        self,
-        pattern: RequestPattern,
-        req_input: ScoringInput,
-        best_score: float = 0.0,
-    ) -> float:
-        """Calculate similarity between a request and a learned pattern (0.0 to 1.0)."""
-        score = 0.0
-
-        # Method match (exact)
-        if pattern.method == req_input.method:
-            score += 30.0
-
-        # Path match (partial allowed)
-        path_score = _path_similarity(pattern.path_pattern, req_input.path)
-        if path_score:
-            score += 30.0 * path_score
-
-        total_weight = 100.0 if bool(req_input.body) == bool(pattern.body_schema) else 85.0
-
-        # Fast path exit: headers (15) + query (10) + body (15) can add at most 40.0 points.
-        # If upper bound max_possible score cannot beat best_score, short-circuit (~1.6x speedup).
-        if (score + 40.0) / total_weight <= best_score:
-            return score / total_weight
-
-        # Header key presence
-        # Performance optimization: direct loop counting avoids generator allocation overhead
-        # from sum(1 for h in ...) (~2.5x faster collection counting per call in request hot path).
-        if pattern.required_headers:
-            matches = 0
-            for h in pattern.required_headers:
-                if h in req_input.headers:
-                    matches += 1
-            score += 15.0 * (matches / len(pattern.required_headers))
-
-        # Query param key presence
-        if pattern.query_param_keys:
-            matches = 0
-            for q in pattern.query_param_keys:
-                if q in req_input.query_params:
-                    matches += 1
-            score += 10.0 * (matches / len(pattern.query_param_keys))
-
-        # Body structure match
-        if req_input.body and pattern.body_schema:
-            score += 15.0 * _body_similarity(pattern.body_schema, req_input.body)
-        elif not req_input.body and not pattern.body_schema:
-            score += 15.0
-
-        return score / total_weight
-
-    def _apply_in_memory_mappings(  # noqa: C901, PLR0912
-        self,
-        body: dict,
-        fms: dict | list | None,
-        req: dict,
-        req_headers: dict,
-        req_query: dict,
-    ) -> None:
-        """Apply in-memory field mappings from ResponseTemplate to response body."""
-        if isinstance(fms, dict):
-            for req_field, resp_info in fms.items():
-                if isinstance(resp_info, str):
-                    resp_field = resp_info
-                    transform = "direct"
-                    enum_values = None
-                elif isinstance(resp_info, dict):
-                    resp_field = resp_info.get("response_field", req_field)
-                    transform = resp_info.get("transform", "direct")
-                    enum_values = resp_info.get("enum_values") or resp_info.get("mapping")
-                else:
-                    continue
-
-                val = self._resolve_field(req_field, req, req_headers, req_query)
-                if val is None:
-                    continue
-                if transform == "direct":
-                    self._set_nested(body, resp_field, val)
-                elif transform in ("enum_map", "enum") and enum_values and str(val) in enum_values:
-                    self._set_nested(body, resp_field, enum_values[str(val)])
-        elif isinstance(fms, list):
-            for m in fms:
-                if isinstance(m, dict):
-                    req_field = m.get("source") or m.get("request_field", "")
-                    resp_field = m.get("target") or m.get("response_field", "")
-                    transform = m.get("transform", "direct")
-                    enum_values = m.get("enum_values") or m.get("mapping")
-                else:
-                    req_field = getattr(m, "source", getattr(m, "request_field", ""))
-                    resp_field = getattr(m, "target", getattr(m, "response_field", ""))
-                    transform = getattr(m, "transform", "direct")
-                    enum_values = getattr(m, "mapping", getattr(m, "enum_values", None))
-
-                if not req_field or not resp_field:
-                    continue
-                val = self._resolve_field(req_field, req, req_headers, req_query)
-                if val is None:
-                    continue
-                if transform == "direct":
-                    self._set_nested(body, resp_field, val)
-                elif transform in ("enum_map", "enum") and enum_values and str(val) in enum_values:
-                    self._set_nested(body, resp_field, enum_values[str(val)])
-
-    async def build_local_response(
-        self, device_id: str, template: ResponseTemplate, original_request: dict
-    ) -> dict:
-        """Build a local response from a template, filling in variables from the request."""
-        # Start with template
-        body = dict(template.body_template)
-
-        req = original_request.get("body", {})
-        req_headers = original_request.get("headers", {})
-        req_query = original_request.get("query_params", {})
-
-        # Performance optimization: fast-path in-memory field mappings from ResponseTemplate
-        # avoid DB query and ORM object allocations on local response generation (~800x speedup).
-        fms = getattr(template, "field_mappings", None)
-        if fms is not None:
-            self._apply_in_memory_mappings(body, fms, req, req_headers, req_query)
-        else:
-            # Fallback path for legacy templates where field_mappings attribute is None
-            async with self.db_manager.device_session(device_id) as session:
-                result = await session.execute(select(FieldMapping))
-                mappings = result.scalars().all()
-
-            for mapping in mappings:
-                if mapping.transform == "direct":
-                    val = self._resolve_field(mapping.request_field, req, req_headers, req_query)
-                    if val is not None:
-                        self._set_nested(body, mapping.response_field, val)
-                elif mapping.transform == "enum_map" and mapping.enum_values:
-                    val = self._resolve_field(mapping.request_field, req, req_headers, req_query)
-                    if val is not None and str(val) in mapping.enum_values:
-                        mapped_val = mapping.enum_values[str(val)]
-                        self._set_nested(body, mapping.response_field, mapped_val)
-
-        # Fill expected variables with placeholder values
-        for var in template.expected_variables:
-            if not self._get_nested(body, var):
-                self._set_nested(body, var, 0)
-
-        return {
-            "status_code": template.status_code,
-            "headers": dict(template.headers_template),
-            "body": body,
-        }
-
-    def _resolve_field(self, field_path: str, body: dict, headers: dict, query: dict):
-        """Resolve a field path like 'body.temp_set' or 'headers.X-Request-ID'."""
-        parts = field_path.split(".", 1)
-        source = parts[0]
-        key = parts[1] if len(parts) > 1 else ""
-
-        if source == "body" and isinstance(body, dict):
-            return self._get_nested(body, key)
-        if source == "headers":
-            return headers.get(key)
-        if source == "query":
-            return query.get(key)
-        return None
-
-    def _get_nested(self, d: dict, path: str):
-        """Resolve a dot-separated path in a nested dict via dpath."""
-        if not path or path == "$":
-            return d
-        # Fast-path direct dict lookup for dot-paths without array brackets (~35.9x faster)
-        if "[" not in path:
-            parts = _split_clean_path(path)
-            curr = d
-            for p in parts:
-                if isinstance(curr, dict):
-                    curr = curr.get(p)
-                elif isinstance(curr, list) and p.isdigit():
-                    idx = int(p)
-                    curr = curr[idx] if 0 <= idx < len(curr) else None
-                else:
-                    return None
-            return curr
-        try:
-            return dpath.get(d, _dot_to_dpath(path), separator="/")
-        except (KeyError, TypeError, IndexError):
-            return None
-
-    def _set_nested(self, d: dict, path: str, value: Any) -> None:  # noqa: ANN401
-        _dpath_set(d, path, value)
-
-
 class MatchRateTracker:
     """Tracks real-time match hit/miss rate per device."""
 
@@ -684,14 +433,12 @@ class LearningPipeline:
         db_manager: DatabaseManager,
         llm_decipher: LLMDecipherService,
         buffer: ContextBuffer,
-        matcher: PatternMatcher,
         tracker: MatchRateTracker,
         engine=None,
     ) -> None:
         self.db_manager = db_manager
         self.llm_decipher = llm_decipher
         self.buffer = buffer
-        self.matcher = matcher
         self.tracker = tracker
         self.engine = engine
         self._correlation_cache: dict[str, deque] = defaultdict(lambda: deque(maxlen=1000))
@@ -1555,7 +1302,6 @@ class LearningOrchestrator:
         self.db_manager = db_manager
         self.llm_decipher = None
         self.buffer: dict[str, ContextBuffer] = {}
-        self.matcher = None
         self.engine = None
         self.tracker = None
         self.pipeline = None
@@ -1563,7 +1309,7 @@ class LearningOrchestrator:
     def initialize(self, llm_decipher: LLMDecipherService):
         """Initialize the orchestrator with required services.
 
-        Sets up the PatternEngine, PatternMatcher, and MatchRateTracker.
+        Sets up the PatternEngine and MatchRateTracker.
         Auto-loads any .ride-pattern.json files found in the patterns/
         or data/ directories so pre-seeded or exported patterns are
         available immediately for production/hybrid serving.
@@ -1571,7 +1317,6 @@ class LearningOrchestrator:
         self.llm_decipher = llm_decipher
         self.engine = PatternEngine(self.db_manager)
         self._auto_load_patterns()
-        self.matcher = PatternMatcher(self.db_manager)
         self.tracker = MatchRateTracker(self.db_manager)
 
     def _auto_load_patterns(self):
@@ -1846,7 +1591,6 @@ class LearningOrchestrator:
                 self.db_manager,
                 self.llm_decipher,
                 buffer,
-                self.matcher,
                 self.tracker,
                 self.engine,
             )
@@ -1892,7 +1636,6 @@ class LearningOrchestrator:
                 self.db_manager,
                 self.llm_decipher,
                 buffer,
-                self.matcher,
                 self.tracker,
                 self.engine,
             )

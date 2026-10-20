@@ -30,7 +30,6 @@ from core.pipeline import (
     LearningPipeline,
     MatchRateTracker,
     MatchResult,
-    PatternMatcher,
 )
 from core.resilience import (
     AUTO_SWITCH_MATCH_RATE,
@@ -357,7 +356,6 @@ class TestDeviceMetaFirstFlush:
             db_manager=db_manager,
             llm_decipher=MagicMock(),
             buffer=MagicMock(),
-            matcher=MagicMock(),
             tracker=MagicMock(),
             engine=None,
         )
@@ -513,66 +511,6 @@ class TestContextBuffer:
 
 
 _MATCH_FLOOR = 0.8
-
-
-class TestPatternMatcher:
-    """Test pattern matching engine."""
-
-    async def test_find_best_match(self, db_manager, sample_patterns):  # noqa: ARG002
-        """Test finding best matching pattern."""
-        matcher = PatternMatcher(db_manager)
-        pattern, template, score = await matcher.find_best_match(
-            "test_device_001",
-            method="POST",
-            path="/v1.0/device/test_device_001/commands",
-            headers={"Content-Type": "application/json"},
-            body={"commands": [{"code": "temp_set", "value": 240}]},
-            query_params={},
-        )
-
-        assert pattern is not None
-        assert template is not None
-        assert score >= _MATCH_FLOOR
-
-    async def test_no_match(self, db_manager, sample_patterns):  # noqa: ARG002
-        """Test no match for different request."""
-        matcher = PatternMatcher(db_manager)
-        pattern, template, score = await matcher.find_best_match(
-            "test_device_001",
-            method="GET",
-            path="/v1.0/device/test_device_001/status",
-            headers={},
-            body=None,
-            query_params={},
-        )
-
-        # Should find some match but with lower score
-        assert pattern is not None
-        assert score < _MATCH_FLOOR
-
-    async def test_build_local_response(self, db_manager, sample_patterns):  # noqa: ARG002
-        """Test building local response from template."""
-        matcher = PatternMatcher(db_manager)
-        pattern, template, _ = await matcher.find_best_match(
-            "test_device_001",
-            method="POST",
-            path="/v1.0/device/test_device_001/commands",
-            headers={"Content-Type": "application/json"},
-            body={"commands": [{"code": "temp_set", "value": 240}]},
-            query_params={},
-        )
-
-        response = await matcher.build_local_response(
-            "test_device_001",
-            template,
-            {
-                "body": {"commands": [{"code": "temp_set", "value": 240}], "headers": {}},
-                "query_params": {},
-            },
-        )
-
-        assert response["status_code"] == 200  # noqa: PLR2004
-        assert "body" in response
 
 
 class TestMatchRateTracker:

@@ -409,7 +409,8 @@ nella sezione «Limiti verificati».
 
 1. ✅ **Pattern Engine**: caricamento pattern da `.ride-pattern.json` in cache in-memory
    — realizzato in `PatternEngine.apply_pattern_db` / `load_pattern_file` (`pattern_engine.py`,
-   v1/v2-aware). Nota: `PatternMatcher` (ereditato) è oggi codice morto (vedi P4 nei limiti).
+   v1/v2-aware). Nota: il legacy `PatternMatcher` è stato rimosso in quanto codice morto
+   (il matching passa tutto da `PatternEngine`; vedi P4 nei limiti).
 2. ✅ **Buffer Manager**: `export_capture`/`import_capture` (`buffer_manager.py`) in `.ride-capture.json`
 3. ✅ **Decipher Ingest**: `DecipherIngest` popola il DB decifrato (`decipher_ingest.py`)
 4. ✅ **Endpoint API**: `/api/devices/{id}/patterns/import|export`, `/capture/export` (`server.py`)
@@ -547,6 +548,6 @@ affermazione inventata; ognuna ha evidenza file:riga (report completo in
 - **P3 — `observation_history` non persistita.** Serializzata solo se `observations=`
   esplicito; i percorsi runtime/API non lo passano → i file v2 auto hanno storicamente
   vuoto. Senza persistenza non c'è grounding offline-first. Correlata ai todo D1/E1.
-- **P4 — `PatternMatcher` codice morto.** Istanzziato da `LearningOrchestrator.initialize`
-  ma il suo `find_best_match` non è mai chiamato: tutto passa da `PatternEngine`. Candidato
-  alla rimozione una volta confermato il motore come unica fonte (niente nuova proliferazione).
+- **P4 — `PatternMatcher` codice morto (RISOLTO).** Istanzziato da `LearningOrchestrator.initialize`
+  ma il suo `find_best_match` non era mai chiamato: tutto passava da `PatternEngine`. Rimosso
+  come codice morto; il motore è confermato come unica fonte di matching.

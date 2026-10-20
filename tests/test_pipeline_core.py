@@ -10,7 +10,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import select, update
 
-from core.database import DatabaseManager, LLMContextBuffer, RequestPattern, SessionCache
+from core.database import DatabaseManager, LLMContextBuffer, SessionCache
 from core.pipeline import (
     ContextBuffer,
     CorrelatedPair,
@@ -18,9 +18,7 @@ from core.pipeline import (
     LearningPipeline,
     MatchRateTracker,
     MatchResult,
-    PatternMatcher,
     PipelineMode,
-    ScoringInput,
 )
 
 
@@ -232,68 +230,6 @@ class TestContextBuffer:
         assert [s.sequence for s in seqs] == [3, 4]  # newest retained; oldest dropped
 
 
-class TestPatternMatcher:
-    @pytest.mark.asyncio
-    async def test_init(self, db_manager):
-        matcher = PatternMatcher(db_manager)
-        assert matcher.db_manager is db_manager
-
-    @pytest.mark.asyncio
-    async def test_find_best_match_no_patterns(self, db_manager):
-        matcher = PatternMatcher(db_manager)
-        pattern, template, score = await matcher.find_best_match(
-            "device-001", "POST", "/test", {}, {}, {}
-        )
-        assert pattern is None
-        assert template is None
-        assert score == 0.0
-
-    @pytest.mark.asyncio
-    async def test_calculate_similarity_with_method_match(self, db_manager):
-        matcher = PatternMatcher(db_manager)
-
-        pattern = RequestPattern(
-            pattern_id="p1",
-            method="POST",
-            path_pattern="/test",
-            required_headers=[],
-            query_param_keys=[],
-        )
-        req_input = ScoringInput(method="POST", path="/other", headers={}, body={}, query_params={})
-        score = matcher._calculate_similarity(pattern, req_input)
-        assert 0.2 < score < 0.8  # noqa: PLR2004
-
-    @pytest.mark.asyncio
-    async def test_calculate_similarity_full_match(self, db_manager):
-        matcher = PatternMatcher(db_manager)
-
-        pattern = RequestPattern(
-            pattern_id="p2",
-            method="GET",
-            path_pattern="/status",
-            required_headers=[],
-            query_param_keys=[],
-        )
-        req_input = ScoringInput(method="GET", path="/status", headers={}, body={}, query_params={})
-        score = matcher._calculate_similarity(pattern, req_input)
-        assert score >= 0.75  # noqa: PLR2004
-
-    @pytest.mark.asyncio
-    async def test_calculate_similarity_method_mismatch(self, db_manager):
-        matcher = PatternMatcher(db_manager)
-
-        pattern = RequestPattern(
-            pattern_id="p3",
-            method="POST",
-            path_pattern="/status",
-            required_headers=[],
-            query_param_keys=[],
-        )
-        req_input = ScoringInput(method="GET", path="/other", headers={}, body={}, query_params={})
-        score = matcher._calculate_similarity(pattern, req_input)
-        assert score < 0.30  # noqa: PLR2004
-
-
 class TestMatchRateTracker:
     @pytest.mark.asyncio
     async def test_init(self, db_manager):
@@ -336,20 +272,17 @@ class TestLearningPipeline:
     async def test_init(self, db_manager):
         llm = MagicMock()
         buffer = ContextBuffer(db_manager)
-        matcher = PatternMatcher(db_manager)
         tracker = MatchRateTracker(db_manager)
-        pipeline = LearningPipeline(db_manager, llm, buffer, matcher, tracker)
+        pipeline = LearningPipeline(db_manager, llm, buffer, tracker)
         assert pipeline.db_manager is db_manager
         assert pipeline.buffer is buffer
-        assert pipeline.matcher is matcher
 
     @pytest.mark.asyncio
     async def test_register_request(self, db_manager):
         llm = MagicMock()
         buffer = ContextBuffer(db_manager)
-        matcher = PatternMatcher(db_manager)
         tracker = MatchRateTracker(db_manager)
-        pipeline = LearningPipeline(db_manager, llm, buffer, matcher, tracker)
+        pipeline = LearningPipeline(db_manager, llm, buffer, tracker)
         corr_key = await pipeline.register_request(
             "device-001",
             "shelly",
@@ -366,9 +299,8 @@ class TestLearningPipeline:
     async def test_match_response_no_match(self, db_manager):
         llm = MagicMock()
         buffer = ContextBuffer(db_manager)
-        matcher = PatternMatcher(db_manager)
         tracker = MatchRateTracker(db_manager)
-        pipeline = LearningPipeline(db_manager, llm, buffer, matcher, tracker)
+        pipeline = LearningPipeline(db_manager, llm, buffer, tracker)
         result = await pipeline.match_response(
             "device-nonexistent",
             "shelly",
@@ -391,9 +323,8 @@ class TestLearningPipeline:
         """
         llm = MagicMock()
         buffer = ContextBuffer(db_manager)
-        matcher = PatternMatcher(db_manager)
         tracker = MatchRateTracker(db_manager)
-        pipeline = LearningPipeline(db_manager, llm, buffer, matcher, tracker)
+        pipeline = LearningPipeline(db_manager, llm, buffer, tracker)
 
         await pipeline.register_request(
             "device-001",
@@ -435,9 +366,8 @@ class TestLearningPipeline:
         re-match the same already-correlated request."""
         llm = MagicMock()
         buffer = ContextBuffer(db_manager)
-        matcher = PatternMatcher(db_manager)
         tracker = MatchRateTracker(db_manager)
-        pipeline = LearningPipeline(db_manager, llm, buffer, matcher, tracker)
+        pipeline = LearningPipeline(db_manager, llm, buffer, tracker)
 
         await pipeline.register_request(
             "device-001",

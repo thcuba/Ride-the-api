@@ -1,6 +1,6 @@
 """
-Unit tests for core/pipeline.py covering ContextBuffer, PatternMatcher,
-MatchRateTracker, LearningPipeline, and LearningOrchestrator.
+Unit tests for core/pipeline.py covering ContextBuffer, MatchRateTracker,
+LearningPipeline, and LearningOrchestrator.
 """
 
 import json
@@ -14,7 +14,6 @@ from sqlalchemy import select
 from core.database import (
     DatabaseManager,
     DeviceRegistry,
-    FieldMapping,
     RequestPattern,
     ResponseTemplate,
 )
@@ -25,7 +24,6 @@ from core.pipeline import (
     LearningPipeline,
     MatchRateTracker,
     MatchResult,
-    PatternMatcher,
     _redact_pairs_for_prompt,
     get_orchestrator,
 )
@@ -145,134 +143,6 @@ class TestContextBufferMethods:
         await buffer.clear_cache("dev-001")
 
 
-# ============================================================================
-# 3. Tests for PatternMatcher
-# ============================================================================
-
-
-class TestPatternMatcherExtended:
-    @pytest.mark.asyncio
-    async def test_resolve_field_and_nested_helpers(self, db_manager):
-        matcher = PatternMatcher(db_manager)
-
-        data = {"user": {"profile": {"name": "Alice", "tags": ["admin", "user"]}}}
-        assert matcher._get_nested(data, "user.profile.name") == "Alice"
-        assert matcher._get_nested(data, "user.profile.tags.0") == "admin"
-        assert matcher._get_nested(data, "nonexistent.path") is None
-
-        d = {}
-        matcher._set_nested(d, "config.setting.value", 42)  # noqa: PLR2004
-        assert d["config"]["setting"]["value"] == 42  # noqa: PLR2004
-
-        body = {"temp": 22.5}
-        headers = {"X-Trace-ID": "abc123"}
-        query = {"lang": "en"}
-
-        assert matcher._resolve_field("body.temp", body, headers, query) == 22.5  # noqa: PLR2004
-        assert matcher._resolve_field("headers.X-Trace-ID", body, headers, query) == "abc123"
-        assert matcher._resolve_field("query.lang", body, headers, query) == "en"
-        assert matcher._resolve_field("unknown.key", body, headers, query) is None
-
-    @pytest.mark.asyncio
-    async def test_build_local_response_with_field_mappings(self, db_manager):
-        dev_id = "dev-matcher"
-        await db_manager.get_or_create_device(dev_id, "shelly")
-        matcher = PatternMatcher(db_manager)
-
-        async with db_manager.device_session(dev_id) as session:
-            pattern = RequestPattern(
-                pattern_id="p1",
-                method="POST",
-                path_pattern="/status",
-                protocol="http",
-                intent="get_status",
-            )
-            mapping1 = FieldMapping(
-                mapping_id="m1",
-                request_field="body.power",
-                request_type="boolean",
-                response_field="state.active",
-                response_type="boolean",
-                transform="direct",
-                intent="get_status",
-            )
-            mapping2 = FieldMapping(
-                mapping_id="m2",
-                request_field="body.mode",
-                request_type="integer",
-                response_field="state.mode_label",
-                response_type="string",
-                transform="enum_map",
-                enum_values={"1": "LOW", "2": "HIGH"},
-                intent="get_status",
-            )
-            session.add_all([pattern, mapping1, mapping2])
-
-        template = ResponseTemplate(
-            template_id="tpl_p1",
-            pattern_id="p1",
-            status_code=200,
-            headers_template={"Content-Type": "application/json"},
-            body_template={"state": {}},
-            expected_variables=["state.missing_var"],
-        )
-
-        orig_req = {"body": {"power": True, "mode": 2}}
-        res = await matcher.build_local_response(dev_id, template, orig_req)
-
-        assert res["status_code"] == 200  # noqa: PLR2004
-        assert res["headers"] == {"Content-Type": "application/json"}
-        assert res["body"]["state"]["active"] is True
-        assert res["body"]["state"]["mode_label"] == "HIGH"
-        assert res["body"]["state"]["missing_var"] == 0
-
-    @pytest.mark.asyncio
-    async def test_find_best_match_returns_pattern_and_template(self, db_manager):
-        dev_id = "dev-match-search"
-        await db_manager.get_or_create_device(dev_id, "shelly")
-        matcher = PatternMatcher(db_manager)
-
-        async with db_manager.device_session(dev_id) as session:
-            pattern = RequestPattern(
-                pattern_id="pat-1",
-                method="POST",
-                path_pattern="/api/v1/status",
-                protocol="http",
-                intent="check_status",
-                required_headers=["content-type"],
-                query_param_keys=["verbose"],
-                body_schema={"type": "object"},
-            )
-            template = ResponseTemplate(
-                template_id="tpl_pat-1",
-                pattern_id="pat-1",
-                status_code=200,
-                headers_template={"content-type": "application/json"},
-                body_template={"status": "ok"},
-            )
-            session.add_all([pattern, template])
-
-        best_pattern, best_template, score = await matcher.find_best_match(
-            dev_id,
-            "POST",
-            "/api/v1/status",
-            {"content-type": "application/json"},
-            {"type": "check"},
-            {"verbose": "true"},
-        )
-
-        assert best_pattern is not None
-        assert best_pattern.pattern_id == "pat-1"
-        assert best_template is not None
-        assert best_template.template_id == "tpl_pat-1"
-        assert score >= 0.5  # noqa: PLR2004
-
-
-# ============================================================================
-# 4. Tests for MatchRateTracker
-# ============================================================================
-
-
 class TestMatchRateTrackerExtended:
     @pytest.mark.asyncio
     async def test_get_stats_empty_device(self, db_manager):
@@ -311,9 +181,8 @@ class TestLearningPipelineExtended:
     async def test_flush_and_learn_empty_buffer(self, db_manager):
         llm = MagicMock()
         buffer = ContextBuffer(db_manager)
-        matcher = PatternMatcher(db_manager)
         tracker = MatchRateTracker(db_manager)
-        pipeline = LearningPipeline(db_manager, llm, buffer, matcher, tracker)
+        pipeline = LearningPipeline(db_manager, llm, buffer, tracker)
 
         res = await pipeline.flush_and_learn("dev-empty")
         assert res["success"] is False
@@ -323,9 +192,8 @@ class TestLearningPipelineExtended:
     async def test_flush_and_learn_device_not_found(self, db_manager):
         llm = MagicMock()
         buffer = ContextBuffer(db_manager)
-        matcher = PatternMatcher(db_manager)
         tracker = MatchRateTracker(db_manager)
-        pipeline = LearningPipeline(db_manager, llm, buffer, matcher, tracker)
+        pipeline = LearningPipeline(db_manager, llm, buffer, tracker)
 
         await buffer.add_pair("dev-unknown", make_correlated_pair(device_id="dev-unknown"))
         res = await pipeline.flush_and_learn("dev-unknown")
@@ -348,9 +216,8 @@ class TestLearningPipelineExtended:
         )
 
         buffer = ContextBuffer(db_manager)
-        matcher = PatternMatcher(db_manager)
         tracker = MatchRateTracker(db_manager)
-        pipeline = LearningPipeline(db_manager, llm, buffer, matcher, tracker)
+        pipeline = LearningPipeline(db_manager, llm, buffer, tracker)
 
         await buffer.add_pair(dev_id, make_correlated_pair(device_id=dev_id))
 
@@ -366,9 +233,8 @@ class TestLearningPipelineExtended:
 
         llm = MagicMock()
         buffer = ContextBuffer(db_manager)
-        matcher = PatternMatcher(db_manager)
         tracker = MatchRateTracker(db_manager)
-        pipeline = LearningPipeline(db_manager, llm, buffer, matcher, tracker)
+        pipeline = LearningPipeline(db_manager, llm, buffer, tracker)
 
         analysis_v2 = {
             "commands": [
@@ -414,9 +280,8 @@ class TestLearningPipelineExtended:
 
         llm = MagicMock()
         buffer = ContextBuffer(db_manager)
-        matcher = PatternMatcher(db_manager)
         tracker = MatchRateTracker(db_manager)
-        pipeline = LearningPipeline(db_manager, llm, buffer, matcher, tracker)
+        pipeline = LearningPipeline(db_manager, llm, buffer, tracker)
 
         analysis = {
             "protocol_info": {
