@@ -1348,7 +1348,7 @@ async function loadDeviceStats(deviceId) {
                   <!-- Analysis preview (hidden) -->
                   <div class="analysis-box" id="analysis-box-${escapeHtml(deviceId)}" style="display:none;">
                     <h4>&#x1F4DD; LLM Analysis Preview</h4>
-                    <textarea id="analysis-text-${escapeHtml(deviceId)}" style="min-height:120px;"></textarea>
+                    <textarea id="analysis-text-${escapeHtml(deviceId)}" style="min-height:120px;" aria-label="LLM analysis JSON editor"></textarea>
                     <div style="font-size:12px;color:var(--text2);margin:4px 0;">Edit the analysis above before committing, then click Commit to save patterns.</div>
                     <div class="llm-actions">
                       <button class="btn btn-ghost" onclick="discardPreview('${escapeJs(deviceId)}')">Discard</button>
