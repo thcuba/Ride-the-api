@@ -2127,10 +2127,41 @@ function renderLLMSettings(settings) {
   renderLLMProfileCards(settings);
 }
 
+let savedLLMSettings = null;
+
+function updateLLMCardDirty(card) {
+  if (!card || !savedLLMSettings) return;
+  const saved = savedLLMSettings.profiles && savedLLMSettings.profiles[card.dataset.name];
+  const values = {
+    base_url: card.querySelector('.lpc-base-url').value,
+    model_id: card.querySelector('.lpc-model-id').value,
+    api_key: card.querySelector('.lpc-api-key').value,
+    timeout: card.querySelector('.lpc-timeout').value,
+    max_retries: card.querySelector('.lpc-max-retries').value,
+    prompt_template: card.querySelector('.lpc-prompt-template').value,
+    enabled: card.querySelector('.lpc-enabled').checked,
+  };
+  const dirty = !saved || Object.keys(values).some(k => String(values[k]) !== String(saved[k]));
+  card.classList.toggle('lpc-dirty', dirty);
+  const badge = card.querySelector('.lpc-unsaved-badge');
+  if (badge) badge.style.display = dirty ? 'inline-block' : 'none';
+}
+
 function renderLLMProfileCards(settings) {
   const list = document.getElementById('llm-profiles-list');
   if (!list) return;
   list.innerHTML = '';
+  // Snapshot of the last-saved state, used to flag cards whose form values
+  // differ from what is persisted (the Test button probes UNSAVED values, so
+  // a passed test does NOT mean the change is live until Save is pressed).
+  savedLLMSettings = settings;
+  if (!list.dataset.llmDirtyListener) {
+    list.dataset.llmDirtyListener = '1';
+    list.addEventListener('input', (ev) => {
+      const card = ev.target.closest('.llm-profile-card');
+      if (card) updateLLMCardDirty(card);
+    });
+  }
   const profiles = settings.profiles || {};
   Object.keys(profiles).forEach((name, idx) => {
     const p = profiles[name];
@@ -2141,6 +2172,7 @@ function renderLLMProfileCards(settings) {
     card.innerHTML = `
       <div class="lpc-head">
         <span class="lpc-name">${escapeHtml(name)}</span>
+        <span class="lpc-unsaved-badge" style="display:none;margin-left:8px;padding:1px 6px;font-size:10px;border-radius:8px;background:#ffc107;color:#333;">unsaved</span>
         <div class="lpc-actions">
           <label class="lpc-enable">
             <input type="checkbox" class="lpc-enabled" ${p.enabled ? 'checked' : ''}> Enabled
@@ -2202,6 +2234,7 @@ function addLLMProfile() {
   card.innerHTML = `
     <div class="lpc-head">
       <span class="lpc-name">${escapeHtml(name.trim())}</span>
+      <span class="lpc-unsaved-badge" style="display:none;margin-left:8px;padding:1px 6px;font-size:10px;border-radius:8px;background:#ffc107;color:#333;">unsaved</span>
       <div class="lpc-actions">
         <label class="lpc-enable">
           <input type="checkbox" class="lpc-enabled" checked> Enabled
@@ -2244,6 +2277,8 @@ function addLLMProfile() {
       </div>
     </div>`;
   list.appendChild(card);
+  // A brand-new profile is by definition not saved yet.
+  updateLLMCardDirty(card);
   // Make the new profile selectable as default.
   const defaultSel = document.getElementById('llm-default-profile');
   if (defaultSel) {
@@ -2295,7 +2330,12 @@ async function testLLMProfile(name) {
       return;
     }
     const data = await res.json();
-    showToast(`${name}: ${data.message || 'Test passed: got a response'}`, 'success');
+    const baseMsg = data.message || 'Test passed: got a response';
+    const unsaved = card.classList.contains('lpc-dirty');
+    showToast(
+      `${name}: ${baseMsg}${unsaved ? ' — press Save to apply' : ''}`,
+      unsaved ? 'warning' : 'success'
+    );
   } catch(e) {
     showToast(`${name}: ${e.message || 'Test failed'}`, 'error');
   } finally {
@@ -2340,6 +2380,13 @@ async function saveLLMSettings() {
       return showToast(err.error || 'Failed to save LLM settings', 'error');
     }
     showToast('LLM settings saved', 'success');
+    // The form values are now the persisted truth: clear the dirty badges.
+    savedLLMSettings = settings;
+    document.querySelectorAll('#llm-profiles-list .llm-profile-card').forEach(card => {
+      card.classList.remove('lpc-dirty');
+      const badge = card.querySelector('.lpc-unsaved-badge');
+      if (badge) badge.style.display = 'none';
+    });
     closeLLMSettings();
     // Refresh the per-device profile dropdowns so they reflect the new set.
     document.querySelectorAll('[id^="profile-select-"]').forEach(sel => {

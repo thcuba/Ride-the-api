@@ -116,7 +116,7 @@ llm_decipher:
       model_id: "gpt-4o-mini"
 ```
 
-> **Local Ollama:** change `base_url` to `http://localhost:11434/v1`, `api_key` to `"ollama"`, and `model_id` to `"llama3.1:8b"` (or your preferred model).
+> **Local Ollama:** change `base_url` to `http://localhost:11434/v1`, `api_key` to `"ollama"`, and `model_id` to a model that is **installed on your Ollama host** (check with `ollama list`; `llama3.2:1b` is a safe small default for a Raspberry Pi).
 
 Export the environment variable:
 
