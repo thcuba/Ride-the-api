@@ -322,7 +322,7 @@ Configures the LLM profile for a specific device (overrides the default profile)
 ```json
 {
   "base_url": "http://localhost:11434/v1",
-  "model_id": "llama3.1:8b",
+  "model_id": "llama3.2:1b",
   "profile_name": "local_ollama"
 }
 ```

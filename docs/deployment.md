@@ -95,8 +95,10 @@ systemctl --user enable --now ride-the-api
 
 > **Pi 4 / 2GB RAM note:** the base install is lightweight (excludes the unused
 > `onnxruntime`), and LLM inference is meant to run **off-box via API cloud** —
-> a local Ollama `llama3.1:8b` (~6GB) does not fit a 2GB Pi. The default
-> profile already points at an OpenAI-compatible endpoint.
+> a local 8B-class Ollama model (e.g. `llama3.1:8b`, ~6GB) does not fit a 2GB
+> Pi; if you do run a local model, pick a small one that is actually installed
+> (check with `ollama list`). The default profile already points at an
+> OpenAI-compatible endpoint.
 
 ### Windows — `deploy/install.ps1`
 

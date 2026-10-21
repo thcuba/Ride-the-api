@@ -102,6 +102,43 @@ class TestLLMSettingsService:
         assert payload["profiles"]["default"]["max_retries"] == 3  # noqa: PLR2004
         assert updated["default_profile"] == "default"
 
+    def test_update_settings_model_change_applies_live(self):
+        """A user-changed model_id is persisted AND active immediately.
+
+        Regression guard for the dashboard flow: editing the Model ID on an
+        existing profile must take effect right away (no restart, no stale
+        default kept in memory).
+        """
+        service, _ = _service_with_profiles()
+        new_cfg = {
+            "enabled": True,
+            "default_profile": "default",
+            "profiles": {
+                "default": {
+                    "base_url": "http://localhost:11434/v1",
+                    "api_key": "ollama",
+                    "model_id": "smollm2:135m",
+                    "prompt_template": "",
+                    "enabled": True,
+                    "timeout": 30,
+                    "max_retries": 2,
+                }
+            },
+        }
+        with (
+            patch("core.llm_decipher.save_llm_settings") as mock_save,
+            patch("core.llm_decipher.load_llm_settings", return_value=new_cfg),
+        ):
+            updated = service.update_settings(new_cfg)
+        # The persisted payload carries the model the user chose...
+        payload = mock_save.call_args[0][0]
+        assert payload["profiles"]["default"]["model_id"] == "smollm2:135m"
+        # ...and the live effective state uses it immediately, no restart.
+        assert updated["profiles"]["default"]["model_id"] == "smollm2:135m"
+        profile = service.get_profile("default")
+        assert profile is not None
+        assert profile.model_id == "smollm2:135m"
+
     def test_update_settings_rejects_unknown_default(self):
         service, _ = _service_with_profiles()
         with (

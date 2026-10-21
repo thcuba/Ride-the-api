@@ -290,11 +290,15 @@ llm_decipher:
         - response: {status_code, headers, body_template, expected_variables}
         - confidence: 0.0-1.0
 
-    # Local Ollama profile
+    # Local Ollama profile.
+    # NOTE: model_id must match a model that is ACTUALLY installed on your
+    # Ollama host — check with `ollama list`. The default below (llama3.2:1b)
+    # is small enough for a Raspberry Pi; a 8B-class model (e.g. llama3.1:8b)
+    # does not fit low-RAM boards.
     local_ollama:
       base_url: "http://localhost:11434/v1"
       api_key: "ollama"
-      model_id: "llama3.1:8b"
+      model_id: "llama3.2:1b"
       prompt_template: |
         Analyze device communication pairs for {device_id} ({vendor} {device_type}).
 

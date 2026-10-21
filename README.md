@@ -95,12 +95,12 @@ llm_decipher:
       model_id: "gpt-4o-mini"
 ```
 
-For local Ollama:
+For local Ollama (use a model that is **actually installed**: check with `ollama list`):
 ```yaml
     local_ollama:
       base_url: "http://localhost:11434/v1"
       api_key: "ollama"
-      model_id: "llama3.1:8b"
+      model_id: "llama3.2:1b"
 ```
 
 ## License
