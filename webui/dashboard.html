@@ -486,6 +486,10 @@
     <svg class="icon-svg" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
     <span>Options</span>
   </a>
+      <button class="btn btn-ghost" id="themeToggleBtn" onclick="toggleTheme()" aria-label="Switch to light theme" title="Switch theme">
+      <svg class="icon-svg" id="themeToggleIcon" aria-hidden="true" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      <span id="themeToggleLabel">Theme</span>
+    </button>
       <button class="btn btn-ghost" id="refreshBtn" onclick="loadDevices()" aria-label="Refresh device list" title="Refresh device list">
       <svg class="icon-svg" aria-hidden="true" viewBox="0 0 24 24"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
       <span>Refresh</span>
@@ -1430,6 +1434,37 @@ async function deleteDevice(deviceId, btn) {
       loadDevices();
     } catch(e) { showToast('Failed to toggle auto-switch', 'error'); }
   }
+
+  // ── Theme toggle ─────────────────────────────────────────────────────────────
+  function updateThemeToggleButton(theme) {
+    const btn = document.getElementById('themeToggleBtn');
+    const icon = document.getElementById('themeToggleIcon');
+    const label = document.getElementById('themeToggleLabel');
+    if (!btn || !icon) return;
+    const isLight = theme === 'light';
+    btn.setAttribute('aria-label', isLight ? 'Switch to dark theme' : 'Switch to light theme');
+    btn.title = isLight ? 'Switch to dark theme' : 'Switch to light theme';
+    if (label) label.textContent = isLight ? 'Dark' : 'Light';
+    // Sun icon for light theme (switch to dark), Moon icon for dark theme (switch to light)
+    icon.innerHTML = isLight
+      ? '<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>'
+      : '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>';
+  }
+
+  function toggleTheme() {
+    const current = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+    const next = current === 'light' ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', next);
+    try { localStorage.setItem('rta-theme', next); } catch (e) {}
+    updateThemeToggleButton(next);
+    showToast('Theme set to ' + (next.charAt(0).toUpperCase() + next.slice(1)), 'info');
+  }
+
+  // Init theme button state on DOM load
+  document.addEventListener('DOMContentLoaded', function () {
+    const current = document.documentElement.getAttribute('data-theme') || 'dark';
+    updateThemeToggleButton(current);
+  });
 
   // ── RAM Buffer toggle ────────────────────────────────────────────────────────
   async function toggleRamBuffer(enabled) {
