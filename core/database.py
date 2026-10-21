@@ -538,9 +538,10 @@ class DatabaseManager:
             return False
         try:
             ipaddress.ip_address(value)
-            return True
         except ValueError:
             return False
+        else:
+            return True
 
     async def _get_device_db_url(self, device_id: str) -> str | None:
         """Look up a device's custom database URL from the registry."""
