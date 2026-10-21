@@ -212,10 +212,15 @@ class CertManager:
         now = datetime.now(UTC)
 
         # Build subject/issuer
-        try:
-            ipaddress.ip_address(hostname)
-            is_ip = True
-        except ValueError:
+        # Performance optimization: short-circuit non-IP hostnames without '.' or ':'
+        # to avoid ValueError exception overhead inside ipaddress.ip_address.
+        if hostname and ("." in hostname or ":" in hostname):
+            try:
+                ipaddress.ip_address(hostname)
+                is_ip = True
+            except ValueError:
+                is_ip = False
+        else:
             is_ip = False
 
         if is_ip:
