@@ -2530,6 +2530,7 @@ async def import_buffer(device_id: str, request: Request):
 # I/O inside async handlers. Only successful reads are cached: a missing file
 # is not memoized so a later-created file is picked up.
 _WEBUI_HTML_CACHE: dict[Path, str] = {}
+_WEBUI_HTML_CACHE.clear()
 
 
 async def _serve_webui(path: Path, page_name: str, expected: str) -> HTMLResponse:
