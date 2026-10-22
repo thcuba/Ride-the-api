@@ -291,16 +291,38 @@
     const para = document.createElement('p');
     para.style.cssText = 'margin:0 0 12px;font-size:13px;color:#9ca8ba;line-height:1.5;';
     para.textContent = 'No password is configured. Set a control-plane password (minimum 8 characters) to secure administrative access:';
-    const pw = document.createElement('input');
-    pw.type = 'password';
-    pw.placeholder = 'New password';
-    pw.setAttribute('aria-label', 'New password');
-    pw.style.cssText = 'width:100%;box-sizing:border-box;padding:10px 12px;border-radius:8px;border:1px solid #2d3648;background:#0e1116;color:#e1e6ed;font-family:inherit;font-size:14px;margin:8px 0;';
-    const pw2 = document.createElement('input');
-    pw2.type = 'password';
-    pw2.placeholder = 'Confirm password';
-    pw2.setAttribute('aria-label', 'Confirm password');
-    pw2.style.cssText = 'width:100%;box-sizing:border-box;padding:10px 12px;border-radius:8px;border:1px solid #2d3648;background:#0e1116;color:#e1e6ed;font-family:inherit;font-size:14px;margin:0 0 16px;';
+    function createPasswordInput(placeholder, ariaLabel, marginBottom) {
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'position:relative;display:flex;align-items:center;margin:' + (marginBottom || '0') + ';';
+      const input = document.createElement('input');
+      input.type = 'password';
+      input.placeholder = placeholder;
+      input.setAttribute('aria-label', ariaLabel);
+      input.style.cssText = 'width:100%;box-sizing:border-box;padding:10px 32px 10px 12px;border-radius:8px;border:1px solid #2d3648;background:#0e1116;color:#e1e6ed;font-family:inherit;font-size:14px;';
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'pw-toggle-btn';
+      btn.setAttribute('aria-label', 'Show ' + ariaLabel.toLowerCase());
+      btn.title = 'Show ' + ariaLabel.toLowerCase();
+      btn.style.cssText = 'position:absolute;right:8px;background:none;border:none;color:#9ca8ba;cursor:pointer;padding:2px;display:flex;align-items:center;justify-content:center;border-radius:4px;';
+      btn.innerHTML = '<svg class="icon-svg-sm" aria-hidden="true" viewBox="0 0 24 24" style="width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+      btn.addEventListener('click', function () {
+        const isPass = input.type === 'password';
+        input.type = isPass ? 'text' : 'password';
+        btn.setAttribute('aria-label', (isPass ? 'Hide ' : 'Show ') + ariaLabel.toLowerCase());
+        btn.title = (isPass ? 'Hide ' : 'Show ') + ariaLabel.toLowerCase();
+        btn.querySelector('svg').innerHTML = isPass
+          ? '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>'
+          : '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>';
+      });
+      wrap.appendChild(input);
+      wrap.appendChild(btn);
+      return { wrap: wrap, input: input };
+    }
+    const pwObj = createPasswordInput('New password', 'New password', '8px 0');
+    const pw = pwObj.input;
+    const pw2Obj = createPasswordInput('Confirm password', 'Confirm password', '0 0 16px');
+    const pw2 = pw2Obj.input;
     const actions = document.createElement('div');
     actions.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;';
     const cancelBtn = document.createElement('button');
@@ -340,8 +362,8 @@
     actions.appendChild(saveBtn);
     box.appendChild(title);
     box.appendChild(para);
-    box.appendChild(pw);
-    box.appendChild(pw2);
+    box.appendChild(pwObj.wrap);
+    box.appendChild(pw2Obj.wrap);
     box.appendChild(actions);
     overlay.appendChild(box);
     document.body.appendChild(overlay);
