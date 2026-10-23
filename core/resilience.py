@@ -275,33 +275,46 @@ class CloudIndependenceVerifier:
     async def import_device_patterns(self, device_id: str, data: dict) -> int:
         """Import previously exported patterns (for sharing between devices)."""
         count = 0
-        async with self.db_manager.device_session(device_id) as session:
-            for p_data in data.get("patterns", []):
-                existing = await session.execute(
-                    select(RequestPattern).where(RequestPattern.pattern_id == p_data["pattern_id"])
-                )
-                if not existing.scalar_one_or_none():
-                    pattern = RequestPattern(**p_data)
-                    session.add(pattern)
-                    count += 1
+        patterns_data = data.get("patterns", [])
+        templates_data = data.get("templates", [])
+        mappings_data = data.get("field_mappings", [])
 
-            for t_data in data.get("templates", []):
-                existing = await session.execute(
-                    select(ResponseTemplate).where(
-                        ResponseTemplate.template_id == t_data["template_id"]
+        async with self.db_manager.device_session(device_id) as session:
+            if patterns_data:
+                p_ids = [p["pattern_id"] for p in patterns_data if "pattern_id" in p]
+                existing_res = await session.execute(
+                    select(RequestPattern.pattern_id).where(RequestPattern.pattern_id.in_(p_ids))
+                )
+                existing_p_ids = set(existing_res.scalars().all())
+                for p_data in patterns_data:
+                    if p_data.get("pattern_id") not in existing_p_ids:
+                        pattern = RequestPattern(**p_data)
+                        session.add(pattern)
+                        count += 1
+
+            if templates_data:
+                t_ids = [t["template_id"] for t in templates_data if "template_id" in t]
+                existing_res = await session.execute(
+                    select(ResponseTemplate.template_id).where(
+                        ResponseTemplate.template_id.in_(t_ids)
                     )
                 )
-                if not existing.scalar_one_or_none():
-                    template = ResponseTemplate(**t_data)
-                    session.add(template)
+                existing_t_ids = set(existing_res.scalars().all())
+                for t_data in templates_data:
+                    if t_data.get("template_id") not in existing_t_ids:
+                        template = ResponseTemplate(**t_data)
+                        session.add(template)
 
-            for m_data in data.get("field_mappings", []):
-                existing = await session.execute(
-                    select(FieldMapping).where(FieldMapping.mapping_id == m_data["mapping_id"])
+            if mappings_data:
+                m_ids = [m["mapping_id"] for m in mappings_data if "mapping_id" in m]
+                existing_res = await session.execute(
+                    select(FieldMapping.mapping_id).where(FieldMapping.mapping_id.in_(m_ids))
                 )
-                if not existing.scalar_one_or_none():
-                    mapping = FieldMapping(**m_data)
-                    session.add(mapping)
+                existing_m_ids = set(existing_res.scalars().all())
+                for m_data in mappings_data:
+                    if m_data.get("mapping_id") not in existing_m_ids:
+                        mapping = FieldMapping(**m_data)
+                        session.add(mapping)
 
         logger.info(f"Imported {count} patterns for device {device_id}")
         return count

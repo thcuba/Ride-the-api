@@ -204,3 +204,11 @@
 ## 2026-03-31 - Fast-Path Check for Non-Equals Scalar String Redaction
 **Learning:** `_redact_key_value_pairs` in `core/redaction.py` executed `text.split("&")`, item loop iteration, and `"&".join(...)` on every scalar string body, regardless of whether key-value delimiter `=` existed. Adding a fast-path short-circuit `if "=" not in text: return text` eliminates string splitting, list allocation, and string joining on scalar non-key-value string payloads (~4.3x speedup, ~0.11s vs ~0.47s per 1,000,000 checks).
 **Action:** Short-circuit string-parsing helpers early with fast `in` character presence checks (e.g. `if "=" not in text: return text`) before allocating lists via `split()` or rejoining strings.
+
+## 2026-03-30 - Batch query pattern IDs during device pattern import
+**Learning:** Checking for existing records row-by-row inside a loop causes an N+1 query antipattern in SQLAlchemy async sessions. Extracting the set of incoming IDs and executing a single SQL query using  reduces query count from N to 1 and substantially cuts execution time (~5x faster on initial batch insert, ~90x faster when entries already exist).
+**Action:** When performing bulk duplicate checks or inserts in SQLAlchemy async sessions, collect candidate unique identifiers and fetch existing IDs in batch using .
+
+## 2026-03-30 - Batch query pattern IDs during device pattern import
+**Learning:** Checking for existing records row-by-row inside a loop causes an N+1 query antipattern in SQLAlchemy async sessions. Extracting the set of incoming IDs and executing a single SQL query using `.in_()` reduces query count from N to 1 and substantially cuts execution time (~5x faster on initial batch insert, ~90x faster when entries already exist).
+**Action:** When performing bulk duplicate checks or inserts in SQLAlchemy async sessions, collect candidate unique identifiers and fetch existing IDs in batch using `select(Model.id).where(Model.id.in_(candidate_ids))`.

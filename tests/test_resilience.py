@@ -111,6 +111,54 @@ class TestCloudIndependenceVerifier:
         assert result.get("independent") is False
         assert result.get("patterns_learned") >= 1
 
+    @pytest.mark.asyncio
+    async def test_import_device_patterns(self, db_manager, registered_device):
+        verifier = CloudIndependenceVerifier(db_manager)
+        data = {
+            "patterns": [
+                {
+                    "pattern_id": "p1",
+                    "method": "GET",
+                    "path_pattern": "/status",
+                    "protocol": "http",
+                    "intent": "get_status",
+                },
+                {
+                    "pattern_id": "p2",
+                    "method": "POST",
+                    "path_pattern": "/set",
+                    "protocol": "http",
+                    "intent": "set_status",
+                },
+            ],
+            "templates": [
+                {
+                    "template_id": "t1",
+                    "pattern_id": "p1",
+                    "status_code": 200,
+                    "confidence": 0.9,
+                }
+            ],
+            "field_mappings": [
+                {
+                    "mapping_id": "m1",
+                    "intent": "power_state",
+                    "request_field": "power",
+                    "request_type": "bool",
+                    "response_field": "state",
+                    "response_type": "str",
+                    "confidence": 0.9,
+                }
+            ],
+        }
+
+        imported_count = await verifier.import_device_patterns(registered_device, data)
+        assert imported_count == 2  # noqa: PLR2004
+
+        # Duplicate import should not insert existing items
+        reimported_count = await verifier.import_device_patterns(registered_device, data)
+        assert reimported_count == 0
+
 
 class TestAutoSwitchScheduler:
     @pytest.mark.asyncio
