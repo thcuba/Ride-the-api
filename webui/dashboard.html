@@ -1373,7 +1373,13 @@ async function loadDeviceStats(deviceId) {
 
                   <!-- Analysis preview (hidden) -->
                   <div class="analysis-box" id="analysis-box-${escapeHtml(deviceId)}" style="display:none;">
-                    <h4>&#x1F4DD; LLM Analysis Preview</h4>
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                      <h4 style="margin-bottom:0;">&#x1F4DD; LLM Analysis Preview</h4>
+                      <div style="display:flex;gap:6px;">
+                        <button type="button" class="btn btn-ghost" style="padding:2px 8px;font-size:11px;" onclick="formatAnalysisJson('${escapeJs(deviceId)}')" aria-label="Format LLM analysis JSON">Format JSON</button>
+                        <button type="button" class="btn btn-ghost" style="padding:2px 8px;font-size:11px;" onclick="copyAnalysisJson('${escapeJs(deviceId)}')" aria-label="Copy LLM analysis JSON to clipboard">Copy JSON</button>
+                      </div>
+                    </div>
                     <textarea id="analysis-text-${escapeHtml(deviceId)}" style="min-height:120px;" aria-label="LLM analysis JSON editor"></textarea>
                     <div style="font-size:12px;color:var(--text2);margin:4px 0;">Edit the analysis above before committing, then click Commit to save patterns.</div>
                     <div class="llm-actions">
@@ -2578,12 +2584,39 @@ async function previewAnalysis(deviceId) {
   }
 }
 
+function formatAnalysisJson(deviceId) {
+  const ta = document.getElementById('analysis-text-' + deviceId);
+  if (!ta || !ta.value.trim()) return;
+  try {
+    const parsed = JSON.parse(ta.value);
+    ta.value = JSON.stringify(parsed, null, 2);
+    showToast('Analysis JSON formatted', 'success');
+  } catch (err) {
+    showToast('Invalid JSON in LLM Analysis Preview: ' + err.message, 'error');
+  }
+}
+
+function copyAnalysisJson(deviceId) {
+  const ta = document.getElementById('analysis-text-' + deviceId);
+  if (!ta || !ta.value.trim()) return;
+  copyToClipboard(ta.value, 'LLM Analysis Preview');
+}
+
 function discardPreview(deviceId) {
   const box = document.getElementById('analysis-box-' + deviceId);
   if (box) box.style.display = 'none';
 }
 
 async function commitPatterns(deviceId) {
+  const ta = document.getElementById('analysis-text-' + deviceId);
+  if (ta && ta.value.trim()) {
+    try {
+      JSON.parse(ta.value);
+    } catch (err) {
+      showToast('Invalid JSON in LLM Analysis Preview: ' + err.message, 'error');
+      return;
+    }
+  }
   const pairIds = getSelectedPairIds(deviceId);
   const notes = (document.getElementById('context-notes-' + deviceId) || {}).value || '';
   const box = document.getElementById('analysis-box-' + deviceId);
