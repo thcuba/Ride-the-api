@@ -106,6 +106,27 @@ class TestDatabaseManagerLifecycle:
 
 class TestDeviceRegistry:
     @pytest.mark.asyncio
+    async def test_get_or_create_device_missing_config_fallback(self, db_manager, monkeypatch):
+        """Verify get_or_create_device falls back to empty dict when get_config fails."""
+
+        def mock_get_config():
+            raise RuntimeError("Config error")
+
+        monkeypatch.setattr("core.database.get_config", mock_get_config)
+        await db_manager.get_or_create_device(
+            device_id="device-no-config",
+            vendor="shelly",
+            device_type="plug",
+            name="No Config Plug",
+        )
+        async with await db_manager.get_core_session() as session:
+            result = await session.execute(
+                select(DeviceRegistry).where(DeviceRegistry.device_id == "device-no-config")
+            )
+            dev = result.scalar_one()
+            assert dev.config == {}
+
+    @pytest.mark.asyncio
     async def test_get_or_create_device(self, db_manager):
         await db_manager.get_or_create_device(
             device_id="device-001",
