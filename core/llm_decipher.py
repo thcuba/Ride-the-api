@@ -69,8 +69,21 @@ class LLMProfile(BaseModel):
 
     @field_validator("api_key", mode="before")
     @classmethod
-    def _resolve_env_var(cls, v: str) -> str:
-        """Resolve API key from environment variable if it starts with ${}."""
+    def _resolve_env_var(cls, v: object) -> object:
+        """Normalize the API key before it is coerced to ``SecretStr``.
+
+        Accepts a plain string, an already-wrapped ``SecretStr`` (both are used
+        by callers), or ``None``; resolves a ``${ENV_VAR}`` reference from the
+        environment. Anything else becomes an empty string.
+
+        Handling ``SecretStr`` matters: the previous version only accepted
+        ``str``, so callers passing an already-wrapped key (the profile-copy
+        path and the connection test) had it silently blanked, and the SDK then
+        received the ``"not-set"`` placeholder — which made those LLM paths fail
+        authentication no matter what the operator configured.
+        """
+        if isinstance(v, SecretStr):
+            v = v.get_secret_value()
         if isinstance(v, str) and v.startswith("${") and v.endswith("}"):
             return os.environ.get(v[2:-1], "")
         return v if isinstance(v, str) else ""
@@ -251,20 +264,29 @@ class LLMDecipherService:
         logger.info("LLM decipher config changed, reloading")
         self._load_config()
 
-    def _get_client(self, profile: LLMProfile) -> AsyncOpenAI:
-        """Get or create an OpenAI-compatible async client for a profile."""
-        cached = self._clients.get(profile.name)
-        if cached:
-            return cached
+    def _build_client(self, profile: LLMProfile) -> AsyncOpenAI:
+        """Create a fresh OpenAI-compatible async client for a profile.
+
+        Never registers the client in the shared cache: callers that build a
+        throwaway profile (e.g. :meth:`test_connection`) must not be served a
+        previously cached client for a different set of connection params.
+        """
         # The SDK rejects an empty/missing api_key at construction, so pass a
         # placeholder for local providers (e.g. Ollama) that ignore auth.
         api_key = profile.api_key.get_secret_value() or "not-set"
-        client = AsyncOpenAI(
+        return AsyncOpenAI(
             api_key=api_key,
             base_url=profile.base_url.rstrip("/"),
             timeout=profile.timeout,
             max_retries=profile.max_retries,
         )
+
+    def _get_client(self, profile: LLMProfile) -> AsyncOpenAI:
+        """Get or create an OpenAI-compatible async client for a profile."""
+        cached = self._clients.get(profile.name)
+        if cached:
+            return cached
+        client = self._build_client(profile)
         self._clients[profile.name] = client
         return client
 
@@ -716,6 +738,9 @@ Response:
         profile = LLMProfile(
             name="_test",
             base_url=base_url,
+            # SecretStr matches LLMProfile's declared field type; the field
+            # validator unwraps it back to the raw key (a plain str would be
+            # wrapped identically, but this keeps the types honest).
             api_key=SecretStr(api_key),
             model_id=model_id,
             prompt_template="",
@@ -723,7 +748,7 @@ Response:
             timeout=timeout,
             max_retries=max_retries,
         )
-        client = self._get_client(profile)
+        client = self._build_client(profile)
         kwargs = {
             "model": profile.model_id,
             "messages": [{"role": "user", "content": "hello"}],
@@ -734,6 +759,12 @@ Response:
         except Exception as exc:  # noqa: BLE001 - surface the provider error to the UI
             logger.warning("LLM connection test failed for %s: %s", base_url, exc)
             return {"success": False, "error": f"LLM test failed: {exc}"}
+        finally:
+            # The test client is throwaway and deliberately never cached (a
+            # fixed "_test" cache key would pin the first test's base_url and
+            # api_key, so later tests would keep failing on stale credentials).
+            # Close it here so a retried test cannot leak a connection pool.
+            await client.close()
         return {"success": True, "content": content, "message": "Test passed: got a response"}
 
     def _get_db_schema(self, vendor: str) -> str:
