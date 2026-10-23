@@ -6,6 +6,7 @@ SQLite database and portable ``.ride-pattern.json`` export.
 """
 
 import hashlib
+from pathlib import Path
 
 import pytest
 import pytest_asyncio
@@ -67,3 +68,47 @@ class TestDeleteDevice:
         assert await dm.delete_device("dev-re") is True
         await dm.get_or_create_device("dev-re", "coap")
         assert any(d["device_id"] == "dev-re" for d in await dm.list_devices())
+
+    @pytest.mark.asyncio
+    async def test_delete_handles_db_unlink_oserror(self, dm, monkeypatch, caplog):
+        await dm.get_or_create_device("dev-err-db", "shelly")
+        db_path = dm.device_db_dir / dm._safe_db_name("dev-err-db")  # noqa: SLF001
+        assert db_path.exists()
+
+        original_unlink = Path.unlink
+
+        def mock_unlink(path_obj, *args, **kwargs):
+            if path_obj == db_path:
+                raise OSError("Permission denied / disk error")
+            return original_unlink(path_obj, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "unlink", mock_unlink)
+
+        with caplog.at_level("WARNING"):
+            assert await dm.delete_device("dev-err-db") is True
+
+        assert f"Could not remove device DB {db_path}" in caplog.text
+        assert not any(d["device_id"] == "dev-err-db" for d in await dm.list_devices())
+
+    @pytest.mark.asyncio
+    async def test_delete_handles_pattern_unlink_oserror(self, dm, monkeypatch, caplog):
+        await dm.get_or_create_device("dev-err-pat", "shelly")
+        pf = pattern_file_path(dm, "dev-err-pat")
+        pf.parent.mkdir(parents=True, exist_ok=True)
+        pf.write_text('{"version": "v2"}')
+        assert pf.exists()
+
+        original_unlink = Path.unlink
+
+        def mock_unlink(path_obj, *args, **kwargs):
+            if path_obj == pf:
+                raise OSError("Permission denied / disk error")
+            return original_unlink(path_obj, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "unlink", mock_unlink)
+
+        with caplog.at_level("WARNING"):
+            assert await dm.delete_device("dev-err-pat") is True
+
+        assert f"Could not remove pattern file {pf}" in caplog.text
+        assert not any(d["device_id"] == "dev-err-pat" for d in await dm.list_devices())

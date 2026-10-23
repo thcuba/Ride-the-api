@@ -991,7 +991,7 @@ class DatabaseManager:
         if db_path.exists():
             try:
                 db_path.unlink()
-            except OSError as e:  # pragma: no cover - best-effort cleanup
+            except OSError as e:
                 logger.warning(f"Could not remove device DB {db_path}: {e}")
 
         pattern_file = (
@@ -1002,7 +1002,7 @@ class DatabaseManager:
         if pattern_file.exists():
             try:
                 pattern_file.unlink()
-            except OSError as e:  # pragma: no cover - best-effort cleanup
+            except OSError as e:
                 logger.warning(f"Could not remove pattern file {pattern_file}: {e}")
 
         self._device_engines.pop(device_id, None)
