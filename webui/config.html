@@ -502,6 +502,50 @@ function buildSidebar() {
   sidebar.appendChild(raw);
 }
 
+// ── LLM Decipher section (editable; persistence via the LLM settings API) ───
+// The LLM page and this section are two entry points onto the SAME data: the
+// fields are populated from the effective (runtime) settings and saved through
+// /api/llm/settings (see saveConfig), never through PUT /api/config. The
+// working copy lives in cfg.llm_decipher so the generic renderer's edits land
+// there. No refetch on re-render, or structural edits would discard unsaved
+// changes.
+let llmSectionLoaded = false;
+async function renderLLMSection(container) {
+  const note = document.createElement('p');
+  note.className = 'sec-desc';
+  note.style.marginBottom = '10px';
+  note.textContent = 'Profiles actually in use by the decipher. Saving applies them through the LLM settings API — the same store the LLM page uses.';
+  container.appendChild(note);
+
+  const openBtn = document.createElement('button');
+  openBtn.type = 'button';
+  openBtn.className = 'btn btn-primary';
+  openBtn.style.marginBottom = '14px';
+  openBtn.textContent = '🤖 Open LLM Settings';
+  openBtn.setAttribute('aria-label', 'Open the LLM settings page');
+  openBtn.addEventListener('click', () => { window.location.href = '/#llm-settings'; });
+  container.appendChild(openBtn);
+
+  const box = document.createElement('div');
+  container.appendChild(box);
+  if (!llmSectionLoaded) {
+    box.textContent = 'Loading…';
+    try {
+      const res = await fetch('/api/llm/settings');
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      // The renderer edits write through cfg, so the working copy must hold the
+      // effective settings — not the stale config.yaml section.
+      cfg.llm_decipher = await res.json();
+      llmSectionLoaded = true;
+    } catch (err) {
+      box.textContent = 'Could not load LLM settings: ' + err.message;
+      return;
+    }
+  }
+  box.innerHTML = '';
+  renderObject(box, cfg.llm_decipher, 'llm_decipher');
+}
+
 function selectSection(key) {
   document.querySelectorAll('.section-item').forEach(b => {
     const isActive = b.dataset.section === key;
@@ -551,6 +595,18 @@ function selectSection(key) {
     fields.innerHTML = '';
     fields.appendChild(ta);
     setDirty('__raw__');
+    if (title) title.focus();
+    return;
+  }
+  if (key === 'llm_decipher') {
+    // Editable here too, but persistence belongs to the LLM settings API:
+    // values are loaded from the effective (runtime) state and saved through
+    // /api/llm/settings, never written to config.yaml by this page.
+    title.textContent = SECTION_LABELS[key] || 'LLM Decipher';
+    desc.textContent = 'LLM profiles in use — saved through the LLM settings API';
+    fields.innerHTML = '';
+    fields.classList.remove('dirty');
+    renderLLMSection(fields);
     if (title) title.focus();
     return;
   }
@@ -765,7 +821,10 @@ function renderField(path, label, value) {
         ctrl.appendChild(ta);
       } else {
         const input = document.createElement('input');
-        input.type = 'text'; input.id = id; input.value = value;
+        // Secret-looking fields are masked, exactly like the LLM page does.
+        input.type = /(^|\.)api_key$/.test(path) ? 'password' : 'text';
+        if (input.type === 'password') input.autocomplete = 'off';
+        input.id = id; input.value = value;
         input.addEventListener('change', () => {
           setAt(cfg, path, input.value === '' ? null : input.value);
           setDirty(path); markFieldDirty(path);
@@ -1022,6 +1081,27 @@ async function saveConfig() {
     // For normal sections cfg already reflects every edit: field changes write
     // straight into cfg, so edits in any section are preserved across switches.
   try {
+    // LLM profiles are persisted by the LLM settings API, not by /api/config:
+    // this page is a second entry point onto the same store.
+    const llmTouched = [...dirty].some(p => p === 'llm_decipher' || p.startsWith('llm_decipher.'));
+    if (llmTouched && cfg.llm_decipher) {
+      const lres = await fetch('/api/llm/settings', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cfg.llm_decipher),
+      });
+      if (!lres.ok) {
+        const lerr = await lres.json().catch(() => null);
+        const lmsg = (lerr && lerr.error) ? lerr.error : 'HTTP ' + lres.status;
+        status.textContent = 'LLM profiles not saved: ' + lmsg;
+        status.className = 'status err';
+        showToast('LLM profiles not saved', 'error');
+        updateSaveBtn();
+        return;
+      }
+      // Drop the cached working copy so the next visit re-reads the
+      // canonical (validated) settings.
+      llmSectionLoaded = false;
+    }
     const res = await fetch('/api/config', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ config: cfg }),
@@ -1040,6 +1120,7 @@ async function saveConfig() {
     const savedData = await savedRes.json();
     cfg = savedData.config || cfg;
     dirty.clear();
+    llmSectionLoaded = false;
     updateSaveBtn();
     status.textContent = 'Saved, hot-reload applied.';
     status.className = 'status ok';

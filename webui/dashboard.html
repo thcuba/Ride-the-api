@@ -1534,6 +1534,9 @@ loadTlsBar();
 loadTlsCerts();
 loadProtoServers();
 loadVendors();
+// Deep link used by the Configuration page: /#llm-settings opens the LLM page,
+// which owns the profiles (the config page only mirrors them, read-only).
+if (window.location.hash === '#llm-settings') { openLLMSettings(); }
 setInterval(loadDevices, 8000);
 setInterval(loadTlsBar, 15000);
 
