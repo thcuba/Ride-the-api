@@ -1187,6 +1187,30 @@ class LearningPipeline:
                 pattern_id = f"{device_id}_{intent}_{path_digest}"
                 pattern = existing_patterns.get(pattern_id)
 
+            existing_templates = {}
+            if template_ids:
+                res = await session.execute(
+                    select(ResponseTemplate).where(ResponseTemplate.template_id.in_(template_ids))
+                )
+                existing_templates = {t.template_id: t for t in res.scalars().all()}
+
+            existing_mappings = set()
+            if mapping_ids:
+                res = await session.execute(
+                    select(FieldMapping.mapping_id).where(FieldMapping.mapping_id.in_(mapping_ids))
+                )
+                existing_mappings = set(res.scalars().all())
+
+            for item in prepared_patterns:
+                pattern_data = item["pattern_data"]
+                intent = item["intent"]
+                method = item["method"]
+                path = item["path"]
+                pattern_id = item["pattern_id"]
+                resp_data = item["resp_data"]
+                template_id = item["template_id"]
+
+                pattern = existing_patterns.get(pattern_id)
                 if not pattern:
                     pattern = RequestPattern(
                         pattern_id=pattern_id,

@@ -208,3 +208,6 @@
 ## 2026-03-31 - Bulk Pre-fetching in Pattern Ingestion
 **Learning:** Performing database queries inside loops during pattern ingestion creates an N+1 query bottleneck. Pre-fetching existing RequestPattern, ResponseTemplate, and FieldMapping rows using bulk IN queries reduces database round-trips significantly.
 **Action:** Always extract candidate keys and execute a bulk  query before iterating over items to upsert or insert in SQLAlchemy session loops.
+## 2025-05-18 - Fix N+1 Query in Pipeline Template Ingestion
+**Learning:** Ingestion loops querying `RequestPattern`, `ResponseTemplate`, and `FieldMapping` individually per pattern item cause extreme N+1 database overhead as the number of patterns grows. Pre-computing pattern, template, and mapping IDs and batching `SELECT` queries with `in_()` drops database roundtrips from 3N to 3 queries.
+**Action:** Always pre-calculate deterministic identifiers and execute batch `in_()` queries before looping when upserting learned or imported entities.

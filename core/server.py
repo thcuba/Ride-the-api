@@ -765,10 +765,10 @@ app = FastAPI(
     version="0.2.0",
     lifespan=lifespan,
 )
-# Security: Disable credential sharing when allowing wildcard origins to prevent CORS vulnerability.
+# Restrict CORS to trusted local web UI origins to prevent cross-site request attacks.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:8911", "http://127.0.0.1:8911"],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
