@@ -99,6 +99,13 @@ systemctl --user enable --now ride-the-api
 > Pi; if you do run a local model, pick a small one that is actually installed
 > (check with `ollama list`). The default profile already points at an
 > OpenAI-compatible endpoint.
+>
+> **Prebuilt vs source:** the LLM client (`openai` SDK) requires the classic
+> `httpx` (0.x). A prebuilt bundle built against `httpx2` makes **every** LLM
+> connection test fail with `Connection error.` while the same call works from a
+> shell — that is a build/dependency issue, not a config one. Prefer the
+> source bootstrap below (`deploy/bootstrap.sh`);
+> `tests/test_llm_runtime_deps.py` guards the `openai`↔`httpx` contract in CI.
 
 ### Windows — `deploy/install.ps1`
 
