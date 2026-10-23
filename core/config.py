@@ -499,14 +499,14 @@ class ConnectionWatchdogConfig(BaseModel):
     """
 
     enabled: bool = True
-    interval: int = 60          # seconds between probes
-    timeout: int = 10           # per-probe HTTP timeout
-    max_failures: int = 5       # consecutive transport failures before restart
+    interval: int = 60  # seconds between probes
+    timeout: int = 10  # per-probe HTTP timeout
+    max_failures: int = 5  # consecutive transport failures before restart
     probe_url: str = "http://api.openai.com/v1/models"
     restart_command: list[str] = Field(
         default_factory=lambda: ["systemctl", "--user", "restart", "ride-the-api"]
     )
-    cooldown: int = 600         # seconds to wait before allowing another restart
+    cooldown: int = 600  # seconds to wait before allowing another restart
 
 
 class Config(BaseModel):
@@ -526,9 +526,7 @@ class Config(BaseModel):
     learning: LearningConfig = Field(default_factory=LearningConfig)
     tls_decrypt: TLSDecryptConfig = Field(default_factory=TLSDecryptConfig)
     protocol_servers: ProtocolServersConfig = Field(default_factory=ProtocolServersConfig)
-    connection_watchdog: ConnectionWatchdogConfig = Field(
-        default_factory=ConnectionWatchdogConfig
-    )
+    connection_watchdog: ConnectionWatchdogConfig = Field(default_factory=ConnectionWatchdogConfig)
 
 
 class ConfigManager:

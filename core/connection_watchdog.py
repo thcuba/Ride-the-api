@@ -53,7 +53,10 @@ class ConnectionWatchdog:
     def __init__(self, config: ConnectionWatchdogConfig) -> None:
         self._cfg = config
         self._failures = 0
-        self._last_restart = 0.0
+        # ``-inf`` = no previous restart, so the first one is never suppressed by
+        # the cooldown (``time.monotonic()`` is a system-wide clock: on a freshly
+        # booted host it is below ``cooldown`` and a ``0`` sentinel would block).
+        self._last_restart = float("-inf")
         self._task: asyncio.Task | None = None
 
     async def start(self) -> None:
