@@ -41,6 +41,7 @@ from core.buffer import (
 )
 from core.cert_manager import CertManager, get_cert_manager
 from core.config import ConnectionType, get_config_manager
+from core.connection_watchdog import ConnectionWatchdog
 from core.database import (
     DatabaseManager,
     DeviceRegistry,
@@ -139,6 +140,7 @@ cert_manager: CertManager | None = None
 auto_switch_scheduler: AutoSwitchScheduler | None = None
 metrics_server: MetricsServer | None = None
 _metrics_scrape_task: asyncio.Task | None = None
+connection_watchdog: ConnectionWatchdog | None = None
 
 APP_VERSION_FALLBACK = "0.2.0"
 
@@ -610,6 +612,27 @@ async def lifespan(_app: FastAPI):  # noqa: C901, PLR0912, PLR0915
     await auto_switch_scheduler.start()
     logger.info("Auto-switch scheduler started")
 
+    # Start the connection watchdog: detects when the process can no longer
+    # reach any outbound HTTP endpoint (a wedged async HTTP stack seen on
+    # long-running installs) and restarts the process so the box heals itself.
+    global connection_watchdog  # noqa: PLW0603
+    watchdog_cfg = config.connection_watchdog
+    if watchdog_cfg.enabled:
+        try:
+            connection_watchdog = ConnectionWatchdog(watchdog_cfg)
+            await connection_watchdog.start()
+            logger.info(
+                "Connection watchdog enabled: probe %s every %ds, restart after %d failures",
+                watchdog_cfg.probe_url,
+                watchdog_cfg.interval,
+                watchdog_cfg.max_failures,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to start connection watchdog, disabled")
+            connection_watchdog = None
+    else:
+        logger.info("Connection watchdog disabled (config)")
+
     # Start Prometheus metrics endpoint if enabled (documented in api.md:
     # metrics live on their own port 9090, separate from the proxy's 8911,
     # and expose ride_api_* plus python_* runtime metrics).
@@ -684,6 +707,14 @@ async def lifespan(_app: FastAPI):  # noqa: C901, PLR0912, PLR0915
             logger.info("Auto-switch scheduler stopped")
         except Exception as e:
             logger.error("Error stopping auto-switch scheduler: %s", e)  # noqa: TRY400
+
+    # Stop the connection watchdog probe loop.
+    if connection_watchdog is not None:
+        try:
+            await connection_watchdog.stop()
+            logger.info("Connection watchdog stopped")
+        except Exception as e:
+            logger.error("Error stopping connection watchdog: %s", e)  # noqa: TRY400
 
     # Stop the Prometheus metrics server and its gauge-refresh worker.
     if metrics_server:

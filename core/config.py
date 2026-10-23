@@ -483,6 +483,32 @@ class ProtocolServersConfig(BaseModel):
     matter_bridge: MatterBridgeConfig = Field(default_factory=MatterBridgeConfig)
 
 
+class ConnectionWatchdogConfig(BaseModel):
+    """Auto-heal when the process can no longer make outgoing HTTP calls.
+
+    Long-running installs occasionally get into a state where every outbound
+    HTTP request fails with ``Connection error.`` (httpx.TransportError) while
+    local listeners keep serving and the same calls succeed from a shell. Only a
+    process restart clears it. The watchdog periodically probes an outbound URL
+    with a FRESH client and, after ``max_failures`` consecutive failures, restarts
+    itself via ``restart_command`` (then cools down for ``cooldown`` seconds).
+
+    ``restart_command`` defaults to the standard systemd user unit; set it to an
+    empty list to disable the restart (the watchdog then only logs) or point it
+    at any non-interactive restart command.
+    """
+
+    enabled: bool = True
+    interval: int = 60          # seconds between probes
+    timeout: int = 10           # per-probe HTTP timeout
+    max_failures: int = 5       # consecutive transport failures before restart
+    probe_url: str = "http://api.openai.com/v1/models"
+    restart_command: list[str] = Field(
+        default_factory=lambda: ["systemctl", "--user", "restart", "ride-the-api"]
+    )
+    cooldown: int = 600         # seconds to wait before allowing another restart
+
+
 class Config(BaseModel):
     core: CoreConfig = Field(default_factory=CoreConfig)
     buffer: BufferConfig = Field(default_factory=BufferConfig)
@@ -500,6 +526,9 @@ class Config(BaseModel):
     learning: LearningConfig = Field(default_factory=LearningConfig)
     tls_decrypt: TLSDecryptConfig = Field(default_factory=TLSDecryptConfig)
     protocol_servers: ProtocolServersConfig = Field(default_factory=ProtocolServersConfig)
+    connection_watchdog: ConnectionWatchdogConfig = Field(
+        default_factory=ConnectionWatchdogConfig
+    )
 
 
 class ConfigManager:
