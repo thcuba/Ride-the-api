@@ -139,3 +139,58 @@ class TestAutoSwitchScheduler:
         assert scheduler._task is task
 
         await scheduler.stop()
+
+
+@pytest.mark.asyncio
+async def test_import_device_patterns(db_manager, registered_device):
+    """Test importing device patterns with batch logic and duplicate filtering."""
+    verifier = CloudIndependenceVerifier(db_manager)
+    device_id = registered_device
+
+    data = {
+        "patterns": [
+            {
+                "pattern_id": "p1",
+                "method": "GET",
+                "path_pattern": "/status",
+                "protocol": "http",
+                "intent": "status",
+            },
+            {
+                "pattern_id": "p2",
+                "method": "POST",
+                "path_pattern": "/control",
+                "protocol": "http",
+                "intent": "control",
+            },
+        ],
+        "templates": [
+            {
+                "template_id": "t1",
+                "pattern_id": "p1",
+                "status_code": 200,
+            }
+        ],
+        "field_mappings": [
+            {
+                "mapping_id": "m1",
+                "request_field": "state",
+                "request_type": "string",
+                "response_field": "ison",
+                "response_type": "boolean",
+                "intent": "control",
+            }
+        ],
+    }
+
+    # Initial import
+    count = await verifier.import_device_patterns(device_id, data)
+    assert count == 2  # noqa: PLR2004
+
+    # Re-import same data - should import 0 new items
+    count2 = await verifier.import_device_patterns(device_id, data)
+    assert count2 == 0
+
+    # Import empty data dict - should handle gracefully
+    count3 = await verifier.import_device_patterns(device_id, {})
+    assert count3 == 0
