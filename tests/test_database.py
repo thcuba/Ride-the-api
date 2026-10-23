@@ -108,6 +108,7 @@ class TestDeviceRegistry:
     @pytest.mark.asyncio
     async def test_get_or_create_device_missing_config_fallback(self, db_manager, monkeypatch):
         """Verify get_or_create_device falls back to empty dict when get_config fails."""
+
         def mock_get_config():
             raise RuntimeError("Config error")
 
