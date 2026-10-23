@@ -2257,8 +2257,16 @@ async def put_config(request: Request):
             status_code=400,
             content={"error": "Invalid JSON body: expected an object with a 'config' key"},
         )
+    payload = body["config"]
+    # LLM profiles are owned by the LLM settings API (``/api/llm/settings``),
+    # which validates them and persists to the runtime override file. A config
+    # save always sends the whole tree, so stamp the *effective* (runtime) LLM
+    # section back in: profiles can never be clobbered — or silently rolled
+    # back to stale ``config.yaml`` values — by saving an unrelated section.
+    if isinstance(payload, dict) and "llm_decipher" in payload and llm_decipher_service:
+        payload = {**payload, "llm_decipher": llm_decipher_service.get_settings()}
     try:
-        ok = config_manager.update_config(body["config"])
+        ok = config_manager.update_config(payload)
     except ValidationError as ve:
         return JSONResponse(status_code=400, content={"error": f"Config validation failed: {ve}"})
     except Exception:  # noqa: BLE001 - persist failure should not 500 silently
