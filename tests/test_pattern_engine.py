@@ -633,19 +633,19 @@ def test_eval_formula_ast_security_rejections(engine):
 
     # 1. Attribute access attempts
     assert engine._eval_formula('"".__class__', {}, store) == 0
-    assert engine._eval_formula('abs.__globals__', {}, store) == 0
+    assert engine._eval_formula("abs.__globals__", {}, store) == 0
 
     # 2. Method call attempts
     assert engine._eval_formula('"hello".upper()', {}, store) == 0
 
     # 3. Subscript/indexing attempts
-    assert engine._eval_formula('[1, 2, 3][0]', {}, store) == 0
+    assert engine._eval_formula("[1, 2, 3][0]", {}, store) == 0
 
     # 4. List / dict comprehension attempts
-    assert engine._eval_formula('[x for x in [1, 2]]', {}, store) == 0
+    assert engine._eval_formula("[x for x in [1, 2]]", {}, store) == 0
 
     # 5. Lambda function attempts
-    assert engine._eval_formula('(lambda x: x + 1)(2)', {}, store) == 0
+    assert engine._eval_formula("(lambda x: x + 1)(2)", {}, store) == 0
 
 
 def test_eval_formula_ast_allowed_operations(engine):
