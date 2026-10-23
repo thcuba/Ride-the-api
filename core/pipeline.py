@@ -198,7 +198,7 @@ class ContextBuffer:
         # lists, booleans, None, and timestamp via .isoformat()) are natively
         # JSON serializable. Removing default=str avoids fallback handler lookup.
         # Since json.dumps defaults to ensure_ascii=True, all non-ASCII characters
-        # are escaped as \uXXXX ASCII sequences, so string character count
+        # are escaped as \uHHHH ASCII sequences, so string character count
         # len(serialized) exactly equals its UTF-8 byte size len(serialized.encode('utf-8'))
         # without allocating intermediate bytes objects (~1.20x speedup).
         serialized = json.dumps(pair_json)
@@ -1694,7 +1694,7 @@ class LearningOrchestrator:
         if device.mode == PipelineMode.PASSTHROUGH.value:
             return {"action": "ignored", "reason": "passthrough"}
         # Production/hybrid mode: learn from the miss. The CLOUD_MISS is NOT
-        # recorded again here ÃƒÆ'Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â it was already counted once when the request  # noqa: E501
+        # recorded again here - it was already counted once when the request
         # was forwarded (_handle_production/_handle_hybrid record it at
         # request time). Recording it again on the response would double-count
         # total_requests/cloud_misses and understate the real match rate.
