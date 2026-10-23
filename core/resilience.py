@@ -272,36 +272,67 @@ class CloudIndependenceVerifier:
             ],
         }
 
-    async def import_device_patterns(self, device_id: str, data: dict) -> int:
+    async def import_device_patterns(self, device_id: str, data: dict) -> int:  # noqa: C901, PLR0912
         """Import previously exported patterns (for sharing between devices)."""
         count = 0
         async with self.db_manager.device_session(device_id) as session:
-            for p_data in data.get("patterns", []):
-                existing = await session.execute(
-                    select(RequestPattern).where(RequestPattern.pattern_id == p_data["pattern_id"])
-                )
-                if not existing.scalar_one_or_none():
-                    pattern = RequestPattern(**p_data)
-                    session.add(pattern)
-                    count += 1
-
-            for t_data in data.get("templates", []):
-                existing = await session.execute(
-                    select(ResponseTemplate).where(
-                        ResponseTemplate.template_id == t_data["template_id"]
+            patterns = data.get("patterns", [])
+            if patterns:
+                p_ids = [p["pattern_id"] for p in patterns if "pattern_id" in p]
+                existing_p = set()
+                if p_ids:
+                    res = await session.execute(
+                        select(RequestPattern.pattern_id).where(
+                            RequestPattern.pattern_id.in_(p_ids)
+                        )
                     )
-                )
-                if not existing.scalar_one_or_none():
-                    template = ResponseTemplate(**t_data)
-                    session.add(template)
+                    existing_p = set(res.scalars().all())
 
-            for m_data in data.get("field_mappings", []):
-                existing = await session.execute(
-                    select(FieldMapping).where(FieldMapping.mapping_id == m_data["mapping_id"])
-                )
-                if not existing.scalar_one_or_none():
-                    mapping = FieldMapping(**m_data)
-                    session.add(mapping)
+                for p_data in patterns:
+                    if p_data.get("pattern_id") not in existing_p:
+                        pattern = RequestPattern(**p_data)
+                        session.add(pattern)
+                        count += 1
+                        if "pattern_id" in p_data:
+                            existing_p.add(p_data["pattern_id"])
+
+            templates = data.get("templates", [])
+            if templates:
+                t_ids = [t["template_id"] for t in templates if "template_id" in t]
+                existing_t = set()
+                if t_ids:
+                    res = await session.execute(
+                        select(ResponseTemplate.template_id).where(
+                            ResponseTemplate.template_id.in_(t_ids)
+                        )
+                    )
+                    existing_t = set(res.scalars().all())
+
+                for t_data in templates:
+                    if t_data.get("template_id") not in existing_t:
+                        template = ResponseTemplate(**t_data)
+                        session.add(template)
+                        if "template_id" in t_data:
+                            existing_t.add(t_data["template_id"])
+
+            mappings = data.get("field_mappings", [])
+            if mappings:
+                m_ids = [m["mapping_id"] for m in mappings if "mapping_id" in m]
+                existing_m = set()
+                if m_ids:
+                    res = await session.execute(
+                        select(FieldMapping.mapping_id).where(
+                            FieldMapping.mapping_id.in_(m_ids)
+                        )
+                    )
+                    existing_m = set(res.scalars().all())
+
+                for m_data in mappings:
+                    if m_data.get("mapping_id") not in existing_m:
+                        mapping = FieldMapping(**m_data)
+                        session.add(mapping)
+                        if "mapping_id" in m_data:
+                            existing_m.add(m_data["mapping_id"])
 
         logger.info(f"Imported {count} patterns for device {device_id}")
         return count

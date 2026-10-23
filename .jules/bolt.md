@@ -204,3 +204,8 @@
 ## 2026-03-31 - Fast-Path Check for Non-Equals Scalar String Redaction
 **Learning:** `_redact_key_value_pairs` in `core/redaction.py` executed `text.split("&")`, item loop iteration, and `"&".join(...)` on every scalar string body, regardless of whether key-value delimiter `=` existed. Adding a fast-path short-circuit `if "=" not in text: return text` eliminates string splitting, list allocation, and string joining on scalar non-key-value string payloads (~4.3x speedup, ~0.11s vs ~0.47s per 1,000,000 checks).
 **Action:** Short-circuit string-parsing helpers early with fast `in` character presence checks (e.g. `if "=" not in text: return text`) before allocating lists via `split()` or rejoining strings.
+
+
+## 2026-03-31 - Batching DB existence queries in resilience pattern imports
+**Learning:** Checking for existing records inside a loop generates N+1 queries, significantly slowing down batch operations (e.g. 200 items took ~1.40s for fresh import and ~0.66s for re-import).
+**Action:** Use SQLAlchemy `in_` queries to fetch all matching existing record IDs in a single query prior to the loop, reducing database roundtrips from O(N) to O(1) and accelerating execution speed by 5.6x for fresh imports and 59x for duplicate re-imports.
