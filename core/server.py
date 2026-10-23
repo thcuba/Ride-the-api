@@ -2261,9 +2261,10 @@ async def put_config(request: Request):
     # LLM profiles are owned by the LLM settings API (``/api/llm/settings``),
     # which validates them and persists to the runtime override file. A config
     # save always sends the whole tree, so stamp the *effective* (runtime) LLM
-    # section back in: profiles can never be clobbered — or silently rolled
-    # back to stale ``config.yaml`` values — by saving an unrelated section.
-    if isinstance(payload, dict) and "llm_decipher" in payload and llm_decipher_service:
+    # section back in — present or not: a generic save can neither change nor
+    # drop the profiles, and ``config.yaml`` stays aligned with the runtime.
+    # The Configuration page edits them through the LLM settings API instead.
+    if isinstance(payload, dict) and llm_decipher_service:
         payload = {**payload, "llm_decipher": llm_decipher_service.get_settings()}
     try:
         ok = config_manager.update_config(payload)

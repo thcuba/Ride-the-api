@@ -931,12 +931,15 @@ The **single source of truth** for the system LLM profiles used by the decipher
 (`enabled`, `default_profile`, `profiles`). `PUT` validates the payload and
 persists it to the runtime override file, so a change takes effect immediately.
 
-`llm_decipher` is therefore **owned by this endpoint**: a generic
-`PUT /api/config` cannot change it. Because a config save always sends the whole
-tree, the server stamps the *effective* (runtime) LLM section back in before
-persisting — otherwise saving any unrelated section would silently roll the
-profiles back to stale `config.yaml` values. The Configuration page mirrors that
-section read-only and links to the LLM page, which is the one place to edit it.
+`llm_decipher` is therefore **owned by this endpoint**, which is one of two
+entry points onto the same store: the LLM page (dashboard modal) and the
+Configuration page's "LLM Decipher" section, which loads the effective values
+and saves them through this API.
+
+A generic `PUT /api/config` can never change them: because a config save always
+sends the whole tree, the server stamps the *effective* (runtime) LLM section
+back in — present or not — so a save can neither overwrite nor drop the profiles
+and `config.yaml` stays aligned with the runtime.
 
 ### `GET /api/llm/profiles`
 

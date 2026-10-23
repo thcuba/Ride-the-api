@@ -304,6 +304,25 @@ class TestLLMSettingsAPI:
         assert "injected" not in out["profiles"]
         assert out["profiles"]["default"]["base_url"] == "http://a/v1"
 
+    def test_config_save_without_llm_section_keeps_effective_profiles(self):
+        """Omitting the section must not drop the profiles either.
+
+        ``PUT /api/config`` replaces the whole config, so the effective LLM
+        section is stamped back in even when the payload has no
+        ``llm_decipher`` key at all.
+        """
+        server.llm_decipher_service = self._mock_service()
+        client = self._client()
+        headers = {"X-API-Key": "test-password"}
+        cfg = client.get("/api/config", headers=headers).json()["config"]
+        cfg.pop("llm_decipher", None)
+        with patch.object(config_manager, "_write", return_value=True):
+            resp = client.put("/api/config", headers=headers, json={"config": cfg})
+        assert resp.status_code == 200  # noqa: PLR2004
+        out = resp.json()["config"]["llm_decipher"]
+        assert out["default_profile"] == "default"
+        assert out["profiles"]["default"]["base_url"] == "http://a/v1"
+
     def test_test_profile_success(self):
         svc = MagicMock()
         svc.test_connection = AsyncMock(
