@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import re
 import socket
+import sys
 import urllib.error
 import urllib.request
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
+from opentelemetry import trace as otel_trace
+from opentelemetry.sdk.trace.export import ConsoleSpanExporter
 
 from core import observability as obs
 
@@ -143,36 +146,31 @@ def test_metrics_registry_isolated_from_global() -> None:
 
 
 def test_build_tracer_otlp_fallback_on_importerror() -> None:
-    """When OTLP exporter module is missing, build_tracer falls back to ConsoleSpanExporter with warning."""
-    import sys
-    from opentelemetry import trace as otel_trace
-    from opentelemetry.sdk.trace.export import ConsoleSpanExporter
-
-    with patch.dict(sys.modules, {"opentelemetry.exporter.otlp.proto.grpc.trace_exporter": None}):
-        with patch.object(obs.logger, "warning") as mock_warn:
-            tracer = obs.build_tracer("otlp", "http://localhost:4317")
-            assert tracer is not None
-            mock_warn.assert_called_once()
-            assert "opentelemetry-exporter-otlp is not installed" in mock_warn.call_args[0][0]
-            tp = otel_trace.get_tracer_provider()
-            assert isinstance(
-                tp._active_span_processor._span_processors[0].span_exporter,  # type: ignore[attr-defined]
-                ConsoleSpanExporter,
-            )
+    """When OTLP exporter module is missing, build_tracer falls back to ConsoleSpanExporter."""
+    otlp_mod = "opentelemetry.exporter.otlp.proto.grpc.trace_exporter"
+    with (
+        patch.dict(sys.modules, {otlp_mod: None}),
+        patch.object(obs.logger, "warning") as mock_warn,
+    ):
+        tracer = obs.build_tracer("otlp", "http://localhost:4317")
+        assert tracer is not None
+        mock_warn.assert_called_once()
+        assert "opentelemetry-exporter-otlp is not installed" in mock_warn.call_args[0][0]
+        tp = otel_trace.get_tracer_provider()
+        assert isinstance(
+            tp._active_span_processor._span_processors[0].span_exporter,  # type: ignore[attr-defined]
+            ConsoleSpanExporter,
+        )
 
 
 def test_build_tracer_otlp_success() -> None:
-    """When OTLP exporter is available, build_tracer instantiates OTLPSpanExporter with endpoint."""
-    import sys
-    from unittest.mock import MagicMock
-
+    """When OTLP exporter is available, build_tracer instantiates OTLPSpanExporter."""
     mock_exporter_module = MagicMock()
     mock_otlp_cls = MagicMock()
     mock_exporter_module.OTLPSpanExporter = mock_otlp_cls
 
-    with patch.dict(
-        sys.modules, {"opentelemetry.exporter.otlp.proto.grpc.trace_exporter": mock_exporter_module}
-    ):
+    otlp_mod = "opentelemetry.exporter.otlp.proto.grpc.trace_exporter"
+    with patch.dict(sys.modules, {otlp_mod: mock_exporter_module}):
         tracer = obs.build_tracer("otlp", "http://localhost:4317")
         assert tracer is not None
         mock_otlp_cls.assert_called_once_with(endpoint="http://localhost:4317")
