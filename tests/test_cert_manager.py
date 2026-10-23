@@ -257,3 +257,79 @@ class TestDeleteCertEndpoint:
         assert response.status_code == 200  # noqa: PLR2004
         assert response.json()["status"] == "ok"
         assert response.json()["hostname"] == "existing.example.com"
+
+
+class TestCertEndpointsErrorHandling:
+    """Test error handling and exception isolation in TLS cert endpoints."""
+
+    def test_get_cert_info_invalid_hostname_returns_400(self, monkeypatch, tmp_path):
+        """Requesting info with an invalid hostname format returns 400."""
+        cm = CertManager(
+            CertManagerConfig(
+                ca_cert_path=str(tmp_path / "certs" / "ca.pem"),
+                ca_key_path=str(tmp_path / "certs" / "ca.key"),
+                device_certs_dir=str(tmp_path / "device_certs"),
+                external_certs_dir=str(tmp_path / "external_certs"),
+            )
+        )
+        monkeypatch.setattr(server_mod, "cert_manager", cm)
+        monkeypatch.setattr(server_mod.config_manager.config.security, "password", "testpass")
+        client = TestClient(server_mod.app)
+
+        response = client.get(
+            "/api/tls/certs/invalid%20hostname", headers={"X-API-Key": "testpass"}
+        )
+        assert response.status_code == 400  # noqa: PLR2004
+        assert "Unsafe hostname" in response.json().get("error", "")
+
+    def test_upload_json_invalid_base64_returns_400(self, monkeypatch, tmp_path):
+        """Uploading cert with bad base64 encoding returns 400."""
+        cm = CertManager(
+            CertManagerConfig(
+                ca_cert_path=str(tmp_path / "certs" / "ca.pem"),
+                ca_key_path=str(tmp_path / "certs" / "ca.key"),
+                device_certs_dir=str(tmp_path / "device_certs"),
+                external_certs_dir=str(tmp_path / "external_certs"),
+            )
+        )
+        monkeypatch.setattr(server_mod, "cert_manager", cm)
+        monkeypatch.setattr(server_mod.config_manager.config.security, "password", "testpass")
+        client = TestClient(server_mod.app)
+
+        response = client.post(
+            "/api/tls/certs/upload-json",
+            json={
+                "hostname": "valid.com",
+                "cert_base64": "!!!notbase64!!!",
+                "key_base64": "!!!notbase64!!!",
+            },
+            headers={"X-API-Key": "testpass"},
+        )
+        assert response.status_code == 400  # noqa: PLR2004
+
+    def test_unexpected_exception_returns_500_without_leak(self, monkeypatch, tmp_path):
+        """Unexpected internal exceptions return 500 without leaking details."""
+        cm = CertManager(
+            CertManagerConfig(
+                ca_cert_path=str(tmp_path / "certs" / "ca.pem"),
+                ca_key_path=str(tmp_path / "certs" / "ca.key"),
+                device_certs_dir=str(tmp_path / "device_certs"),
+                external_certs_dir=str(tmp_path / "external_certs"),
+            )
+        )
+
+        def mock_import_raise(*_args, **_kwargs):
+            raise OSError("Disk write failure: secret internal path /var/private")
+
+        monkeypatch.setattr(cm, "import_cert", mock_import_raise)
+        monkeypatch.setattr(server_mod, "cert_manager", cm)
+        monkeypatch.setattr(server_mod.config_manager.config.security, "password", "testpass")
+        client = TestClient(server_mod.app)
+
+        response = client.post(
+            "/api/tls/certs/upload-json",
+            json={"hostname": "valid.com", "cert_base64": "Y2VydA==", "key_base64": "a2V5"},
+            headers={"X-API-Key": "testpass"},
+        )
+        assert response.status_code == 500  # noqa: PLR2004
+        assert response.json() == {"error": "An internal error occurred"}
