@@ -321,9 +321,7 @@ class CloudIndependenceVerifier:
                 existing_m = set()
                 if m_ids:
                     res = await session.execute(
-                        select(FieldMapping.mapping_id).where(
-                            FieldMapping.mapping_id.in_(m_ids)
-                        )
+                        select(FieldMapping.mapping_id).where(FieldMapping.mapping_id.in_(m_ids))
                     )
                     existing_m = set(res.scalars().all())
 
