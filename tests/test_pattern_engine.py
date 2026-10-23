@@ -625,3 +625,37 @@ async def test_find_best_match_cached_skips_db():
     assert pattern is not None
     assert template is not None
     db.device_session.assert_not_called()
+
+
+# Test: formula security AST validation
+def test_eval_formula_ast_security_rejections(engine):
+    store = engine.get_state_store("device-1")
+
+    # 1. Attribute access attempts
+    assert engine._eval_formula('"".__class__', {}, store) == 0
+    assert engine._eval_formula('abs.__globals__', {}, store) == 0
+
+    # 2. Method call attempts
+    assert engine._eval_formula('"hello".upper()', {}, store) == 0
+
+    # 3. Subscript/indexing attempts
+    assert engine._eval_formula('[1, 2, 3][0]', {}, store) == 0
+
+    # 4. List / dict comprehension attempts
+    assert engine._eval_formula('[x for x in [1, 2]]', {}, store) == 0
+
+    # 5. Lambda function attempts
+    assert engine._eval_formula('(lambda x: x + 1)(2)', {}, store) == 0
+
+
+def test_eval_formula_ast_allowed_operations(engine):
+    store = engine.get_state_store("device-1")
+    store.set("temp", 20)
+
+    # Arithmetic & math helpers
+    assert engine._eval_formula("{state.temp} + abs(-5)", {}, store) == 25  # noqa: PLR2004
+    assert engine._eval_formula("min(10, max(2, 5))", {}, store) == 5  # noqa: PLR2004
+    assert engine._eval_formula("round(3.14159, 2)", {}, store) == 3.14  # noqa: PLR2004
+
+    # Comparisons & ternary expressions
+    assert engine._eval_formula("{state.temp} > 15 if True else False", {}, store) is True

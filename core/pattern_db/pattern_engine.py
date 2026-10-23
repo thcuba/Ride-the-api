@@ -8,6 +8,7 @@ matching, state management and .ride-pattern.json import/export.
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import contextlib
 import functools
@@ -109,10 +110,68 @@ _FORMULA_EVALUATOR = simpleeval.SimpleEval(
 )
 
 
+_ALLOWED_FORMULA_AST_NODES = (
+    ast.Module,
+    ast.Expr,
+    ast.BinOp,
+    ast.UnaryOp,
+    ast.BoolOp,
+    ast.Compare,
+    ast.IfExp,
+    ast.Call,
+    ast.Constant,
+    ast.Name,
+    ast.Load,
+    ast.Add,
+    ast.Sub,
+    ast.Mult,
+    ast.Div,
+    ast.FloorDiv,
+    ast.Mod,
+    ast.Pow,
+    ast.LShift,
+    ast.RShift,
+    ast.BitOr,
+    ast.BitXor,
+    ast.BitAnd,
+    ast.UAdd,
+    ast.USub,
+    ast.Not,
+    ast.Invert,
+    ast.Eq,
+    ast.NotEq,
+    ast.Lt,
+    ast.LtE,
+    ast.Gt,
+    ast.GtE,
+    ast.Is,
+    ast.IsNot,
+    ast.In,
+    ast.NotIn,
+    ast.And,
+    ast.Or,
+)
+
+
+def _validate_formula_ast(node: ast.AST) -> None:
+    """Validate that formula AST contains only whitelisted, safe node types."""
+    for child in ast.walk(node):
+        if not isinstance(child, _ALLOWED_FORMULA_AST_NODES):
+            raise simpleeval.FeatureNotAvailable(
+                f"AST node '{type(child).__name__}' is not permitted in formulas"
+            )
+        if isinstance(child, ast.Call) and not isinstance(child.func, ast.Name):
+            raise simpleeval.FeatureNotAvailable(
+                "Only direct function calls (e.g. func(...)) are permitted in formulas"
+            )
+
+
 @functools.lru_cache(maxsize=1024)
 def _parse_formula_ast(expr: str):
     """Parse formula string into a simpleeval AST, cached for speedup."""
-    return _FORMULA_EVALUATOR.parse(expr)
+    parsed = _FORMULA_EVALUATOR.parse(expr)
+    _validate_formula_ast(parsed)
+    return parsed
 
 
 # Pre-compiled regex patterns for template resolution and formula processing (hot paths)
