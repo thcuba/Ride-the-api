@@ -929,6 +929,22 @@ Endpoints for managing user-saved LLM profiles.
 
 List of system LLM profiles (from `config.yaml`).
 
+### `POST /api/llm/profiles/test`
+
+Sends a small "hello" completion to a provider and reports whether it answers — this is
+the dashboard's per-profile **Test** button. The body carries the (possibly unsaved) form
+values: `base_url` and `model_id` are required, `api_key` is optional (empty for local
+providers that ignore auth), `timeout` defaults to 30 and `max_retries` to 2.
+
+Returns `200 {"success": true, ...}` on a non-empty completion, or `502` with
+`{"success": false, "error": ...}` when the provider rejects the call.
+
+Each test builds a **throwaway client** from the request's own values — deliberately
+**not** taken from the shared per-profile client cache — and closes it afterwards. A
+cached client must never be reused here: caching the throwaway profile under a fixed
+name would pin the first test's `base_url`/`api_key`, so every later test would keep
+using stale credentials and a corrected key would appear to have no effect.
+
 ### `GET /api/llm/user-profiles`
 
 List of saved user profiles.

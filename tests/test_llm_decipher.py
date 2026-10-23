@@ -5,6 +5,7 @@ Tests for the LLM Deciphering Service.
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import SecretStr
 
 import core.llm_decipher
 from core.llm_decipher import (
@@ -112,6 +113,23 @@ class TestLLMDecipherService:
         )
         assert profile.api_key.get_secret_value() == "sk-literal-key"
 
+    def test_api_key_secretstr_is_not_blanked(self):
+        """An already-wrapped SecretStr must keep its value.
+
+        Regression: the before-validator accepted only ``str``, so a SecretStr
+        argument (used by the profile-copy path and the connection test) was
+        silently blanked and the client fell back to the placeholder key.
+        """
+        profile = LLMProfile(
+            name="copy",
+            base_url="https://api.openai.com/v1",
+            api_key=SecretStr("sk-wrapped-key"),
+            model_id="gpt-4o",
+            prompt_template="",
+        )
+
+        assert profile.api_key.get_secret_value() == "sk-wrapped-key"
+
     @pytest.mark.asyncio
     @patch("core.llm_decipher.AsyncOpenAI")
     async def test_call_llm_success(self, mock_client_class):
@@ -218,6 +236,46 @@ class TestLLMDecipherService:
         _, kwargs = mock_client_class.call_args
         assert kwargs["api_key"] == "sk-super-secret"
         assert kwargs["base_url"] == "https://api.openai.com/v1"
+
+    @pytest.mark.asyncio
+    @patch("core.llm_decipher.AsyncOpenAI")
+    async def test_connection_never_reuses_a_stale_client(self, mock_client_class):
+        """Each test builds a fresh client from that call's params.
+
+        Regression: the throwaway ``_test`` profile used to go through the
+        shared client cache under a fixed name, so the first test pinned the
+        base_url/api_key and every later test kept hitting that stale client —
+        making corrected form values appear to have no effect.
+        """
+        mock_client = MagicMock()
+        mock_client.close = AsyncMock()
+        mock_client_class.return_value = mock_client
+        msg = MagicMock()
+        msg.message.content = "hi"
+        choice = MagicMock()
+        choice.choices = [msg]
+        mock_client.chat.completions.create = AsyncMock(return_value=choice)
+
+        service = make_service()
+
+        first = await service.test_connection(
+            base_url="https://a.example/v1", model_id="m1", api_key="key-1"
+        )
+        second = await service.test_connection(
+            base_url="https://b.example/v1", model_id="m2", api_key="key-2"
+        )
+
+        assert first["success"] is True
+        assert second["success"] is True
+        # Two independent clients, each built from its own call's parameters.
+        assert mock_client_class.call_count == 2  # noqa: PLR2004
+        second_kwargs = mock_client_class.call_args_list[1].kwargs
+        assert second_kwargs["base_url"] == "https://b.example/v1"
+        assert second_kwargs["api_key"] == "key-2"
+        # The throwaway profile must not pollute the shared client cache.
+        assert service._clients == {}
+        # And it must be closed so repeated tests do not leak connection pools.
+        assert mock_client.close.await_count == 2  # noqa: PLR2004
 
     def test_json_extraction_from_markdown(self):
         """Test extracting JSON from ```json blocks via _parse_llm_json."""
