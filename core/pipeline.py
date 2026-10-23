@@ -1123,6 +1123,51 @@ class LearningPipeline:
             # Try to extract from top-level fields
             patterns = [analysis]
 
+        # Pre-compute IDs for batch lookup to eliminate N+1 queries
+        pattern_ids = []
+        template_ids = []
+        mapping_ids = []
+
+        prepared_patterns = []
+        for pattern_data in patterns:
+            intent = pattern_data.get("intent", "unknown")
+            method = pattern_data.get("method", pattern_data.get("request_method", "POST"))
+            path = pattern_data.get("path", pattern_data.get("request_path", "/unknown"))
+            path_digest = hashlib.md5(path.encode("utf-8")).hexdigest()[:8]
+            pattern_id = f"{device_id}_{intent}_{path_digest}"
+            pattern_ids.append(pattern_id)
+
+            resp_data = pattern_data.get("response", pattern_data.get("response_template", {}))
+            template_id = f"tpl_{pattern_id}" if resp_data else None
+            if template_id:
+                template_ids.append(template_id)
+
+            mappings = pattern_data.get("field_mappings", {})
+            prepared_mappings = []
+            if isinstance(mappings, dict):
+                for req_field, raw_resp_info in mappings.items():
+                    resp_info = (
+                        {"response_field": raw_resp_info, "type": "string"}
+                        if isinstance(raw_resp_info, str)
+                        else raw_resp_info
+                    )
+                    mapping_id = f"map_{device_id}_{intent}_{req_field.replace('.', '_')}"
+                    mapping_ids.append(mapping_id)
+                    prepared_mappings.append((mapping_id, req_field, resp_info))
+
+            prepared_patterns.append(
+                {
+                    "pattern_data": pattern_data,
+                    "intent": intent,
+                    "method": method,
+                    "path": path,
+                    "pattern_id": pattern_id,
+                    "resp_data": resp_data,
+                    "template_id": template_id,
+                    "prepared_mappings": prepared_mappings,
+                }
+            )
+
         async with self.db_manager.device_session(device_id) as session:
             stats = await session.execute(
                 select(MatchStats).where(MatchStats.device_id == device_id)
@@ -1132,20 +1177,37 @@ class LearningPipeline:
                 stats_obj = MatchStats(device_id=device_id)
                 session.add(stats_obj)
 
-            for pattern_data in patterns:
-                intent = pattern_data.get("intent", "unknown")
-                method = pattern_data.get("method", pattern_data.get("request_method", "POST"))
-                path = pattern_data.get("path", pattern_data.get("request_path", "/unknown"))
-
-                # Create or update request pattern
-                # Use a deterministic hash so pattern IDs are stable across processes.
-                path_digest = hashlib.md5(path.encode("utf-8")).hexdigest()[:8]
-                pattern_id = f"{device_id}_{intent}_{path_digest}"
-                existing = await session.execute(
-                    select(RequestPattern).where(RequestPattern.pattern_id == pattern_id)
+            existing_patterns = {}
+            if pattern_ids:
+                res = await session.execute(
+                    select(RequestPattern).where(RequestPattern.pattern_id.in_(pattern_ids))
                 )
-                pattern = existing.scalar_one_or_none()
+                existing_patterns = {p.pattern_id: p for p in res.scalars().all()}
 
+            existing_templates = {}
+            if template_ids:
+                res = await session.execute(
+                    select(ResponseTemplate).where(ResponseTemplate.template_id.in_(template_ids))
+                )
+                existing_templates = {t.template_id: t for t in res.scalars().all()}
+
+            existing_mappings = set()
+            if mapping_ids:
+                res = await session.execute(
+                    select(FieldMapping.mapping_id).where(FieldMapping.mapping_id.in_(mapping_ids))
+                )
+                existing_mappings = set(res.scalars().all())
+
+            for item in prepared_patterns:
+                pattern_data = item["pattern_data"]
+                intent = item["intent"]
+                method = item["method"]
+                path = item["path"]
+                pattern_id = item["pattern_id"]
+                resp_data = item["resp_data"]
+                template_id = item["template_id"]
+
+                pattern = existing_patterns.get(pattern_id)
                 if not pattern:
                     pattern = RequestPattern(
                         pattern_id=pattern_id,
@@ -1159,6 +1221,7 @@ class LearningPipeline:
                         confidence=pattern_data.get("confidence", 0.5),
                     )
                     session.add(pattern)
+                    existing_patterns[pattern_id] = pattern
                     stats_obj.patterns_learned += 1
                 else:
                     # The LLM may revise a pattern on a later flush: keep the
@@ -1172,14 +1235,8 @@ class LearningPipeline:
                     pattern.intent = intent
                     pattern.confidence = pattern_data.get("confidence", 0.5)
 
-                # Create/update response template
-                resp_data = pattern_data.get("response", pattern_data.get("response_template", {}))
-                if resp_data:
-                    template_id = f"tpl_{pattern_id}"
-                    existing_tpl = await session.execute(
-                        select(ResponseTemplate).where(ResponseTemplate.template_id == template_id)
-                    )
-                    template = existing_tpl.scalar_one_or_none()
+                if resp_data and template_id:
+                    template = existing_templates.get(template_id)
                     if not template:
                         template = ResponseTemplate(
                             template_id=template_id,
@@ -1192,6 +1249,7 @@ class LearningPipeline:
                             confidence=resp_data.get("confidence", 0.5),
                         )
                         session.add(template)
+                        existing_templates[template_id] = template
                         stats_obj.templates_created += 1
                     else:
                         template.status_code = resp_data.get("status_code", 200)
@@ -1201,29 +1259,21 @@ class LearningPipeline:
                         template.expected_variables = resp_data.get("expected_variables", [])
                         template.confidence = resp_data.get("confidence", 0.5)
 
-                # Save field mappings
-                mappings = pattern_data.get("field_mappings", {})
-                if isinstance(mappings, dict):
-                    for req_field, resp_info in mappings.items():
-                        if isinstance(resp_info, str):
-                            resp_info = {"response_field": resp_info, "type": "string"}  # noqa: PLW2901
-                        mapping_id = f"map_{device_id}_{intent}_{req_field.replace('.', '_')}"
-                        existing_map = await session.execute(
-                            select(FieldMapping).where(FieldMapping.mapping_id == mapping_id)
+                for mapping_id, req_field, resp_info in item["prepared_mappings"]:
+                    if mapping_id not in existing_mappings:
+                        fmap = FieldMapping(
+                            mapping_id=mapping_id,
+                            request_field=req_field,
+                            request_type=resp_info.get("request_type", "string"),
+                            response_field=resp_info.get("response_field", req_field),
+                            response_type=resp_info.get("type", "string"),
+                            transform=resp_info.get("transform", "direct"),
+                            enum_values=resp_info.get("enum_values"),
+                            intent=intent,
+                            confidence=resp_info.get("confidence", 0.5),
                         )
-                        if not existing_map.scalar_one_or_none():
-                            fmap = FieldMapping(
-                                mapping_id=mapping_id,
-                                request_field=req_field,
-                                request_type=resp_info.get("request_type", "string"),
-                                response_field=resp_info.get("response_field", req_field),
-                                response_type=resp_info.get("type", "string"),
-                                transform=resp_info.get("transform", "direct"),
-                                enum_values=resp_info.get("enum_values"),
-                                intent=intent,
-                                confidence=resp_info.get("confidence", 0.5),
-                            )
-                            session.add(fmap)
+                        session.add(fmap)
+                        existing_mappings.add(mapping_id)
 
     async def _persist_device_meta(
         self, device_id: str, device: DeviceRegistry, analysis: dict
