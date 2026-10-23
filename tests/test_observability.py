@@ -6,6 +6,7 @@ import re
 import socket
 import urllib.error
 import urllib.request
+from unittest.mock import patch
 
 import pytest
 
@@ -13,6 +14,7 @@ from core import observability as obs
 
 _OK = 200
 _NOT_FOUND = 404
+_SERVER_ERROR = 500
 
 
 def _free_port() -> int:
@@ -94,6 +96,34 @@ def test_metrics_server_stop_is_idempotent() -> None:
     server.stop()
     assert not server.is_running
     server.stop()  # second call must not raise
+
+
+def test_metrics_server_handles_render_exception() -> None:
+    port = _free_port()
+    server = obs.MetricsServer(port, "/metrics")
+    server.start()
+    try:
+        with patch.object(obs.registry, "render", side_effect=Exception("Render error")):
+            with pytest.raises(urllib.error.HTTPError) as exc:
+                urllib.request.urlopen(f"http://127.0.0.1:{port}/metrics", timeout=5)
+            assert exc.value.code == _SERVER_ERROR
+    finally:
+        server.stop()
+
+
+def test_metrics_server_handles_on_scrape_exception() -> None:
+    def bad_on_scrape() -> None:
+        raise RuntimeError("Callback error")
+
+    port = _free_port()
+    server = obs.MetricsServer(port, "/metrics", on_scrape=bad_on_scrape)
+    server.start()
+    try:
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/metrics", timeout=5)
+        assert exc.value.code == _SERVER_ERROR
+    finally:
+        server.stop()
 
 
 def test_build_tracer_uses_console_by_default():
