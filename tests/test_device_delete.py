@@ -6,6 +6,7 @@ SQLite database and portable ``.ride-pattern.json`` export.
 """
 
 import hashlib
+from pathlib import Path
 
 import pytest
 import pytest_asyncio
@@ -67,3 +68,49 @@ class TestDeleteDevice:
         assert await dm.delete_device("dev-re") is True
         await dm.get_or_create_device("dev-re", "coap")
         assert any(d["device_id"] == "dev-re" for d in await dm.list_devices())
+
+    @pytest.mark.asyncio
+    async def test_delete_device_db_unlink_oserror(self, dm, monkeypatch, caplog):
+        """Verify OSError when unlinking device DB is caught, logged, and deletion succeeds."""
+        await dm.get_or_create_device("dev-oserror-db", "shelly")
+        db_path = dm.device_db_dir / dm._safe_db_name("dev-oserror-db")  # noqa: SLF001
+        assert db_path.exists()
+
+        original_unlink = Path.unlink
+
+        def mock_unlink(self_path, *args, **kwargs):
+            if self_path == db_path:
+                raise OSError("Permission denied (mocked DB error)")
+            return original_unlink(self_path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "unlink", mock_unlink)
+
+        with caplog.at_level("WARNING"):
+            result = await dm.delete_device("dev-oserror-db")
+
+        assert result is True
+        assert f"Could not remove device DB {db_path}: Permission denied (mocked DB error)" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_delete_device_pattern_unlink_oserror(self, dm, monkeypatch, caplog):
+        """Verify OSError when unlinking pattern file is caught, logged, and deletion succeeds."""
+        await dm.get_or_create_device("dev-oserror-pattern", "shelly")
+        pf = pattern_file_path(dm, "dev-oserror-pattern")
+        pf.parent.mkdir(parents=True, exist_ok=True)
+        pf.write_text("{\"version\": \"v2\"}")
+        assert pf.exists()
+
+        original_unlink = Path.unlink
+
+        def mock_unlink(self_path, *args, **kwargs):
+            if self_path == pf:
+                raise OSError("Permission denied (mocked pattern error)")
+            return original_unlink(self_path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "unlink", mock_unlink)
+
+        with caplog.at_level("WARNING"):
+            result = await dm.delete_device("dev-oserror-pattern")
+
+        assert result is True
+        assert f"Could not remove pattern file {pf}: Permission denied (mocked pattern error)" in caplog.text
