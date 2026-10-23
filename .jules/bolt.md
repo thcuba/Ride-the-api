@@ -204,3 +204,7 @@
 ## 2026-03-31 - Fast-Path Check for Non-Equals Scalar String Redaction
 **Learning:** `_redact_key_value_pairs` in `core/redaction.py` executed `text.split("&")`, item loop iteration, and `"&".join(...)` on every scalar string body, regardless of whether key-value delimiter `=` existed. Adding a fast-path short-circuit `if "=" not in text: return text` eliminates string splitting, list allocation, and string joining on scalar non-key-value string payloads (~4.3x speedup, ~0.11s vs ~0.47s per 1,000,000 checks).
 **Action:** Short-circuit string-parsing helpers early with fast `in` character presence checks (e.g. `if "=" not in text: return text`) before allocating lists via `split()` or rejoining strings.
+
+## 2025-05-18 - Fix N+1 Query in Pipeline Template Ingestion
+**Learning:** Ingestion loops querying `RequestPattern`, `ResponseTemplate`, and `FieldMapping` individually per pattern item cause extreme N+1 database overhead as the number of patterns grows. Pre-computing pattern, template, and mapping IDs and batching `SELECT` queries with `in_()` drops database roundtrips from 3N to 3 queries.
+**Action:** Always pre-calculate deterministic identifiers and execute batch `in_()` queries before looping when upserting learned or imported entities.
