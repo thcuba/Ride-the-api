@@ -22,6 +22,7 @@
 13. [learning](#learning) — Learning and production modes
 14. [tls_decrypt](#tls_decrypt) — TLS decryption/MITM
 15. [protocol_servers](#protocol_servers) — Multi-protocol servers
+16. [connection_watchdog](#connection_watchdog) — Auto-heal of a wedged process
 
 ---
 
@@ -1147,6 +1148,40 @@ protocol_servers:
     controller_port: 5540
     fabric_id: 1
     vendor_id: 65521
+```
+
+---
+
+## connection_watchdog
+
+Auto-heal for a wedge observed on long-running installs: every **outgoing** HTTP
+call fails with `Connection error.` while local listeners keep serving and the
+same call succeeds from a shell. Only a process restart clears it. The watchdog
+probes an outbound URL with a **fresh** HTTP client every `interval` seconds and,
+after `max_failures` consecutive transport/timeout failures, restarts the service
+via `restart_command` (then waits `cooldown` seconds before allowing another
+restart). Any HTTP response — even a 4xx/3xx — proves the transport path works,
+so only transport/timeout errors count as failures.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | `boolean` | `true` | Enable the probe loop and auto-restart |
+| `interval` | `integer` | `60` | Seconds between probes |
+| `timeout` | `integer` | `10` | Per-probe HTTP timeout in seconds |
+| `max_failures` | `integer` | `5` | Consecutive transport failures before restarting |
+| `probe_url` | `string` | `"http://api.openai.com/v1/models"` | Outbound URL to probe; point it at an always-reachable (e.g. LAN) endpoint for a fully local check |
+| `restart_command` | `string[]` | `["systemctl","--user","restart","ride-the-api"]` | Command used to restart the process; `[]` disables the restart (log only) |
+| `cooldown` | `integer` | `600` | Seconds to wait before allowing another restart (avoids a reboot loop) |
+
+```yaml
+connection_watchdog:
+  enabled: true
+  interval: 60
+  timeout: 10
+  max_failures: 5
+  probe_url: "http://api.openai.com/v1/models"
+  restart_command: ["systemctl", "--user", "restart", "ride-the-api"]
+  cooldown: 600
 ```
 
 ---

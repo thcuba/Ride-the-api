@@ -393,6 +393,29 @@ protocol_servers:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# CONNECTION WATCHDOG (auto-heal)
+# ═══════════════════════════════════════════════════════════════════════════════
+# On long-running installs the process can wedge: every OUTGOING HTTP call fails
+# with "Connection error." while local listeners keep working and the same call
+# succeeds from a shell. Only a process restart clears it. The watchdog probes an
+# outbound URL with a fresh client every `interval` seconds and, after
+# `max_failures` consecutive transport failures, restarts the service via
+# `restart_command` (then waits `cooldown` seconds before allowing another).
+#
+# - Set restart_command: [] to only log the wedge without restarting.
+# - Point probe_url at an always-reachable endpoint; a LAN address keeps the
+#   check fully local (any HTTP response, even 4xx, proves the network path OK).
+connection_watchdog:
+  enabled: true
+  interval: 60
+  timeout: 10
+  max_failures: 5
+  probe_url: "http://api.openai.com/v1/models"
+  restart_command: ["systemctl", "--user", "restart", "ride-the-api"]
+  cooldown: 600
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # TLS DECRYPTION ENGINE (MITM proxy for HTTPS/MQTTS/CoAPS)
 # ═══════════════════════════════════════════════════════════════════════════════
 
