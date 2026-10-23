@@ -89,7 +89,10 @@ class TestDeleteDevice:
             result = await dm.delete_device("dev-oserror-db")
 
         assert result is True
-        assert f"Could not remove device DB {db_path}: Permission denied (mocked DB error)" in caplog.text
+        assert (
+            f"Could not remove device DB {db_path}: Permission denied (mocked DB error)"
+            in caplog.text
+        )
 
     @pytest.mark.asyncio
     async def test_delete_device_pattern_unlink_oserror(self, dm, monkeypatch, caplog):
@@ -97,7 +100,7 @@ class TestDeleteDevice:
         await dm.get_or_create_device("dev-oserror-pattern", "shelly")
         pf = pattern_file_path(dm, "dev-oserror-pattern")
         pf.parent.mkdir(parents=True, exist_ok=True)
-        pf.write_text("{\"version\": \"v2\"}")
+        pf.write_text('{"version": "v2"}')
         assert pf.exists()
 
         original_unlink = Path.unlink
@@ -113,4 +116,7 @@ class TestDeleteDevice:
             result = await dm.delete_device("dev-oserror-pattern")
 
         assert result is True
-        assert f"Could not remove pattern file {pf}: Permission denied (mocked pattern error)" in caplog.text
+        assert (
+            f"Could not remove pattern file {pf}: Permission denied (mocked pattern error)"
+            in caplog.text
+        )
