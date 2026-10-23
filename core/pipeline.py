@@ -1123,6 +1123,26 @@ class LearningPipeline:
             # Try to extract from top-level fields
             patterns = [analysis]
 
+        # Pre-compute candidate pattern, template, and mapping IDs for bulk fetching
+        pattern_ids = set()
+        template_ids = set()
+        mapping_ids = set()
+        for pattern_data in patterns:
+            intent = pattern_data.get("intent", "unknown")
+            path = pattern_data.get("path", pattern_data.get("request_path", "/unknown"))
+            path_digest = hashlib.md5(path.encode("utf-8")).hexdigest()[:8]
+            pattern_id = f"{device_id}_{intent}_{path_digest}"
+            pattern_ids.add(pattern_id)
+
+            resp_data = pattern_data.get("response", pattern_data.get("response_template", {}))
+            if resp_data:
+                template_ids.add(f"tpl_{pattern_id}")
+
+            mappings = pattern_data.get("field_mappings", {})
+            if isinstance(mappings, dict):
+                for req_field in mappings:
+                    mapping_ids.add(f"map_{device_id}_{intent}_{req_field.replace('.', '_')}")
+
         async with self.db_manager.device_session(device_id) as session:
             stats = await session.execute(
                 select(MatchStats).where(MatchStats.device_id == device_id)
@@ -1132,19 +1152,40 @@ class LearningPipeline:
                 stats_obj = MatchStats(device_id=device_id)
                 session.add(stats_obj)
 
+            # Bulk pre-fetch existing entities to avoid N+1 queries inside the loop
+            if pattern_ids:
+                p_res = await session.execute(
+                    select(RequestPattern).where(RequestPattern.pattern_id.in_(pattern_ids))
+                )
+                existing_patterns = {p.pattern_id: p for p in p_res.scalars().all()}
+            else:
+                existing_patterns = {}
+
+            if template_ids:
+                t_res = await session.execute(
+                    select(ResponseTemplate).where(ResponseTemplate.template_id.in_(template_ids))
+                )
+                existing_templates = {t.template_id: t for t in t_res.scalars().all()}
+            else:
+                existing_templates = {}
+
+            if mapping_ids:
+                m_res = await session.execute(
+                    select(FieldMapping).where(FieldMapping.mapping_id.in_(mapping_ids))
+                )
+                existing_mappings = {m.mapping_id: m for m in m_res.scalars().all()}
+            else:
+                existing_mappings = {}
+
             for pattern_data in patterns:
                 intent = pattern_data.get("intent", "unknown")
                 method = pattern_data.get("method", pattern_data.get("request_method", "POST"))
                 path = pattern_data.get("path", pattern_data.get("request_path", "/unknown"))
 
                 # Create or update request pattern
-                # Use a deterministic hash so pattern IDs are stable across processes.
                 path_digest = hashlib.md5(path.encode("utf-8")).hexdigest()[:8]
                 pattern_id = f"{device_id}_{intent}_{path_digest}"
-                existing = await session.execute(
-                    select(RequestPattern).where(RequestPattern.pattern_id == pattern_id)
-                )
-                pattern = existing.scalar_one_or_none()
+                pattern = existing_patterns.get(pattern_id)
 
                 if not pattern:
                     pattern = RequestPattern(
@@ -1159,10 +1200,9 @@ class LearningPipeline:
                         confidence=pattern_data.get("confidence", 0.5),
                     )
                     session.add(pattern)
+                    existing_patterns[pattern_id] = pattern
                     stats_obj.patterns_learned += 1
                 else:
-                    # The LLM may revise a pattern on a later flush: keep the
-                    # learned fields fresh instead of leaving the old row stale.
                     pattern.method = method
                     pattern.path_pattern = path
                     pattern.protocol = pattern_data.get("protocol", "http")
@@ -1176,10 +1216,7 @@ class LearningPipeline:
                 resp_data = pattern_data.get("response", pattern_data.get("response_template", {}))
                 if resp_data:
                     template_id = f"tpl_{pattern_id}"
-                    existing_tpl = await session.execute(
-                        select(ResponseTemplate).where(ResponseTemplate.template_id == template_id)
-                    )
-                    template = existing_tpl.scalar_one_or_none()
+                    template = existing_templates.get(template_id)
                     if not template:
                         template = ResponseTemplate(
                             template_id=template_id,
@@ -1192,6 +1229,7 @@ class LearningPipeline:
                             confidence=resp_data.get("confidence", 0.5),
                         )
                         session.add(template)
+                        existing_templates[template_id] = template
                         stats_obj.templates_created += 1
                     else:
                         template.status_code = resp_data.get("status_code", 200)
@@ -1208,10 +1246,7 @@ class LearningPipeline:
                         if isinstance(resp_info, str):
                             resp_info = {"response_field": resp_info, "type": "string"}  # noqa: PLW2901
                         mapping_id = f"map_{device_id}_{intent}_{req_field.replace('.', '_')}"
-                        existing_map = await session.execute(
-                            select(FieldMapping).where(FieldMapping.mapping_id == mapping_id)
-                        )
-                        if not existing_map.scalar_one_or_none():
+                        if mapping_id not in existing_mappings:
                             fmap = FieldMapping(
                                 mapping_id=mapping_id,
                                 request_field=req_field,
@@ -1224,6 +1259,7 @@ class LearningPipeline:
                                 confidence=resp_info.get("confidence", 0.5),
                             )
                             session.add(fmap)
+                            existing_mappings[mapping_id] = fmap
 
     async def _persist_device_meta(
         self, device_id: str, device: DeviceRegistry, analysis: dict

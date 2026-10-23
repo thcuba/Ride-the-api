@@ -204,3 +204,7 @@
 ## 2026-03-31 - Fast-Path Check for Non-Equals Scalar String Redaction
 **Learning:** `_redact_key_value_pairs` in `core/redaction.py` executed `text.split("&")`, item loop iteration, and `"&".join(...)` on every scalar string body, regardless of whether key-value delimiter `=` existed. Adding a fast-path short-circuit `if "=" not in text: return text` eliminates string splitting, list allocation, and string joining on scalar non-key-value string payloads (~4.3x speedup, ~0.11s vs ~0.47s per 1,000,000 checks).
 **Action:** Short-circuit string-parsing helpers early with fast `in` character presence checks (e.g. `if "=" not in text: return text`) before allocating lists via `split()` or rejoining strings.
+
+## 2026-03-31 - Bulk Pre-fetching in Pattern Ingestion
+**Learning:** Performing database queries inside loops during pattern ingestion creates an N+1 query bottleneck. Pre-fetching existing RequestPattern, ResponseTemplate, and FieldMapping rows using bulk IN queries reduces database round-trips significantly.
+**Action:** Always extract candidate keys and execute a bulk  query before iterating over items to upsert or insert in SQLAlchemy session loops.
