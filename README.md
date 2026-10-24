@@ -1,6 +1,25 @@
 # Ride-the-API
 
-A DNS interception proxy that sits between IoT devices and their cloud APIs, learns device protocols via LLM analysis, and serves responses locally — making devices fully functional even if the vendor shuts down its cloud servers.
+A DNS interception proxy that sits between IoT devices and their cloud APIs, learns device protocols via LLM analysis, and serves responses locally — with the goal of keeping devices working if the vendor shuts down its cloud servers.
+
+## Project status
+
+This is an **experimental protocol-emulation proxy**, and the wording above
+describes the goal, not a measured result. Being explicit about the difference:
+
+- **Verified today**: the local learning pipeline (buffer → LLM analysis →
+  patterns → local match) and the fidelity of the request/response path. The
+  test suite covers both, and `templates/e2e_smoke.py` **asserts** that a learned
+  pattern actually serves the request locally with the value that was sent
+  (the LLM is mocked there, so it exercises the plumbing, not the model).
+- **Not yet verified**: a full end-to-end run against one named physical device
+  and firmware version (fresh install → interception → learning → vendor cloud
+  blocked → device reboot → container recreated). Until that exists, treat
+  "devices keep working without their cloud" as unproven for any specific
+  device.
+- A device is only labelled **cloud independent** when it is in production mode
+  *and* its measured match rate reaches `AUTO_SWITCH_MATCH_RATE`
+  (`core/resilience.py`) — recognising request shapes is not treated as proof.
 
 ```
 IoT Device ──▶ nginx/TLS MITM ──▶ Ride-the-API ──▶ Vendor Cloud (learning only)

@@ -86,8 +86,20 @@ class CloudIndependenceVerifier:
         is_learning = device.mode == "learning"  # noqa: F841
         is_production = device.mode == "production"
 
-        # Production mode with excellent match rate = independent
-        if is_production and has_patterns and has_templates and has_high_confidence:
+        # Production mode with an excellent match rate = independent.
+        #
+        # The match rate is required here too: recognising request shapes
+        # (patterns, templates, high template confidence) is not proof that the
+        # device behaves correctly without its cloud. Without this check a device
+        # that matches almost nothing was still labelled "cloud independent"
+        # while every request kept going upstream.
+        if (
+            is_production
+            and has_patterns
+            and has_templates
+            and has_high_confidence
+            and has_excellent_match_rate
+        ):
             return {
                 "independent": True,
                 "patterns_learned": patterns_count,
@@ -96,7 +108,10 @@ class CloudIndependenceVerifier:
                 "total_requests": total_requests,
                 "mode": "production",
                 "auto_switch_enabled": device.auto_switch_enabled,
-                "reason": "Device is in production mode with learned patterns",
+                "reason": (
+                    "Device is in production mode with learned patterns and a "
+                    f"match rate of {match_rate:.1f}% (>= {AUTO_SWITCH_MATCH_RATE}%)"
+                ),
             }
 
         # Learning mode with enough data to switch (99% threshold)

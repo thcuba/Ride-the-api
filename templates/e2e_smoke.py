@@ -89,6 +89,20 @@ LLM_ANALYSIS = {
 }
 
 
+def _assert_local_match(res: dict) -> None:
+    """Assert the OUTCOME of the flow, not just that the code ran.
+
+    The request must have been served locally and the response must carry the
+    value that was sent. The LLM is mocked and the threshold is lowered by the
+    caller, so this exercises the plumbing (buffer -> patterns -> local match),
+    not the model.
+    """
+    assert res.get("action") == "local_response", f"expected a local match, got {res}"
+    payload = json.dumps(res.get("response"), default=str)
+    assert "240" in payload, f"the sent value must appear in the response: {payload}"
+    assert res.get("match_score", 0) >= 0.7, f"match score too low: {res.get('match_score')}"  # noqa: PLR2004
+
+
 async def main() -> None:
     with tempfile.TemporaryDirectory() as raw:
         tmp = Path(raw)
@@ -171,9 +185,10 @@ async def main() -> None:
             {},
         )
         print("  production result:", json.dumps(res, default=str)[:220])
+        _assert_local_match(res)
 
         await dbm.close()
-        print("\n✅ END-TO-END OK")
+        print("\n✅ E2E OK (local match served with the sent value; LLM mocked, threshold lowered)")
 
 
 if __name__ == "__main__":
