@@ -68,6 +68,11 @@ The nginx container entrypoint renders `deploy/nginx.conf.template` into `nginx.
 
 ## Forwarding mechanism
 
+> **Scope**: this contract applies to the FastAPI HTTP handler behind a reverse proxy. The TLS
+> MITM listener terminates TLS itself, so nothing downstream can see — or act on — an `X-Action`
+> header; that path performs the real upstream exchange (`core/tls_mitm.py::_forward_upstream`)
+> and replays the vendor's status, headers and raw body bytes.
+
 ### HTTP forward signal
 
 1. Ride-the-API detects an unmatched request with `signal_forward_to_cloud` enabled

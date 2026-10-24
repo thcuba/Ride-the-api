@@ -150,6 +150,16 @@ class CommandResult:
     # If forwarded to cloud
     forwarded: bool = False
     cloud_response: dict[str, Any] | None = None
+    # Upstream response, preserved verbatim when the request was forwarded.
+    # A proxy must replay the conversation as it happened: dropping the status
+    # turns a vendor 401/429/500 into a fake "200 OK" for the device, and
+    # dropping the headers loses cookies, retry hints and content negotiation.
+    status_code: int | None = None
+    response_headers: dict[str, str] = field(default_factory=dict)
+    # Raw upstream body bytes. ``response`` holds the JSON-decoded view (for
+    # parsing/learning); ``body_bytes`` is what actually goes back on the wire,
+    # so non-JSON payloads survive byte-for-byte.
+    body_bytes: bytes | None = None
 
 
 @dataclass
@@ -169,6 +179,11 @@ class InterceptedRequest:
     headers: dict[str, str] = field(default_factory=dict)
     query_params: dict[str, str] = field(default_factory=dict)
     body: dict[str, Any] | None = None
+    # Raw device body bytes, as received on the wire. ``body`` is the parsed
+    # JSON view used for analysis/learning; ``body_bytes`` is what a forward
+    # must replay so non-JSON payloads (XML, form data, protobuf, raw bytes)
+    # are not destroyed by re-serialising them as JSON.
+    body_bytes: bytes | None = None
     # MQTT
     topic: str | None = None
     qos: int | None = None
