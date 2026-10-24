@@ -875,6 +875,14 @@ List of all imported and auto-generated certificates.
 
 Details of a certificate for a specific hostname.
 
+> **Error responses** (these endpoints and the other certificate routes). A rejected request —
+> invalid payload, unsafe hostname, unreadable certificate — returns `400` with a **stable
+> message**: the exception text is deliberately **not** echoed, because it can carry filesystem
+> paths or other internals. The detail is written to the server log as
+> `Rejected request (<message>): <detail>`. Unexpected failures return
+> `500 {"error": "An internal error occurred"}`. The same applies to the pattern and capture
+> import endpoints.
+
 ---
 
 ### Upload Certificate: `POST /api/tls/certs/upload`
