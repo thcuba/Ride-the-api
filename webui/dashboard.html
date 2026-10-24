@@ -739,7 +739,24 @@
     title.style.cssText = 'margin:0 0 8px;font-size:16px;color:#6c8cff;';
     const para = document.createElement('p');
     para.style.cssText = 'margin:0 0 12px;font-size:13px;color:#9ca8ba;line-height:1.5;';
-    para.textContent = 'No password is configured. Set a control-plane password (minimum 8 characters) to secure administrative access:';
+    para.textContent = 'No password is configured. Set a control-plane password (minimum 8 characters) to secure administrative access. The one-time setup token guards this first-run window: it is printed in the server logs and stored in ridebase/setup-token.';
+
+    // First-run is guarded by a one-time setup token: while no password exists the
+    // endpoint has no credential to validate, so the token proves local/admin access.
+    const tokenWrap = document.createElement('div');
+    tokenWrap.style.cssText = 'margin:0 0 12px;';
+    const tokenLabel = document.createElement('label');
+    tokenLabel.textContent = 'Setup token';
+    tokenLabel.style.cssText = 'display:block;margin:0 0 4px;font-size:12px;color:#9ca8ba;';
+    const tokenInput = document.createElement('input');
+    tokenInput.type = 'text';
+    tokenInput.autocomplete = 'off';
+    tokenInput.placeholder = 'First-run setup token (from the server logs)';
+    tokenInput.setAttribute('aria-label', 'First-run setup token');
+    tokenInput.style.cssText = 'width:100%;box-sizing:border-box;padding:8px 10px;border-radius:6px;border:1px solid #2d3648;background:#0f131a;color:#e1e6ed;font-family:ui-monospace,Menlo,Consolas,monospace;';
+    tokenWrap.appendChild(tokenLabel);
+    tokenWrap.appendChild(tokenInput);
+
     function createPasswordInput(placeholder, ariaLabel, marginBottom) {
       const wrap = document.createElement('div');
       wrap.style.cssText = 'position:relative;display:flex;align-items:center;margin:' + (marginBottom || '0') + ';';
@@ -787,11 +804,12 @@
       if (!pw.value) { err('Please enter a password'); pw.focus(); return; }
       if (pw.value.length < 8) { err('Minimum 8 characters required'); pw.focus(); return; }
       if (pw.value !== pw2.value) { err('Passwords do not match'); pw2.focus(); return; }
+      if (!tokenInput.value) { err('Paste the setup token from the server logs'); tokenInput.focus(); return; }
       saveBtn.disabled = true;
       saveBtn.textContent = 'Saving…';
       fetch('/api/auth/password', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Setup-Token': tokenInput.value.trim() },
         body: JSON.stringify({ password: pw.value }),
       }).then(function (r) {
         if (!r.ok) return r.json().then(function (j) { throw new Error(j && j.error ? j.error : 'Server error'); });
@@ -813,6 +831,7 @@
     box.appendChild(para);
     box.appendChild(pwObj.wrap);
     box.appendChild(pw2Obj.wrap);
+    box.appendChild(tokenWrap);
     box.appendChild(actions);
     overlay.appendChild(box);
     document.body.appendChild(overlay);

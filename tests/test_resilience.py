@@ -6,7 +6,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import select
 
-from core.database import DatabaseManager, DeviceRegistry, RequestPattern
+from core.database import DatabaseManager, DeviceRegistry, RequestPattern, ResponseTemplate
 from core.resilience import (
     AUTO_SWITCH_MATCH_RATE,
     CHECK_INTERVAL_SECONDS,
@@ -110,6 +110,62 @@ class TestCloudIndependenceVerifier:
         result = await verifier.check_cloud_independence(device_id)
         assert result.get("independent") is False
         assert result.get("patterns_learned") >= 1
+
+    @pytest.mark.asyncio
+    async def test_production_without_match_rate_is_not_independent(self, db_manager):
+        """Learned shapes alone must not earn the "cloud independent" label.
+
+        A device in production mode with patterns and a confident template but no
+        recorded matches would otherwise be advertised as independent while every
+        request still goes upstream.
+        """
+        device_id = "prod-no-rate"
+        await db_manager.get_or_create_device(
+            device_id=device_id,
+            vendor="generic",
+            device_type="sensor",
+            name="High Confidence, No Matches",
+        )
+        async with db_manager.core_session() as session:
+            row = (
+                await session.execute(
+                    select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
+                )
+            ).scalar_one()
+            row.mode = "production"
+            await session.flush()
+
+        async with db_manager.device_session(device_id) as session:
+            session.add(
+                RequestPattern(
+                    pattern_id="rp-no-rate",
+                    method="GET",
+                    path_pattern="/status",
+                    protocol="http",
+                    intent="get_status",
+                )
+            )
+            session.add(
+                ResponseTemplate(
+                    template_id="rt-no-rate",
+                    pattern_id="rp-no-rate",
+                    status_code=200,
+                    headers_template={},
+                    body_template={},
+                    field_mappings={},
+                    confidence=0.95,
+                )
+            )
+
+        verifier = CloudIndependenceVerifier(db_manager)
+        result = await verifier.check_cloud_independence(device_id)
+
+        # Patterns + a confident template are present, but nothing ever matched.
+        assert result.get("independent") is False
+        assert result.get("patterns_learned") >= 1
+        assert result.get("templates_created") >= 1
+        assert result.get("match_rate") == 0.0
+        assert "match rate" in result.get("reason", "")
 
 
 class TestAutoSwitchScheduler:

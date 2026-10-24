@@ -373,7 +373,10 @@ The resilience module verifies that devices can operate independently of the ven
 cloud. Key features:
 
 - **Cloud Independence Verifier**: REST API that tests whether a device can operate without the
-  vendor's cloud, analyzing the completeness of learned patterns and match statistics.
+  vendor's cloud. A device is reported as independent only when it is in production mode, has
+  patterns and high-confidence templates, **and** its measured match rate reaches
+  `AUTO_SWITCH_MATCH_RATE`; recognising request shapes alone is not treated as proof that the
+  device behaves correctly without its cloud.
 - **Auto-switch scheduler**: runs every 60 seconds and evaluates the match rate of each device.
 - **Configurable thresholds**:
   - `AUTO_SWITCH_MATCH_RATE` = 99% (switch to production).
