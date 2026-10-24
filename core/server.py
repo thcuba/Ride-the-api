@@ -913,7 +913,7 @@ async def tls_update_device_config(device_id: str, request: Request):
             return {"status": "ok", "device_id": device_id}
 
     except Exception as e:
-        return JSONResponse(status_code=400, content={"error": str(e)})
+        return _client_error(e, "Invalid TLS configuration payload")
 
 
 @app.get("/api/tls/ports")
@@ -1007,7 +1007,7 @@ async def tls_get_cert_info(hostname: str):
             )
         return {"cert": info}  # noqa: TRY300
     except ValueError as e:
-        return JSONResponse(status_code=400, content={"error": str(e)})
+        return _client_error(e, "Invalid certificate lookup request")
     except Exception:
         logger.exception("Handler error (500)")
         return JSONResponse(status_code=500, content={"error": "An internal error occurred"})
@@ -1032,7 +1032,9 @@ async def tls_upload_cert(
             "message": f"Certificate imported for '{hostname}'",
         }
     except (ValueError, UnicodeDecodeError) as e:
-        return JSONResponse(status_code=400, content={"error": str(e)})
+        return _client_error(
+            e, "Invalid certificate upload. Provide a valid PEM or DER certificate file."
+        )
     except Exception:
         logger.exception("Failed to upload cert")
         return JSONResponse(status_code=500, content={"error": "An internal error occurred"})
@@ -1058,7 +1060,9 @@ async def tls_upload_cert_json(request: Request):
         cert_manager.import_cert(hostname, cert_pem, key_pem)
         return {"status": "ok", "hostname": hostname}  # noqa: TRY300
     except (ValueError, UnicodeDecodeError, binascii.Error) as e:
-        return JSONResponse(status_code=400, content={"error": str(e)})
+        return _client_error(
+            e, "Invalid certificate payload. Provide a valid PEM or DER certificate."
+        )
     except Exception:
         logger.exception("Failed to upload cert via JSON")
         return JSONResponse(status_code=500, content={"error": "An internal error occurred"})
@@ -1082,7 +1086,7 @@ async def tls_delete_cert(hostname: str):
             "message": f"Certificate deleted for '{hostname}'",
         }
     except ValueError as e:
-        return JSONResponse(status_code=400, content={"error": str(e)})
+        return _client_error(e, "Invalid certificate deletion request")
     except Exception:
         logger.exception("Failed to delete cert")
         return JSONResponse(status_code=500, content={"error": "An internal error occurred"})
@@ -1110,7 +1114,9 @@ async def tls_rotate_cert(hostname: str, request: Request):
             "message": f"Certificate rotated for '{hostname}'",
         }
     except (ValueError, UnicodeDecodeError, binascii.Error) as e:
-        return JSONResponse(status_code=400, content={"error": str(e)})
+        return _client_error(
+            e, "Could not rotate the certificate. Check the certificate and CA configuration."
+        )
     except Exception:
         logger.exception("Failed to rotate cert")
         return JSONResponse(status_code=500, content={"error": "An internal error occurred"})
@@ -1853,7 +1859,7 @@ async def put_pattern(device_id: str, pattern_id: str, request: Request):
             await session.commit()
             return {"status": "ok", "pattern_id": pattern_id}
     except Exception as e:
-        return JSONResponse(status_code=400, content={"error": str(e)})
+        return _client_error(e, "Invalid pattern update payload")
 
 
 @app.patch("/api/devices/{device_id}/patterns/{pattern_id}")
@@ -1940,7 +1946,7 @@ async def patch_pattern(device_id: str, pattern_id: str, request: Request):  # n
             await session.commit()
             return {"status": "ok", "pattern_id": pattern_id}
     except Exception as e:
-        return JSONResponse(status_code=400, content={"error": str(e)})
+        return _client_error(e, "Invalid pattern update payload")
 
 
 @app.delete("/api/devices/{device_id}/patterns/{pattern_id}")
@@ -1971,7 +1977,7 @@ async def delete_pattern(device_id: str, pattern_id: str):
             await session.commit()
             return {"status": "deleted", "pattern_id": pattern_id}
     except Exception as e:
-        return JSONResponse(status_code=400, content={"error": str(e)})
+        return _client_error(e, "Could not delete the pattern")
 
 
 @app.get("/api/llm/profiles")
@@ -2520,7 +2526,7 @@ async def import_patterns(device_id: str, request: Request):
             content={"error": "Pattern validation failed", "details": e.to_dict()},
         )
     except Exception as e:
-        return JSONResponse(status_code=400, content={"error": str(e)})
+        return _client_error(e, "Invalid pattern import payload")
 
 
 @app.get("/api/devices/{device_id}/capture/export")
@@ -2579,7 +2585,7 @@ async def import_buffer(device_id: str, request: Request):
             content={"error": "Capture validation failed", "details": e.to_dict()},
         )
     except Exception as e:
-        return JSONResponse(status_code=400, content={"error": str(e)})
+        return _client_error(e, "Invalid capture import payload")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2659,6 +2665,18 @@ except Exception as e:
 # Hop-by-hop/framing headers never replayed to the device: they describe the
 # upstream connection, not the message (the response object sets its own).
 _RESPONSE_HOP_BY_HOP = ("content-length", "transfer-encoding", "connection")
+
+
+def _client_error(exc: BaseException, message: str, status_code: int = 400) -> JSONResponse:
+    """Return a control-plane error response that never leaks internals.
+
+    Raw exception text can carry filesystem paths, library internals or
+    configuration details (CodeQL ``py/stack-trace-exposure``). The client gets
+    a stable, actionable message; the detail is logged server-side, where it is
+    actually useful for debugging.
+    """
+    logger.info("Rejected request (%s): %s", message, exc)
+    return JSONResponse(status_code=status_code, content={"error": message})
 
 
 def _upstream_response(cloud_response, decoded: dict | None = None) -> Response:

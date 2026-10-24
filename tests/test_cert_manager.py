@@ -280,7 +280,11 @@ class TestCertEndpointsErrorHandling:
             "/api/tls/certs/invalid%20hostname", headers={"X-API-Key": "testpass"}
         )
         assert response.status_code == 400  # noqa: PLR2004
-        assert "Unsafe hostname" in response.json().get("error", "")
+        # The reason is deliberately NOT echoed any more: exception text can carry
+        # filesystem paths or other internals (CodeQL py/stack-trace-exposure).
+        # The detail is logged server-side instead — see tests/test_error_exposure.py.
+        assert response.json() == {"error": "Invalid certificate lookup request"}
+        assert "Unsafe hostname" not in response.text
 
     def test_upload_json_invalid_base64_returns_400(self, monkeypatch, tmp_path):
         """Uploading cert with bad base64 encoding returns 400."""
