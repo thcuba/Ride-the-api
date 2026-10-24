@@ -5,6 +5,7 @@ LearningPipeline, and LearningOrchestrator.
 
 import json
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -24,6 +25,8 @@ from core.pipeline import (
     LearningPipeline,
     MatchRateTracker,
     MatchResult,
+    _llm_task_profile,
+    _llm_validate_weak_match,
     _redact_pairs_for_prompt,
     get_orchestrator,
 )
@@ -497,3 +500,46 @@ class TestOrchestratorPipelineDelegation:
         res = await orch.preview_analysis("dev-preview-orphan")
         assert res["success"] is False
         assert res["error"] == "No buffer entries to analyze"
+
+
+class TestLLMPurposeProfiles:
+    """Purpose-bound LLM profiles: correlation validation and flush/update choice."""
+
+    def test_task_profile_ignores_objects_without_resolver(self):
+        assert _llm_task_profile(object(), "flush") is None
+
+    def test_task_profile_ignores_non_string_results(self):
+        """A mock double must never be mistaken for a bound profile name."""
+        assert _llm_task_profile(MagicMock(), "flush") is None
+
+    async def test_weak_match_stays_a_miss_when_no_profile_is_bound(self):
+        svc = MagicMock()
+        svc.resolve_task_profile.return_value = None
+        device = SimpleNamespace(device_id="dev")
+        assert await _llm_validate_weak_match(svc, device, object(), {"method": "GET"}) is False
+        svc.validate_match.assert_not_called()
+
+    async def test_weak_match_confirmed_by_the_llm(self):
+        svc = MagicMock()
+        svc.resolve_task_profile.return_value = "validator"
+        svc.validate_match = AsyncMock(
+            return_value={"applicable": True, "confidence": 0.9, "reason": "same endpoint"}
+        )
+        device = SimpleNamespace(device_id="dev")
+        assert await _llm_validate_weak_match(svc, device, object(), {"method": "GET"}) is True
+        # The purpose is what selects the profile.
+        svc.resolve_task_profile.assert_called_once_with("correlation")
+        assert svc.validate_match.await_args.args[2] == "validator"
+
+    async def test_weak_match_rejected_or_broken_is_false(self):
+        """A rejection or a provider error must leave the normal miss path."""
+        device = SimpleNamespace(device_id="dev")
+        rejecting = MagicMock()
+        rejecting.resolve_task_profile.return_value = "validator"
+        rejecting.validate_match = AsyncMock(return_value={"applicable": False})
+        assert await _llm_validate_weak_match(rejecting, device, object(), {}) is False
+
+        broken = MagicMock()
+        broken.resolve_task_profile.return_value = "validator"
+        broken.validate_match = AsyncMock(side_effect=RuntimeError("boom"))
+        assert await _llm_validate_weak_match(broken, device, object(), {}) is False

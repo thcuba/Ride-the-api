@@ -425,6 +425,59 @@ class MatchRateTracker:
             }
 
 
+def _llm_task_profile(llm_decipher: Any, task: str) -> str | None:  # noqa: ANN401
+    """Return the profile bound to a purpose, or ``None`` when unbound.
+
+    Defensive by design: an unbound purpose, a double without the resolver or
+    any lookup error yields ``None`` so the caller falls back to the device
+    profile — a profile lookup must never break a flush.
+    """
+    resolver = getattr(llm_decipher, "resolve_task_profile", None)
+    if not callable(resolver):
+        return None
+    try:
+        name = resolver(task)
+    except Exception:  # noqa: BLE001 - never block on profile lookup
+        logger.debug("Could not resolve the LLM profile for task %s", task)
+        return None
+    return name if isinstance(name, str) and name else None
+
+
+async def _llm_validate_weak_match(
+    llm_decipher: Any,  # noqa: ANN401 - the service, or a test double
+    device: DeviceRegistry,
+    pattern: Any,  # noqa: ANN401 - pattern object from the match engine
+    request: dict,
+) -> bool:
+    """Let the LLM confirm a below-threshold pattern (``correlation`` purpose).
+
+    Returns True only when a profile is bound to the purpose AND the model
+    confirms that the learned pattern applies to the incoming request. Any
+    failure returns False, so the request keeps its normal miss behaviour
+    (cloud forward + learning): validation can never make matching worse than
+    it was before the purpose was bound.
+    """
+    profile = _llm_task_profile(llm_decipher, "correlation")
+    if not profile:
+        return False
+    try:
+        verdict = await llm_decipher.validate_match(pattern, request, profile)
+    except Exception:  # noqa: BLE001 - validation is best-effort
+        logger.exception("LLM match validation failed for %s", getattr(device, "device_id", "?"))
+        return False
+    if not isinstance(verdict, dict):
+        return False
+    applicable = bool(verdict.get("applicable"))
+    logger.info(
+        "LLM %s the weak match for %s (confidence=%s, %s)",
+        "confirmed" if applicable else "rejected",
+        getattr(device, "device_id", "?"),
+        verdict.get("confidence"),
+        verdict.get("reason", ""),
+    )
+    return applicable
+
+
 class LearningPipeline:
     """Orchestrates the learning flow: correlate buffer, read LLM, save patterns."""
 
@@ -787,7 +840,14 @@ class LearningPipeline:
         if is_first_flush:
             context["first_flush"] = True
 
-        profile_name = device.llm_profile_name or "default"
+        # A purpose-bound profile wins over the device profile and the service
+        # default. The grounded pass (a learned model already exists, so the LLM
+        # works on a delta) is its own purpose: an operator can spend a stronger
+        # model on the update and a cheaper one on the first pass.
+        task = "learning_context" if context.get("current_model") else "flush"
+        profile_name = (
+            _llm_task_profile(self.llm_decipher, task) or device.llm_profile_name or "default"
+        )
         llm_analysis = await self._analyze_with_llm(
             context, profile_name, device.llm_base_url, device.llm_model_id
         )
@@ -845,7 +905,14 @@ class LearningPipeline:
 
         context = await self._build_context(device_id, device, pairs, context_notes)
 
-        profile_name = device.llm_profile_name or "default"
+        # A purpose-bound profile wins over the device profile and the service
+        # default. The grounded pass (a learned model already exists, so the LLM
+        # works on a delta) is its own purpose: an operator can spend a stronger
+        # model on the update and a cheaper one on the first pass.
+        task = "learning_context" if context.get("current_model") else "flush"
+        profile_name = (
+            _llm_task_profile(self.llm_decipher, task) or device.llm_profile_name or "default"
+        )
         llm_analysis = await self._analyze_with_llm(
             context, profile_name, device.llm_base_url, device.llm_model_id
         )
@@ -1527,7 +1594,18 @@ class LearningOrchestrator:
             device.device_id, method, path, headers, body, query_params, protocol=protocol
         )
 
-        if pattern and template and score >= device.match_threshold:
+        confident = bool(pattern and template and score >= device.match_threshold)
+        if pattern and template and not confident:
+            # Weak match: the local engine found a pattern, but below the device
+            # threshold. Let the LLM (``correlation`` purpose) confirm it before
+            # falling back to the cloud.
+            confident = await _llm_validate_weak_match(
+                self.llm_decipher,
+                device,
+                pattern,
+                {"method": method, "path": path, "headers": headers, "body": body},
+            )
+        if confident:
             # Local hit -- build with state-aware engine
             response = await self.engine.build_local_response(
                 device.device_id,
@@ -1582,7 +1660,18 @@ class LearningOrchestrator:
             device.device_id, method, path, headers, body, query_params, protocol=protocol
         )
 
-        if pattern and template and score >= device.match_threshold:
+        confident = bool(pattern and template and score >= device.match_threshold)
+        if pattern and template and not confident:
+            # Weak match: the local engine found a pattern, but below the device
+            # threshold. Let the LLM (``correlation`` purpose) confirm it before
+            # falling back to the cloud.
+            confident = await _llm_validate_weak_match(
+                self.llm_decipher,
+                device,
+                pattern,
+                {"method": method, "path": path, "headers": headers, "body": body},
+            )
+        if confident:
             # Confident local hit -- build with state-aware engine
             response = await self.engine.build_local_response(
                 device.device_id,

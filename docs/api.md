@@ -943,8 +943,14 @@ Endpoints for managing user-saved LLM profiles.
 ### `GET /api/llm/settings` · `PUT /api/llm/settings`
 
 The **single source of truth** for the system LLM profiles used by the decipher
-(`enabled`, `default_profile`, `profiles`). `PUT` validates the payload and
-persists it to the runtime override file, so a change takes effect immediately.
+(`enabled`, `default_profile`, `profiles`, `task_profiles`). `PUT` validates the
+payload and persists it to the runtime override file, so a change takes effect
+immediately.
+
+`task_profiles` binds a **purpose** to a profile: `correlation` (validate a weak match against
+the learned patterns), `flush` (analyse the buffer and learn) and `learning_context` (the flush
+grounded with the already-learned model). An empty value leaves the purpose unbound, so the
+device profile — and then `default_profile` — applies.
 
 `llm_decipher` is therefore **owned by this endpoint**, which is one of two
 entry points onto the same store: the LLM page (dashboard modal) and the
