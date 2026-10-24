@@ -23,6 +23,9 @@ from __future__ import annotations
 import hmac
 import json
 import logging
+import os
+import secrets
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -44,9 +47,55 @@ logger = logging.getLogger(__name__)
 PUBLIC_PATHS = frozenset({"/api/tls/ca-cert"})
 
 # First-run setup endpoint. Reachable WITHOUT credentials ONLY while the
-# control-plane password is still empty so the operator can set one from the
-# UI; once a password exists it falls back to normal authentication.
+# control-plane password is still empty, and only with the one-time setup token
+# (see `setup_token()`); once a password exists it falls back to normal
+# authentication.
 SETUP_PATH = "/api/auth/password"
+
+# Header the first-run setup token must arrive in.
+SETUP_TOKEN_HEADER = "x-setup-token"
+
+# One-time setup token state. It is generated lazily (only while no password
+# exists), persisted so the operator can read it from the filesystem as well as
+# the logs, and cached for the process lifetime.
+_SETUP_TOKEN: str | None = None
+_SETUP_TOKEN_FILE = os.environ.get("SETUP_TOKEN_FILE", "ridebase/setup-token")
+
+
+def setup_token(path: str | Path | None = None) -> str:
+    """Return the one-time token that authorises first-run provisioning.
+
+    While ``security.password`` is empty the setup endpoint cannot validate a
+    credential, so anyone able to reach the port first could claim
+    administration. Requiring this token closes that window: it is printed in
+    the logs (and written to a file, mode 0600) so only someone with
+    local/admin access can complete the bootstrap.
+
+    ``path`` lets the caller place the file next to the databases; it is only
+    honoured the first time the token is generated.
+    """
+    global _SETUP_TOKEN, _SETUP_TOKEN_FILE  # noqa: PLW0603 - generated once
+    if _SETUP_TOKEN is None:
+        token = secrets.token_urlsafe(24)
+        target = Path(path) if path is not None else Path(_SETUP_TOKEN_FILE)
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(token + "\n", encoding="utf-8")
+            target.chmod(0o600)
+            where = str(target.resolve())
+        except OSError as exc:  # noqa: BLE001 - the log line still carries it
+            logger.warning("Could not persist the setup token to %s: %s", target, exc)
+            where = "(not persisted)"
+        logger.warning(
+            "First-run setup token: %s  (also in %s)\n"
+            "Use it as the %s header when setting security.password.",
+            token,
+            where,
+            SETUP_TOKEN_HEADER,
+        )
+        _SETUP_TOKEN_FILE = str(target)
+        _SETUP_TOKEN = token
+    return _SETUP_TOKEN
 
 
 def _safe_eq(a: str, b: str) -> bool:
@@ -114,9 +163,22 @@ class ControlPlaneAuthMiddleware(BaseHTTPMiddleware):
             self._log_once(password_ok=False)
             if path == SETUP_PATH:
                 # First-run: the operator is provisioning the control-plane
-                # password. There is nothing to validate a credential against
-                # yet, so let the handler through.
-                return await call_next(request)
+                # password. There is no credential to validate against yet, so a
+                # one-time setup token guards the window instead — otherwise
+                # whoever reaches the port first could claim administration.
+                if _safe_eq(request.headers.get(SETUP_TOKEN_HEADER, ""), setup_token()):
+                    return await call_next(request)
+                return JSONResponse(
+                    status_code=403,
+                    content={
+                        "error": (
+                            "Setup token required: the control plane has no password yet. "
+                            "Read the one-time token from the server logs (or "
+                            "ridebase/setup-token) and send it as X-Setup-Token."
+                        )
+                    },
+                    headers={"X-Auth-Setup": "token-required"},
+                )
             return JSONResponse(
                 status_code=503,
                 content={

@@ -30,6 +30,9 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
+      # The Dockerfile's last stage is `production-gpu`; without an explicit
+      # target Compose builds that one, not the CPU default.
+      target: production
     container_name: ride-the-api
     restart: unless-stopped
     ports:
@@ -37,6 +40,10 @@ services:
     volumes:
       - ../config:/app/config:ro
       - ../data:/app/data
+      # Learned state lives in ./ridebase (core.db + the per-device DBs), relative
+      # to the app working directory: without this mount it stays in the
+      # disposable container layer and is lost whenever the container is replaced.
+      - ../ridebase:/app/ridebase
       - ../certs:/app/certs   # writable: the app generates/rotates the CA here
       - ../models:/app/models:ro
       - ../logs:/app/logs

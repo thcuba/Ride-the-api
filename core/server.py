@@ -92,6 +92,7 @@ from core.security import (
     ControlPlaneAuthMiddleware,
     MaxBodySizeMiddleware,
     SecurityHeadersMiddleware,
+    setup_token,
 )
 from core.tls_mitm import (
     DecryptedRequest,
@@ -469,6 +470,12 @@ async def lifespan(_app: FastAPI):  # noqa: C901, PLR0912, PLR0915
     logger.info("Starting Local Cloud Replacement Proxy...")
 
     config = config_manager.config
+
+    # Bootstrap guard: while no control-plane password is set, first-run
+    # provisioning is protected by a one-time token. Announce it at startup (and
+    # keep it next to the databases) so the operator can complete the setup.
+    if config.security.auth_enabled and not config.security.password:
+        setup_token(Path(config.core.device_db_dir).parent / "setup-token")
 
     # Initialize database
     data_dir = Path(config.core.device_db_dir)

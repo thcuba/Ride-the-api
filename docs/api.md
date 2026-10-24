@@ -87,17 +87,32 @@ On a fresh install (auth enabled, `security.password` empty) this is the **only*
 route reachable without credentials, so the UI can guide the operator to create
 the control-plane password from the browser instead of editing `config.yaml`.
 
+Because the endpoint has no credential to validate against yet, the first-run
+window is protected by a **one-time setup token**: it is generated at startup
+while no password exists, printed in the server logs and written to
+`ridebase/setup-token` (mode `0600`). Requests must carry it in the
+`X-Setup-Token` header — without it anyone able to reach the port could claim
+administration before the operator configures the instance.
+
+```bash
+curl -X POST http://<server>:8911/api/auth/password \
+  -H "Content-Type: application/json" \
+  -H "X-Setup-Token: <token from the logs>" \
+  -d '{"password": "<new password>"}'
+```
+
 Body: `{"password": "<new password>"}` — must be at least 8 characters.
 
 | Case | Response |
 |------|----------|
-| No password set yet, valid body | `200` `{"status":"ok","config_updated":true}` |
+| No password set yet, valid body **+ setup token** | `200` `{"status":"ok","config_updated":true}` |
+| No password set yet, missing/wrong setup token | `403` + `X-Auth-Setup: token-required` |
 | Empty / too-short password | `400` |
 | A password is already configured | `403` "A password is already set" |
 | Non-JSON body | `400` |
 
 Once a password exists, this endpoint requires the normal password like every
-other `/api/*` route (it is not a bypass).
+other `/api/*` route (it is not a bypass) and the setup token is no longer used.
 
 ---
 
