@@ -83,10 +83,19 @@ location / {
 }
 
 location @cloud_redirect {
-    proxy_pass https://cloud_upstream;
-    # resolver: 8.8.8.8 1.1.1.1 ipv6=on ← set in the upstream block
+    # `proxy_pass` to a *variable* is what makes nginx resolve the name at
+    # runtime through the `resolver` declared in the `http` context — a static
+    # upstream name would be resolved once, at startup, by the system resolver
+    # (i.e. the local DNS this design exists to bypass).
+    set $cloud_host "api.example.com";
+    proxy_pass https://$cloud_host$request_uri;
+    proxy_ssl_server_name on;
 }
 ```
+
+The `resolver` directive is declared in the `http` (or `server`/`location`)
+context: it is **not** valid inside an `upstream` block, and a configuration
+that puts it there makes nginx refuse to start.
 
 ### Non-HTTP protocols (MQTT, raw TCP)
 
@@ -96,7 +105,9 @@ connections directly to the cloud:
 ```nginx
 stream {
     upstream mqtt_cloud {
-        resolver 8.8.8.8 1.1.1.1 valid=300s ipv6=on;
+        # NOTE: the stream module has no `resolver` directive — this name is
+        # resolved once at startup by the system resolver. Use a literal IP if
+        # the local DNS must be bypassed.
         server mqtt.example.com:8883;
     }
     server {

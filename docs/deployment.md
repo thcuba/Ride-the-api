@@ -293,6 +293,18 @@ nginx handles:
 docker compose -f deploy/docker-compose.yml up -d
 ```
 
+The Compose file builds the **CPU** stage (`target: production`) — without an
+explicit target, Compose would build the Dockerfile's last stage,
+`production-gpu`. It also mounts `../ridebase` at `/app/ridebase`, where the
+learned state lives (core database + per-device databases): without that mount
+it would stay in the disposable container layer and be lost whenever the
+container is replaced.
+
+On the very first start, while no control-plane password is set, the API logs a
+**one-time setup token** (also written to `ridebase/setup-token`, mode `0600`).
+Paste it into the setup dialog of the UI, or send it as the `X-Setup-Token`
+header, to create the password — see [api.md](api.md#first-run-password-setup-post-apiauthpassword).
+
 ### Services
 
 #### `ride-the-api` (main server)
