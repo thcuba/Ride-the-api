@@ -209,3 +209,7 @@
 ## 2026-03-31 - Batching DB existence queries in resilience pattern imports
 **Learning:** Checking for existing records inside a loop generates N+1 queries, significantly slowing down batch operations (e.g. 200 items took ~1.40s for fresh import and ~0.66s for re-import).
 **Action:** Use SQLAlchemy `in_` queries to fetch all matching existing record IDs in a single query prior to the loop, reducing database roundtrips from O(N) to O(1) and accelerating execution speed by 5.6x for fresh imports and 59x for duplicate re-imports.
+
+## 2026-03-31 - Memoizing IP Locality Checks with LRU Cache
+**Learning:** `is_local_ip` was called on every intercepted request across protocol servers to determine local vs external traffic routing. Even with fast string prefix checks, evaluating repetitive client IP strings incurred string prefix comparisons, splitting, and `ipaddress.ip_address` fallback parsing overhead. Decorating `is_local_ip` with `@functools.lru_cache(maxsize=2048)` memoizes IP locality results and speeds up repeated IP locality checks by ~8.37x (~0.28s vs ~2.37s per 1,400,000 lookups).
+**Action:** Apply `@functools.lru_cache` to pure utility functions called per-request on repetitive string identifiers (such as client IP addresses) to eliminate string parsing overhead.
