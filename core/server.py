@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio  # noqa: TC003
 import base64
+import binascii
 import json
 import logging
 import os
@@ -998,6 +999,8 @@ async def tls_get_cert_info(hostname: str):
                 status_code=404, content={"error": f"No certificate found for '{hostname}'"}
             )
         return {"cert": info}  # noqa: TRY300
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
     except Exception:
         logger.exception("Handler error (500)")
         return JSONResponse(status_code=500, content={"error": "An internal error occurred"})
@@ -1021,8 +1024,11 @@ async def tls_upload_cert(
             "hostname": hostname,
             "message": f"Certificate imported for '{hostname}'",
         }
-    except Exception as e:
+    except (ValueError, UnicodeDecodeError) as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
+    except Exception:
+        logger.exception("Failed to upload cert")
+        return JSONResponse(status_code=500, content={"error": "An internal error occurred"})
 
 
 @app.post("/api/tls/certs/upload-json")
@@ -1044,8 +1050,11 @@ async def tls_upload_cert_json(request: Request):
         key_pem = base64.b64decode(key_b64).decode("utf-8")
         cert_manager.import_cert(hostname, cert_pem, key_pem)
         return {"status": "ok", "hostname": hostname}  # noqa: TRY300
-    except Exception as e:
+    except (ValueError, UnicodeDecodeError, binascii.Error) as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
+    except Exception:
+        logger.exception("Failed to upload cert via JSON")
+        return JSONResponse(status_code=500, content={"error": "An internal error occurred"})
 
 
 @app.delete("/api/tls/certs/{hostname}")
@@ -1065,8 +1074,11 @@ async def tls_delete_cert(hostname: str):
             "hostname": hostname,
             "message": f"Certificate deleted for '{hostname}'",
         }
-    except Exception as e:
+    except ValueError as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
+    except Exception:
+        logger.exception("Failed to delete cert")
+        return JSONResponse(status_code=500, content={"error": "An internal error occurred"})
 
 
 @app.post("/api/tls/certs/{hostname}/rotate")
@@ -1090,8 +1102,11 @@ async def tls_rotate_cert(hostname: str, request: Request):
             "hostname": hostname,
             "message": f"Certificate rotated for '{hostname}'",
         }
-    except Exception as e:
+    except (ValueError, UnicodeDecodeError, binascii.Error) as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
+    except Exception:
+        logger.exception("Failed to rotate cert")
+        return JSONResponse(status_code=500, content={"error": "An internal error occurred"})
 
 
 @app.post("/api/tls/root-ca/download")
