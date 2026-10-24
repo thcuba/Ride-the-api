@@ -2649,10 +2649,39 @@ except Exception as e:
 
 # ── Main proxy endpoint helpers ───────────────────────────────────────────────
 
+# Hop-by-hop/framing headers never replayed to the device: they describe the
+# upstream connection, not the message (the response object sets its own).
+_RESPONSE_HOP_BY_HOP = ("content-length", "transfer-encoding", "connection")
 
-async def _forward_bypassed_request(
-    adapter, request: Request, path: str, body, client_ip: str
-) -> JSONResponse:
+
+def _upstream_response(cloud_response, decoded: dict | None = None) -> Response:
+    """Replay an upstream response verbatim: status, headers and body bytes.
+
+    A proxy must preserve the conversation. Inventing a 200 with a JSON body
+    turns a vendor 401/429/500 into a false success for the device and drops
+    cookies, ``retry-after`` and content negotiation. The raw upstream bytes are
+    reused as-is, so non-JSON payloads survive byte-for-byte.
+    """
+    body = getattr(cloud_response, "body_bytes", None)
+    if body is None:
+        fallback = decoded if decoded is not None else (cloud_response.response or {})
+        body = json.dumps(fallback).encode("utf-8")
+    headers = {
+        str(k): str(v)
+        for k, v in (getattr(cloud_response, "response_headers", None) or {}).items()
+        if str(k).lower() not in _RESPONSE_HOP_BY_HOP
+    }
+    headers.setdefault("content-type", "application/json")
+    return Response(
+        content=body,
+        status_code=getattr(cloud_response, "status_code", None) or 200,
+        headers=headers,
+    )
+
+
+async def _forward_bypassed_request(  # noqa: PLR0913
+    adapter, request: Request, path: str, body, client_ip: str, *, raw_body: bytes | None = None
+) -> Response:
     """Forward a bypassed device's request straight to the cloud.
 
     Used by the HTTP proxy endpoint for per-IP bypass: the traffic transits the
@@ -2678,11 +2707,12 @@ async def _forward_bypassed_request(
             headers=dict(request.headers),
             query_params=dict(request.query_params),
             body=body,
+            body_bytes=raw_body,
             client_ip=client_ip,
         )
     )
     if cloud_response and cloud_response.success:
-        return JSONResponse(content=cloud_response.response or {})
+        return _upstream_response(cloud_response)
     return JSONResponse(
         status_code=502,
         content={
@@ -2732,7 +2762,9 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
     # Prometheus: count every proxied request.
     metrics_registry.requests_total.inc()
 
-    # Parse request body
+    # Parse request body. The raw bytes are kept too: a forward must be
+    # byte-faithful and never re-encode a non-JSON payload as JSON.
+    raw_body = await request.body()
     body = await _get_request_body(request)
 
     # Determine source
@@ -2752,10 +2784,12 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
         )
         decision = traffic_selector.evaluate(request_info)
         if decision.value == "passthrough" and is_local:
-            logger.info(f"Passthrough for local traffic from {client_ip} to {vendor}")
-            return JSONResponse(
-                status_code=200,
-                content={"status": "passthrough", "message": "Traffic forwarded directly"},
+            # The device addressed *this* gateway, so a passthrough decision
+            # must actually forward the request upstream. Replying 200 with a
+            # note instead fabricated a success the device never received.
+            logger.info(f"Passthrough for local traffic from {client_ip} to {vendor}: forwarding")
+            return await _forward_bypassed_request(
+                adapter, request, path, body, client_ip, raw_body=raw_body
             )
 
     # Per-IP bypass: forward this device's traffic straight to the cloud, skipping
@@ -2764,7 +2798,9 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
     # signal_forward_to_cloud is on, else the legacy adapter forward.
     if await db_manager.is_ips_bypassed(client_ip):
         logger.info(f"Bypass for {client_ip} to {vendor}: forwarding to cloud directly")
-        return await _forward_bypassed_request(adapter, request, path, body, client_ip)
+        return await _forward_bypassed_request(
+            adapter, request, path, body, client_ip, raw_body=raw_body
+        )
 
     # Build intercepted request
     intercepted = InterceptedRequest(
@@ -2776,6 +2812,7 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
         headers=dict(request.headers),
         query_params=dict(request.query_params),
         body=body,
+        body_bytes=raw_body,
     )
 
     try:
@@ -2851,15 +2888,17 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
                 # `CommandResult.response`, not `.data` — the old code read a
                 # nonexistent attribute, so the device always got an empty body.
                 resp_body = cloud_response.response or {}
+                # Learn from the *real* upstream status/headers, and replay them
+                # to the device unchanged (see _upstream_response).
                 await orchestrator.handle_response(
                     device_id=device_id,
                     vendor=vendor,
                     protocol="http",
-                    status_code=200,
-                    headers={"content-type": "application/json"},
+                    status_code=cloud_response.status_code or 200,
+                    headers=cloud_response.response_headers or {"content-type": "application/json"},
                     body=resp_body,
                 )
-                return JSONResponse(content=resp_body)
+                return _upstream_response(cloud_response, resp_body)
             return JSONResponse(
                 status_code=502,
                 content={

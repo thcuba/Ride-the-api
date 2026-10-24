@@ -26,8 +26,9 @@ from typing import TYPE_CHECKING
 
 import h11
 
-from adapters.base import device_id_from_ip
+from adapters.base import InterceptedRequest, ProtocolType, device_id_from_ip
 from core.cert_manager import CertManager
+from core.cloud_forward import forward_intercepted
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
@@ -503,14 +504,9 @@ class TLSMITMServer:
                     )
                 else:
                     # The pipeline returned a non-local action (forward,
-                    # no_fallback, buffered_for_learning, …) with no local
-                    # response body. Mirror the documented forward contract
-                    # (docs/nginx-architecture.md) exactly like the FastAPI
-                    # HTTP handler does: a forward miss replies with
-                    # 502 + X-Action: forward so nginx (or a downstream proxy)
-                    # re-routes the request to the cloud loop-free; a
-                    # no_fallback miss replies conclusive 501. Anything else
-                    # falls back to a generic 502.
+                    # no_fallback, buffered_for_learning, ...) with no local
+                    # response body. Handled below: `forward` performs the real
+                    # upstream exchange, everything else is reported conclusively.
                     action = (
                         handler_result.get("action") if isinstance(handler_result, dict) else ""
                     )
@@ -519,26 +515,34 @@ class TLSMITMServer:
                         if isinstance(handler_result, dict)
                         else "not_served"
                     )
+                    # A forward must actually reach the vendor: this listener owns
+                    # the TLS session, so an X-Action signal would be delivered to
+                    # the device, which cannot act on it.
                     if action == "forward":
-                        status = 502
-                        headers = {
-                            "content-type": "application/json",
-                            "X-Action": "forward",
-                            "X-Original-Host": hostname,
-                        }
-                    elif action == "no_fallback":
-                        status = 501
-                        headers = {"content-type": "application/json"}
+                        forwarded = await self._forward_upstream(
+                            decrypted_req, hostname, device_id_from_ip("tls", client_ip)
+                        )
+                        response = (
+                            forwarded
+                            if forwarded is not None
+                            else {
+                                "status_code": 502,
+                                "headers": {"content-type": "application/json"},
+                                "body": json.dumps(
+                                    {
+                                        "error": "upstream_forward_failed",
+                                        "action": action,
+                                        "reason": reason,
+                                    }
+                                ),
+                            }
+                        )
                     else:
-                        status = 502
-                        headers = {"content-type": "application/json"}
-                    await self._write_http_response(
-                        ssl_obj,
-                        outgoing,
-                        writer,
-                        {
-                            "status_code": status,
-                            "headers": headers,
+                        # Nothing local to serve and no forward target: report it
+                        # conclusively instead of pretending it was handled.
+                        response = {
+                            "status_code": 501 if action == "no_fallback" else 502,
+                            "headers": {"content-type": "application/json"},
                             "body": json.dumps(
                                 {
                                     "error": "local_response_unavailable",
@@ -546,9 +550,8 @@ class TLSMITMServer:
                                     "reason": reason,
                                 }
                             ),
-                        },
-                        client_ip,
-                    )
+                        }
+                    await self._write_http_response(ssl_obj, outgoing, writer, response, client_ip)
             else:
                 logger.warning(
                     "TLS MITM: no request_handler set — dropping decrypted request from %s %s %s",
@@ -782,6 +785,63 @@ class TLSMITMServer:
                     )
 
         return None
+
+    async def _forward_upstream(
+        self, req: DecryptedRequest, hostname: str, device_id: str
+    ) -> dict | None:
+        """Forward a decrypted device request to the vendor cloud.
+
+        The TLS listener terminates TLS itself, so no proxy downstream can see —
+        and therefore act on — an ``X-Action: forward`` signal: the device would
+        simply receive a bare 502 with a header it cannot interpret. So this
+        path performs the upstream exchange here and returns the vendor's real
+        response (status, headers and raw body bytes) for replay over TLS.
+
+        Returns ``None`` when the exchange failed, so the caller can answer with
+        an explicit error instead of pretending the request was forwarded.
+        """
+        try:
+            result = await forward_intercepted(
+                InterceptedRequest(
+                    device_id=device_id,
+                    timestamp=datetime.now(UTC),
+                    protocol=ProtocolType.HTTPS,
+                    client_ip=req.client_ip,
+                    method=req.method,
+                    path=req.path,
+                    headers=dict(req.headers),
+                    query_params={},
+                    # The raw bytes are replayed verbatim (`body` stays None so
+                    # nothing re-encodes a non-JSON payload as JSON).
+                    body=None,
+                    body_bytes=req.body or None,
+                ),
+                hostname=hostname,
+                port=443,
+                use_tls=True,
+            )
+        except Exception:  # noqa: BLE001 - a forward failure must not kill the session
+            logger.exception("TLS MITM: upstream forward to %s failed", hostname)
+            return None
+        if not result.success:
+            logger.warning("TLS MITM: upstream forward to %s failed: %s", hostname, result.error)
+            return None
+        logger.info(
+            "TLS MITM: forwarded %s %s to %s -> %s",
+            req.method,
+            req.path,
+            hostname,
+            result.status_code,
+        )
+        return {
+            "status_code": result.status_code or 200,
+            "headers": result.response_headers or {"content-type": "application/json"},
+            "body": (
+                result.body_bytes
+                if result.body_bytes is not None
+                else json.dumps(result.response or {})
+            ),
+        }
 
     async def _write_http_response(
         self,
