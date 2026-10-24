@@ -170,6 +170,12 @@ analysis and field deciphering.
 - **LLM Profiles** (`LLMProfile`): each profile specifies `base_url`, `api_key`, `model_id`,
   `prompt_template`, `timeout` and `max_retries`. The `api_key` can be resolved from environment
   variables using `${VAR_NAME}` syntax.
+- **Purpose-bound profiles** (`llm_decipher.task_profiles`): a purpose may be served by a
+  dedicated profile — `correlation` (validate a weak match against the learned patterns),
+  `flush` (analyse the buffer and learn) and `learning_context` (the flush grounded with the
+  already-learned model). An unbound purpose falls back to the device profile and then to
+  `default_profile`. Both the LLM page and the Configuration section edit them through
+  `PUT /api/llm/settings`.
 - **Single and batch deciphering**: `decipher_pair()` analyzes a single pair; `decipher_batch()`
   analyzes multiple pairs in parallel with `asyncio.gather()`.
 - **Prompt construction**: the prompt is built from a template that includes the
@@ -181,6 +187,12 @@ analysis and field deciphering.
   [`json_repair`](https://github.com/mangiucugna/json_repair) library (see `_parse_llm_json`).
 - **Cache**: deciphered results are cached in memory (TTL: 1 hour) to
   avoid redundant LLM calls.
+- **Weak-match validation** (`validate_match()`): when the local engine returns a pattern whose
+  score is below the device `match_threshold`, the request would normally be forwarded to the
+  cloud. If a profile is bound to the `correlation` purpose, the LLM is asked to confirm the
+  learned pattern against the incoming request first, and only a positive verdict serves it
+  locally. Every failure mode — unbound purpose, provider error, unparseable answer — keeps the
+  normal miss behaviour, so validation can never make matching worse than it was.
 - **Retry with backoff**: in case of timeout or HTTP error, retries up to `max_retries` times with
   exponential backoff (1s, 2s, …) driven by the [`tenacity`](https://github.com/jd/tenacity)
   library (shared helpers in `core/retry.py`).

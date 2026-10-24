@@ -154,10 +154,21 @@ class LLMDecipherService:
     Supports multiple LLM providers (OpenAI-compatible APIs, local Ollama, etc.)
     """
 
+    # Purposes an LLM call can serve. Each may be bound to a dedicated profile
+    # (``task_profiles``) so e.g. a cheap local model can serve the buffer flush
+    # while a stronger one validates uncertain matches. An unset task falls back
+    # to the device profile and then to ``default_profile``.
+    TASKS: dict[str, str] = {
+        "correlation": "Validate an uncertain match against the learned patterns",
+        "flush": "Analyse the buffer and learn patterns (Send to LLM)",
+        "learning_context": "Analyse the buffer grounded with the already-learned model",
+    }
+
     def __init__(self, config_manager=None) -> None:
         self.config_manager = config_manager or get_config_manager()
         self._config = None
         self._profiles: dict[str, LLMProfile] = {}
+        self._task_profiles: dict[str, str] = {}
         self._default_profile = "default"
         self._enabled = True
         self._clients: dict[str, AsyncOpenAI] = {}
@@ -188,6 +199,11 @@ class LLMDecipherService:
 
         self._default_profile = getattr(self._config, "default_profile", "default")
         self._enabled = bool(getattr(self._config, "enabled", True))
+        self._task_profiles = {
+            task: str(name)
+            for task, name in (getattr(self._config, "task_profiles", None) or {}).items()
+            if task in self.TASKS and name
+        }
 
         # Load profiles (fully replace so removed profiles drop out on reload).
         profiles_config = getattr(self._config, "profiles", {})
@@ -217,6 +233,12 @@ class LLMDecipherService:
                 self._enabled = bool(overrides["enabled"])
             if "default_profile" in overrides:
                 self._default_profile = overrides["default_profile"]
+            if isinstance(overrides.get("task_profiles"), dict):
+                self._task_profiles = {
+                    task: str(name)
+                    for task, name in overrides["task_profiles"].items()
+                    if task in self.TASKS and name
+                }
             if "profiles" in overrides:
                 runtime_profiles = overrides.get("profiles")
                 if isinstance(runtime_profiles, dict):
@@ -295,6 +317,86 @@ class LLMDecipherService:
         profile_name = name or self._default_profile
         return self._profiles.get(profile_name)
 
+    def resolve_task_profile(self, task: str) -> str | None:
+        """Return the profile bound to ``task``, or ``None`` when unbound.
+
+        Callers fall back to their own default (the device profile, then
+        ``default_profile``), so nothing changes until a task is bound.
+        """
+        name = self._task_profiles.get(task)
+        return name if name and name in self._profiles else None
+
+    async def validate_match(
+        self,
+        pattern: Any,  # noqa: ANN401 - a pattern object or a plain dict
+        request: dict,
+        profile_name: str | None = None,
+    ) -> dict:
+        """Ask the LLM whether a below-threshold pattern really applies.
+
+        Drives the ``correlation`` task: when the local match engine returns a
+        pattern whose score is under the device threshold, the LLM can confirm
+        it instead of forwarding the request to the cloud. Never raises — any
+        failure means "not validated", so the caller keeps its normal behaviour.
+        """
+        profile = self.get_profile(profile_name)
+        if not profile:
+            return {"applicable": False, "reason": f"profile not found: {profile_name}"}
+        prompt = self._build_validation_prompt(pattern, request)
+        try:
+            result = await self.call_llm(profile, prompt)
+        except Exception:  # noqa: BLE001 - validation must never break the hot path
+            logger.exception("LLM match validation failed")
+            return {"applicable": False, "reason": "llm error"}
+        if not result.get("success"):
+            return {"applicable": False, "reason": str(result.get("error") or "llm error")}
+        try:
+            data = _parse_llm_json(result.get("content") or "")
+        except Exception:  # noqa: BLE001 - defensive parse
+            logger.warning("Could not parse LLM match validation output")
+            return {"applicable": False, "reason": "unparseable output"}
+        if not isinstance(data, dict):
+            return {"applicable": False, "reason": "unexpected output"}
+        return {
+            "applicable": bool(data.get("applicable", False)),
+            "confidence": float(data.get("confidence") or 0.0),
+            "reason": str(data.get("reason") or ""),
+        }
+
+    @staticmethod
+    def _build_validation_prompt(pattern: Any, request: dict) -> str:  # noqa: ANN401
+        """Prompt asking the LLM to confirm a weak pattern match."""
+
+        def _get(obj: Any, name: str, default: Any = None) -> Any:  # noqa: ANN401
+            if isinstance(obj, dict):
+                return obj.get(name, default)
+            return getattr(obj, name, default)
+
+        learned = {
+            "intent": _get(pattern, "intent"),
+            "method": _get(pattern, "method"),
+            "path": _get(pattern, "path"),
+            "protocol": _get(pattern, "protocol"),
+            "response_template": _get(pattern, "response_template"),
+        }
+        incoming = {
+            "method": request.get("method"),
+            "path": request.get("path"),
+            "headers": request.get("headers"),
+            "body": request.get("body"),
+        }
+        return (
+            "You validate a weak pattern match in a cloud-replacement proxy.\n"
+            "A pattern already learned for this device is given below, together with\n"
+            "an incoming request. Decide whether the learned pattern applies to the\n"
+            "incoming request (same endpoint and shape), so the proxy can answer it\n"
+            "locally instead of forwarding it to the cloud.\n\n"
+            f"LEARNED PATTERN:\n{json.dumps(learned, default=str)[:4000]}\n\n"
+            f"INCOMING REQUEST:\n{json.dumps(incoming, default=str)[:4000]}\n\n"
+            "Answer with ONLY a JSON object: "
+            '{"applicable": true|false, "confidence": 0.0-1.0, "reason": "<short>"}'
+        )
+
     def list_profiles(self) -> list[str]:
         """List available profile names."""
         if not self._enabled:
@@ -327,6 +429,9 @@ class LLMDecipherService:
             "enabled": self._enabled,
             "default_profile": self._default_profile,
             "profiles": profiles,
+            # Always the full task set so both UIs (LLM page and the
+            # Configuration section) show one field per purpose.
+            "task_profiles": {task: self._task_profiles.get(task, "") for task in self.TASKS},
         }
 
     def update_settings(self, settings: dict) -> dict:
@@ -365,16 +470,37 @@ class LLMDecipherService:
         if default_profile and default_profile not in validated:
             raise ValueError(f"default_profile '{default_profile}' is not a known profile")
 
+        task_profiles = self._validate_task_profiles(settings.get("task_profiles"), validated)
+
         payload = {
             "enabled": enabled,
             "default_profile": default_profile,
             "profiles": validated,
+            "task_profiles": task_profiles,
         }
         save_llm_settings(payload)
 
         # Reload in-memory state so the change is live immediately.
         self._load_config()
         return self.get_settings()
+
+    @staticmethod
+    def _validate_task_profiles(raw_tasks: Any, validated: dict[str, dict]) -> dict[str, str]:  # noqa: ANN401
+        """Validate purpose → profile bindings; an empty value means unbound."""
+        if raw_tasks is None:
+            raw_tasks = {}
+        if not isinstance(raw_tasks, dict):
+            raise ValueError("task_profiles must be an object")  # noqa: TRY004
+        bindings: dict[str, str] = {}
+        for task, raw in raw_tasks.items():
+            if task not in LLMDecipherService.TASKS:
+                raise ValueError(f"unknown task '{task}'")
+            name = str(raw or "")
+            if name:
+                if name not in validated:
+                    raise ValueError(f"task '{task}' references unknown profile '{name}'")
+                bindings[task] = name
+        return bindings
 
     def reload(self) -> None:
         """Re-read config.yaml and runtime overrides (used after external edits)."""

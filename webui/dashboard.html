@@ -603,6 +603,24 @@
     </div>
 
     <div class="pm-row">
+      <label>Profile per purpose</label>
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="flex:1;font-size:12px;color:var(--text2);" title="Validates a weak (below-threshold) match against the learned patterns">Correlation &amp; validation</span>
+          <select id="llm-task-correlation" style="flex:1;" aria-label="LLM profile for correlation and validation"></select>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="flex:1;font-size:12px;color:var(--text2);" title="Analyses the buffer and learns patterns (Send to LLM)">Buffer flush</span>
+          <select id="llm-task-flush" style="flex:1;" aria-label="LLM profile for the buffer flush"></select>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="flex:1;font-size:12px;color:var(--text2);" title="Analyses the buffer grounded with the already-learned model">Learned context (update)</span>
+          <select id="llm-task-learning_context" style="flex:1;" aria-label="LLM profile for the grounded update flush"></select>
+        </div>
+      </div>
+    </div>
+
+    <div class="pm-row">
       <label>Profiles</label>
       <div id="llm-profiles-list" style="display:flex;flex-direction:column;gap:8px;max-height:320px;overflow-y:auto;"></div>
     </div>
@@ -2155,6 +2173,23 @@ function renderLLMSettings(settings) {
     });
     defaultSel.value = settings.default_profile || Object.keys(settings.profiles || {})[0] || '';
   }
+  // Purpose → profile bindings (empty = fall back to the default profile).
+  const taskProfiles = settings.task_profiles || {};
+  ['correlation', 'flush', 'learning_context'].forEach(task => {
+    const sel = document.getElementById('llm-task-' + task);
+    if (!sel) return;
+    sel.innerHTML = '';
+    const none = document.createElement('option');
+    none.value = '';
+    none.textContent = '— use default —';
+    sel.appendChild(none);
+    Object.keys(settings.profiles || {}).forEach(name => {
+      const opt = document.createElement('option');
+      opt.value = name; opt.textContent = name;
+      sel.appendChild(opt);
+    });
+    sel.value = taskProfiles[task] || '';
+  });
   renderLLMProfileCards(settings);
 }
 
@@ -2393,7 +2428,14 @@ function collectLLMSettings() {
       };
     });
   }
-  return { enabled, default_profile: defaultProfile, profiles };
+  // Purpose → profile bindings; an empty selection is omitted so the purpose
+  // stays unbound and falls back to the device/default profile.
+  const task_profiles = {};
+  ['correlation', 'flush', 'learning_context'].forEach(task => {
+    const sel = document.getElementById('llm-task-' + task);
+    if (sel && sel.value) task_profiles[task] = sel.value;
+  });
+  return { enabled, default_profile: defaultProfile, profiles, task_profiles };
 }
 
 async function saveLLMSettings() {

@@ -259,6 +259,12 @@ class LLMDecipherConfig(BaseModel):
     enabled: bool = True
     default_profile: str = "default"
     profiles: dict[str, LLMDecipherProfile] = Field(default_factory=dict)
+    # Purpose → profile binding. Each purpose (see ``LLMDecipherService.TASKS``)
+    # may be served by a dedicated profile — e.g. a cheap local model for the
+    # buffer flush and a stronger one to validate weak matches. An empty or
+    # missing entry falls back to ``default_profile``. Normally managed at
+    # runtime through the LLM settings API, which both UIs edit.
+    task_profiles: dict[str, str] = Field(default_factory=dict)
 
 
 class ModificationRule(BaseModel):

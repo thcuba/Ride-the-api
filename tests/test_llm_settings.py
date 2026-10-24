@@ -65,6 +65,79 @@ class TestLLMSettingsService:
         assert settings["profiles"]["default"]["base_url"] == "http://a/v1"
         assert settings["profiles"]["default"]["api_key"] == "k"
 
+    def test_get_settings_always_exposes_every_task(self):
+        """Both UIs render one field per purpose, so all keys are present."""
+        service, _ = _service_with_profiles()
+        assert service.get_settings()["task_profiles"] == {
+            "correlation": "",
+            "flush": "",
+            "learning_context": "",
+        }
+
+    def test_task_profiles_round_trip_and_resolve(self):
+        service, _ = _service_with_profiles()
+        saved = {}
+
+        def fake_save(payload):
+            saved.clear()
+            saved.update(payload)
+
+        with (
+            patch("core.llm_decipher.save_llm_settings", side_effect=fake_save),
+            patch("core.llm_decipher.load_llm_settings", side_effect=lambda: saved or None),
+        ):
+            updated = service.update_settings(
+                {
+                    "enabled": True,
+                    "default_profile": "default",
+                    "profiles": {"default": {"base_url": "http://a/v1", "api_key": "k"}},
+                    "task_profiles": {"flush": "default", "correlation": ""},
+                }
+            )
+        assert updated["task_profiles"]["flush"] == "default"
+        assert updated["task_profiles"]["correlation"] == ""
+        assert service.resolve_task_profile("flush") == "default"
+        # Unbound purpose → None, so callers fall back to the default profile.
+        assert service.resolve_task_profile("correlation") is None
+
+    def test_update_settings_rejects_unknown_task(self):
+        service, _ = _service_with_profiles()
+        with pytest.raises(ValueError, match="unknown task"):
+            service.update_settings(
+                {"profiles": {"default": {}}, "task_profiles": {"nope": "default"}}
+            )
+
+    def test_update_settings_rejects_task_with_unknown_profile(self):
+        service, _ = _service_with_profiles()
+        with pytest.raises(ValueError, match="unknown profile"):
+            service.update_settings(
+                {"profiles": {"default": {}}, "task_profiles": {"flush": "ghost"}}
+            )
+
+    async def test_validate_match_parses_llm_verdict(self):
+        service, _ = _service_with_profiles()
+        answer = '{"applicable": true, "confidence": 0.8, "reason": "same endpoint"}'
+        with patch.object(
+            service,
+            "call_llm",
+            new=AsyncMock(return_value={"success": True, "content": answer}),
+        ):
+            verdict = await service.validate_match(object(), {"method": "GET"}, "default")
+        assert verdict == {"applicable": True, "confidence": 0.8, "reason": "same endpoint"}
+
+    async def test_validate_match_failure_is_never_fatal(self):
+        """A provider error must degrade to 'not validated', never raise."""
+        service, _ = _service_with_profiles()
+        with patch.object(service, "call_llm", new=AsyncMock(side_effect=RuntimeError("boom"))):
+            verdict = await service.validate_match(object(), {}, "default")
+        assert verdict["applicable"] is False
+        assert "llm error" in verdict["reason"]
+
+    async def test_validate_match_unknown_profile(self):
+        service, _ = _service_with_profiles()
+        verdict = await service.validate_match(object(), {}, "ghost")
+        assert verdict["applicable"] is False
+
     def test_list_profiles_gated_by_enabled(self):
         service, _ = _service_with_profiles()
         assert service.list_profiles() == ["default"]
