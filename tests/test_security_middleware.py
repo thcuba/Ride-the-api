@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import stat
+
 import pytest
 from fastapi.testclient import TestClient
 from starlette.applications import Starlette
@@ -9,6 +11,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 import core.server as server_mod
+from core import security as security_mod
 from core.security import MaxBodySizeMiddleware
 from core.server import app
 
@@ -183,9 +186,14 @@ def test_setup_password_allows_first_run_set(monkeypatch):
         "set_security_password",
         lambda pw: calls.append(pw) or True,
     )
+    monkeypatch.setattr(security_mod, "_SETUP_TOKEN", "test-setup-token")
     try:
         client = TestClient(app)
-        resp = client.post("/api/auth/password", json={"password": "nuova-password-123"})
+        resp = client.post(
+            "/api/auth/password",
+            json={"password": "nuova-password-123"},
+            headers={"X-Setup-Token": "test-setup-token"},
+        )
         assert resp.status_code == 200  # noqa: PLR2004
         assert calls == ["nuova-password-123"]
     finally:
@@ -202,14 +210,22 @@ def test_setup_password_rejects_short_or_mismatched(monkeypatch):
     monkeypatch.setattr(server_mod, "orchestrator", object())
     monkeypatch.setattr(server_mod, "cert_manager", _FakeCertManager())
     try:
+        monkeypatch.setattr(security_mod, "_SETUP_TOKEN", "test-setup-token")
+        auth = {"X-Setup-Token": "test-setup-token"}
         client = TestClient(app)
-        assert client.post("/api/auth/password", json={"password": ""}).status_code == 400  # noqa: PLR2004
-        assert client.post("/api/auth/password", json={"password": "short"}).status_code == 400  # noqa: PLR2004
+        assert (
+            client.post("/api/auth/password", json={"password": ""}, headers=auth).status_code
+            == 400  # noqa: PLR2004
+        )
+        assert (
+            client.post("/api/auth/password", json={"password": "short"}, headers=auth).status_code
+            == 400  # noqa: PLR2004
+        )
         assert (
             client.post(
                 "/api/auth/password",
                 content=b"not-json",
-                headers={"Content-Type": "application/json"},
+                headers={**auth, "Content-Type": "application/json"},
             ).status_code
             == 400  # noqa: PLR2004
         )
@@ -249,6 +265,7 @@ def test_first_install_end_to_end_flow(monkeypatch):
         return True
 
     monkeypatch.setattr(server_mod.config_manager, "set_security_password", _set_password)
+    monkeypatch.setattr(security_mod, "_SETUP_TOKEN", "test-setup-token")
     monkeypatch.setattr(server_mod, "db_manager", _FakeDB())
     monkeypatch.setattr(server_mod, "orchestrator", object())
     monkeypatch.setattr(server_mod, "cert_manager", _FakeCertManager())
@@ -265,6 +282,7 @@ def test_first_install_end_to_end_flow(monkeypatch):
         created = client.post(
             "/api/auth/password",
             json={"password": new_password},
+            headers={"X-Setup-Token": "test-setup-token"},
         )
         assert created.status_code == 200  # noqa: PLR2004
 
@@ -284,6 +302,73 @@ def test_first_install_end_to_end_flow(monkeypatch):
         assert replay.status_code == 403  # noqa: PLR2004
     finally:
         cfg.security.auth_enabled, cfg.security.password = saved
+
+
+def test_setup_token_required_while_no_password(monkeypatch):
+    """The first-run window must not be claimable by whoever reaches the port."""
+    cfg = server_mod.config_manager.config
+    saved = (cfg.security.auth_enabled, cfg.security.password)
+    cfg.security.auth_enabled = True
+    cfg.security.password = ""
+    monkeypatch.setattr(security_mod, "_SETUP_TOKEN", "test-setup-token")
+    monkeypatch.setattr(server_mod, "db_manager", _FakeDB())
+    monkeypatch.setattr(server_mod, "orchestrator", object())
+    monkeypatch.setattr(server_mod, "cert_manager", _FakeCertManager())
+    try:
+        client = TestClient(app)
+        resp = client.post("/api/auth/password", json={"password": "nuova-password-123"})
+        assert resp.status_code == 403  # noqa: PLR2004
+        assert resp.headers.get("X-Auth-Setup") == "token-required"
+        assert "setup token" in resp.json()["error"].lower()
+
+        wrong = client.post(
+            "/api/auth/password",
+            json={"password": "nuova-password-123"},
+            headers={"X-Setup-Token": "not-the-token"},
+        )
+        assert wrong.status_code == 403  # noqa: PLR2004
+    finally:
+        cfg.security.auth_enabled, cfg.security.password = saved
+
+
+def test_setup_token_unlocks_first_run_set(monkeypatch):
+    """The correct token completes the bootstrap."""
+    cfg = server_mod.config_manager.config
+    saved = (cfg.security.auth_enabled, cfg.security.password)
+    cfg.security.auth_enabled = True
+    cfg.security.password = ""
+    monkeypatch.setattr(security_mod, "_SETUP_TOKEN", "test-setup-token")
+    monkeypatch.setattr(server_mod, "db_manager", _FakeDB())
+    monkeypatch.setattr(server_mod, "orchestrator", object())
+    monkeypatch.setattr(server_mod, "cert_manager", _FakeCertManager())
+    calls = []
+    monkeypatch.setattr(
+        server_mod.config_manager, "set_security_password", lambda pw: calls.append(pw) or True
+    )
+    try:
+        client = TestClient(app)
+        resp = client.post(
+            "/api/auth/password",
+            json={"password": "nuova-password-123"},
+            headers={"X-Setup-Token": "test-setup-token"},
+        )
+        assert resp.status_code == 200  # noqa: PLR2004
+        assert calls == ["nuova-password-123"]
+    finally:
+        cfg.security.auth_enabled, cfg.security.password = saved
+
+
+def test_setup_token_is_persisted_owner_only(monkeypatch, tmp_path):
+    """The operator can read the token from the filesystem, and nobody else."""
+    monkeypatch.setattr(security_mod, "_SETUP_TOKEN", None)
+    target = tmp_path / "ridebase" / "setup-token"
+    token = security_mod.setup_token(target)
+
+    assert token
+    assert target.read_text().strip() == token
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600  # noqa: PLR2004
+    # Idempotent: a second call returns the same token (no re-issue).
+    assert security_mod.setup_token() == token
 
 
 # ── F-09: MaxBodySizeMiddleware ────────────────────────────────────────────────

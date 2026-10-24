@@ -21,15 +21,26 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # Upstream: the Ride-the-API FastAPI app (internal network / sidecar)
+# nginx requires this file (the *main* config, which the container entrypoint
+# renders from this template) to declare its own `events`/`http` contexts:
+# `upstream` and `server` are only valid inside `http`, and `stream` only at the
+# top level. Without these wrappers nginx refuses to start
+# (`"upstream" directive is not allowed here`).
+events {
+    worker_connections 1024;
+}
+
+http {
 upstream ride_api {
     server ride-the-api:8911;
 }
 
-# Upstream: the REAL vendor cloud, resolved via public DNS to avoid loops.
-upstream cloud_upstream {
-    ${DNS_RESOLVERS}
-    server api.example.com:443;
-}
+# The dedicated dual-stack resolver, used for *runtime* name resolution: this is
+# what forces cloud forwarding through public DNS rather than the local resolver.
+# `resolver` is only valid inside `http`/`server`/`location` — placing it in an
+# `upstream` block (as this file used to) makes nginx refuse to start. The
+# variable already contains the `resolver` keyword itself.
+${DNS_RESOLVERS}
 
 # ── HTTP server (redirects to HTTPS) ──────────────────────────────────────────
 server {
@@ -70,7 +81,8 @@ server {
     # response and re-issue the request to the cloud upstream.
     location = /_cloud/ {
         internal;  # only reachable via internal redirect (error_page / X-Accel)
-        proxy_pass https://cloud_upstream;
+        set $cloud_host "api.example.com";
+        proxy_pass https://$cloud_host$request_uri;
         proxy_set_header Host $http_x_original_host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto https;
@@ -98,7 +110,8 @@ server {
     location @cloud_redirect {
         # Proxy the ORIGINAL request method/body to the cloud upstream.
         # Uses the resolver configured above (default 8.8.8.8 / 1.1.1.1, IPv6).
-        proxy_pass https://cloud_upstream;
+        set $cloud_host "api.example.com";
+        proxy_pass https://$cloud_host$request_uri;
         proxy_set_header Host $http_host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto https;
@@ -108,13 +121,17 @@ server {
     }
 }
 
+}
+
 # ── TCP stream proxy for non-HTTP protocols (MQTT, raw TCP) ───────────────────
 # nginx stream module proxies MQTT/raw TCP to the cloud using the same
 # loop-free dual-stack resolver.  Enable per-vendor as needed.
 stream {
     # Example: MQTT over TLS to the real broker
     upstream mqtt_cloud {
-        ${DNS_RESOLVERS}
+        # NOTE: the stream module has no `resolver` directive — this name is
+        # resolved once at startup by the system resolver. Use a literal IP
+        # here if the local DNS must be bypassed.
         server mqtt.example.com:8883;
     }
 

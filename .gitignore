@@ -73,3 +73,8 @@ core/database.py.bak
 
 # Analysis / inventory files (auto-generated)
 INVENTARIO_HANDROLLED.md
+
+# Runtime state: databases, exported patterns and the first-run setup token
+# (ridebase/.gitkeep keeps the directory in the repository)
+ridebase/*
+!ridebase/.gitkeep
