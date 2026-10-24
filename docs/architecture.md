@@ -82,11 +82,18 @@ autonomous local responses. Each request passes through the following stages:
 - **HTTP/1.1 parsing/serialization**: decrypted traffic is parsed and re-serialized with the
   [`h11`](https://github.com/python-hyper/h11) state machine (`parse_decrypted_http_request`,
   `serialize_http_response`) — no regex-based HTTP parsers are used.
-- **Forward contract**: when the pipeline does not serve a local response, the MITM mirrors the
-  documented forward contract (`docs/nginx-architecture.md`): `action=forward` → **502** +
-  `X-Action: forward` + `X-Original-Host` (the SNI); `action=no_fallback` → **501**; anything else →
-  generic 502. A downstream nginx (or proxy) catches the `X-Action: forward` signal and re-routes
-  loop-free.
+- **Forward contract**: when the pipeline does not serve a local response, the behaviour depends
+  on who terminates the connection.
+  - **FastAPI HTTP handler**: with `signal_forward_to_cloud` enabled (a proxy is in front) it
+    answers `action=forward` → **502** + `X-Action: forward` + `X-Original-Host` (the SNI), and a
+    downstream nginx catches that signal and re-routes loop-free; otherwise it calls
+    `adapter.forward_to_cloud()` itself and **replays the vendor response verbatim** (status,
+    headers and raw body bytes — see `_upstream_response`). `action=no_fallback` → **501**.
+  - **TLS MITM listener**: it terminates TLS itself, so no proxy downstream can see (let alone
+    act on) an `X-Action` header — the device would just receive a bare 502. This path therefore
+    performs the real upstream exchange itself (`_forward_upstream`) and replays the vendor's
+    status/headers/bytes; only a genuine upstream failure answers 502. The `X-Action` contract
+    applies to the HTTP handler behind a reverse proxy, **not** to this listener.
 
 ### 2.2 TrafficSelector (`core/traffic_selector.py`)
 
