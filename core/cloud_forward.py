@@ -84,6 +84,44 @@ def _norm_headers(headers: dict[str, str] | None) -> dict[str, str]:
     return {str(k).lower(): str(v) for k, v in (headers or {}).items()}
 
 
+def _raw_body_matches_parsed(parsed: Any, raw: bytes) -> bool:  # noqa: ANN401
+    """True when ``raw`` is exactly the payload ``parsed`` was decoded from."""
+    if parsed is None:
+        # Nothing parsed (empty or non-JSON body): replay the original bytes.
+        return True
+    try:
+        return json.loads(raw) == parsed
+    except (json.JSONDecodeError, UnicodeDecodeError, TypeError, ValueError):
+        return False
+
+
+def _request_body_bytes(
+    request: InterceptedRequest, method: str, headers: dict[str, str]
+) -> bytes | None:
+    """Bytes to send upstream, keeping the device's payload intact.
+
+    A forward must be byte-faithful. Replay the original bytes whenever the
+    pipeline left the body untouched — this is what keeps non-JSON payloads
+    (XML, form data, protobuf, raw bytes) alive instead of re-encoding them as
+    JSON — and only re-serialise when the parsed body was actually rewritten
+    (e.g. by a modification rule).
+    """
+    if method in ("GET", "HEAD", "DELETE"):
+        return None
+    raw = getattr(request, "body_bytes", None)
+    if raw is not None and _raw_body_matches_parsed(request.body, raw):
+        if not raw:
+            return None
+        headers["content-length"] = str(len(raw))
+        return raw
+    if request.body is None or request.body == {}:
+        return None
+    body = json.dumps(request.body).encode("utf-8")
+    headers.setdefault("content-type", "application/json")
+    headers["content-length"] = str(len(body))
+    return body
+
+
 class CloudForwarder:
     """Forward a single HTTP/1.1 request to a cloud IP, driven by upstream DNS."""
 
@@ -287,12 +325,7 @@ async def forward_intercepted(  # noqa: PLR0913
         path = f"{path}{sep}{urlencode(request.query_params)}"
 
     headers = _norm_headers(request.headers)
-    body: bytes | None = None
-    if request.body is not None and method not in ("GET", "HEAD", "DELETE") and request.body != {}:
-        body = json.dumps(request.body).encode("utf-8")
-        if "content-type" not in headers:
-            headers["content-type"] = "application/json"
-        headers["content-length"] = str(len(body))
+    body = _request_body_bytes(request, method, headers)
 
     last_err: str | None = None
     for ip in ips:
@@ -313,6 +346,12 @@ async def forward_intercepted(  # noqa: PLR0913
                 response=_decode_body(response.body) or {},
                 forwarded=True,
                 error=None,
+                # Replay the upstream response verbatim: status, headers and the
+                # raw body bytes. Without these the caller can only invent a
+                # 200 + JSON, which hides vendor auth failures and rate limits.
+                status_code=response.status_code,
+                response_headers=dict(response.headers),
+                body_bytes=response.body,
             )
         except (TimeoutError, CloudForwardError, ConnectionError, OSError) as exc:
             last_err = str(exc)
