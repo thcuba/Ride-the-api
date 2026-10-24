@@ -591,7 +591,7 @@
     </div>
 
     <div class="pm-row">
-      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+      <label for="llm-enabled-toggle" style="display:flex;align-items:center;gap:8px;cursor:pointer;">
         <input type="checkbox" id="llm-enabled-toggle" role="switch" aria-checked="true" onchange="this.setAttribute('aria-checked', this.checked)">
         Enable LLM deciphering
       </label>
@@ -1333,11 +1333,11 @@ async function loadDeviceStats(deviceId) {
                     <select id="profile-select-${escapeHtml(deviceId)}" style="flex:1;" onchange="onProfileChange('${escapeJs(deviceId)}')">
                       <option value="default">Default</option>
                     </select>
-                    <button class="btn btn-ghost" style="padding:4px 8px;font-size:11px;" onclick="saveAsNewProfile('${escapeJs(deviceId)}')">Save As</button>
+                    <button type="button" class="btn btn-ghost" style="padding:4px 8px;font-size:11px;" onclick="saveAsNewProfile('${escapeJs(deviceId)}')" aria-label="Save template as new profile">Save As</button>
                   </div>
                   <div class="llm-row" style="justify-content:flex-end;gap:6px;border:none;padding-top:0;">
-                    <button class="btn btn-ghost" style="padding:2px 8px;font-size:11px;" onclick="editProfile('${escapeJs(deviceId)}')" aria-label="Edit template profile">Edit</button>
-                    <button class="btn btn-ghost" style="padding:2px 8px;font-size:11px;" onclick="deleteProfile('${escapeJs(deviceId)}')" id="delete-profile-btn-${escapeHtml(deviceId)}" aria-label="Delete template profile">Delete</button>
+                    <button type="button" class="btn btn-ghost" style="padding:2px 8px;font-size:11px;" onclick="editProfile('${escapeJs(deviceId)}')" aria-label="Edit template profile">Edit</button>
+                    <button type="button" class="btn btn-ghost" style="padding:2px 8px;font-size:11px;" onclick="deleteProfile('${escapeJs(deviceId)}')" id="delete-profile-btn-${escapeHtml(deviceId)}" aria-label="Delete template profile">Delete</button>
                   </div>
 
                   <!-- Context notes -->
@@ -1345,7 +1345,7 @@ async function loadDeviceStats(deviceId) {
                     <label for="context-notes-${escapeHtml(deviceId)}" style="min-width:0;margin-bottom:4px;">Context Notes</label>
                     <textarea id="context-notes-${escapeHtml(deviceId)}" placeholder="Add context for LLM analysis&#10;e.g.: &#34;This endpoint controls device pairing&#34;"></textarea>
                     <div style="display:flex;gap:6px;margin-top:4px;justify-content:flex-end;">
-                      <button class="btn btn-ghost" id="save-notes-btn-${escapeHtml(deviceId)}" style="padding:4px 10px;font-size:11px;" onclick="saveContextNotes('${escapeJs(deviceId)}')">Save Notes</button>
+                      <button type="button" class="btn btn-ghost" id="save-notes-btn-${escapeHtml(deviceId)}" style="padding:4px 10px;font-size:11px;" onclick="saveContextNotes('${escapeJs(deviceId)}')">Save Notes</button>
                     </div>
                   </div>
 
@@ -1355,7 +1355,7 @@ async function loadDeviceStats(deviceId) {
                       <label style="min-width:0;">Buffer</label>
                       <div style="display:flex;gap:6px;align-items:center;" id="buffer-actions-${escapeHtml(deviceId)}">
                         <span id="buf-count-${escapeHtml(deviceId)}" style="font-size:11px;color:var(--text2);">0 entries</span>
-                        <label style="font-size:11px;color:var(--text2);display:flex;align-items:center;gap:4px;cursor:pointer;">
+                        <label for="select-all-buf-${escapeHtml(deviceId)}" style="font-size:11px;color:var(--text2);display:flex;align-items:center;gap:4px;cursor:pointer;">
                           <input type="checkbox" id="select-all-buf-${escapeHtml(deviceId)}" aria-label="Select all buffer entries" onchange="toggleSelectAll('${escapeJs(deviceId)}')"> All
                         </label>
                       </div>
@@ -1367,8 +1367,8 @@ async function loadDeviceStats(deviceId) {
 
                   <!-- Actions -->
                   <div class="llm-actions">
-                    <button class="btn btn-ghost" onclick="previewAnalysis('${escapeJs(deviceId)}')" id="preview-btn-${escapeHtml(deviceId)}">&#x1F50D; Preview &amp; Edit</button>
-                    <button class="btn btn-primary" onclick="sendToLLM('${escapeJs(deviceId)}')" id="send-btn-${escapeHtml(deviceId)}">&#x27A4; Send to LLM</button>
+                    <button type="button" class="btn btn-ghost" onclick="previewAnalysis('${escapeJs(deviceId)}')" id="preview-btn-${escapeHtml(deviceId)}" aria-label="Preview and edit LLM analysis">&#x1F50D; Preview &amp; Edit</button>
+                    <button type="button" class="btn btn-primary" onclick="sendToLLM('${escapeJs(deviceId)}')" id="send-btn-${escapeHtml(deviceId)}" aria-label="Send selected entries to LLM">&#x27A4; Send to LLM</button>
                   </div>
 
                   <!-- Analysis preview (hidden) -->
@@ -1383,8 +1383,8 @@ async function loadDeviceStats(deviceId) {
                     <textarea id="analysis-text-${escapeHtml(deviceId)}" style="min-height:120px;" aria-label="LLM analysis JSON editor"></textarea>
                     <div style="font-size:12px;color:var(--text2);margin:4px 0;">Edit the analysis above before committing, then click Commit to save patterns.</div>
                     <div class="llm-actions">
-                      <button class="btn btn-ghost" onclick="discardPreview('${escapeJs(deviceId)}')">Discard</button>
-                      <button class="btn btn-primary" onclick="commitPatterns('${escapeJs(deviceId)}')">&#x2714; Commit Patterns</button>
+                      <button type="button" class="btn btn-ghost" onclick="discardPreview('${escapeJs(deviceId)}')" aria-label="Discard preview">Discard</button>
+                      <button type="button" class="btn btn-primary" onclick="commitPatterns('${escapeJs(deviceId)}')" aria-label="Commit patterns to device">&#x2714; Commit Patterns</button>
                     </div>
                   </div>
 
@@ -2205,10 +2205,10 @@ function renderLLMProfileCards(settings) {
         <span class="lpc-name">${escapeHtml(name)}</span>
         <span class="lpc-unsaved-badge" style="display:none;margin-left:8px;padding:1px 6px;font-size:10px;border-radius:8px;background:#ffc107;color:#333;">unsaved</span>
         <div class="lpc-actions">
-          <label class="lpc-enable">
-            <input type="checkbox" class="lpc-enabled" ${p.enabled ? 'checked' : ''}> Enabled
+          <label for="lpc-enabled-${safeKey}" class="lpc-enable">
+            <input type="checkbox" id="lpc-enabled-${safeKey}" class="lpc-enabled" ${p.enabled ? 'checked' : ''}> Enabled
           </label>
-          <button class="btn" style="padding:2px 8px;font-size:11px;" onclick="testLLMProfile('${escapeJs(name)}')" aria-label="Test ${escapeHtml(name)} LLM connection">Test</button>
+          <button type="button" class="btn" style="padding:2px 8px;font-size:11px;" onclick="testLLMProfile('${escapeJs(name)}')" aria-label="Test ${escapeHtml(name)} LLM connection">Test</button>
           <button type="button" class="btn btn-danger" style="padding:2px 8px;font-size:11px;" onclick="deleteLLMProfile('${escapeJs(name)}')" aria-label="Delete ${escapeHtml(name)} LLM profile">Delete</button>
         </div>
       </div>
@@ -2267,10 +2267,10 @@ function addLLMProfile() {
       <span class="lpc-name">${escapeHtml(name.trim())}</span>
       <span class="lpc-unsaved-badge" style="display:none;margin-left:8px;padding:1px 6px;font-size:10px;border-radius:8px;background:#ffc107;color:#333;">unsaved</span>
       <div class="lpc-actions">
-        <label class="lpc-enable">
-          <input type="checkbox" class="lpc-enabled" checked> Enabled
+        <label for="lpc-enabled-${safeKey}" class="lpc-enable">
+          <input type="checkbox" id="lpc-enabled-${safeKey}" class="lpc-enabled" checked> Enabled
         </label>
-        <button class="btn" style="padding:2px 8px;font-size:11px;" onclick="testLLMProfile('${escapeJs(name.trim())}')" aria-label="Test ${escapeHtml(name.trim())} LLM connection">Test</button>
+        <button type="button" class="btn" style="padding:2px 8px;font-size:11px;" onclick="testLLMProfile('${escapeJs(name.trim())}')" aria-label="Test ${escapeHtml(name.trim())} LLM connection">Test</button>
         <button type="button" class="btn btn-danger" style="padding:2px 8px;font-size:11px;" onclick="deleteLLMProfile('${escapeJs(name.trim())}')" aria-label="Delete ${escapeHtml(name.trim())} LLM profile">Delete</button>
       </div>
     </div>
