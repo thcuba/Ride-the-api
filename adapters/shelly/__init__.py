@@ -25,6 +25,7 @@ from adapters.base import (
     InterceptedRequest,
     ProtocolAdapter,
     ProtocolType,
+    host_from_request,
 )
 from core.cloud_forward import forward_intercepted
 
@@ -182,11 +183,7 @@ class ShellyProtocolAdapter(ProtocolAdapter):
 
     @staticmethod
     def _host_from_request(request: InterceptedRequest) -> str | None:
-        host = (request.headers or {}).get("Host")
-        if host:
-            # Strip an explicit :port suffix if present.
-            return host.split(":", 1)[0]
-        return None
+        return host_from_request(request)
 
     async def build_response(self, request: InterceptedRequest, result: CommandResult) -> dict:  # noqa: ARG002
         if result.success and result.response:

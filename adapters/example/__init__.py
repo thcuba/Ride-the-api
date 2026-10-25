@@ -23,6 +23,7 @@ from adapters.base import (
     InterceptedRequest,
     ProtocolAdapter,
     ProtocolType,
+    host_from_request,
 )
 from core.cloud_forward import forward_intercepted
 
@@ -302,10 +303,7 @@ class ExampleProtocolAdapter(ProtocolAdapter):
 
     @staticmethod
     def _host_from_request(request: InterceptedRequest) -> str | None:
-        host = (request.headers or {}).get("Host")
-        if host:
-            return host.split(":", 1)[0]
-        return None
+        return host_from_request(request)
 
     # ══════════════════════════════════════════════════════════════════════════════
     # RESPONSE BUILDING
