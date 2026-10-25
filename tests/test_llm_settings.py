@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -31,8 +32,8 @@ class MockConfigManager:
         self.callbacks.append(callback)
 
 
-def _profile_cfg(base_url="http://a/v1", api_key="k"):
-    return MockConfig(
+def _profile_cfg(base_url="http://a/v1", api_key="k", max_tokens=None):
+    profile = MockConfig(
         base_url=base_url,
         api_key=api_key,
         model_id="m",
@@ -41,18 +42,35 @@ def _profile_cfg(base_url="http://a/v1", api_key="k"):
         timeout=30,
         max_retries=2,
     )
+    if max_tokens is not None:
+        profile.max_tokens = max_tokens
+    return profile
 
 
-def _service_with_profiles():
+def _service_with_profiles(max_tokens=None):
     cm = MockConfigManager()
     cm.config = MockConfig(
         llm_decipher=MockConfig(
             enabled=True,
             default_profile="default",
-            profiles={"default": _profile_cfg()},
+            profiles={"default": _profile_cfg(max_tokens=max_tokens)},
         )
     )
     return LLMDecipherService(config_manager=cm), cm
+
+
+class _RecordingClient:
+    """An OpenAI-compatible client that records the arguments of each completion."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
+
+    async def _create(self, **kwargs):
+        self.calls.append(kwargs)
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content='{"patterns": []}'))]
+        )
 
 
 class TestLLMSettingsService:
@@ -500,3 +518,47 @@ class TestLLMSettingsAPI:
             headers={"X-API-Key": "test-password"},
         )
         assert resp.status_code == 404  # noqa: PLR2004
+
+
+DEFAULT_CEILING = 2048
+CUSTOM_CEILING = 123
+EXPOSED_CEILING = 777
+
+
+class TestTokenCeiling:
+    """A completion must carry a ceiling, or a model that ignores the JSON format never ends.
+
+    Measured on the Pi with a real prompt: the configured local model answered only because
+    a ceiling was imposed by hand (600 tokens, 56s, and the answer was still prose, not the
+    JSON the pipeline parses). Without one, the call runs into the client timeout and the
+    retryer pays it again.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_completion_carries_a_ceiling_by_default(self):
+        service, _ = _service_with_profiles()
+        client = _RecordingClient()
+        with patch.object(service, "_get_client", return_value=client):
+            result = await service.call_llm(service._profiles["default"], "analizza queste coppie")
+        assert result["success"] is True
+        assert client.calls[0]["max_tokens"] == DEFAULT_CEILING
+
+    @pytest.mark.asyncio
+    async def test_the_ceiling_is_configurable_per_profile(self):
+        service, _ = _service_with_profiles(max_tokens=CUSTOM_CEILING)
+        client = _RecordingClient()
+        with patch.object(service, "_get_client", return_value=client):
+            await service.call_llm(service._profiles["default"], "analizza queste coppie")
+        assert client.calls[0]["max_tokens"] == CUSTOM_CEILING
+
+    @pytest.mark.asyncio
+    async def test_zero_leaves_the_ceiling_to_the_provider(self):
+        service, _ = _service_with_profiles(max_tokens=0)
+        client = _RecordingClient()
+        with patch.object(service, "_get_client", return_value=client):
+            await service.call_llm(service._profiles["default"], "analizza queste coppie")
+        assert "max_tokens" not in client.calls[0]
+
+    def test_settings_expose_the_ceiling_to_the_uis(self):
+        service, _ = _service_with_profiles(max_tokens=EXPOSED_CEILING)
+        assert service.get_settings()["profiles"]["default"]["max_tokens"] == EXPOSED_CEILING

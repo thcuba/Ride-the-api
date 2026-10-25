@@ -484,6 +484,12 @@ Deciphering unknown protocols or encrypted payloads via Large Language Model.
 | `api_key` | `string` | `""` | API key for LLM access |
 | `model_id` | `string` | `""` | LLM model identifier (e.g. `gpt-4o`, `claude-3`) |
 | `prompt_template` | `string` | `""` | Prompt template to guide deciphering |
+| `max_tokens` | `integer` | `2048` | Ceiling on the tokens one completion may generate; `0` sends no parameter |
+
+A completion without a ceiling is a trap with a local model: one that does not honour the
+requested JSON format keeps generating until the context or the client `timeout` stops it,
+and the retryer then pays that timeout again. The call cannot yield anything useful either
+way — with `max_tokens` it fails fast and visibly instead of costing a minute per attempt.
 
 API keys are typed as [`pydantic`](https://docs.pydantic.dev/) `SecretStr` (via the
 `pydantic-settings` / pydantic field validators), so credentials never appear in logs, error
@@ -500,6 +506,7 @@ llm_decipher:
       base_url: "https://api.openai.com/v1"
       api_key: "${OPENAI_API_KEY}"
       model_id: "gpt-4o"
+      max_tokens: 2048
       prompt_template: "Decode the following IoT payload into JSON format:\n{payload}"
 ```
 

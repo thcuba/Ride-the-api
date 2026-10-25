@@ -276,6 +276,15 @@ class LLMDecipherProfile(BaseModel):
     api_key: str = ""
     model_id: str = ""
     prompt_template: str = ""
+    max_tokens: int = Field(
+        default=2048,
+        description=(
+            "Ceiling on the tokens a single completion may generate. A model that does not "
+            "honour the requested JSON format keeps generating until the context or the "
+            "client timeout stops it, so every call costs the timeout plus its retries. "
+            "0 = do not send the parameter."
+        ),
+    )
 
 
 class LLMDecipherConfig(BaseModel):
