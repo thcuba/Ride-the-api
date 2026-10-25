@@ -1,0 +1,136 @@
+# Onboarding a real device
+
+How to take one named device, point it at the proxy, and see the first translated
+request/response pair. Every step below has a check you can run, because the failures in this
+chain are quiet: a listener that never came up, a device that never asked, a model that answers
+with prose instead of JSON.
+
+Worked example: a **Philips Air Purifier 800** (`192.168.178.77`) that talks to
+`ats.prod.eu-da.iot.versuni.com` (AWS IoT, MQTT over WSS on **443**). The measured results of
+that run are at the bottom.
+
+## 0. What has to be true before starting
+
+| Piece | Why it is needed |
+|-------|------------------|
+| The proxy listens where the device looks (**443**) | The device dials 443 itself; a DNS answer pointing at a port nobody listens on produces a refused connection, not an interception |
+| Something answers DNS for that device | Either this proxy (see [deployment](deployment.md#dns-interception)) or the network's resolver with a per-client upstream / rewrite |
+| A capable model for the decipher | A model too small produces prose, not the pattern JSON the pipeline parses |
+
+## 1. Make the proxy listen on the privileged ports
+
+```bash
+sudo setcap cap_net_bind_service=+ep "$(readlink -f .venv/bin/python)"
+systemctl --user restart ride-the-api
+```
+
+The capability goes on the **resolved** interpreter: `bin/python` in a virtualenv is a symlink
+and `setcap` refuses symlinks ("Invalid file ... for capability operation") while changing
+nothing. One capability covers 53 and 443.
+
+**Check** — `GET /health` reports what is bound, so nothing has to be guessed:
+
+```bash
+curl -s http://127.0.0.1:8911/health | jq .ports
+# "tls_mitm": {"requested": [443, 8883, 5684, 8443], "bound": [...], "missing": []}
+```
+
+`missing` must be empty. The log says the same: `TLS MITM: successfully bound 4/4 ports`.
+
+## 2. Send the device's names to the proxy
+
+Two distinct roles, deliberately:
+
+- the **network's resolver** (AdGuard Home, Pi-hole, dnsmasq) decides *which device* is sent
+  here — a per-client upstream DNS, reversible by deleting that entry;
+- **this proxy** intercepts the names in `dns.intercept` for that client and forwards
+  everything else untouched.
+
+```yaml
+dns:
+  enabled: true
+  listen_host: 0.0.0.0
+  listen_port: 53
+  answer_ip: 192.168.178.200          # what intercepted names resolve to
+  intercept:
+    - ats.prod.eu-da.iot.versuni.com  # the vendor cloud, by name
+```
+
+Leave time sources (`ntp.*`) out: the device needs its real clock.
+
+**Check** — ask the proxy from a *different* host, so the network path is exercised and not just
+loopback:
+
+```bash
+dig +short @192.168.178.200 ats.prod.eu-da.iot.versuni.com   # -> 192.168.178.200 (the proxy)
+dig +short @192.168.178.200 example.org                      # -> the real address (forwarded)
+```
+
+## 3. Make the device talk
+
+The device only produces traffic when it retries its cloud connection: **power-cycle it**. Its
+DNS then flows resolver -> proxy, the name resolves to the proxy, and it dials 443 here.
+
+**Checks**, in order:
+
+1. the resolver's query log shows the device's name answered by the proxy address;
+2. the proxy logs the TLS session on 443;
+3. the pair appears in the learning store. The device entry is created from the traffic itself
+   (`ip-192-168-178-77`) — there is nothing to pre-register, `/api/devices/{id}/...` answers
+   *404* until the first packet arrives.
+
+Enrich it as soon as it exists, so the decipher prompt carries the right context instead of
+`vendor: unknown`:
+
+```bash
+curl -X PUT http://127.0.0.1:8911/api/devices/ip-192-168-178-77/tls-config \
+  -H "X-API-Key: $PASSWORD" -H 'Content-Type: application/json' \
+  -d '{"name": "Air Philips 800", "vendor": "philips", "passthrough": true, "pinning_bypass": "mitm_proxy"}'
+```
+
+## 4. Turn the traffic into a translation
+
+The decipher sends the learned pairs to the configured LLM profile and stores the patterns it
+returns (`GET /api/devices/{id}/patterns`). Two things decide whether that works:
+
+- **the model.** Check it on the real task, not with the provider's "hello": local models on a
+  small board answered in prose after ~56 s (and never finished without a ceiling), while a
+  cloud model returned valid patterns in ~12 s;
+- **`max_tokens`** (default 2048, `0` = do not send): a model that ignores
+  `response_format: json_object` otherwise generates until the client `timeout` cuts it off, and
+  the retry pays that timeout again.
+
+Then switch the device to `production` (`POST /api/devices/{id}/mode`) once its match rate is
+good, and it is served locally.
+
+## What goes wrong, and what it looks like
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| Device resolves to the proxy but nothing is intercepted | 443 not listening (no `CAP_NET_BIND_SERVICE`) | step 1; `ports.tls_mitm.missing` shows it |
+| Device works normally, nothing is seen | its names are not in `dns.intercept` | add the exact name — an unlisted name is forwarded, never guessed |
+| Device has no DNS at all | it was pointed at a resolver that does not answer | point it at a resolver that forwards here, or at this proxy with `dns.enabled` |
+| TLS session fails right after the handshake | the device validates the vendor CA (certificate pinning) | `tls_decrypt.pinning_bypass` per vendor, or `GET /api/tls/frida/script.js` |
+| Decipher fails with "LLM call failed" | local model produced nothing usable within the timeout | give the profile a capable model (and a `max_tokens` ceiling) |
+| `/health` reports `version: 0.2.0` on a prebuilt | the bundle had no `VERSION` file | fixed in the build workflow; a source deploy writes it in `bootstrap.sh` |
+
+## Measured run — Philips Air Purifier 800
+
+```
+proxy          192.168.178.200 (Raspberry Pi), release 1.2.15
+device         192.168.178.77, cloud ats.prod.eu-da.iot.versuni.com (AWS IoT, 443)
+DNS            ats... -> 192.168.178.200 | example.org -> real address | ntp... -> forwarded
+listeners      TLS MITM bound 4/4 ports [443, 8883, 5684, 8443]; DNS on 0.0.0.0:53 (udp+tcp, +ipv6)
+resolver       AdGuard Home, client "Air Philips 800" upstream 192.168.178.200
+translation    same prompt: local model 56.4s -> prose, invalid JSON; cloud model 11.9s -> 2 patterns
+open           the device has to be power-cycled to retry its cloud connection; whether it
+               accepts the local CA is still unknown (the channel is AWS IoT, so pinning is
+               the expected obstacle)
+```
+
+## References
+
+- [Deployment](deployment.md) — capability, DNS interception, both deployment shapes
+- [Architecture](architecture.md) — DNS interception, request lifecycle, learning/production
+- [Verification](verification.md) — the request/response path proved end to end
+- [API](api.md) — device, pattern and health endpoints used above
