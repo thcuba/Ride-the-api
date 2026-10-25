@@ -222,3 +222,109 @@ def test_upstream_port_parsing():
 def test_lan_address_detection_does_not_raise():
     detected = _detect_lan_ip()
     assert isinstance(detected, str)
+
+
+class _TruncatingUpstream:
+    """UDP answers TC=1 (the real answer does not fit); TCP serves it in full."""
+
+    def __init__(self, *, serve_tcp: bool = True) -> None:
+        self.serve_tcp = serve_tcp
+        self.udp_queries: list[str] = []
+        self.tcp_queries: list[str] = []
+
+    def make_response(self, data: bytes) -> bytes:
+        query = dns.message.from_wire(data)
+        question = query.question[0]
+        response = dns.message.make_response(query)
+        response.answer.append(
+            dns.rrset.from_text(
+                question.name.to_text(), 30, dns.rdataclass.IN, dns.rdatatype.A, UPSTREAM_IP
+            )
+        )
+        return response
+
+    # UDP side
+    def connection_made(self, transport) -> None:
+        self.transport = transport
+
+    def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
+        query = dns.message.from_wire(data)
+        self.udp_queries.append(query.question[0].name.to_text())
+        truncated = dns.message.make_response(query)
+        truncated.flags |= dns.flags.TC
+        self.transport.sendto(truncated.to_wire(), addr)
+
+    # TCP side
+    async def handle_tcp(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        try:
+            while True:
+                header = await reader.readexactly(2)
+                payload = await reader.readexactly(int.from_bytes(header, "big"))
+                query = dns.message.from_wire(payload)
+                self.tcp_queries.append(query.question[0].name.to_text())
+                answer = self.make_response(payload).to_wire()
+                writer.write(len(answer).to_bytes(2, "big") + answer)
+                await writer.drain()
+        except (asyncio.IncompleteReadError, ConnectionError):
+            pass
+        finally:
+            writer.close()
+
+
+@pytest.mark.asyncio
+async def test_truncated_answer_is_completed_over_tcp():
+    """TC=1 upstream must be resolved by *us*, otherwise the client loops forever."""
+    port, upstream_port = _free_port(), _free_port()
+    loop = asyncio.get_running_loop()
+    transport, protocol = await loop.create_datagram_endpoint(
+        _TruncatingUpstream, local_addr=("127.0.0.1", upstream_port)
+    )
+    tcp_server = await asyncio.start_server(
+        protocol.handle_tcp, host="127.0.0.1", port=upstream_port
+    )
+
+    interceptor = DNSInterceptor(
+        _config(listen_port=port, dns_servers=[f"127.0.0.1:{upstream_port}"], dns_servers_v6=[])
+    )
+    await interceptor.start()
+    try:
+        answer = await loop.run_in_executor(
+            None,
+            lambda: dns.query.udp(_query("big.other.test"), "127.0.0.1", port=port, timeout=6),
+        )
+        assert not answer.flags & dns.flags.TC, "the client must never see a truncated answer"
+        assert [rdata.address for rrset in answer.answer for rdata in rrset] == [UPSTREAM_IP]
+        assert protocol.tcp_queries == ["big.other.test."]
+        assert interceptor.stats["tcp_retries"] == 1
+    finally:
+        await interceptor.stop()
+        tcp_server.close()
+        transport.close()
+
+
+@pytest.mark.asyncio
+async def test_truncated_answer_without_tcp_gives_servfail():
+    """If the resolver cannot deliver it over TCP either, fail honestly — never loop."""
+    port, upstream_port = _free_port(), _free_port()
+    transport, protocol = await asyncio.get_running_loop().create_datagram_endpoint(
+        _TruncatingUpstream, local_addr=("127.0.0.1", upstream_port)
+    )
+    interceptor = DNSInterceptor(
+        _config(
+            listen_port=port,
+            dns_servers=[f"127.0.0.1:{upstream_port}"],
+            dns_servers_v6=[],
+            forward_timeout=0.5,
+        )
+    )
+    await interceptor.start()
+    try:
+        answer = await asyncio.get_running_loop().run_in_executor(
+            None,
+            lambda: dns.query.udp(_query("big.other.test"), "127.0.0.1", port=port, timeout=6),
+        )
+        assert answer.rcode() == dns.rcode.SERVFAIL
+        assert interceptor.stats["refused"] == 1
+    finally:
+        await interceptor.stop()
+        transport.close()
