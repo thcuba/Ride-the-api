@@ -112,6 +112,7 @@ nginx on port 443 → loop-free cloud forwarding via dedicated DNS (8.8.8.8/1.1.
 | [Pattern DB](docs/portable-pattern-database.md) | .ride-pattern.json / .ride-capture.json format |
 | [Nginx Architecture](docs/nginx-architecture.md) | Reverse proxy + DNS loop prevention |
 | [Protocol Servers](docs/protocol-servers.md) | MQTT, CoAP, Modbus, WebSocket, Raw TCP, bridges |
+| [Onboarding a device](docs/onboarding-a-device.md) | Take one real device under the proxy, step by step, with the checks |
 | [Contributing](CONTRIBUTING.md) | Dev setup, tests/linters, PR workflow |
 
 ## Key Features
