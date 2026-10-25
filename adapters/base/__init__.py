@@ -382,6 +382,20 @@ def get_adapter_registry() -> ProtocolAdapterRegistry:
     return _adapter_registry
 
 
+def _strip_port(host_header: str) -> str:
+    """``example.com:8443`` -> ``example.com``; ``[2001:db8::1]:8443`` -> ``2001:db8::1``.
+
+    An IPv6 literal is bracketed (RFC 3986), so splitting on the first colon returned a
+    bare ``[``: the forward then fell back to the hostname in the adapter configuration,
+    silently, which is the same class of bug as the case-sensitive lookup.
+    """
+    value = host_header.strip()
+    if value.startswith("["):
+        end = value.find("]")
+        return value[1:end] if end != -1 else value
+    return value.split(":", 1)[0]
+
+
 def host_from_request(request: InterceptedRequest) -> str | None:
     """Return the hostname from the request's ``Host`` header, if present.
 
@@ -393,7 +407,7 @@ def host_from_request(request: InterceptedRequest) -> str | None:
     """
     for key, value in (request.headers or {}).items():
         if key.lower() == "host" and value:
-            return str(value).split(":", 1)[0]
+            return _strip_port(str(value))
     return None
 
 
