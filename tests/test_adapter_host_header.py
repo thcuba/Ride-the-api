@@ -49,7 +49,5 @@ def test_helper_returns_none_without_a_host_header():
 def test_both_forwarding_adapters_find_a_lower_cased_host():
     """The adapters use the shared helper, so the case no longer matters."""
     for adapter in (ExampleProtocolAdapter, ShellyProtocolAdapter):
-        assert (
-            adapter._host_from_request(_request({"host": "vendor.example"})) == "vendor.example"
-        )
+        assert adapter._host_from_request(_request({"host": "vendor.example"})) == "vendor.example"
         assert adapter._host_from_request(_request({"Host": "vendor.example"})) == "vendor.example"
