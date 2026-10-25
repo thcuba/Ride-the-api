@@ -31,6 +31,8 @@ import dns.rdataclass
 import dns.rdatatype
 import dns.rrset
 
+from core.ports import bind_failure_hint
+
 if TYPE_CHECKING:
     from core.config import Config
 
@@ -127,12 +129,13 @@ class DNSInterceptor:
             )
             self._udp_transport = transport
         except OSError as exc:
+            hint = bind_failure_hint(self.port, exc)
             logger.warning(
-                "DNS: cannot listen on %s:%d/udp — %s (port 53 needs privilege: "
-                "setcap cap_net_bind_service=+ep on the interpreter)",
+                "DNS: cannot listen on %s:%d/udp — %s%s",
                 self.host,
                 self.port,
                 exc,
+                f" | {hint}" if hint else "",
             )
             return
 
@@ -141,7 +144,14 @@ class DNSInterceptor:
                 self._handle_tcp, host=self.host, port=self.port
             )
         except OSError as exc:
-            logger.warning("DNS: cannot listen on %s:%d/tcp — %s", self.host, self.port, exc)
+            hint = bind_failure_hint(self.port, exc)
+            logger.warning(
+                "DNS: cannot listen on %s:%d/tcp — %s%s",
+                self.host,
+                self.port,
+                exc,
+                f" | {hint}" if hint else "",
+            )
 
         # A device on a dual-stack network can ask us over IPv6: an "any" address means
         # both families, and a name that only resolves over IPv4 is still answered.
