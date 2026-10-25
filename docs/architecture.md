@@ -557,3 +557,34 @@ proprietary protocols the LLM analyses Observation batches directly.
      match_rate ≥ 99% → LEARNING → PRODUCTION
      match_rate < 90% → PRODUCTION → LEARNING
 ```
+
+---
+
+## 10. DNS Interception (`core/dns_server.py`)
+
+A device reaches its vendor cloud by name, so the name is where interception has to
+start. This server is the piece that makes that possible without breaking anything else.
+
+- **Intercepted names** (`dns.intercept`) are answered by the proxy itself with
+  `dns.answer_ip` (A) and an empty NOERROR for AAAA — NODATA keeps a dual-stack device
+  on the IPv4 route we actually serve, instead of letting it prefer a v6 address we
+  cannot answer.
+- **Every other name is forwarded verbatim** to the upstream resolvers
+  (`dns.dns_servers`, `dns.dns_servers_v6`), so the proxy can be the DNS for a whole
+  network with nothing hijacked by accident. A name that is not listed is **never**
+  guessed: guessing would silently black-hole a device.
+- Patterns are exact names or `*.domain` wildcards, matched case-insensitively. Time
+  sources (`ntp.*`) are deliberately *not* intercepted — the device needs its real clock.
+- When no upstream can answer, the client gets **SERVFAIL**: an honest failure, never a
+  fabricated address.
+- UDP and TCP (length-prefixed) are both served. Port 53 needs `CAP_NET_BIND_SERVICE`;
+  a port that cannot be bound is reported as a warning and never stops the service.
+
+Two deployment shapes use it: the device (or the router) takes the proxy as its DNS, or
+a local resolver such as AdGuard Home keeps serving the network while that client's
+*upstream DNS* points at the proxy — which answers the configured names and forwards
+everything else.
+
+`tests/test_dns_server.py` covers the pattern matching, the synthesised answers and a
+real socket round trip: an intercepted name is answered locally without asking anyone,
+a different name is forwarded and comes back as the upstream's own answer.

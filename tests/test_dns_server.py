@@ -1,0 +1,224 @@
+"""The DNS interception server: intercept what is configured, forward the rest.
+
+The rule this file protects: a name that is **not** listed in ``dns.intercept``
+must be forwarded to the real resolvers. Guessing (or black-holing) would leave a
+device without DNS — which is exactly what happened when a device was pointed at a
+proxy that had no DNS server at all.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import socket
+
+import dns.message
+import dns.query
+import dns.rcode
+import dns.rdataclass
+import dns.rdatatype
+import dns.rrset
+import pytest
+
+from core.config import Config
+from core.dns_server import DNSInterceptor, _detect_lan_ip, get_dns_interceptor, set_dns_interceptor
+
+PROXY_IP = "192.168.178.200"
+UPSTREAM_IP = "203.0.113.7"
+INTERCEPTED = "ats.prod.eu-da.iot.versuni.com"
+
+
+def _free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+class _FakeUpstream(asyncio.DatagramProtocol):
+    """A resolver that answers every A query with one fixed address."""
+
+    def __init__(self) -> None:
+        self.queries: list[str] = []
+        self.transport = None
+
+    def connection_made(self, transport) -> None:
+        self.transport = transport
+
+    def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
+        query = dns.message.from_wire(data)
+        question = query.question[0]
+        self.queries.append(question.name.to_text())
+        response = dns.message.make_response(query)
+        response.answer.append(
+            dns.rrset.from_text(
+                question.name.to_text(),
+                30,
+                dns.rdataclass.IN,
+                dns.rdatatype.A,
+                UPSTREAM_IP,
+            )
+        )
+        self.transport.sendto(response.to_wire(), addr)
+
+
+def _config(**overrides) -> Config:
+    config = Config()
+    dns = config.dns
+    dns.enabled = True
+    dns.listen_host = "127.0.0.1"
+    dns.answer_ip = PROXY_IP
+    dns.intercept = [INTERCEPTED, "*.example.test"]
+    dns.forward_timeout = 0.4
+    for key, value in overrides.items():
+        setattr(dns, key, value)
+    return config
+
+
+def _query(name: str, qtype: str = "A") -> dns.message.Message:
+    return dns.message.make_query(name, qtype)
+
+
+# ── which names are intercepted ──────────────────────────────────────────────
+
+
+def test_matches_exact_names_and_wildcards():
+    interceptor = DNSInterceptor(_config())
+
+    assert interceptor.matches(INTERCEPTED)
+    assert interceptor.matches(INTERCEPTED.upper())  # DNS names are case-insensitive
+    assert interceptor.matches(INTERCEPTED + ".")
+    assert interceptor.matches("a.example.test")  # *.example.test
+    assert interceptor.matches("example.test")  # the bare domain too
+    assert interceptor.matches("deep.a.example.test")
+
+    assert not interceptor.matches("ntp.iot.versuni.com")  # real clock: never hijack
+    assert not interceptor.matches("example.test.evil.com")
+    assert not interceptor.matches("notexample.test")
+
+
+def test_nothing_is_intercepted_by_default():
+    interceptor = DNSInterceptor(_config(intercept=[]))
+    assert not interceptor.matches(INTERCEPTED)
+
+
+# ── what it answers ──────────────────────────────────────────────────────────
+
+
+def test_intercepted_a_returns_the_proxy_address():
+    interceptor = DNSInterceptor(_config())
+    response = interceptor._intercept_response(_query(INTERCEPTED), _query(INTERCEPTED).question[0])
+
+    assert response.rcode() == dns.rcode.NOERROR
+    answers = [rdata.address for rrset in response.answer for rdata in rrset]
+    assert answers == [PROXY_IP]
+    assert response.answer[0].ttl == 60  # noqa: PLR2004
+
+
+def test_intercepted_aaaa_is_empty_noerror():
+    """NODATA keeps a dual-stack device on the IPv4 route we actually serve."""
+    query = _query(INTERCEPTED, "AAAA")
+    response = DNSInterceptor(_config())._intercept_response(query, query.question[0])
+
+    assert response.rcode() == dns.rcode.NOERROR
+    assert response.answer == []
+
+
+# ── the server on a real socket ──────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_intercepts_configured_names_and_forwards_the_others():
+    port = _free_port()
+    upstream_port = _free_port()
+    upstream = asyncio.get_running_loop().create_datagram_endpoint(
+        _FakeUpstream, local_addr=("127.0.0.1", upstream_port)
+    )
+    transport, protocol = await upstream
+
+    config = _config(
+        listen_port=port,
+        dns_servers=[f"127.0.0.1:{upstream_port}"],
+        dns_servers_v6=[],
+    )
+    set_dns_interceptor(None)
+    interceptor = get_dns_interceptor(config)
+    assert interceptor is not None
+    await interceptor.start()
+    try:
+        # 1. an intercepted name is answered by us, without asking anyone
+        answer = await asyncio.get_running_loop().run_in_executor(
+            None,
+            lambda: dns.query.udp(_query(INTERCEPTED), "127.0.0.1", port=port, timeout=5),
+        )
+        addresses = [rdata.address for rrset in answer.answer for rdata in rrset]
+        assert addresses == [PROXY_IP]
+
+        # 2. everything else goes to the real resolver, unchanged
+        answer = await asyncio.get_running_loop().run_in_executor(
+            None,
+            lambda: dns.query.udp(_query("www.other.test"), "127.0.0.1", port=port, timeout=5),
+        )
+        addresses = [rdata.address for rrset in answer.answer for rdata in rrset]
+        assert addresses == [UPSTREAM_IP]
+        assert protocol.queries == ["www.other.test."]
+        assert interceptor.stats["intercepted"] == 1
+        assert interceptor.stats["forwarded"] == 1
+    finally:
+        await interceptor.stop()
+        transport.close()
+        set_dns_interceptor(None)
+
+
+@pytest.mark.asyncio
+async def test_tcp_is_served_too():
+    port = _free_port()
+    interceptor = DNSInterceptor(_config(listen_port=port))
+    set_dns_interceptor(None)
+    set_dns_interceptor(interceptor)
+    await interceptor.start()
+    try:
+        answer = await asyncio.get_running_loop().run_in_executor(
+            None,
+            lambda: dns.query.tcp(_query(INTERCEPTED), "127.0.0.1", port=port, timeout=5),
+        )
+        assert [rdata.address for rrset in answer.answer for rdata in rrset] == [PROXY_IP]
+    finally:
+        await interceptor.stop()
+        set_dns_interceptor(None)
+
+
+@pytest.mark.asyncio
+async def test_no_upstream_reachable_returns_servfail():
+    """An honest failure beats a fabricated address."""
+    port = _free_port()
+    interceptor = DNSInterceptor(
+        _config(listen_port=port, dns_servers=["127.0.0.1:1"], dns_servers_v6=[])
+    )
+    await interceptor.start()
+    try:
+        answer = await asyncio.get_running_loop().run_in_executor(
+            None,
+            lambda: dns.query.udp(_query("www.other.test"), "127.0.0.1", port=port, timeout=5),
+        )
+        assert answer.rcode() == dns.rcode.SERVFAIL
+        assert interceptor.stats["refused"] == 1
+    finally:
+        await interceptor.stop()
+
+
+@pytest.mark.asyncio
+async def test_disabled_server_binds_nothing():
+    interceptor = DNSInterceptor(_config(enabled=False))
+    await interceptor.start()
+    assert interceptor._udp_transport is None
+    assert interceptor._tcp_server is None
+
+
+def test_upstream_port_parsing():
+    assert DNSInterceptor._split_upstream("1.1.1.1") == ("1.1.1.1", 53)
+    assert DNSInterceptor._split_upstream("127.0.0.1:5353") == ("127.0.0.1", 5353)
+    assert DNSInterceptor._split_upstream("2001:4860:4860::8888") == ("2001:4860:4860::8888", 53)
+
+
+def test_lan_address_detection_does_not_raise():
+    detected = _detect_lan_ip()
+    assert isinstance(detected, str)
