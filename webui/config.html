@@ -186,9 +186,9 @@
   </div>
   <div class="header-actions">
     <span class="path-chip" id="configPath">…</span>
-    <a class="btn btn-ghost" href="/">← Dashboard</a>
-    <a class="btn btn-ghost" href="/options">⚙ Options</a>
-    <button class="btn btn-primary" id="saveBtn" onclick="saveConfig()" title="No unsaved changes (Ctrl+S)" disabled>&#x2714; Save All</button>
+    <a class="btn btn-ghost" href="/" aria-label="Return to dashboard" title="Return to dashboard">← Dashboard</a>
+    <a class="btn btn-ghost" href="/options" aria-label="Open options page" title="Open options page">⚙ Options</a>
+    <button class="btn btn-primary" id="saveBtn" onclick="saveConfig()" aria-label="Save all configuration changes" title="No unsaved changes (Ctrl+S)" disabled>&#x2714; Save All</button>
   </div>
 </div>
 
@@ -200,7 +200,7 @@
     <div id="fields"></div>
     <div class="save-bar">
       <span class="status" id="saveStatus" role="status" aria-live="polite"></span>
-      <button class="btn btn-primary" id="saveBtn2" onclick="saveConfig()" title="No unsaved changes (Ctrl+S)" disabled>&#x2714; Save All</button>
+      <button class="btn btn-primary" id="saveBtn2" onclick="saveConfig()" aria-label="Save all configuration changes" title="No unsaved changes (Ctrl+S)" disabled>&#x2714; Save All</button>
     </div>
   </main>
 </div>
