@@ -58,6 +58,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # Tags are needed to record which release the bundle is: the asset has to be able
+          # to say "1.2.15", not the static fallback version.
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -75,6 +79,16 @@ jobs:
         shell: bash
         run: python -m PyInstaller --noconfirm --clean packaging/rta.spec
 
+      # The frozen bundle reads <install-root>/VERSION to report its release (see
+      # core/server.runtime_version). Without this file a prebuilt answers /health with the
+      # static fallback version, so the asset lies about what is running.
+      - name: Record the bundle version
+        shell: bash
+        run: |
+          version="$(git describe --tags --always)"
+          printf '%s\n' "${version}" > VERSION
+          echo "bundle version: ${version}"
+
       # ---- Non-Windows: tar.gz of the onedir bundle + default config dir ----
       # The frozen binary reads config/config.yaml from the CWD (config_manager
       # singleton), NOT from _internal/. Ship a ready-to-use layout:
@@ -87,10 +101,14 @@ jobs:
           mkdir -p dist/out/config dist/out/certs dist/out/data dist/out/logs
           cp -r dist/ride-the-api dist/out/ride-the-api
           cp config/config.yaml dist/out/config/config.yaml
+          cp VERSION dist/out/VERSION
           cd dist/out
           # Write the asset to the workspace root so the upload step's
           # `${{ matrix.asset }}` (relative to $GITHUB_WORKSPACE) finds it.
           tar czf "${GITHUB_WORKSPACE}/${{ matrix.asset }}" .
+          # Fail the build rather than ship an asset whose version is wrong.
+          tar tzf "${GITHUB_WORKSPACE}/${{ matrix.asset }}" | grep -qx './VERSION' \
+            || { echo "::error::VERSION is missing from ${{ matrix.asset }}"; exit 1; }
           ls -lh "${GITHUB_WORKSPACE}/${{ matrix.asset }}"
 
       # ---- Windows: build the Inno Setup installer ----
@@ -122,6 +140,10 @@ jobs:
           # /Q = quiet (errors only). Do NOT use the MSYS //Qp convention here:
           # this step runs under pwsh, where `//` is not a path escape and is
           # rejected by iscc as "Unknown option: //Qp".
+          # The installer reads this file for its AppVersion; keep it next to the payload
+          # so the installer and the installed service agree on the release.
+          Copy-Item VERSION dist\ride-the-api\VERSION -Force
+          if (-not (Test-Path "dist\ride-the-api\VERSION")) { throw "VERSION was not staged" }
           & $iscc /Q packaging\windows\setup.iss
           Get-ChildItem dist\installer\ride-the-api-setup.exe
           Copy-Item dist\installer\ride-the-api-setup.exe "${{ matrix.asset }}"

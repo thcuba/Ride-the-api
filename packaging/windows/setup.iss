@@ -11,7 +11,10 @@
 AppId={{CE2157C0-550F-4318-AD20-7A494D6264B2}}
 AppName=ride-the-api
 ; Keep in sync with `version` in pyproject.toml.
-AppVersion=0.2.0
+; The release tag, read from the VERSION file the workflow writes (the path is relative
+; to this script, like the Source entries below).
+#define AppVersion FileRead("..\..\VERSION")
+AppVersion={#AppVersion}
 AppPublisher=ride-the-api
 SetupIconFile=..\..\assets\icon.ico
 UninstallDisplayIcon={app}\ride-the-api.exe
