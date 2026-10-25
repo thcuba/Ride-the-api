@@ -585,12 +585,17 @@ systemctl --user restart ride-the-api
 A port that cannot be bound is logged as a warning (`DNS: cannot listen on ...`), and the rest of
 the service keeps running.
 
-Then point the device at the proxy, in either of two ways:
+Then point the device at the proxy. The common shape is a **per-client upstream DNS**: the local
+resolver stays the DNS of the network and only the chosen client is sent here.
 
-1. set the proxy as the device's (or the router's) DNS server, or
-2. keep a local resolver (AdGuard Home, Pi-hole) resolving for the network and give that client an
-   **upstream DNS** pointing at the proxy — intercepted names are answered locally, the rest is
-   forwarded by the proxy as usual.
+AdGuard Home — *Settings → DNS settings → Upstream DNS servers* → add a client entry for the
+device's address with `192.168.178.200` as its upstream (or the same thing through
+`/control/clients/update`). Pi-hole is the equivalent *per-client* group upstream. The selection is
+reversible: remove the upstream and that device goes back to the vendor untouched.
+
+The other two shapes are the device (or the router) pointed straight at the proxy, and a resolver
+*rewrite* (`ats.prod.eu-da.iot.versuni.com -> 192.168.178.200`), which is the only one that needs no
+upstream and no DNS server of ours.
 
 Verify from another machine:
 
