@@ -42,18 +42,27 @@ _MAX_TCP_MESSAGE = 65535
 
 
 class _DNSUDPProtocol(asyncio.DatagramProtocol):
-    """UDP side of the DNS server."""
+    """UDP side of the DNS server.
+
+    Each protocol instance answers on its **own** transport: with an IPv4 and an IPv6
+    listener bound to the same port, replying through a shared one would send an IPv6
+    answer out of the IPv4 socket.
+    """
 
     def __init__(self, interceptor: DNSInterceptor) -> None:
         self._interceptor = interceptor
+        self._transport: asyncio.DatagramTransport | None = None
+
+    def connection_made(self, transport: asyncio.BaseTransport) -> None:
+        self._transport = transport  # type: ignore[assignment]
 
     def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
         asyncio.create_task(self._reply(data, addr))  # noqa: RUF006 - fire and forget by design
 
     async def _reply(self, data: bytes, addr: tuple[str, int]) -> None:
         response = await self._interceptor.handle_query(data, client=addr[0])
-        if response:
-            self._interceptor.send_udp(response, addr)
+        if response and self._transport is not None:
+            self._transport.sendto(response, addr)
 
     def error_received(self, exc: Exception) -> None:
         logger.debug("DNS: UDP error: %s", exc)
@@ -80,12 +89,24 @@ class DNSInterceptor:
 
         self._udp_transport: asyncio.DatagramTransport | None = None
         self._tcp_server: asyncio.AbstractServer | None = None
+        self._udp_transport_v6: asyncio.DatagramTransport | None = None
+        self._tcp_server_v6: asyncio.AbstractServer | None = None
         self.stats = {
             "intercepted": 0,
             "forwarded": 0,
             "tcp_retries": 0,
             "refused": 0,
             "errors": 0,
+        }
+
+    @property
+    def listening(self) -> dict[str, bool]:
+        """What is actually bound — the truth a health check or a test should read."""
+        return {
+            "udp": self._udp_transport is not None,
+            "tcp": self._tcp_server is not None,
+            "udp_v6": self._udp_transport_v6 is not None,
+            "tcp_v6": self._tcp_server_v6 is not None,
         }
 
     # ── lifecycle ────────────────────────────────────────────────────────────
@@ -122,14 +143,56 @@ class DNSInterceptor:
         except OSError as exc:
             logger.warning("DNS: cannot listen on %s:%d/tcp — %s", self.host, self.port, exc)
 
+        # A device on a dual-stack network can ask us over IPv6: an "any" address means
+        # both families, and a name that only resolves over IPv4 is still answered.
+        if self.host in ("0.0.0.0", "::"):
+            await self._start_ipv6(loop)
+
         logger.info(
-            "DNS: listening on %s:%d (udp%s) — intercepting %s, answering %s",
+            "DNS: listening on %s:%d (udp%s%s) — intercepting %s, answering %s",
             self.host,
             self.port,
             "+tcp" if self._tcp_server else " only",
+            ", +ipv6" if self._udp_transport_v6 else "",
             self.patterns or "nothing",
             self.answer_ip,
         )
+
+    async def _start_ipv6(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Add the IPv6 listeners, best-effort: a host without IPv6 must still serve IPv4.
+
+        The sockets are created explicitly with ``IPV6_V6ONLY``: on Linux an IPv6 "any"
+        socket is dual-stack by default, so binding ``::`` would collide with the IPv4
+        listener already sitting on the same port — and IPv4 is the one devices rely on.
+        """
+        v6only = getattr(socket, "IPV6_V6ONLY", None)
+
+        udp_sock = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+        try:
+            if v6only is not None:
+                udp_sock.setsockopt(socket.IPPROTO_IPV6, v6only, 1)
+            udp_sock.setblocking(False)
+            udp_sock.bind(("::", self.port))
+            transport, _ = await loop.create_datagram_endpoint(
+                lambda: _DNSUDPProtocol(self), sock=udp_sock
+            )
+        except OSError as exc:
+            logger.debug("DNS: no IPv6 UDP listener on [::]:%d — %s", self.port, exc)
+            udp_sock.close()
+            return
+        self._udp_transport_v6 = transport
+
+        tcp_sock = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+        try:
+            if v6only is not None:
+                tcp_sock.setsockopt(socket.IPPROTO_IPV6, v6only, 1)
+            tcp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            tcp_sock.bind(("::", self.port))
+            tcp_sock.listen(128)
+            self._tcp_server_v6 = await asyncio.start_server(self._handle_tcp, sock=tcp_sock)
+        except OSError as exc:
+            logger.debug("DNS: no IPv6 TCP listener on [::]:%d — %s", self.port, exc)
+            tcp_sock.close()
 
     async def stop(self) -> None:
         if self._udp_transport is not None:
@@ -139,13 +202,16 @@ class DNSInterceptor:
             self._tcp_server.close()
             await self._tcp_server.wait_closed()
             self._tcp_server = None
+        if self._udp_transport_v6 is not None:
+            self._udp_transport_v6.close()
+            self._udp_transport_v6 = None
+        if self._tcp_server_v6 is not None:
+            self._tcp_server_v6.close()
+            await self._tcp_server_v6.wait_closed()
+            self._tcp_server_v6 = None
         logger.info("DNS: stopped")
 
     # ── query handling ───────────────────────────────────────────────────────
-
-    def send_udp(self, payload: bytes, addr: tuple[str, int]) -> None:
-        if self._udp_transport is not None:
-            self._udp_transport.sendto(payload, addr)
 
     async def handle_query(self, data: bytes, client: str = "unknown") -> bytes | None:
         """Answer one DNS message. ``None`` means: send nothing back."""

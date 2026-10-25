@@ -577,6 +577,10 @@ start. This server is the piece that makes that possible without breaking anythi
   sources (`ntp.*`) are deliberately *not* intercepted — the device needs its real clock.
 - When no upstream can answer, the client gets **SERVFAIL**: an honest failure, never a
   fabricated address.
+- UDP and TCP (length-prefixed) are both served, on **IPv6 too** when `listen_host` is an
+  any-address (`0.0.0.0` / `::`): a dual-stack device that asks over IPv6 is answered instead
+  of timing out with nothing in the log. Port 53 needs `CAP_NET_BIND_SERVICE`; a port that
+  cannot be bound is reported as a warning and never stops the service.
 - A **truncated** answer (TC=1) is completed over TCP *upstream*, with the same resolver:
   passing the flag back to the client would make it retry over TCP and receive that same flag
   from us, forever. If the resolver cannot deliver it over TCP either, the client gets

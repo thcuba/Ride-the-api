@@ -571,6 +571,10 @@ dns:
     - "*.example.vendor.com"
 ```
 
+With `listen_host: 0.0.0.0` the server binds **both families** (the IPv6 sockets are created with
+`IPV6_V6ONLY`, so they coexist with the IPv4 listener on the same port): a device that resolves over
+IPv6 gets an answer instead of waiting forever. An explicit `listen_host` is respected as given.
+
 Names in `intercept` are answered with `answer_ip`; **every other name is forwarded unchanged** to
 `dns.dns_servers` / `dns.dns_servers_v6`, so nothing else in the network loses resolution. Leave
 time sources (`ntp.*`) out of the list — the device needs its real clock.

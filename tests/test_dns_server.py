@@ -224,6 +224,68 @@ def test_lan_address_detection_does_not_raise():
     assert isinstance(detected, str)
 
 
+def _ipv6_available() -> bool:
+    try:
+        with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as probe:
+            probe.bind(("::1", 0))
+    except OSError:
+        return False
+    return True
+
+
+def _free_port_dual() -> int:
+    """A port free on both families: the listeners share the same number."""
+    for _ in range(20):
+        port = _free_port()
+        try:
+            with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as probe:
+                probe.bind(("::1", port))
+        except OSError:
+            continue
+        return port
+    return _free_port()
+
+
+@pytest.mark.asyncio
+async def test_an_any_address_listens_on_ipv6_too():
+    """A dual-stack device may ask over IPv6: it must not time out in silence."""
+    if not _ipv6_available():
+        pytest.skip("no IPv6 in this environment")
+    port = _free_port_dual()
+    interceptor = DNSInterceptor(_config(listen_host="0.0.0.0", listen_port=port))
+    await interceptor.start()
+    try:
+        answer = await dns.asyncquery.udp(
+            dns.message.make_query(INTERCEPTED, "A"), "::1", port=port, timeout=5
+        )
+        assert [rdata.address for rrset in answer.answer for rdata in rrset] == [PROXY_IP]
+
+        tcp = await asyncio.get_running_loop().run_in_executor(
+            None, lambda: dns.query.tcp(_query(INTERCEPTED), "::1", port=port, timeout=5)
+        )
+        assert [rdata.address for rrset in tcp.answer for rdata in rrset] == [PROXY_IP]
+
+        # the IPv4 side must keep working on the same port
+        v4 = await asyncio.get_running_loop().run_in_executor(
+            None, lambda: dns.query.udp(_query(INTERCEPTED), "127.0.0.1", port=port, timeout=5)
+        )
+        assert [rdata.address for rrset in v4.answer for rdata in rrset] == [PROXY_IP]
+    finally:
+        await interceptor.stop()
+
+
+@pytest.mark.asyncio
+async def test_a_specific_address_does_not_add_an_ipv6_listener():
+    """An explicit listen_host is a decision, not a suggestion."""
+    interceptor = DNSInterceptor(_config(listen_host="127.0.0.1", listen_port=_free_port()))
+    await interceptor.start()
+    try:
+        assert interceptor.listening["udp_v6"] is False
+        assert interceptor.listening["tcp_v6"] is False
+    finally:
+        await interceptor.stop()
+
+
 class _TruncatingUpstream:
     """UDP answers TC=1 (the real answer does not fit); TCP serves it in full."""
 
