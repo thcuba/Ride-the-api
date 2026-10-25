@@ -132,8 +132,14 @@ the static app version when no `VERSION` file exists (dev checkout).
 {
   "status": "healthy",
   "service": "local-cloud-replacement-proxy",
-  "version": "0.2.0",
-  "adapters": ["example"]
+  "version": "1.2.15",
+  "adapters": ["example"],
+  "ports": {
+    "proxy": {"port": 8911, "listening": true},
+    "dns": {"enabled": true, "host": "0.0.0.0", "port": 53, "udp": true, "tcp": true,
+            "udp_v6": true, "tcp_v6": false},
+    "tls_mitm": {"requested": [443, 8883, 5684, 8443], "bound": [8883, 5684, 8443], "missing": [443]}
+  }
 }
 ```
 
@@ -143,6 +149,12 @@ the static app version when no `VERSION` file exists (dev checkout).
 | `service` | string | Service name |
 | `version` | string | Current version |
 | `adapters` | array[string] | List of registered vendors/adapters |
+| `ports` | object | What is actually bound: `proxy`, `dns` (`udp`/`tcp`/`udp_v6`/`tcp_v6`) and `tls_mitm` (`requested`/`bound`/`missing`) |
+
+The `ports` block is the first thing to read when a device "does not work": a listener that
+never came up (a port below 1024 without `CAP_NET_BIND_SERVICE`) is the usual cause, and it is
+otherwise invisible. A port that cannot be bound is reported, never fatal — the rest of the
+service keeps running.
 
 **Status codes**: `200` OK, `503` Service Unavailable
 

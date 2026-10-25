@@ -29,6 +29,7 @@ import h11
 from adapters.base import InterceptedRequest, ProtocolType, device_id_from_ip
 from core.cert_manager import CertManager
 from core.cloud_forward import forward_intercepted
+from core.ports import bind_failure_hint
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
@@ -280,6 +281,8 @@ class TLSMITMServer:
 
         # Running servers
         self._servers: list[asyncio.AbstractServer] = []
+        # Which of the requested ports actually came up (443 needs a capability).
+        self.bound_ports: list[int] = []
         self._tasks: list[asyncio.Task] = []
 
         # Device metadata: ip -> DevicePortInfo
@@ -315,13 +318,30 @@ class TLSMITMServer:
                     port=port,
                 )
                 self._servers.append(server)
+                self.bound_ports.append(port)
                 logger.info("TLS MITM: listening on %s:%d", self.host, port)
             except OSError as e:
-                logger.warning("TLS MITM: cannot listen on %s:%d — %s", self.host, port, e)
+                hint = bind_failure_hint(port, e)
+                logger.warning(
+                    "TLS MITM: cannot listen on %s:%d — %s%s",
+                    self.host,
+                    port,
+                    e,
+                    f" | {hint}" if hint else "",
+                )
 
         if not self._servers:
             logger.error("TLS MITM: no ports could be bound!")
             return []
+
+        if missing := [p for p in self.listen_ports if p not in self.bound_ports]:
+            logger.warning(
+                "TLS MITM: %d/%d ports bound; NOT listening on %s — a device pointed at "
+                "this proxy on those ports will get a connection refused",
+                len(self._servers),
+                len(self.listen_ports),
+                missing,
+            )
 
         logger.info(
             "TLS MITM: successfully bound %d/%d ports",
@@ -336,6 +356,7 @@ class TLSMITMServer:
             server.close()
             await server.wait_closed()
         self._servers.clear()
+        self.bound_ports.clear()
 
         tasks = self._tasks
         self._tasks = []
@@ -938,6 +959,15 @@ class TLSMITMServer:
 # ── Global instance ─────────────────────────────────────────────────────────
 
 _tls_mitm_server: TLSMITMServer | None = None
+
+
+def peek_tls_mitm_server() -> TLSMITMServer | None:
+    """The running instance, or ``None`` — never creates one.
+
+    ``get_tls_mitm_server()`` builds the instance (and its CA) on first call, so a health
+    check must not use it: looking at the state must not change it.
+    """
+    return _tls_mitm_server
 
 
 def get_tls_mitm_server(
