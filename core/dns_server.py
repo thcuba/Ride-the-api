@@ -25,6 +25,7 @@ import socket
 from typing import TYPE_CHECKING
 
 import dns.asyncquery
+import dns.flags
 import dns.message
 import dns.rdataclass
 import dns.rdatatype
@@ -90,7 +91,13 @@ class DNSInterceptor:
         self._tcp_server: asyncio.AbstractServer | None = None
         self._udp_transport_v6: asyncio.DatagramTransport | None = None
         self._tcp_server_v6: asyncio.AbstractServer | None = None
-        self.stats = {"intercepted": 0, "forwarded": 0, "refused": 0, "errors": 0}
+        self.stats = {
+            "intercepted": 0,
+            "forwarded": 0,
+            "tcp_retries": 0,
+            "refused": 0,
+            "errors": 0,
+        }
 
     @property
     def listening(self) -> dict[str, bool]:
@@ -291,6 +298,11 @@ class DNSInterceptor:
 
         ``dns.asyncquery.udp`` takes a parsed message, not wire bytes, and returns
         the resolver's own answer: we hand it back as it arrived.
+
+        A **truncated** answer (TC=1) is not an answer. Handing the flag back to the
+        client would make it retry over TCP and get the same flag from us again,
+        forever, so the retry has to happen *upstream*: the same resolver is asked
+        again over TCP, and only its full answer is sent back.
         """
         for server in self.upstreams:
             host, port = self._split_upstream(server)
@@ -301,8 +313,28 @@ class DNSInterceptor:
             except Exception as exc:  # noqa: BLE001 - try the next resolver
                 logger.debug("DNS: upstream %s failed: %s", server, exc)
                 continue
+
+            if response.flags & dns.flags.TC:
+                completed = await self._retry_over_tcp(query, server)
+                if completed is not None:
+                    return completed
+                continue  # this resolver cannot deliver it over TCP: try the next one
             return response.to_wire()
         return None
+
+    async def _retry_over_tcp(self, query: dns.message.Message, server: str) -> bytes | None:
+        """Ask the same resolver again over TCP, which has no size limit."""
+        host, port = self._split_upstream(server)
+        try:
+            response = await dns.asyncquery.tcp(
+                query, host, port=port, timeout=self.forward_timeout
+            )
+        except Exception as exc:  # noqa: BLE001 - the caller tries the next resolver
+            logger.warning("DNS: upstream %s answered truncated and TCP failed: %s", server, exc)
+            return None
+        self.stats["tcp_retries"] += 1
+        logger.debug("DNS: upstream %s answered truncated, completed over TCP", server)
+        return response.to_wire()
 
     # ── TCP side ─────────────────────────────────────────────────────────────
 
