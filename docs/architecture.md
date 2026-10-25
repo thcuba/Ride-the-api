@@ -580,10 +580,25 @@ start. This server is the piece that makes that possible without breaking anythi
 - UDP and TCP (length-prefixed) are both served. Port 53 needs `CAP_NET_BIND_SERVICE`;
   a port that cannot be bound is reported as a warning and never stops the service.
 
-Two deployment shapes use it: the device (or the router) takes the proxy as its DNS, or
-a local resolver such as AdGuard Home keeps serving the network while that client's
-*upstream DNS* points at the proxy — which answers the configured names and forwards
-everything else.
+### Who decides what is intercepted
+
+The proxy is not meant to replace the network's resolver, and the split is deliberate:
+
+- the **local resolver** (AdGuard Home, Pi-hole, dnsmasq) stays the DNS of the network and
+  decides **which devices** are sent here — a per-client upstream DNS (AdGuard Home,
+  Pi-hole) or a router/client rule;
+- **this server** intercepts the names in `dns.intercept` for those clients, and forwards
+  everything else.
+
+So the *selection* is a resolver decision — one client at a time, reversible by removing
+the upstream — and the *interception* is a proxy decision: one name at a time, explicitly
+listed. A device that is not sent here keeps talking to its vendor: nothing is intercepted
+by accident, and a device that is sent here keeps resolving everything else normally.
+
+The same server also works with the device (or the router) pointed straight at it, for a
+deployment with no resolver of its own; and a resolver *rewrite*
+(`ats.prod.eu-da.iot.versuni.com -> proxy`) is the third shape, which needs no upstream and
+no DNS server of ours at all.
 
 `tests/test_dns_server.py` covers the pattern matching, the synthesised answers and a
 real socket round trip: an intercepted name is answered locally without asking anyone,
