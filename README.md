@@ -24,6 +24,14 @@ That test states its own limits: the pattern *extraction* step is fed a canned a
 of calling a real model, so model quality is not measured. Capture, correlation, persistence,
 matching and serving are production code, and the network exchange is real.
 
+**Verified live on hardware** — on a Raspberry Pi 4, deployed from source, with a **real public
+vendor** reached over the internet: a vendor `429` arrives as `429`; a non-JSON body keeps its
+`content-type` and its bytes; the vendor receives the device's own bytes unchanged; control-plane
+errors carry no internals; and an unreachable vendor fails loudly (`502`) instead of claiming
+success. Exact commands and results: [`docs/verification.md`](docs/verification.md).
+Running the real path also found a defect the suite had missed — the forward ignored the
+request's `Host` header and used the configured hostname instead (fixed in #408).
+
 **Not yet verified:**
 
 - a run against **one named physical device and firmware version** — DNS interception, the
