@@ -4,22 +4,35 @@ A DNS interception proxy that sits between IoT devices and their cloud APIs, lea
 
 ## Project status
 
-This is an **experimental protocol-emulation proxy**, and the wording above
-describes the goal, not a measured result. Being explicit about the difference:
+**Ride-the-API is experimental protocol emulation**, not a turnkey solution, and it does not
+claim that any specific device keeps working after its vendor cloud shuts down.
 
-- **Verified today**: the local learning pipeline (buffer → LLM analysis →
-  patterns → local match) and the fidelity of the request/response path. The
-  test suite covers both, and `templates/e2e_smoke.py` **asserts** that a learned
-  pattern actually serves the request locally with the value that was sent
-  (the LLM is mocked there, so it exercises the plumbing, not the model).
-- **Not yet verified**: a full end-to-end run against one named physical device
-  and firmware version (fresh install → interception → learning → vendor cloud
-  blocked → device reboot → container recreated). Until that exists, treat
-  "devices keep working without their cloud" as unproven for any specific
-  device.
-- A device is only labelled **cloud independent** when it is in production mode
-  *and* its measured match rate reaches `AUTO_SWITCH_MATCH_RATE`
-  (`core/resilience.py`) — recognising request shapes is not treated as proof.
+**Demonstrated, and reproducible in CI** — `tests/test_complete_path.py` walks one complete,
+truthful request/response path in order, against a *real* HTTP vendor on a socket (not a mock):
+
+1. a fresh install (empty database directory) comes up and creates its store;
+2. forwarding preserves **bytes, status and headers in both directions**: a vendor `429` with
+   its `retry-after` and a non-JSON body reaches the device unchanged, and the vendor receives
+   the device's own bytes;
+3. learning **captures the real vendor response** — the stored pair carries the `429` and its
+   headers, not a fabricated `200`;
+4. with the vendor **shut down**, the learned pattern serves the request locally, and it still
+   does after the database manager is rebuilt on the same directory — a restart / container
+   recreation with a persistent volume.
+
+That test states its own limits: the pattern *extraction* step is fed a canned analysis instead
+of calling a real model, so model quality is not measured. Capture, correlation, persistence,
+matching and serving are production code, and the network exchange is real.
+
+**Not yet verified:**
+
+- a run against **one named physical device and firmware version** — DNS interception, the
+  device's own certificate handling and retry logic, and its behaviour across a real reboot;
+- pattern extraction by a real LLM from real vendor traffic, end to end.
+
+A device is only labelled **cloud independent** when it is in production mode *and* its measured
+match rate reaches `AUTO_SWITCH_MATCH_RATE` (`core/resilience.py`) — recognising request shapes
+is not treated as proof.
 
 ```
 IoT Device ──▶ nginx/TLS MITM ──▶ Ride-the-API ──▶ Vendor Cloud (learning only)
