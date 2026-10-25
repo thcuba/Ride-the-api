@@ -100,6 +100,7 @@ from core.tls_mitm import (
     DecryptedRequest,
     TLSMITMServer,
     get_tls_mitm_server,
+    peek_tls_mitm_server,
 )
 from core.traffic_selector import TrafficRequestInfo, get_traffic_selector, is_local_ip
 
@@ -1233,14 +1234,53 @@ async def protocol_server_config(name: str):
     # ═══════════════════════════════════════════════════════════════════════════════
 
 
+def _listening_ports() -> dict[str, object]:
+    """What is actually bound — the first question when a device "does not work".
+
+    Failures here are quiet by nature: a port below 1024 without CAP_NET_BIND_SERVICE, or a
+    device aimed at a listener that never came up. Reporting it costs nothing and turns a
+    guess into a diagnosis. Never creates anything (a health check must not change state),
+    never raises.
+    """
+    report: dict[str, object] = {}
+    try:
+        report["proxy"] = {"port": config_manager.config.proxy.port, "listening": True}
+    except Exception:  # noqa: BLE001 - /health must never fail
+        report["proxy"] = {"listening": True}
+    try:
+        dns = get_dns_interceptor()
+        report["dns"] = (
+            {"enabled": False, "listening": False}
+            if dns is None
+            else {"enabled": dns.enabled, "host": dns.host, "port": dns.port, **dns.listening}
+        )
+    except Exception:  # noqa: BLE001
+        report["dns"] = {"enabled": None}
+    try:
+        tls = peek_tls_mitm_server()
+        report["tls_mitm"] = (
+            {"requested": [], "bound": [], "missing": []}
+            if tls is None
+            else {
+                "requested": list(tls.listen_ports),
+                "bound": list(tls.bound_ports),
+                "missing": [p for p in tls.listen_ports if p not in tls.bound_ports],
+            }
+        )
+    except Exception:  # noqa: BLE001
+        report["tls_mitm"] = {"requested": None}
+    return report
+
+
 @app.get("/health")
 async def health_check():
-    """Health check endpoint."""
+    """Health check endpoint: also reports what is actually bound."""
     return {
         "status": "healthy",
         "service": "local-cloud-replacement-proxy",
         "version": runtime_version(),
         "adapters": adapter_registry.list_vendors() if adapter_registry else [],
+        "ports": _listening_ports(),
     }
 
 

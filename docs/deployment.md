@@ -579,12 +579,19 @@ Names in `intercept` are answered with `answer_ip`; **every other name is forwar
 `dns.dns_servers` / `dns.dns_servers_v6`, so nothing else in the network loses resolution. Leave
 time sources (`ntp.*`) out of the list — the device needs its real clock.
 
-Port 53 is privileged, like 443 for TLS interception. Grant the capability once, which covers both:
+Port 53 is privileged, like 443 for TLS interception. Grant the capability once, which covers both
+— but **on the interpreter the virtualenv points to, not on the symlink**:
 
 ```bash
-sudo setcap cap_net_bind_service=+ep /path/to/.venv/bin/python
+sudo setcap cap_net_bind_service=+ep "$(readlink -f /path/to/.venv/bin/python)"
 systemctl --user restart ride-the-api
 ```
+
+A virtualenv's `bin/python` is a symlink (`-> python3 -> /usr/bin/python3.x`) and `setcap`
+refuses symlinks: applied to the link it answers *"Invalid file ... for capability operation"*
+and nothing changes. Giving the capability to the system interpreter is enough for every venv
+built on it. The alternative, if you prefer not to touch interpreters, is
+`sysctl -w net.ipv4.ip_unprivileged_port_start=0` (plus a file in `/etc/sysctl.d/` to persist it).
 
 A port that cannot be bound is logged as a warning (`DNS: cannot listen on ...`), and the rest of
 the service keeps running.
@@ -600,6 +607,10 @@ reversible: remove the upstream and that device goes back to the vendor untouche
 The other two shapes are the device (or the router) pointed straight at the proxy, and a resolver
 *rewrite* (`ats.prod.eu-da.iot.versuni.com -> 192.168.178.200`), which is the only one that needs no
 upstream and no DNS server of ours.
+
+Both listeners report what they actually bound: `/health` carries a `ports` block (`dns`,
+`tls_mitm` with `requested`/`bound`/`missing`) and the TLS listener logs `bound N/M ports`,
+so a missing 443 is visible instead of being guessed at.
 
 Verify from another machine:
 
