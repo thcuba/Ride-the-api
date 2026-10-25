@@ -555,6 +555,52 @@ sudo systemctl status ride-the-api
 
 ---
 
+## DNS interception
+
+A device finds its vendor by name, so the name is where interception has to start. Enable the
+DNS server:
+
+```yaml
+dns:
+  enabled: true
+  listen_host: 0.0.0.0
+  listen_port: 53
+  answer_ip: 192.168.178.200   # what intercepted names resolve to; empty = detect the LAN address
+  intercept:
+    - ats.prod.eu-da.iot.versuni.com
+    - "*.example.vendor.com"
+```
+
+Names in `intercept` are answered with `answer_ip`; **every other name is forwarded unchanged** to
+`dns.dns_servers` / `dns.dns_servers_v6`, so nothing else in the network loses resolution. Leave
+time sources (`ntp.*`) out of the list — the device needs its real clock.
+
+Port 53 is privileged, like 443 for TLS interception. Grant the capability once, which covers both:
+
+```bash
+sudo setcap cap_net_bind_service=+ep /path/to/.venv/bin/python
+systemctl --user restart ride-the-api
+```
+
+A port that cannot be bound is logged as a warning (`DNS: cannot listen on ...`), and the rest of
+the service keeps running.
+
+Then point the device at the proxy, in either of two ways:
+
+1. set the proxy as the device's (or the router's) DNS server, or
+2. keep a local resolver (AdGuard Home, Pi-hole) resolving for the network and give that client an
+   **upstream DNS** pointing at the proxy — intercepted names are answered locally, the rest is
+   forwarded by the proxy as usual.
+
+Verify from another machine:
+
+```bash
+dig +short @192.168.178.200 ats.prod.eu-da.iot.versuni.com   # -> 192.168.178.200 (the proxy)
+dig +short @192.168.178.200 example.org                     # -> the real address (forwarded)
+```
+
+---
+
 ## Troubleshooting
 
 ### DNS Loop

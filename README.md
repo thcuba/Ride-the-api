@@ -20,6 +20,11 @@ truthful request/response path in order, against a *real* HTTP vendor on a socke
    does after the database manager is rebuilt on the same directory — a restart / container
    recreation with a persistent volume.
 
+**And the piece that makes interception reachable at all**: `core/dns_server.py` answers the names
+listed in `dns.intercept` with the proxy's own address and **forwards every other name verbatim** to
+the real resolvers — so the proxy can be the DNS for a network without hijacking anything by
+accident (`tests/test_dns_server.py`, real socket round trip included).
+
 That test states its own limits: the pattern *extraction* step is fed a canned analysis instead
 of calling a real model, so model quality is not measured. Capture, correlation, persistence,
 matching and serving are production code, and the network exchange is real.

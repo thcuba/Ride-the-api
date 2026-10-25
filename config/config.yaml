@@ -529,6 +529,26 @@ observability:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 dns:
+  # ── DNS interception server (core/dns_server.py) ────────────────────────────
+  # Answers the names listed in `intercept` with `answer_ip`, so devices reach this
+  # proxy instead of their vendor cloud, and forwards EVERY other name unchanged to
+  # the resolvers below (nothing else in the network loses resolution).
+  # Opt-in: port 53 needs CAP_NET_BIND_SERVICE
+  #   sudo setcap cap_net_bind_service=+ep .venv/bin/python
+  enabled: false
+  listen_host: "0.0.0.0"
+  listen_port: 53
+  # What intercepted names resolve to; empty = auto-detect the LAN address.
+  answer_ip: ""
+  answer_ttl: 60
+  forward_timeout: 5.0
+  # Exact names or "*.domain" wildcards. Never list time sources (ntp.*): the
+  # device needs its real clock.
+  intercept: []
+  #  - "ats.prod.eu-da.iot.versuni.com"
+  #  - "*.example.vendor.com"
+
+  # ── Legacy: let an external resolver do the rewriting ───────────────────────
   # Example dnsmasq configuration for local DNS interception
   # Add to /etc/dnsmasq.d/ride-api.conf:
   #
