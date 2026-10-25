@@ -1178,8 +1178,8 @@ async function loadDeviceStats(deviceId) {
     detail.innerHTML = `<div class="detail-card">
       <div class="detail-header">
             <h2 id="details-title" tabindex="-1">${escapeHtml(s.name || deviceId)} — Details</h2>
-        <button class="btn btn-danger" style="padding:4px 10px;font-size:12px;margin-right:8px;" onclick="deleteDevice('${escapeJs(deviceId)}', this)" aria-label="Delete device ${escapeHtml(deviceId)}">Delete</button>
-        <button class="close-btn" onclick="closeDetails()" aria-label="Close details panel">&times;</button>
+        <button class="btn btn-danger" style="padding:4px 10px;font-size:12px;margin-right:8px;" onclick="deleteDevice('${escapeJs(deviceId)}', this)" aria-label="Delete device ${escapeHtml(deviceId)}" title="Delete device and remove all learned patterns">Delete</button>
+        <button class="close-btn" onclick="closeDetails()" aria-label="Close details panel" title="Close details panel">&times;</button>
       </div>
       ${ring}
       <div class="stats-grid">
@@ -1264,12 +1264,12 @@ async function loadDeviceStats(deviceId) {
         </div>
         <div class="tc-row">
           <span class="tc-label">CA Certificate</span>
-          <button class="btn btn-ghost" onclick="downloadCaCert()" style="padding:4px 10px;font-size:12px;" aria-label="Download CA certificate">Download</button>
+          <button class="btn btn-ghost" onclick="downloadCaCert()" style="padding:4px 10px;font-size:12px;" aria-label="Download CA certificate" title="Download CA certificate (PEM)">Download</button>
         </div>
         <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px;gap:8px;">
-          <a class="btn btn-ghost" href="/patterns/${escapeHtml(deviceId)}" style="padding:6px 12px;font-size:12px;">View Patterns</a>
+          <a class="btn btn-ghost" href="/patterns/${escapeHtml(deviceId)}" style="padding:6px 12px;font-size:12px;" aria-label="View learned patterns for ${escapeHtml(s.name || deviceId)}" title="View learned patterns for this device">View Patterns</a>
           <div style="text-align:right;">
-            <button class="btn btn-primary" id="save-tls-btn-${escapeHtml(deviceId)}" onclick="saveTlsConfig('${escapeJs(deviceId)}')" style="padding:6px 16px;font-size:12px;">Save TLS Config</button>
+            <button class="btn btn-primary" id="save-tls-btn-${escapeHtml(deviceId)}" onclick="saveTlsConfig('${escapeJs(deviceId)}')" style="padding:6px 16px;font-size:12px;" aria-label="Save TLS configuration for ${escapeHtml(s.name || deviceId)}" title="Save TLS configuration">Save TLS Config</button>
           </div>
         </div>
 
@@ -1296,7 +1296,7 @@ async function loadDeviceStats(deviceId) {
           <div style="flex:1;display:flex;gap:6px;align-items:center;">
             <input type="number" id="dc-threshold-${escapeHtml(deviceId)}" value="${(s.match_threshold * 100).toFixed(0)}" min="0" max="100" step="1" style="flex:1;" aria-label="Match threshold percent">
             <span style="font-size:11px;color:var(--text2);">%</span>
-            <button type="button" class="btn btn-ghost" onclick="saveDeviceThreshold('${escapeJs(deviceId)}', this)" style="padding:4px 10px;font-size:12px;" aria-label="Save match threshold for ${escapeHtml(s.name || deviceId)}">Save</button>
+            <button type="button" class="btn btn-ghost" onclick="saveDeviceThreshold('${escapeJs(deviceId)}', this)" style="padding:4px 10px;font-size:12px;" aria-label="Save match threshold for ${escapeHtml(s.name || deviceId)}" title="Save match threshold">Save</button>
           </div>
         </div>
         <div class="tc-row">
@@ -1306,7 +1306,7 @@ async function loadDeviceStats(deviceId) {
               ${[131072, 262144, 524288, 1048576, 2097152, 5242880, 10485760].map(sz => `<option value="${sz}" ${s.context_buffer_size === sz ? 'selected' : ''}>${(sz/1024).toFixed(0)} KB${sz===1048576?' (1MB)':''}</option>`).join('')}
               <option value="${s.context_buffer_size}" ${![131072, 262144, 524288, 1048576, 2097152, 5242880, 10485760].includes(s.context_buffer_size) ? 'selected' : ''}>Custom (${(s.context_buffer_size/1024).toFixed(0)} KB)</option>
             </select>
-            <button type="button" class="btn btn-ghost" onclick="saveDeviceBuffer('${escapeJs(deviceId)}', this)" style="padding:4px 10px;font-size:12px;" aria-label="Save context buffer size for ${escapeHtml(s.name || deviceId)}">Save</button>
+            <button type="button" class="btn btn-ghost" onclick="saveDeviceBuffer('${escapeJs(deviceId)}', this)" style="padding:4px 10px;font-size:12px;" aria-label="Save context buffer size for ${escapeHtml(s.name || deviceId)}" title="Save context buffer size">Save</button>
           </div>
         </div>
 
@@ -1340,7 +1340,7 @@ async function loadDeviceStats(deviceId) {
             </div>
             <div style="display:flex;gap:6px;">
               <input type="text" id="dc-ip-new-${escapeHtml(deviceId)}" placeholder="e.g. 192.168.1.50" style="flex:1;" aria-label="New IP address for device">
-              <button class="btn btn-ghost" onclick="addDeviceIp('${escapeJs(deviceId)}', this)" style="padding:4px 12px;font-size:12px;">+ Add IP</button>
+              <button class="btn btn-ghost" onclick="addDeviceIp('${escapeJs(deviceId)}', this)" style="padding:4px 12px;font-size:12px;" aria-label="Add IP address to device" title="Add IP address to device">+ Add IP</button>
             </div>
           </div>
         </div>
@@ -1348,9 +1348,9 @@ async function loadDeviceStats(deviceId) {
         <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px;gap:8px;">
           <span style="font-size:11px;color:var(--text2);" id="dc-status-${escapeHtml(deviceId)}"></span>
           <div style="text-align:right;display:flex;gap:8px;">
-            <button type="button" class="btn btn-ghost" onclick="saveDeviceConnection('${escapeJs(deviceId)}', this)" style="padding:6px 12px;font-size:12px;" aria-label="Save connection type for ${escapeHtml(s.name || deviceId)}">Save Connection</button>
-            <button type="button" class="btn btn-ghost" onclick="saveDeviceLLM('${escapeJs(deviceId)}', this)" style="padding:6px 12px;font-size:12px;" aria-label="Save LLM configuration for ${escapeHtml(s.name || deviceId)}">Save LLM</button>
-            <button type="button" class="btn btn-primary" onclick="assignDeviceDatabase('${escapeJs(deviceId)}', this)" style="padding:6px 16px;font-size:12px;" aria-label="Assign database for ${escapeHtml(s.name || deviceId)}">Assign Database</button>
+            <button type="button" class="btn btn-ghost" onclick="saveDeviceConnection('${escapeJs(deviceId)}', this)" style="padding:6px 12px;font-size:12px;" aria-label="Save connection type for ${escapeHtml(s.name || deviceId)}" title="Save connection type">Save Connection</button>
+            <button type="button" class="btn btn-ghost" onclick="saveDeviceLLM('${escapeJs(deviceId)}', this)" style="padding:6px 12px;font-size:12px;" aria-label="Save LLM configuration for ${escapeHtml(s.name || deviceId)}" title="Save LLM configuration">Save LLM</button>
+            <button type="button" class="btn btn-primary" onclick="assignDeviceDatabase('${escapeJs(deviceId)}', this)" style="padding:6px 16px;font-size:12px;" aria-label="Assign database for ${escapeHtml(s.name || deviceId)}" title="Assign protocol database to device">Assign Database</button>
           </div>
         </div>
       </div>
@@ -1370,11 +1370,11 @@ async function loadDeviceStats(deviceId) {
                     <select id="profile-select-${escapeHtml(deviceId)}" style="flex:1;" onchange="onProfileChange('${escapeJs(deviceId)}')">
                       <option value="default">Default</option>
                     </select>
-                    <button type="button" class="btn btn-ghost" style="padding:4px 8px;font-size:11px;" onclick="saveAsNewProfile('${escapeJs(deviceId)}')" aria-label="Save template as new profile">Save As</button>
+                    <button type="button" class="btn btn-ghost" style="padding:4px 8px;font-size:11px;" onclick="saveAsNewProfile('${escapeJs(deviceId)}')" aria-label="Save template as new profile" title="Save prompt template as new profile">Save As</button>
                   </div>
                   <div class="llm-row" style="justify-content:flex-end;gap:6px;border:none;padding-top:0;">
-                    <button type="button" class="btn btn-ghost" style="padding:2px 8px;font-size:11px;" onclick="editProfile('${escapeJs(deviceId)}')" aria-label="Edit template profile">Edit</button>
-                    <button type="button" class="btn btn-ghost" style="padding:2px 8px;font-size:11px;" onclick="deleteProfile('${escapeJs(deviceId)}')" id="delete-profile-btn-${escapeHtml(deviceId)}" aria-label="Delete template profile">Delete</button>
+                    <button type="button" class="btn btn-ghost" style="padding:2px 8px;font-size:11px;" onclick="editProfile('${escapeJs(deviceId)}')" aria-label="Edit template profile" title="Edit selected template profile">Edit</button>
+                    <button type="button" class="btn btn-ghost" style="padding:2px 8px;font-size:11px;" onclick="deleteProfile('${escapeJs(deviceId)}')" id="delete-profile-btn-${escapeHtml(deviceId)}" aria-label="Delete template profile" title="Delete selected template profile">Delete</button>
                   </div>
 
                   <!-- Context notes -->
@@ -1382,7 +1382,7 @@ async function loadDeviceStats(deviceId) {
                     <label for="context-notes-${escapeHtml(deviceId)}" style="min-width:0;margin-bottom:4px;">Context Notes</label>
                     <textarea id="context-notes-${escapeHtml(deviceId)}" placeholder="Add context for LLM analysis&#10;e.g.: &#34;This endpoint controls device pairing&#34;"></textarea>
                     <div style="display:flex;gap:6px;margin-top:4px;justify-content:flex-end;">
-                      <button type="button" class="btn btn-ghost" id="save-notes-btn-${escapeHtml(deviceId)}" style="padding:4px 10px;font-size:11px;" onclick="saveContextNotes('${escapeJs(deviceId)}')">Save Notes</button>
+                      <button type="button" class="btn btn-ghost" id="save-notes-btn-${escapeHtml(deviceId)}" style="padding:4px 10px;font-size:11px;" onclick="saveContextNotes('${escapeJs(deviceId)}')" aria-label="Save context notes for ${escapeHtml(s.name || deviceId)}" title="Save context notes for LLM analysis">Save Notes</button>
                     </div>
                   </div>
 
@@ -1404,8 +1404,8 @@ async function loadDeviceStats(deviceId) {
 
                   <!-- Actions -->
                   <div class="llm-actions">
-                    <button type="button" class="btn btn-ghost" onclick="previewAnalysis('${escapeJs(deviceId)}')" id="preview-btn-${escapeHtml(deviceId)}" aria-label="Preview and edit LLM analysis">&#x1F50D; Preview &amp; Edit</button>
-                    <button type="button" class="btn btn-primary" onclick="sendToLLM('${escapeJs(deviceId)}')" id="send-btn-${escapeHtml(deviceId)}" aria-label="Send selected entries to LLM">&#x27A4; Send to LLM</button>
+                    <button type="button" class="btn btn-ghost" onclick="previewAnalysis('${escapeJs(deviceId)}')" id="preview-btn-${escapeHtml(deviceId)}" aria-label="Preview and edit LLM analysis" title="Preview and edit LLM analysis before committing">&#x1F50D; Preview &amp; Edit</button>
+                    <button type="button" class="btn btn-primary" onclick="sendToLLM('${escapeJs(deviceId)}')" id="send-btn-${escapeHtml(deviceId)}" aria-label="Send selected entries to LLM" title="Send selected buffer entries to LLM for protocol learning">&#x27A4; Send to LLM</button>
                   </div>
 
                   <!-- Analysis preview (hidden) -->
@@ -1413,15 +1413,15 @@ async function loadDeviceStats(deviceId) {
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
                       <h4 style="margin-bottom:0;">&#x1F4DD; LLM Analysis Preview</h4>
                       <div style="display:flex;gap:6px;">
-                        <button type="button" class="btn btn-ghost" style="padding:2px 8px;font-size:11px;" onclick="formatAnalysisJson('${escapeJs(deviceId)}')" aria-label="Format LLM analysis JSON">Format JSON</button>
-                        <button type="button" class="btn btn-ghost" style="padding:2px 8px;font-size:11px;" onclick="copyAnalysisJson('${escapeJs(deviceId)}')" aria-label="Copy LLM analysis JSON to clipboard">Copy JSON</button>
+                        <button type="button" class="btn btn-ghost" style="padding:2px 8px;font-size:11px;" onclick="formatAnalysisJson('${escapeJs(deviceId)}')" aria-label="Format LLM analysis JSON" title="Format analysis JSON with 2-space indentation">Format JSON</button>
+                        <button type="button" class="btn btn-ghost" style="padding:2px 8px;font-size:11px;" onclick="copyAnalysisJson('${escapeJs(deviceId)}')" aria-label="Copy LLM analysis JSON to clipboard" title="Copy analysis JSON to clipboard">Copy JSON</button>
                       </div>
                     </div>
                     <textarea id="analysis-text-${escapeHtml(deviceId)}" style="min-height:120px;" aria-label="LLM analysis JSON editor"></textarea>
                     <div style="font-size:12px;color:var(--text2);margin:4px 0;">Edit the analysis above before committing, then click Commit to save patterns.</div>
                     <div class="llm-actions">
-                      <button type="button" class="btn btn-ghost" onclick="discardPreview('${escapeJs(deviceId)}')" aria-label="Discard preview">Discard</button>
-                      <button type="button" class="btn btn-primary" onclick="commitPatterns('${escapeJs(deviceId)}')" aria-label="Commit patterns to device">&#x2714; Commit Patterns</button>
+                      <button type="button" class="btn btn-ghost" onclick="discardPreview('${escapeJs(deviceId)}')" aria-label="Discard preview" title="Discard LLM analysis preview">Discard</button>
+                      <button type="button" class="btn btn-primary" onclick="commitPatterns('${escapeJs(deviceId)}')" aria-label="Commit patterns to device" title="Commit analyzed patterns to device pattern database">&#x2714; Commit Patterns</button>
                     </div>
                   </div>
 
