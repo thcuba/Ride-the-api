@@ -51,3 +51,22 @@ def test_both_forwarding_adapters_find_a_lower_cased_host():
     for adapter in (ExampleProtocolAdapter, ShellyProtocolAdapter):
         assert adapter._host_from_request(_request({"host": "vendor.example"})) == "vendor.example"
         assert adapter._host_from_request(_request({"Host": "vendor.example"})) == "vendor.example"
+
+
+def test_helper_parses_an_ipv6_literal():
+    """An IPv6 literal is bracketed: splitting on the first colon gave a bare '['."""
+    assert host_from_request(_request({"host": "[2001:db8::1]:8443"})) == "2001:db8::1"
+    assert host_from_request(_request({"host": "[2001:db8::1]"})) == "2001:db8::1"
+    assert host_from_request(_request({"Host": "[::1]:80"})) == "::1"
+
+
+def test_a_malformed_literal_is_left_whole_not_truncated():
+    """Better an obviously broken value than a plausible-looking '['."""
+    assert host_from_request(_request({"host": "[2001:db8::1"})) == "[2001:db8::1"
+    assert host_from_request(_request({"host": "[::1:8443"})) == "[::1:8443"
+
+
+def test_a_plain_hostname_is_unchanged_by_the_literal_handling():
+    assert host_from_request(_request({"host": "vendor.example"})) == "vendor.example"
+    assert host_from_request(_request({"host": "vendor.example:8443"})) == "vendor.example"
+    assert host_from_request(_request({"host": "192.168.178.77:8911"})) == "192.168.178.77"
