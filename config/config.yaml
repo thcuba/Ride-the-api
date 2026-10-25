@@ -240,6 +240,9 @@ llm_decipher:
       base_url: "https://api.openai.com/v1"
       api_key: "${OPENAI_API_KEY}"
       model_id: "gpt-4o-mini"
+      # Ceiling on one completion. Keep it: a local model that ignores the JSON format
+      # generates until the client timeout cuts it off, and the retry pays that twice.
+      max_tokens: 2048
       # Prompt template for batch protocol analysis
       prompt_template: |
         Analyze the following intercepted device communication pairs.

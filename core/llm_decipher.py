@@ -66,6 +66,7 @@ class LLMProfile(BaseModel):
     enabled: bool = True
     timeout: int = 30
     max_retries: int = 2
+    max_tokens: int = 2048  # 0 = leave the ceiling to the provider
 
     @field_validator("api_key", mode="before")
     @classmethod
@@ -218,6 +219,7 @@ class LLMDecipherService:
                 enabled=getattr(profile_config, "enabled", True),
                 timeout=getattr(profile_config, "timeout", 30),
                 max_retries=getattr(profile_config, "max_retries", 2),
+                max_tokens=getattr(profile_config, "max_tokens", 2048),
             )
             new_profiles[name] = profile
 
@@ -255,6 +257,7 @@ class LLMDecipherService:
                             enabled=pcfg.get("enabled", True),
                             timeout=pcfg.get("timeout", 30),
                             max_retries=pcfg.get("max_retries", 2),
+                            max_tokens=int(pcfg.get("max_tokens", 2048)),
                         )
 
         # Drop cached clients whose connection parameters changed so the next
@@ -424,6 +427,7 @@ class LLMDecipherService:
                 "enabled": p.enabled,
                 "timeout": p.timeout,
                 "max_retries": p.max_retries,
+                "max_tokens": p.max_tokens,
             }
         return {
             "enabled": self._enabled,
@@ -465,6 +469,7 @@ class LLMDecipherService:
                 "enabled": bool(pcfg.get("enabled", True)),
                 "timeout": int(pcfg.get("timeout", 30)),
                 "max_retries": int(pcfg.get("max_retries", 2)),
+                "max_tokens": int(pcfg.get("max_tokens", 2048)),
             }
 
         if default_profile and default_profile not in validated:
@@ -621,6 +626,7 @@ class LLMDecipherService:
                 enabled=profile.enabled,
                 timeout=profile.timeout,
                 max_retries=profile.max_retries,
+                max_tokens=profile.max_tokens,
             )
 
         pairs_text = json.dumps(context.get("pairs", []), indent=2, default=str)
@@ -819,6 +825,12 @@ Response:
             "temperature": 0.1,
             "response_format": {"type": "json_object"},
         }
+        # A ceiling on the completion. Without it a model that does not honour the
+        # requested JSON format generates until the client timeout cuts it off, and the
+        # retryer then pays that timeout again — the call cannot produce anything useful
+        # either way, but with a ceiling it fails fast and visibly.
+        if profile.max_tokens > 0:
+            kwargs["max_tokens"] = profile.max_tokens
 
         retryer = make_retryer(max_attempts=profile.max_retries + 1)
         error: str | None = None
