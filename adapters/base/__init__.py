@@ -376,3 +376,18 @@ def get_adapter_registry() -> ProtocolAdapterRegistry:
     if _adapter_registry is None:
         _adapter_registry = ProtocolAdapterRegistry()
     return _adapter_registry
+
+
+def host_from_request(request: InterceptedRequest) -> str | None:
+    """Return the hostname from the request's ``Host`` header, if present.
+
+    HTTP header names are case-insensitive, and the proxy route hands them over
+    lower-cased (it builds the intercepted request with ``dict(request.headers)``
+    as uvicorn/Starlette deliver them). A literal ``headers["Host"]`` lookup
+    therefore missed every real device request, and the forward silently fell
+    back to the hostname in the adapter configuration.
+    """
+    for key, value in (request.headers or {}).items():
+        if key.lower() == "host" and value:
+            return str(value).split(":", 1)[0]
+    return None
