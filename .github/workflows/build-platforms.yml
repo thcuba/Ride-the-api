@@ -85,8 +85,17 @@ jobs:
       - name: Record the bundle version
         shell: bash
         run: |
-          version="$(git describe --tags --always)"
+          # The tag of the release being built is authoritative: an asset must never claim a
+          # version other than the release it is attached to. A manual run has no release, so
+          # it falls back to the nearest tag plus the distance from it.
+          version="${{ github.event.release.tag_name }}"
+          [ -n "${version}" ] || version="$(git describe --tags --always)"
           printf '%s\n' "${version}" > VERSION
+          # The installer reads its AppVersion from this snippet. It cannot read a file
+          # itself: FileRead() is not an ISPP function, and passing the raw text makes Inno
+          # evaluate "1.2.16" as an expression ("Integer expression expected"). Quoting it in
+          # a #define is the supported way.
+          printf '#define AppVersion "%s"\n' "${version}" > version.iss
           echo "bundle version: ${version}"
 
       # ---- Non-Windows: tar.gz of the onedir bundle + default config dir ----
@@ -106,8 +115,12 @@ jobs:
           # Write the asset to the workspace root so the upload step's
           # `${{ matrix.asset }}` (relative to $GITHUB_WORKSPACE) finds it.
           tar czf "${GITHUB_WORKSPACE}/${{ matrix.asset }}" .
-          # Fail the build rather than ship an asset whose version is wrong.
-          tar tzf "${GITHUB_WORKSPACE}/${{ matrix.asset }}" | grep -qx './VERSION' \
+          # Fail the build rather than ship an asset whose version is wrong. The listing goes
+          # to a file on purpose: `tar ... | grep -q` makes grep close the pipe at the first
+          # match, tar dies with "write error" and `-o pipefail` fails the build even though
+          # the entry was there.
+          tar tzf "${GITHUB_WORKSPACE}/${{ matrix.asset }}" > "${RUNNER_TEMP}/bundle-list.txt"
+          grep -qx './VERSION' "${RUNNER_TEMP}/bundle-list.txt" \
             || { echo "::error::VERSION is missing from ${{ matrix.asset }}"; exit 1; }
           ls -lh "${GITHUB_WORKSPACE}/${{ matrix.asset }}"
 

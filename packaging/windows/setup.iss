@@ -11,9 +11,15 @@
 AppId={{CE2157C0-550F-4318-AD20-7A494D6264B2}}
 AppName=ride-the-api
 ; Keep in sync with `version` in pyproject.toml.
-; The release tag, read from the VERSION file the workflow writes (the path is relative
-; to this script, like the Source entries below).
-#define AppVersion FileRead("..\..\VERSION")
+; The release tag. The workflow writes version.iss (a single quoted #define) because Inno
+; cannot read the file itself — FileRead() is not an ISPP function, and an unquoted value is
+; evaluated as an expression ("Integer expression expected" on a version like 1.2.16).
+; Paths inside this script are relative to the script, like the Source entries below.
+#if FileExists("..\..\version.iss")
+  #include "..\..\version.iss"
+#else
+  #define AppVersion "0.0.0-dev"
+#endif
 AppVersion={#AppVersion}
 AppPublisher=ride-the-api
 SetupIconFile=..\..\assets\icon.ico
