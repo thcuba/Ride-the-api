@@ -216,7 +216,30 @@ class ObservabilityConfig(BaseModel):
 
 
 class DNSConfig(BaseModel):
-    """Upstream DNS servers for loop-free cloud forwarding."""
+    """DNS interception server and the upstream resolvers it forwards to."""
+
+    enabled: bool = Field(
+        default=False,
+        description="Run the DNS interception server (opt-in: binds a privileged port)",
+    )
+    listen_host: str = "0.0.0.0"
+    listen_port: int = Field(
+        default=53,
+        description="Port 53 needs CAP_NET_BIND_SERVICE (setcap) or root",
+    )
+    intercept: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Names answered with this proxy's address: exact names or '*.domain' "
+            "wildcards. Anything not listed is forwarded to the upstream resolvers."
+        ),
+    )
+    answer_ip: str = Field(
+        default="",
+        description="Address returned for intercepted names; empty = detect the LAN address",
+    )
+    answer_ttl: int = Field(default=60, description="TTL of the answers we synthesise")
+    forward_timeout: float = Field(default=5.0, description="Per-upstream timeout, seconds")
 
     dns_servers: list[str] = Field(
         default_factory=lambda: ["8.8.8.8", "1.1.1.1"],

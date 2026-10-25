@@ -52,6 +52,7 @@ from core.database import (
     ResponseTemplate,
     init_db_manager,
 )
+from core.dns_server import get_dns_interceptor
 from core.llm_decipher import LLMDecipherService, get_llm_decipher
 from core.logging_config import setup_logging
 from core.modification import get_modification_engine
@@ -537,6 +538,14 @@ async def lifespan(_app: FastAPI):  # noqa: C901, PLR0912, PLR0915
     else:
         logger.info("TLS decryption is disabled (enable in config.yaml)")
 
+    # Start the DNS interception server (configured names -> this proxy)
+    if config.dns.enabled:
+        dns_interceptor = get_dns_interceptor(config)
+        if dns_interceptor:
+            await dns_interceptor.start()
+    else:
+        logger.info("DNS interception is disabled (set dns.enabled in config.yaml)")
+
     # Start config hot-reload
     config_manager.start_watching()
 
@@ -752,6 +761,14 @@ async def lifespan(_app: FastAPI):  # noqa: C901, PLR0912, PLR0915
             logger.info("TLS MITM server stopped")
         except Exception as e:
             logger.error("Error stopping TLS MITM server: %s", e)  # noqa: TRY400
+
+    # Stop the DNS interception server
+    dns_interceptor = get_dns_interceptor()
+    if dns_interceptor:
+        try:
+            await dns_interceptor.stop()
+        except Exception as e:
+            logger.error("Error stopping DNS interception server: %s", e)  # noqa: TRY400
 
     # Prune stale correlation rows so the training store never grows unbounded.
     # Runs regardless of TLS interception so pruning cannot be skipped.

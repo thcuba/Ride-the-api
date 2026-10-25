@@ -557,3 +557,57 @@ proprietary protocols the LLM analyses Observation batches directly.
      match_rate ≥ 99% → LEARNING → PRODUCTION
      match_rate < 90% → PRODUCTION → LEARNING
 ```
+
+---
+
+## 10. DNS Interception (`core/dns_server.py`)
+
+A device reaches its vendor cloud by name, so the name is where interception has to
+start. This server is the piece that makes that possible without breaking anything else.
+
+- **Intercepted names** (`dns.intercept`) are answered by the proxy itself with
+  `dns.answer_ip` (A) and an empty NOERROR for AAAA — NODATA keeps a dual-stack device
+  on the IPv4 route we actually serve, instead of letting it prefer a v6 address we
+  cannot answer.
+- **Every other name is forwarded verbatim** to the upstream resolvers
+  (`dns.dns_servers`, `dns.dns_servers_v6`), so the proxy can be the DNS for a whole
+  network with nothing hijacked by accident. A name that is not listed is **never**
+  guessed: guessing would silently black-hole a device.
+- Patterns are exact names or `*.domain` wildcards, matched case-insensitively. Time
+  sources (`ntp.*`) are deliberately *not* intercepted — the device needs its real clock.
+- When no upstream can answer, the client gets **SERVFAIL**: an honest failure, never a
+  fabricated address.
+- UDP and TCP (length-prefixed) are both served, on **IPv6 too** when `listen_host` is an
+  any-address (`0.0.0.0` / `::`): a dual-stack device that asks over IPv6 is answered instead
+  of timing out with nothing in the log. Port 53 needs `CAP_NET_BIND_SERVICE`; a port that
+  cannot be bound is reported as a warning and never stops the service.
+- A **truncated** answer (TC=1) is completed over TCP *upstream*, with the same resolver:
+  passing the flag back to the client would make it retry over TCP and receive that same flag
+  from us, forever. If the resolver cannot deliver it over TCP either, the client gets
+  SERVFAIL rather than a loop.
+- UDP and TCP (length-prefixed) are both served. Port 53 needs `CAP_NET_BIND_SERVICE`;
+  a port that cannot be bound is reported as a warning and never stops the service.
+
+### Who decides what is intercepted
+
+The proxy is not meant to replace the network's resolver, and the split is deliberate:
+
+- the **local resolver** (AdGuard Home, Pi-hole, dnsmasq) stays the DNS of the network and
+  decides **which devices** are sent here — a per-client upstream DNS (AdGuard Home,
+  Pi-hole) or a router/client rule;
+- **this server** intercepts the names in `dns.intercept` for those clients, and forwards
+  everything else.
+
+So the *selection* is a resolver decision — one client at a time, reversible by removing
+the upstream — and the *interception* is a proxy decision: one name at a time, explicitly
+listed. A device that is not sent here keeps talking to its vendor: nothing is intercepted
+by accident, and a device that is sent here keeps resolving everything else normally.
+
+The same server also works with the device (or the router) pointed straight at it, for a
+deployment with no resolver of its own; and a resolver *rewrite*
+(`ats.prod.eu-da.iot.versuni.com -> proxy`) is the third shape, which needs no upstream and
+no DNS server of ours at all.
+
+`tests/test_dns_server.py` covers the pattern matching, the synthesised answers and a
+real socket round trip: an intercepted name is answered locally without asking anyone,
+a different name is forwarded and comes back as the upstream's own answer.

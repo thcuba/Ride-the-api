@@ -555,6 +555,61 @@ sudo systemctl status ride-the-api
 
 ---
 
+## DNS interception
+
+A device finds its vendor by name, so the name is where interception has to start. Enable the
+DNS server:
+
+```yaml
+dns:
+  enabled: true
+  listen_host: 0.0.0.0
+  listen_port: 53
+  answer_ip: 192.168.178.200   # what intercepted names resolve to; empty = detect the LAN address
+  intercept:
+    - ats.prod.eu-da.iot.versuni.com
+    - "*.example.vendor.com"
+```
+
+With `listen_host: 0.0.0.0` the server binds **both families** (the IPv6 sockets are created with
+`IPV6_V6ONLY`, so they coexist with the IPv4 listener on the same port): a device that resolves over
+IPv6 gets an answer instead of waiting forever. An explicit `listen_host` is respected as given.
+
+Names in `intercept` are answered with `answer_ip`; **every other name is forwarded unchanged** to
+`dns.dns_servers` / `dns.dns_servers_v6`, so nothing else in the network loses resolution. Leave
+time sources (`ntp.*`) out of the list — the device needs its real clock.
+
+Port 53 is privileged, like 443 for TLS interception. Grant the capability once, which covers both:
+
+```bash
+sudo setcap cap_net_bind_service=+ep /path/to/.venv/bin/python
+systemctl --user restart ride-the-api
+```
+
+A port that cannot be bound is logged as a warning (`DNS: cannot listen on ...`), and the rest of
+the service keeps running.
+
+Then point the device at the proxy. The common shape is a **per-client upstream DNS**: the local
+resolver stays the DNS of the network and only the chosen client is sent here.
+
+AdGuard Home — *Settings → DNS settings → Upstream DNS servers* → add a client entry for the
+device's address with `192.168.178.200` as its upstream (or the same thing through
+`/control/clients/update`). Pi-hole is the equivalent *per-client* group upstream. The selection is
+reversible: remove the upstream and that device goes back to the vendor untouched.
+
+The other two shapes are the device (or the router) pointed straight at the proxy, and a resolver
+*rewrite* (`ats.prod.eu-da.iot.versuni.com -> 192.168.178.200`), which is the only one that needs no
+upstream and no DNS server of ours.
+
+Verify from another machine:
+
+```bash
+dig +short @192.168.178.200 ats.prod.eu-da.iot.versuni.com   # -> 192.168.178.200 (the proxy)
+dig +short @192.168.178.200 example.org                     # -> the real address (forwarded)
+```
+
+---
+
 ## Troubleshooting
 
 ### DNS Loop
