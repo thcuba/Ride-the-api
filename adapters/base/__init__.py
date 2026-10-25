@@ -6,6 +6,8 @@ All vendor adapters must implement this interface.
 from __future__ import annotations
 
 import abc
+import base64
+import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
@@ -178,7 +180,9 @@ class InterceptedRequest:
     path: str | None = None
     headers: dict[str, str] = field(default_factory=dict)
     query_params: dict[str, str] = field(default_factory=dict)
-    body: dict[str, Any] | None = None
+    # Parsed body: dict (JSON), str (text) or None. Raw wire bytes live in
+    # ``body_bytes`` below, never here.
+    body: dict[str, Any] | str | None = None
     # Raw device body bytes, as received on the wire. ``body`` is the parsed
     # JSON view used for analysis/learning; ``body_bytes`` is what a forward
     # must replay so non-JSON payloads (XML, form data, protobuf, raw bytes)
@@ -391,3 +395,34 @@ def host_from_request(request: InterceptedRequest) -> str | None:
         if key.lower() == "host" and value:
             return str(value).split(":", 1)[0]
     return None
+
+
+def normalize_request_body(body: Any) -> Any:  # noqa: ANN401
+    """Return a JSON-storable form of a request body.
+
+    ``InterceptedRequest.body`` is the *parsed* body and the raw wire bytes
+    travel in ``body_bytes``. The TLS path however hands the decrypted body over
+    as raw ``bytes``, and storing those in the JSON column
+    ``session_cache.body`` raised
+    ``TypeError: Object of type bytes is not JSON serializable``: the INSERT
+    failed, so nothing was ever learned on the HTTPS path — the one every real
+    device uses — and the device received a 502 instead of the upstream response.
+
+    Empty payloads become ``None``, JSON is parsed into a dict, UTF-8 text stays
+    text, and anything else is preserved losslessly as a base64 marker.
+    """
+    if body is None or isinstance(body, (dict, list, int, float, bool, str)):
+        return body
+    if isinstance(body, (bytes, bytearray, memoryview)):
+        raw = bytes(body)
+        if not raw:
+            return None
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            return {"_encoding": "base64", "data": base64.b64encode(raw).decode("ascii")}
+        try:
+            return json.loads(text)
+        except ValueError:
+            return text
+    return str(body)

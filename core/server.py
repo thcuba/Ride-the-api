@@ -31,6 +31,7 @@ from adapters.base import (
     ProtocolAdapterRegistry,
     ProtocolType,
     device_id_from_ip,
+    normalize_request_body,
 )
 from core.atomic_io import sanitize_filename_component
 from core.buffer import (
@@ -327,7 +328,8 @@ async def handle_tls_decrypted_request(req: DecryptedRequest) -> dict | None:
             path=req.path,
             headers=req.headers,
             query_params={},
-            body=req.body,
+            body=normalize_request_body(req.body),
+            body_bytes=req.body,
         )
 
         # Let the adapter refine the intercepted request (intent, params,
@@ -447,7 +449,7 @@ async def handle_protocol_request(request: InterceptedRequest) -> dict | None:
             method=method,
             path=path,
             headers=request.headers or {},
-            body=request.body,
+            body=normalize_request_body(request.body),
             query_params=request.query_params or {},
             enrichment=enrichment,
         )
@@ -2870,7 +2872,7 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
                 method=intercepted.method or request.method,
                 path=intercepted.path or f"/{path}",
                 headers=dict(intercepted.headers) if intercepted.headers else dict(request.headers),
-                body=intercepted.body,
+                body=normalize_request_body(intercepted.body),
                 query_params=(
                     dict(intercepted.query_params)
                     if hasattr(intercepted, "query_params") and intercepted.query_params

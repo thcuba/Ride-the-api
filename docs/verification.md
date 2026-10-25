@@ -37,7 +37,17 @@ systemd user unit, proxy listening on `:8911`, with a **real public vendor**
 
 ## Defects this found
 
-Live verification is not decoration: it found a defect the suite could not.
+Live verification is not decoration: it found defects the suite could not.
+
+- **Nothing was ever learned on the HTTPS path** (`core/server.py`,
+  `handle_tls_decrypted_request`). The decrypted body was handed to the pipeline as raw `bytes`,
+  while `InterceptedRequest.body` is the *parsed* body and `session_cache.body` is a JSON column.
+  The INSERT raised `TypeError: Object of type bytes is not JSON serializable`, so on the HTTPS
+  path — the one every real device speaks — each request was dropped and the device received
+  `502 {"error": "local_response_unavailable"}` instead of the upstream response. The body is now
+  normalised at every ingress (`normalize_request_body`: JSON → dict, text → str, binary → a
+  lossless base64 marker) while the raw bytes stay in `body_bytes` for byte-faithful forwarding.
+  `tests/test_tls_learning_path.py` fails without the fix, with exactly that INSERT error.
 
 - **The forward ignored the request's `Host` header** (`adapters/example`, `adapters/shelly`).
   The adapters looked up `headers["Host"]` case-sensitively, so with the lower-cased headers
