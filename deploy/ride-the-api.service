@@ -19,9 +19,14 @@ Environment="CONFIG_PATH=/opt/ride-the-api/config/config.yaml"
 
 # ── Privileges ────────────────────────────────────────────────────────────────
 # Interception needs to bind 443/8883/53, which are below 1024. Granting the capability to this
-# unit is narrower than `setcap` on the interpreter: that would hand it to every invocation of
-# that Python, for any user, forever. With AmbientCapabilities it exists only inside this service,
-# and CapabilityBoundingSet removes every other capability from it.
+# unit is narrower than `setcap` on the interpreter, which would hand it to every invocation of
+# that Python, for any user, forever.
+#
+# This works only for a SYSTEM unit like this one. In a user unit (`systemctl --user`) a user
+# manager cannot grant a capability the process does not already have, so these two directives are
+# inert - and CapabilityBoundingSet actively breaks the service, because it also truncates the
+# capability coming from the binary's file capabilities. For a user-unit install, keep the setcap
+# and set neither directive. See docs/deployment.md.
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 NoNewPrivileges=true

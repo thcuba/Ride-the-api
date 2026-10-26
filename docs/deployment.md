@@ -120,20 +120,36 @@ installed.
 
 ### Privileged ports without root
 
-Interception binds 443/8883 and DNS binds 53, all below 1024. Do **not** use `setcap` on the
-interpreter binary: that grants the capability to every invocation of that Python, for any user and
-any script, permanently. The shipped unit requests it for this service only:
+Interception binds 443/8883 and DNS binds 53, all below 1024, so the process needs
+`CAP_NET_BIND_SERVICE`.
+
+**System unit (what `deploy/ride-the-api.service` is).** Request the capability for the service
+alone instead of setting it on the binary:
 
 ```ini
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 ```
 
-If the capability was previously set on the binary, remove it after switching:
+Then remove a previously applied `setcap`:
 
 ```bash
 sudo setcap -r "$(readlink -f "$(command -v python3)")"
 ```
+
+**User unit (`systemctl --user`, the layout the installer writes).** A user manager cannot grant a
+capability the process does not already have, so the two directives above are inert there — and
+`CapabilityBoundingSet` actively breaks the service, because it also truncates the capability that
+arrives from the binary's file capabilities. Keep `setcap` and do not set either directive:
+
+```bash
+sudo setcap cap_net_bind_service=ep "$(readlink -f "$(command -v python3)")"
+```
+
+Measured on the reference host (`net.ipv4.ip_unprivileged_port_start = 1024`): with the `setcap`
+removed, 443 and DNS stopped binding while the higher interception ports stayed up; restoring it
+brought back `bound: [443, 8883, 5684, 8443]` and DNS over both UDP and TCP. Moving such a host to a
+system unit is what would allow dropping the `setcap`.
 
 ### Windows — `deploy/install.ps1`
 
