@@ -2,6 +2,8 @@
 Tests for the Configuration module (Pydantic models, ConfigManager, hot-reload).
 """
 
+import os
+import stat
 from unittest.mock import MagicMock
 
 import pytest
@@ -521,6 +523,49 @@ class TestGlobalHelpers:
         # persisted to disk so the password survives a restart
         reloaded = ConfigManager(config_path=path).load()
         assert reloaded.security.password == "mypassword"
+
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX file mode assertion")
+    def test_config_writes_are_private(self, tmp_path):
+        path = tmp_path / "config.yaml"
+        path.write_text("security:\n  password: ''\n", encoding="utf-8")
+        cm = ConfigManager(config_path=path)
+        cm.load()
+
+        assert cm.set_security_password("private-password") is True
+        assert stat.S_IMODE(path.stat().st_mode) == stat.S_IRUSR | stat.S_IWUSR
+
+    def test_failed_write_keeps_active_and_persisted_config_unchanged(self, tmp_path, monkeypatch):
+        path = tmp_path / "config.yaml"
+        original = {"core": {"database_url": "sqlite:///original.db"}}
+        path.write_text(yaml.safe_dump(original), encoding="utf-8")
+        cm = ConfigManager(config_path=path)
+        cm.load()
+        original_text = path.read_text(encoding="utf-8")
+        original_config = cm.config
+
+        def fail_replace(_source, _destination):
+            raise OSError("simulated read-only config directory")
+
+        monkeypatch.setattr("core.config.os.replace", fail_replace)
+        assert cm.update_config({"core": {"database_url": "sqlite:///new.db"}}) is False
+        assert cm.config is original_config
+        assert cm.config.core.database_url == "sqlite:///original.db"
+        assert path.read_text(encoding="utf-8") == original_text
+        assert list(tmp_path.glob(".*.tmp")) == []
+
+    def test_failed_password_write_does_not_lock_out_current_process(self, tmp_path, monkeypatch):
+        path = tmp_path / "config.yaml"
+        path.write_text("security:\n  auth_enabled: true\n  password: ''\n", encoding="utf-8")
+        cm = ConfigManager(config_path=path)
+        cm.load()
+
+        def fail_replace(_source, _destination):
+            raise OSError("simulated read-only config directory")
+
+        monkeypatch.setattr("core.config.os.replace", fail_replace)
+        assert cm.set_security_password("new-control-password") is False
+        assert cm.config.security.password == ""
+        assert ConfigManager(config_path=path).load().security.password == ""
 
     def test_set_protocol_server_enabled_persists(self, tmp_path):
         path = tmp_path / "config.yaml"

@@ -37,7 +37,8 @@ services:
     depends_on:
       - ride-the-api
     networks:
-      - ride-the-api-net
+      ride-the-api-net:
+        ipv4_address: ${RTA_NGINX_IP:-172.30.0.2}
 
   ride-the-api:
     build:
@@ -48,13 +49,16 @@ services:
       target: production
     container_name: ride-the-api
     restart: unless-stopped
+    # Run as the host owner of bind-mounted data; never needs root in-container.
+    # Override in the environment or .env on hosts with different UID/GID values.
+    user: "${RTA_UID:-1000}:${RTA_GID:-1000}"
     ports:
       # Keep the HTTP control plane local-only; remote dashboard/API access goes
       # through nginx over HTTPS. The proxy remains reachable by nginx on the
       # private Compose network and by IoT devices through nginx's public ports.
       - "127.0.0.1:8080:8911"  # Local health / dashboard only
     volumes:
-      - ../config:/app/config:ro
+      - ../config:/app/config
       - ../data:/app/data
       # Learned state lives in ./ridebase (core.db + the per-device DBs), relative
       # to the app working directory: without this mount it stays in the
@@ -67,6 +71,8 @@ services:
       - PYTHONUNBUFFERED=1
       - LOG_LEVEL=INFO
       - CONFIG_PATH=/app/config/config.yaml
+      # Trust forwarded client IP/protocol headers only from the nginx sidecar.
+      - FORWARDED_ALLOW_IPS=${RTA_NGINX_IP:-172.30.0.2}
     # Binds 8911 inside its own namespace (not privileged), so no capability is needed at all.
     cap_drop:
       - ALL
@@ -78,6 +84,9 @@ services:
 networks:
   ride-the-api-net:
     driver: bridge
+    ipam:
+      config:
+        - subnet: ${RTA_DOCKER_SUBNET:-172.30.0.0/24}
 
 volumes:
   nginx-cache:
