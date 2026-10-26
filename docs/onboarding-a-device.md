@@ -110,7 +110,7 @@ good, and it is served locally.
 | Device resolves to the proxy but nothing is intercepted | 443 not listening (no `CAP_NET_BIND_SERVICE`) | step 1; `ports.tls_mitm.missing` shows it |
 | Device works normally, nothing is seen | its names are not in `dns.intercept` | add the exact name — an unlisted name is forwarded, never guessed |
 | Device has no DNS at all | it was pointed at a resolver that does not answer | point it at a resolver that forwards here, or at this proxy with `dns.enabled` |
-| TLS session fails right after the handshake | the device validates the vendor CA (certificate pinning) | `tls_decrypt.pinning_bypass` per vendor, or `GET /api/tls/frida/script.js` |
+| TLS session fails after the proxy certificate | the app does not trust the proxy CA or pins the vendor certificate | Install/trust the Ride CA, or manually run the Frida script from `GET /api/tls/frida/script.js`. The saved `pinning_bypass` value is guidance only; until the device accepts the proxy certificate, traffic is relayed encrypted and cannot be buffered for the LLM. |
 | Decipher fails with "LLM call failed" | local model produced nothing usable within the timeout | give the profile a capable model (and a `max_tokens` ceiling) |
 | `/health` reports `version: 0.2.0` on a prebuilt | the bundle had no `VERSION` file | fixed in the build workflow; a source deploy writes it in `bootstrap.sh` |
 
