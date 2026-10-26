@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 20494)
-Total output lines: 1898
-
 """
 Learning/Production Pipeline - Core engine that manages device learning and local response serving.
 Handles: correlation, buffer management, LLM deciphering, pattern matching, and match rate tracking.
@@ -644,7 +641,708 @@ class LearningPipeline:
                 for cache_entry in result.scalars().all():
                     # `protocol` may be absent on SQLite databases created
                     # before this column existed. Default to "" so legacy rows
-                    # still flow through t…8494 tokens truncated…stry, analysis: dict
+                    # still flow through the fallback instead of crashing.
+                    if getattr(cache_entry, "protocol", None) == protocol:
+                        # F-05: claim the row atomically so two concurrent
+                        # responses cannot both consume the same pending
+                        # request (select-then-mutate was racy).
+                        claim = await session.execute(
+                            update(SessionCache)
+                            .where(
+                                and_(
+                                    SessionCache.correlation_key == cache_entry.correlation_key,
+                                    SessionCache.correlated == False,  # noqa: E712
+                                )
+                            )
+                            .values(
+                                correlated=True,
+                                correlated_at=datetime.now(UTC),
+                                response_status=status_code,
+                                response_headers=headers,
+                                response_body=body,
+                                response_latency_ms=0.0,
+                            )
+                        )
+                        if claim.rowcount == 0:
+                            # Another coroutine already claimed this row.
+                            continue
+                        matched = {
+                            "correlation_key": cache_entry.correlation_key,
+                            "device_id": device_id,
+                            "vendor": vendor,
+                            "protocol": protocol,
+                            "method": cache_entry.method,
+                            "path": cache_entry.path,
+                            "headers": cache_entry.headers,
+                            "body": cache_entry.body,
+                            "query_params": cache_entry.query_params,
+                            "timestamp": cache_entry.created_at,
+                        }
+                        break
+
+        if not matched:
+            return None
+
+        # Normalize timestamp to timezone-aware (SQLite/aiosqlite may return a
+        # naive datetime despite DateTime(timezone=True)); a naive value crashes
+        # the aware - naive subtraction below.
+        ts = matched.get("timestamp")
+        if not isinstance(ts, datetime):
+            ts = datetime.now(UTC)
+        elif ts.tzinfo is None:
+            ts = ts.replace(tzinfo=UTC)
+        latency_ms = (datetime.now(UTC) - ts).total_seconds() * 1000
+
+        pair = CorrelatedPair(
+            pair_id=str(uuid4()),
+            device_id=device_id,
+            vendor=vendor,
+            protocol=protocol,
+            method=matched["method"],
+            path=matched["path"],
+            request_headers=matched["headers"],
+            request_body=matched["body"],
+            request_query=matched.get("query_params", {}),
+            response_status=status_code,
+            response_headers=headers,
+            response_body=body,
+            latency_ms=latency_ms,
+            correlation_confidence=0.8,
+            timestamp=datetime.now(UTC),
+            enrichment=matched.get("enrichment"),
+        )
+
+        # Store in the _correlation_cache for the pipeline
+        async with self.db_manager.device_session(device_id) as session:
+            cache_entry = SessionCache(
+                device_id=device_id,
+                correlation_key=f"response:{pair.pair_id}",
+                method="RESPONSE",
+                path=pair.path,
+                headers=headers,
+                body=body,
+                correlated=True,
+                correlated_at=datetime.now(UTC),
+                response_status=status_code,
+                response_headers=headers,
+                response_body=body,
+                response_latency_ms=latency_ms,
+                in_buffer=True,
+            )
+
+        return pair
+
+    async def process_learning_pair(
+        self, device_id: str, pair: CorrelatedPair, context_buffer_max: int
+    ) -> bool:
+        """Process a correlated pair in learning mode.
+
+        The flush threshold comes from the *current* device's
+        ``context_buffer_size`` (not the shared store's fixed max), so each
+        device honours its own configured limit.
+
+        Returns: True if buffer was flushed (LLM analysis triggered).
+        """
+        size = await self.buffer.add_pair(device_id, pair)
+        if size >= context_buffer_max:
+            await self._flush_and_learn(device_id)
+            return True
+        return False
+
+    async def _load_device(self, device_id: str) -> DeviceRegistry | None:
+        """Load device from registry."""
+        async with self.db_manager.core_session() as session:
+            result = await session.execute(
+                select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
+            )
+            return result.scalar_one_or_none()
+
+    async def _build_context(
+        self,
+        device_id: str,
+        device: DeviceRegistry,
+        pairs: list[dict],
+        context_notes: str | None = None,
+    ) -> dict:
+        """Build context dict for LLM analysis."""
+        ctx = {
+            "device_id": device_id,
+            "vendor": device.vendor,
+            "device_type": device.device_type,
+            "pairs": [p["pair"] for p in pairs],
+            "total_pairs": len(pairs),
+            "total_size_bytes": sum(p["size"] for p in pairs),
+            "context_notes": context_notes or device.llm_context_notes or "",
+        }
+        # Ground subsequent flushes with the current learned model so the LLM
+        # can produce a *delta* (C1) instead of re-deriving everything from
+        # scratch. Only present once a device header exists (i.e. not the
+        # very first flush). Best-effort: if the model cannot be exported the
+        # flush still proceeds without grounding.
+        if await self.db_manager.read_device_meta(device_id) is not None:
+            try:
+                ingester = decipher_ingest.DecipherIngest(self.db_manager)
+                current = await ingester.export_device_model(device_id)
+                ctx["current_model"] = current.model_dump(mode="json", by_alias=False)
+            except Exception:  # noqa: BLE001 - grounding must never block learning
+                logger.debug(
+                    "Could not export current DeviceModel for grounding of %s",
+                    device_id,
+                )
+        return ctx
+
+    async def flush_and_learn(
+        self, device_id: str, pair_ids: list[int] | None = None, context_notes: str | None = None
+    ) -> dict:
+        """Public flush: filter by optional pair_ids, inject context_notes, save patterns.
+
+        Returns dict with success, pairs_count, patterns_count.
+        """
+        logger.info(f"Flushing context buffer for device {device_id}")
+
+        all_pairs = await self.buffer.get_buffer_pairs(device_id)
+        if not all_pairs:
+            return {
+                "success": False,
+                "error": "No buffer entries to flush",
+                "pairs_count": 0,
+                "patterns_count": 0,
+            }
+
+        if pair_ids is not None:
+            pairs = [p for p in all_pairs if p["id"] in pair_ids]
+            if not pairs:
+                return {
+                    "success": False,
+                    "error": "No matching buffer entries found",
+                    "pairs_count": 0,
+                    "patterns_count": 0,
+                }
+        else:
+            pairs = all_pairs
+
+        device = await self._load_device(device_id)
+        if not device:
+            return {
+                "success": False,
+                "error": "Device not found",
+                "pairs_count": 0,
+                "patterns_count": 0,
+            }
+
+        context = await self._build_context(device_id, device, pairs, context_notes)
+
+        # First flush: the device header is not written yet (protocol still
+        # auto). Ask the LLM to also report the protocol(s) so we can persist
+        # the stable device_meta header; later flushes keep it untouched.
+        is_first_flush = await self.db_manager.read_device_meta(device_id) is None
+        if is_first_flush:
+            context["first_flush"] = True
+
+        # A purpose-bound profile wins over the device profile and the service
+        # default. The grounded pass (a learned model already exists, so the LLM
+        # works on a delta) is its own purpose: an operator can spend a stronger
+        # model on the update and a cheaper one on the first pass.
+        task = "learning_context" if context.get("current_model") else "flush"
+        profile_name = (
+            _llm_task_profile(self.llm_decipher, task) or device.llm_profile_name or "default"
+        )
+        llm_analysis = await self._analyze_with_llm(
+            context, profile_name, device.llm_base_url, device.llm_model_id
+        )
+
+        if not llm_analysis:
+            return {
+                "success": False,
+                "error": "LLM analysis failed",
+                "pairs_count": len(pairs),
+                "patterns_count": 0,
+            }
+
+        await self._save_patterns(device_id, llm_analysis)
+        if is_first_flush:
+            await self._persist_device_meta(device_id, device, llm_analysis)
+        await self._export_and_sync_patterns(device_id)
+
+        if pair_ids is not None:
+            await self.buffer.flush_selected(device_id, pair_ids)
+        else:
+            await self.buffer.flush(device_id)
+        await self.buffer.clear_cache(device_id)
+
+        patterns_count = len(llm_analysis.get("patterns", llm_analysis.get("decoded_patterns", [])))
+        logger.info(
+            f"Learning cycle complete for device {device_id}: {len(pairs)} pairs, "
+            f"{patterns_count} patterns"
+        )
+        return {"success": True, "pairs_count": len(pairs), "patterns_count": patterns_count}
+
+    async def preview_analysis(
+        self, device_id: str, pair_ids: list[int] | None = None, context_notes: str | None = None
+    ) -> dict:
+        """Run LLM analysis WITHOUT saving patterns. Returns raw analysis for user review."""
+        logger.info(f"Preview analysis for device {device_id}")
+
+        all_pairs = await self.buffer.get_buffer_pairs(device_id)
+        if not all_pairs:
+            return {"success": False, "error": "No buffer entries to analyze", "pairs_count": 0}
+
+        if pair_ids is not None:
+            pairs = [p for p in all_pairs if p["id"] in pair_ids]
+            if not pairs:
+                return {
+                    "success": False,
+                    "error": "No matching buffer entries found",
+                    "pairs_count": 0,
+                }
+        else:
+            pairs = all_pairs
+
+        device = await self._load_device(device_id)
+        if not device:
+            return {"success": False, "error": "Device not found", "pairs_count": 0}
+
+        context = await self._build_context(device_id, device, pairs, context_notes)
+
+        # A purpose-bound profile wins over the device profile and the service
+        # default. The grounded pass (a learned model already exists, so the LLM
+        # works on a delta) is its own purpose: an operator can spend a stronger
+        # model on the update and a cheaper one on the first pass.
+        task = "learning_context" if context.get("current_model") else "flush"
+        profile_name = (
+            _llm_task_profile(self.llm_decipher, task) or device.llm_profile_name or "default"
+        )
+        llm_analysis = await self._analyze_with_llm(
+            context, profile_name, device.llm_base_url, device.llm_model_id
+        )
+
+        if not llm_analysis:
+            return {"success": False, "error": "LLM analysis failed", "pairs_count": len(pairs)}
+
+        return {
+            "success": True,
+            "pairs_count": len(pairs),
+            "analysis": llm_analysis,
+            "context": context,
+        }
+
+    async def _flush_and_learn(self, device_id: str):
+        """Internal flush: all pairs, no context notes override."""
+        await self.flush_and_learn(device_id)
+
+    async def _export_and_sync_patterns(self, device_id: str) -> None:
+        """Export learned patterns to .ride-pattern.json and sync with PatternEngine.
+
+        Called after each learning cycle so the PatternEngine's in-memory cache
+        has the latest patterns for subsequent production/hybrid requests.
+        """
+        if not self.engine:
+            return
+        try:
+            ingester = decipher_ingest.DecipherIngest(self.db_manager)
+
+            device_info = await self._load_device(device_id)
+            vendor = device_info.vendor if device_info else "unknown"
+            device_type = device_info.device_type if device_info else "unknown"
+            pattern_db = await ingester.export_patterns(device_id, vendor, device_type)
+
+            if not pattern_db.client.endpoints:
+                logger.debug("No patterns to export for %s", device_id)
+                return
+
+            # Anchor the patterns base dir next to the device databases instead
+            # of the process CWD, so exporting works the same regardless of
+            # where the daemon was started from.
+            patterns_dir = self.db_manager.device_db_dir.parent / "patterns"
+            patterns_dir.mkdir(parents=True, exist_ok=True)
+
+            # Derive a filesystem-safe deterministic filename component from
+            # the (potentially untrusted) device id, instead of using raw
+            # request-derived data directly in the path expression.
+            safe_device_key = hashlib.sha256(device_id.encode("utf-8")).hexdigest()
+            if not _SAFE_FILENAME_RE.fullmatch(safe_device_key):
+                raise ValueError(f"Unsafe pattern path for device {device_id!r}")  # noqa: TRY301
+            # Confine the write target explicitly under the patterns base dir.
+            base = patterns_dir.resolve()
+            filepath = (base / f"{safe_device_key}.ride-pattern.json").resolve()
+            if base != filepath and base not in filepath.parents:
+                raise ValueError(f"Unsafe pattern path for device {device_id!r}")  # noqa: TRY301
+            # Write the portable v2 DeviceModel when the device has a learned
+            # protocol header, so the on-disk .ride-pattern.json is a complete
+            # clone (goal #11). Fall back to the v1 PatternDB for legacy
+            # devices that never completed a first-flush AUTO identification.
+            applied = self.engine._cached_patterns.get(device_id)  # noqa: SLF001
+            header = await self.db_manager.read_device_meta(device_id)
+            if header and (header.get("protocols") or header.get("transport")):
+                device_model = await ingester.export_device_model(
+                    device_id, vendor, device_type, applied=applied
+                )
+                self.engine.save_pattern_file(device_model, str(filepath))
+            else:
+                self.engine.save_pattern_file(pattern_db, str(filepath))
+            self.engine.apply_pattern_db(device_id, pattern_db)
+            # Restore any previously persisted device state so the refreshed
+            # pattern set starts from where the device left off.
+            await self.engine.load_state(device_id)
+            logger.info(
+                "Exported and synced %d patterns for %s to %s",
+                len(pattern_db.client.endpoints),
+                device_id,
+                filepath.name,
+            )
+        except Exception as e:
+            logger.warning("Failed to export/sync patterns for %s: %s", device_id, e)
+
+    async def _analyze_with_llm(
+        self, context: dict, profile_name: str, base_url: str | None, model_id: str | None
+    ) -> dict | None:
+        """Send context to LLM for protocol analysis."""
+        try:
+            profile = self.llm_decipher.get_profile(profile_name)
+            if not profile:
+                logger.warning(f"LLM profile '{profile_name}' not found, skipping analysis")
+                return None
+
+            # Use the profile-rotation fallback chain when no per-device
+            # overrides are set; the breaker excludes degraded providers and
+            # the chain tries healthy alternatives before giving up.
+            if not base_url and not model_id:
+                result = await self.llm_decipher.call_profile_chain(
+                    prompt=self._build_learning_prompt(profile, context),
+                    preferred=profile_name,
+                )
+            else:
+                # Override profile parameters if device-specific config provided
+                effective_profile = LLMProfile(
+                    name=profile_name,
+                    base_url=base_url or profile.base_url,
+                    api_key=profile.api_key,
+                    model_id=model_id or profile.model_id,
+                    prompt_template=profile.prompt_template,
+                    enabled=profile.enabled,
+                    timeout=profile.timeout,
+                    max_retries=profile.max_retries,
+                )
+                prompt = self._build_learning_prompt(effective_profile, context)
+                result = await self.llm_decipher.call_llm(effective_profile, prompt)
+
+            if result["success"]:
+                try:
+                    return _parse_llm_json(result["content"])
+                except Exception:  # noqa: BLE001 - defensive parse
+                    logger.exception("Failed to parse LLM analysis result")
+                    return None
+            else:
+                logger.error(f"LLM analysis failed: {result.get('error')}")
+                return None
+        except Exception:
+            logger.exception("Error in LLM analysis")
+            return None
+
+    def _build_learning_prompt(self, profile, context: dict) -> str:
+        """Build prompt for LLM batch analysis."""
+        # Defense-in-depth (F-02): pairs may come from persistent storage or
+        # imports that predate capture-time redaction, so re-redact before the
+        # payload ever reaches the LLM.
+        pairs = _redact_pairs_for_prompt(context.get("pairs"))
+        pairs_json = json.dumps(pairs, indent=2, default=str)
+        prompt = profile.prompt_template
+        replacements = {
+            "{vendor}": context.get("vendor", "unknown"),
+            "{device_type}": context.get("device_type", "unknown"),
+            "{pairs}": pairs_json,
+            "{device_id}": context.get("device_id", "unknown"),
+            "{context_notes}": context.get("context_notes", ""),
+        }
+        for placeholder, value in replacements.items():
+            prompt = prompt.replace(placeholder, value)
+
+        # On the very first flush the protocol is still unknown (auto). Ask the
+        # LLM to identify the device/protocol in mode="auto" and return a full
+        # structured protocol_info object (transport/security/proprietary/
+        # handler/identity/ports/confidence) plus the legacy flat protocols/
+        # connection_mode so we can persist the stable device header. Later
+        # flushes skip this.
+        if context.get("first_flush"):
+            prompt += (
+                "\n\nThis is the FIRST contact with the device: identify its "
+                'protocol in mode="auto" (initial device/protocol '
+                "identification, not a protocol message). Based on the pairs "
+                'above, also answer in JSON with an object "protocol_info": '
+                '{"transport": "tcp|udp|websocket", "protocol": "mqtt|http|'
+                'modbus|coap|websocket|proprietary|...", "proprietary": '
+                'true|false, "security": "none|tls|mqtts|dtls|...", '
+                '"handler": "the protocol server / MITM handler to use", '
+                '"identity": "vendor/model identity if any", "ports": [list '
+                'of ports], "confidence": 0.0..1.0}. Also include "protocols": '
+                '[list of protocols the device speaks, e.g. ["mqtt"], '
+                '["http"], ["modbus"], ["coap"], ["tls"]], '
+                '"connection_mode": one of auto | tls | http | mqtt | coap | '
+                "modbus (the ingress decision for this device). "
+                'Use "http" for plain HTTP(S) traffic.'
+            )
+        # Subsequent flushes: the device is already known. Ground the LLM with
+        # the current learned model and have it return a structured *delta*
+        # (commands/responses/interactions/?), which is then merged
+        # idempotently into the DeviceModel (C1) instead of re-deriving SQL.
+        elif context.get("current_model"):
+            current_model_json = json.dumps(context["current_model"], indent=2, default=str)
+            prompt += (
+                "\n\nThis device has ALREADY been learned (a DeviceModel "
+                "exists). The device model is:\n"
+                f"{current_model_json}\n\n"
+                "Based ONLY on the NEW pairs above, return a JSON DELTA of the "
+                'device model: an object with "commands" (list of Command: '
+                '"id" (stable, reuse the existing id when the command is '
+                'already known), "kind", "protocol", "method", "path" or '
+                '"topic", "headers", "body_schema", "confidence"), '
+                '"responses" (list of ServerResponse: "id", "triggers" '
+                '(intents), "status_code", "headers_template", "body_template", '
+                '"field_mappings"), "interactions" (list of FieldMapping: '
+                '"source", "target", "transform", "mapping"), and optionally '
+                '"state_variables" or "virtual_sensors". Do NOT repeat '
+                "commands already in the model above unchanged; only new or "
+                "changed knowledge. If nothing is new, return "
+                '{"commands": [], "responses": [], "interactions": []}.'
+            )
+        return prompt
+
+    async def _save_patterns(self, device_id: str, analysis: dict):  # noqa: C901, PLR0912, PLR0915
+        """Save LLM-decoded patterns to the device database.
+
+        Routes structured output through DecipherIngest: a v2 delta (with
+        ``commands``/``responses``/``interactions``) is merged idempotently via
+        :meth:`DecipherIngest.merge_device_model` (C1 learning update), a full
+        v1 PatternDB (``meta``/``client``/``server``) via ``import_patterns``,
+        and simpler analyses fall back to the original dict-based loop.
+        """
+        # Skip the cascade of early `return`: each branch returns on success.
+        if isinstance(analysis.get("commands"), list) or isinstance(
+            analysis.get("responses"), list
+        ):
+            # v2 model delta (C1): only the fields the LLM actually returned,
+            # merged idempotently so re-learning converges instead of duping.
+            try:
+                ingester = decipher_ingest.DecipherIngest(self.db_manager)
+                pruned: dict = {}
+                for key in (
+                    "meta",
+                    "protocol",
+                    "commands",
+                    "responses",
+                    "interactions",
+                    "state_variables",
+                    "virtual_sensors",
+                    "observation_history",
+                ):
+                    if key in analysis:
+                        pruned[key] = analysis[key]
+                # DeviceModel requires meta; default it when the delta omits it.
+                if "meta" not in pruned:
+                    header = await self.db_manager.read_device_meta(device_id) or {}
+                    pruned["meta"] = {
+                        "pattern_id": f"{device_id}-patterns",
+                        "vendor": header.get("vendor", "unknown"),
+                        "device_type": header.get("device_type", "unknown"),
+                        "model": header.get("model", ""),
+                    }
+                # Command/ServerResponse ids are required by the schema but an
+                # LLM delta may omit them: derive stable ids exactly like
+                # merge_device_model does, so re-flush maps to the same row.
+                for cmd in pruned.get("commands", []):
+                    if not cmd.get("id"):
+                        path = cmd.get("path") or cmd.get("path_pattern") or cmd.get("topic") or ""
+                        digest = (
+                            hashlib.md5(path.encode("utf-8")).hexdigest()[:8] if path else "none"
+                        )
+                        cmd["id"] = f"{device_id}_{cmd.get('kind', 'cmd')}_{digest}"
+                for resp in pruned.get("responses", []):
+                    if not resp.get("id"):
+                        tpl_prefix = f"tpl_{device_id}_{resp.get('triggers', ['resp'])[0]}"
+                        resp["id"] = tpl_prefix  # matched by template_id in merge
+                model = DeviceModel.model_validate(pruned)
+                count = await ingester.merge_device_model(device_id, model)
+                logger.info(
+                    "Merged %d model command rows for %s (v2 delta)",
+                    count,
+                    device_id,
+                )
+            except Exception as e:  # noqa: BLE001 - fall back to legacy path
+                logger.warning("v2 delta merge failed, falling back: %s", e)
+            else:
+                return
+
+        # Try structured ingest (PatternDB format) first
+        if "meta" in analysis and "client" in analysis and "server" in analysis:
+            try:
+                pattern_db = PatternDB.model_validate(analysis)
+                ingester = decipher_ingest.DecipherIngest(self.db_manager)
+                count = await ingester.import_patterns(device_id, pattern_db)
+                logger.info("DecipherIngest saved %d patterns for %s", count, device_id)
+            except Exception as e:
+                logger.warning("Structured ingest failed, falling back: %s", e)
+            else:
+                return
+
+        patterns = analysis.get("patterns", analysis.get("decoded_patterns", []))
+        if not patterns:
+            # Try to extract from top-level fields
+            patterns = [analysis]
+
+        # Pre-compute IDs for batch lookup to eliminate N+1 queries
+        pattern_ids = []
+        template_ids = []
+        mapping_ids = []
+
+        prepared_patterns = []
+        for pattern_data in patterns:
+            intent = pattern_data.get("intent", "unknown")
+            method = pattern_data.get("method", pattern_data.get("request_method", "POST"))
+            path = pattern_data.get("path", pattern_data.get("request_path", "/unknown"))
+            path_digest = hashlib.md5(path.encode("utf-8")).hexdigest()[:8]
+            pattern_id = f"{device_id}_{intent}_{path_digest}"
+            pattern_ids.append(pattern_id)
+
+            resp_data = pattern_data.get("response", pattern_data.get("response_template", {}))
+            template_id = f"tpl_{pattern_id}" if resp_data else None
+            if template_id:
+                template_ids.append(template_id)
+
+            mappings = pattern_data.get("field_mappings", {})
+            prepared_mappings = []
+            if isinstance(mappings, dict):
+                for req_field, raw_resp_info in mappings.items():
+                    resp_info = (
+                        {"response_field": raw_resp_info, "type": "string"}
+                        if isinstance(raw_resp_info, str)
+                        else raw_resp_info
+                    )
+                    mapping_id = f"map_{device_id}_{intent}_{req_field.replace('.', '_')}"
+                    mapping_ids.append(mapping_id)
+                    prepared_mappings.append((mapping_id, req_field, resp_info))
+
+            prepared_patterns.append(
+                {
+                    "pattern_data": pattern_data,
+                    "intent": intent,
+                    "method": method,
+                    "path": path,
+                    "pattern_id": pattern_id,
+                    "resp_data": resp_data,
+                    "template_id": template_id,
+                    "prepared_mappings": prepared_mappings,
+                }
+            )
+
+        async with self.db_manager.device_session(device_id) as session:
+            stats = await session.execute(
+                select(MatchStats).where(MatchStats.device_id == device_id)
+            )
+            stats_obj = stats.scalar_one_or_none()
+            if stats_obj is None:
+                stats_obj = MatchStats(device_id=device_id)
+                session.add(stats_obj)
+
+            existing_patterns = {}
+            if pattern_ids:
+                res = await session.execute(
+                    select(RequestPattern).where(RequestPattern.pattern_id.in_(pattern_ids))
+                )
+                existing_patterns = {p.pattern_id: p for p in res.scalars().all()}
+
+            existing_templates = {}
+            if template_ids:
+                res = await session.execute(
+                    select(ResponseTemplate).where(ResponseTemplate.template_id.in_(template_ids))
+                )
+                existing_templates = {t.template_id: t for t in res.scalars().all()}
+
+            existing_mappings = set()
+            if mapping_ids:
+                res = await session.execute(
+                    select(FieldMapping.mapping_id).where(FieldMapping.mapping_id.in_(mapping_ids))
+                )
+                existing_mappings = set(res.scalars().all())
+
+            for item in prepared_patterns:
+                pattern_data = item["pattern_data"]
+                intent = item["intent"]
+                method = item["method"]
+                path = item["path"]
+                pattern_id = item["pattern_id"]
+                resp_data = item["resp_data"]
+                template_id = item["template_id"]
+
+                pattern = existing_patterns.get(pattern_id)
+                if not pattern:
+                    pattern = RequestPattern(
+                        pattern_id=pattern_id,
+                        method=method,
+                        path_pattern=path,
+                        protocol=pattern_data.get("protocol", "http"),
+                        required_headers=pattern_data.get("required_headers", []),
+                        body_schema=pattern_data.get("body_schema", {}),
+                        query_param_keys=pattern_data.get("query_param_keys", []),
+                        intent=intent,
+                        confidence=pattern_data.get("confidence", 0.5),
+                    )
+                    session.add(pattern)
+                    existing_patterns[pattern_id] = pattern
+                    stats_obj.patterns_learned += 1
+                else:
+                    # The LLM may revise a pattern on a later flush: keep the
+                    # learned fields fresh instead of leaving the old row stale.
+                    pattern.method = method
+                    pattern.path_pattern = path
+                    pattern.protocol = pattern_data.get("protocol", "http")
+                    pattern.required_headers = pattern_data.get("required_headers", [])
+                    pattern.body_schema = pattern_data.get("body_schema", {})
+                    pattern.query_param_keys = pattern_data.get("query_param_keys", [])
+                    pattern.intent = intent
+                    pattern.confidence = pattern_data.get("confidence", 0.5)
+
+                if resp_data and template_id:
+                    template = existing_templates.get(template_id)
+                    if not template:
+                        template = ResponseTemplate(
+                            template_id=template_id,
+                            pattern_id=pattern_id,
+                            status_code=resp_data.get("status_code", 200),
+                            headers_template=resp_data.get("headers", {}),
+                            body_template=resp_data.get("body", {}),
+                            field_mappings=resp_data.get("field_mappings", {}),
+                            expected_variables=resp_data.get("expected_variables", []),
+                            confidence=resp_data.get("confidence", 0.5),
+                        )
+                        session.add(template)
+                        existing_templates[template_id] = template
+                        stats_obj.templates_created += 1
+                    else:
+                        template.status_code = resp_data.get("status_code", 200)
+                        template.headers_template = resp_data.get("headers", {})
+                        template.body_template = resp_data.get("body", {})
+                        template.field_mappings = resp_data.get("field_mappings", {})
+                        template.expected_variables = resp_data.get("expected_variables", [])
+                        template.confidence = resp_data.get("confidence", 0.5)
+
+                for mapping_id, req_field, resp_info in item["prepared_mappings"]:
+                    if mapping_id not in existing_mappings:
+                        fmap = FieldMapping(
+                            mapping_id=mapping_id,
+                            request_field=req_field,
+                            request_type=resp_info.get("request_type", "string"),
+                            response_field=resp_info.get("response_field", req_field),
+                            response_type=resp_info.get("type", "string"),
+                            transform=resp_info.get("transform", "direct"),
+                            enum_values=resp_info.get("enum_values"),
+                            intent=intent,
+                            confidence=resp_info.get("confidence", 0.5),
+                        )
+                        session.add(fmap)
+                        existing_mappings.add(mapping_id)
+
+    async def _persist_device_meta(
+        self, device_id: str, device: DeviceRegistry, analysis: dict
     ) -> None:
         """Persist the stable per-device header on the first flush.
 
