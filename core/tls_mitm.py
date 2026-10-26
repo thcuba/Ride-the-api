@@ -257,13 +257,14 @@ class TLSMITMServer:
     6. Send the encrypted response back to the device
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913, PLR0917 — host, ports, certs, handler, device callback
         self,
         host: str = "0.0.0.0",
         listen_ports: list[int] | None = None,
         cert_manager: CertManager | None = None,
         device_certs_dir: str = "./data/device_certs",
         request_handler: Callable[[DecryptedRequest], Coroutine] | None = None,
+        on_device_seen: Callable[[str, str | None], Coroutine] | None = None,
     ) -> None:
         self.host = host
         # Copy so callers' lists are never mutated behind their back, and treat
@@ -278,6 +279,8 @@ class TLSMITMServer:
 
         # External handler set by server.py during integration
         self.request_handler = request_handler
+        # Called as soon as a client identifies itself (IP + SNI), before the handshake.
+        self.on_device_seen = on_device_seen
 
         # Running servers
         self._servers: list[asyncio.AbstractServer] = []
@@ -450,6 +453,17 @@ class TLSMITMServer:
             logger.debug("TLS MITM: %s -> SNI=%s", client_ip, sni)
         else:
             logger.debug("TLS MITM: %s -> no SNI, using generic", client_ip)
+
+        # The client has identified itself: its IP and, usually, the hostname it wants. Record
+        # that here, before the handshake, because a device that pins its vendor's certificate
+        # aborts the handshake and would otherwise never be registered at all.
+        if self.on_device_seen:
+            try:
+                await self.on_device_seen(client_ip, sni)
+            except Exception:
+                logger.warning(
+                    "TLS MITM: could not register device %s (SNI=%s)", client_ip, sni, exc_info=True
+                )
 
         # Get a certificate for this hostname
         hostname = sni or f"{client_ip}.local"

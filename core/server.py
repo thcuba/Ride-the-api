@@ -247,6 +247,45 @@ async def _resolve_device_for_ip(db, client_ip: str | None) -> str | None:
     return await db.resolve_device_id(client_ip)
 
 
+async def handle_device_seen(client_ip: str, sni: str | None) -> None:
+    """Register a device the moment it presents itself on a TLS port.
+
+    Called by the TLS MITM before the handshake completes. A device that pins its vendor's
+    certificate (AWS IoT, for example) aborts the handshake, so every step that runs after a
+    *successful* handshake never runs for it: such a device stayed invisible in the registry and
+    on the dashboard even though the proxy saw each of its connection attempts. The address is the
+    identity here, and the SNI is kept as evidence of what the device asked to talk to.
+    """
+    if not db_manager:
+        return
+    device_id = device_id_from_ip("ip", client_ip)
+    await db_manager.get_or_create_device(device_id, "unknown")
+    async with db_manager.core_session() as session:
+        result = await session.execute(
+            select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
+        )
+        device = result.scalar_one_or_none()
+        if device is None:
+            return
+        changed = False
+        known_ips = list(device.ip_addresses or [])
+        if client_ip not in known_ips:
+            known_ips.append(client_ip)
+            device.ip_addresses = known_ips
+            changed = True
+        if sni:
+            attributes = dict(device.extra_attributes or {})
+            hostnames = list(attributes.get("seen_hostnames") or [])
+            if sni not in hostnames:
+                hostnames.append(sni)
+                attributes["seen_hostnames"] = hostnames
+                device.extra_attributes = attributes
+                changed = True
+        if changed:
+            await session.commit()
+            db_manager.invalidate_ip_lookup_cache()
+
+
 async def handle_tls_decrypted_request(req: DecryptedRequest) -> dict | None:
     """Handle a decrypted TLS request — find/create device and run through pipeline.
 
@@ -532,6 +571,7 @@ async def lifespan(_app: FastAPI):  # noqa: C901, PLR0912, PLR0915
                 listen_ports=config.tls_decrypt.listen_ports,
             )
             tls_mitm_server.request_handler = handle_tls_decrypted_request
+            tls_mitm_server.on_device_seen = handle_device_seen
             await tls_mitm_server.start()
             logger.info("TLS MITM server listening on ports %s", config.tls_decrypt.listen_ports)
         except Exception:
