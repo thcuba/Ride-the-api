@@ -37,7 +37,8 @@ services:
     depends_on:
       - ride-the-api
     networks:
-      - ride-the-api-net
+      ride-the-api-net:
+        ipv4_address: ${RTA_NGINX_IP:-172.30.0.2}
 
   ride-the-api:
     build:
@@ -70,6 +71,8 @@ services:
       - PYTHONUNBUFFERED=1
       - LOG_LEVEL=INFO
       - CONFIG_PATH=/app/config/config.yaml
+      # Trust forwarded client IP/protocol headers only from the nginx sidecar.
+      - FORWARDED_ALLOW_IPS=${RTA_NGINX_IP:-172.30.0.2}
     # Binds 8911 inside its own namespace (not privileged), so no capability is needed at all.
     cap_drop:
       - ALL
@@ -81,6 +84,9 @@ services:
 networks:
   ride-the-api-net:
     driver: bridge
+    ipam:
+      config:
+        - subnet: ${RTA_DOCKER_SUBNET:-172.30.0.0/24}
 
 volumes:
   nginx-cache:
