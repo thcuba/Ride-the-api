@@ -1,16 +1,16 @@
-"""A device that aborts the TLS handshake must still be identified.
+"""Identify a device that refuses our certificate, then forward it to its cloud.
 
-Devices that pin their vendor's certificate (AWS IoT among them) answer our ServerHello with a
-TLS alert and never complete the handshake. Registration that ran only *after* a successful
-handshake therefore left them invisible: the proxy saw every connection attempt, the DNS
-interception worked, and yet the device never appeared in the registry nor on the dashboard.
+Two behaviours, both seen live on the Raspberry Pi with a Philips air purifier talking to AWS IoT:
 
-Seen live on the Raspberry Pi with a Philips air purifier: AdGuard redirected it to the proxy every
-60 seconds, the TCP handshake to port 443 succeeded, the ServerHello was sent — and the device
-closed with a 7-byte TLS alert (bad certificate). The registry stayed empty.
+A -- such a device pins its vendor's certificate and answers our ServerHello with a TLS alert (7
+     bytes on the wire: ``bad certificate``). Registration used to happen only *after* a successful
+     handshake, so the device was never registered at all: the proxy saw every attempt and the
+     registry stayed empty. The refusal is now recorded, and it survives a restart.
+B -- from then on its connections are not decrypted: the ClientHello is replayed to the real host
+     and the two streams are piped verbatim. The device keeps working with its cloud -- "do not stop
+     the communication at the proxy, let it reach the cloud".
 
-The fix registers the device as soon as it identifies itself: its IP, plus the SNI it asked for,
-read from the ClientHello before the handshake is attempted.
+Also covered: identification happens before the handshake, on the ClientHello alone.
 """
 
 from __future__ import annotations
@@ -71,26 +71,45 @@ def _real_client_hello(hostname: str) -> bytes:
 
 
 class _FakeWriter:
-    """The bare minimum ``_handle_connection`` touches on a writer."""
+    """The bare minimum the MITM touches on a writer, plus what it wrote back."""
 
-    def __init__(self, peer: tuple[str, int]) -> None:
+    def __init__(self, peer: tuple[str, int], local: tuple[str, int] = ("127.0.0.1", 0)) -> None:
         self._peer = peer
+        self._local = local
+        self.written = bytearray()
         self.closed = False
 
     def get_extra_info(self, name, default=None):
-        return self._peer if name == "peername" else default
+        if name == "peername":
+            return self._peer
+        if name == "sockname":
+            return self._local  # the port the device reached: where a relay must connect
+        return default
 
-    def write(self, _data):
+    def write(self, data) -> None:
+        self.written += bytes(data)
+
+    async def drain(self) -> None:
         return None
 
-    async def drain(self):
+    def write_eof(self) -> None:
         return None
 
-    def close(self):
+    def close(self) -> None:
         self.closed = True
 
-    async def wait_closed(self):
+    async def wait_closed(self) -> None:
         return None
+
+
+def _mitm(**hooks) -> TLSMITMServer:
+    """Build a MITM with the handlers server.py would wire, for a single connection."""
+    server = TLSMITMServer(listen_ports=[])
+    server.on_device_seen = hooks.get("on_device_seen")
+    server.should_relay_tls = hooks.get("should_relay_tls")
+    server.on_handshake_refused = hooks.get("on_handshake_refused")
+    server.resolve_upstream = hooks.get("resolve_upstream")
+    return server
 
 
 class TestDeviceSeenOnFirstContact:
@@ -102,14 +121,13 @@ class TestDeviceSeenOnFirstContact:
         handshake, which never happens for a pinning device.
         """
         seen = AsyncMock()
-        server = TLSMITMServer(listen_ports=[], on_device_seen=seen)
+        server = _mitm(on_device_seen=seen)
 
         reader = asyncio.StreamReader()
         reader.feed_data(_real_client_hello(SNI))
+        reader.feed_eof()
         writer = _FakeWriter((CLIENT_IP, 52431))
 
-        # The handshake will abort here (no peer, and the device would answer with an alert), which
-        # is exactly the scenario being tested.
         await server._handle_connection(reader, writer)
 
         assert seen.await_count == 1, "il contatto deve essere segnalato prima dell'handshake"
@@ -163,3 +181,140 @@ class TestDeviceSeenOnFirstContact:
         assert device is not None
         assert device.ip_addresses == ["192.168.178.90"]
         assert not (device.extra_attributes or {}).get("seen_hostnames")
+
+
+class TestRefusalIsRecorded:
+    """A: a handshake that dies is information, not just an error."""
+
+    @pytest.mark.asyncio
+    async def test_refused_handshake_is_reported(self):
+        refused = AsyncMock()
+        server = _mitm(on_device_seen=AsyncMock(), on_handshake_refused=refused)
+
+        reader = asyncio.StreamReader()
+        reader.feed_data(_real_client_hello(SNI))
+        reader.feed_eof()  # the device says nothing more, as when it closes the connection
+        writer = _FakeWriter((CLIENT_IP, 52431))
+
+        await server._handle_connection(reader, writer)
+
+        assert refused.await_count == 1, "l'handshake fallito deve essere registrato"
+        assert refused.await_args is not None
+        assert refused.await_args.args[:2] == (CLIENT_IP, SNI)
+
+    @pytest.mark.asyncio
+    async def test_marks_the_device_as_untrusted(self, db_manager, monkeypatch):
+        monkeypatch.setattr(server_mod, "db_manager", db_manager)
+
+        await server_mod.mark_device_untrusted(CLIENT_IP, SNI)
+
+        device = await _device(db_manager, EXPECTED_DEVICE_ID)
+        assert device is not None
+        assert device.extra_attributes.get("tls_passthrough") is True
+        assert device.extra_attributes.get("tls_untrusted_reason") == "client_refused_certificate"
+        assert device.extra_attributes.get("seen_hostnames") == [SNI]
+
+    @pytest.mark.asyncio
+    async def test_recording_twice_changes_nothing(self, db_manager, monkeypatch):
+        """The device retries every minute; the row must not be rewritten each time."""
+        monkeypatch.setattr(server_mod, "db_manager", db_manager)
+        await server_mod.mark_device_untrusted(CLIENT_IP, SNI)
+        first = (await _device(db_manager, EXPECTED_DEVICE_ID)).extra_attributes
+
+        await server_mod.mark_device_untrusted(CLIENT_IP, SNI)
+
+        assert (await _device(db_manager, EXPECTED_DEVICE_ID)).extra_attributes == first
+
+    @pytest.mark.asyncio
+    async def test_should_relay_only_after_the_refusal(self, db_manager, monkeypatch):
+        monkeypatch.setattr(server_mod, "db_manager", db_manager)
+        await server_mod.handle_device_seen(CLIENT_IP, SNI)
+
+        assert await server_mod.should_relay_tls(CLIENT_IP) is False, (
+            "finche' il device non ha rifiutato, il traffico va decifrato e imparato"
+        )
+
+        await server_mod.mark_device_untrusted(CLIENT_IP, SNI)
+
+        assert await server_mod.should_relay_tls(CLIENT_IP) is True
+
+    @pytest.mark.asyncio
+    async def test_should_relay_is_false_for_an_unknown_address(self, db_manager, monkeypatch):
+        monkeypatch.setattr(server_mod, "db_manager", db_manager)
+
+        assert await server_mod.should_relay_tls("10.0.0.5") is False
+
+
+class TestRelayDoesNotStopTheCommunication:
+    """B: the connection reaches the real cloud instead of dying at the proxy."""
+
+    @pytest.mark.asyncio
+    async def test_client_hello_is_replayed_and_the_answer_comes_back(self):
+        client_hello = _real_client_hello(SNI)
+        upstream_saw: list[bytes] = []
+
+        async def handle_upstream(up_reader, up_writer):
+            upstream_saw.append(await up_reader.read(4096))
+            up_writer.write(b"REAL-SERVER-HELLO")  # stands in for the vendor's server
+            await up_writer.drain()
+            up_writer.close()
+
+        upstream = await asyncio.start_server(handle_upstream, "127.0.0.1", 0)
+        up_port = upstream.sockets[0].getsockname()[1]
+
+        try:
+            server = _mitm(
+                on_device_seen=AsyncMock(),
+                should_relay_tls=AsyncMock(return_value=True),
+                resolve_upstream=AsyncMock(return_value="127.0.0.1"),
+            )
+            reader = asyncio.StreamReader()
+            reader.feed_data(client_hello)
+            reader.feed_eof()  # the device sends nothing else in this test
+            # the device reached the upstream's port: that is where the relay must connect
+            writer = _FakeWriter((CLIENT_IP, 52431), local=("192.168.178.200", up_port))
+
+            await asyncio.wait_for(server._handle_connection(reader, writer), timeout=10)
+        finally:
+            upstream.close()
+
+        assert upstream_saw == [client_hello], "il ClientHello deve arrivare intatto al cloud"
+        assert b"REAL-SERVER-HELLO" in bytes(writer.written), (
+            "la risposta del cloud deve tornare al device: la comunicazione non si ferma"
+        )
+        assert not bytes(writer.written).startswith(b"\x16\x03"), (
+            "nessun ServerHello nostro: il TLS non deve essere terminato"
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_relay_when_the_device_has_not_refused_anything(self):
+        """Interceptable devices keep being decrypted and learned: the normal path is untouched."""
+        server = _mitm(on_device_seen=AsyncMock(), should_relay_tls=AsyncMock(return_value=False))
+
+        reader = asyncio.StreamReader()
+        reader.feed_data(_real_client_hello(SNI))
+        reader.feed_eof()
+        writer = _FakeWriter((CLIENT_IP, 52431))
+
+        await server._handle_connection(reader, writer)
+
+        assert bytes(writer.written).startswith(b"\x16\x03"), (
+            "senza pinning il MITM presenta il proprio certificato, come prima"
+        )
+
+    @pytest.mark.asyncio
+    async def test_relay_is_skipped_when_the_host_does_not_resolve(self):
+        server = _mitm(
+            on_device_seen=AsyncMock(),
+            should_relay_tls=AsyncMock(return_value=True),
+            resolve_upstream=AsyncMock(return_value=None),
+        )
+
+        reader = asyncio.StreamReader()
+        reader.feed_data(_real_client_hello(SNI))
+        reader.feed_eof()
+        writer = _FakeWriter((CLIENT_IP, 52431))
+
+        await asyncio.wait_for(server._handle_connection(reader, writer), timeout=10)
+
+        assert writer.closed, "senza risoluzione la connessione va chiusa, non lasciata appesa"

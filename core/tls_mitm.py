@@ -18,6 +18,7 @@ import os
 import ssl
 import struct
 import tempfile
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from http import HTTPStatus
@@ -155,6 +156,25 @@ class DevicePortInfo:
 # ── SNI Extraction from TLS ClientHello ────────────────────────────────────
 
 
+async def _pipe_stream(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    """Copy one stream to the other verbatim, until either side closes.
+
+    Used only by the relay path, where nothing is decrypted and nothing is inspected.
+    """
+    try:
+        while True:
+            chunk = await reader.read(65536)
+            if not chunk:
+                break
+            writer.write(chunk)
+            await writer.drain()
+    except (OSError, TimeoutError):
+        return
+    finally:
+        with suppress(Exception):
+            writer.write_eof()
+
+
 def extract_sni_from_client_hello(data: bytes) -> str | None:  # noqa: C901, PLR0911, PLR0912
     """Extract the SNI (Server Name Indication) from a TLS ClientHello record.
 
@@ -257,14 +277,13 @@ class TLSMITMServer:
     6. Send the encrypted response back to the device
     """
 
-    def __init__(  # noqa: PLR0913, PLR0917 — host, ports, certs, handler, device callback
+    def __init__(
         self,
         host: str = "0.0.0.0",
         listen_ports: list[int] | None = None,
         cert_manager: CertManager | None = None,
         device_certs_dir: str = "./data/device_certs",
         request_handler: Callable[[DecryptedRequest], Coroutine] | None = None,
-        on_device_seen: Callable[[str, str | None], Coroutine] | None = None,
     ) -> None:
         self.host = host
         # Copy so callers' lists are never mutated behind their back, and treat
@@ -277,10 +296,17 @@ class TLSMITMServer:
         self.device_certs_dir = Path(device_certs_dir)
         self.device_certs_dir.mkdir(parents=True, exist_ok=True)
 
-        # External handler set by server.py during integration
+        # External handlers, wired by server.py after construction.
         self.request_handler = request_handler
         # Called as soon as a client identifies itself (IP + SNI), before the handshake.
-        self.on_device_seen = on_device_seen
+        self.on_device_seen: Callable[[str, str | None], Coroutine] | None = None
+        # Asked before the handshake: should this connection be forwarded untouched rather than
+        # decrypted? True for devices known to refuse the certificate we would generate.
+        self.should_relay_tls: Callable[[str, str | None], Coroutine] | None = None
+        # Called when the client refuses our certificate and the handshake dies.
+        self.on_handshake_refused: Callable[[str, str | None], Coroutine] | None = None
+        # Resolves a hostname to its real address, bypassing our own DNS interception.
+        self.resolve_upstream: Callable[[str], Coroutine] | None = None
 
         # Running servers
         self._servers: list[asyncio.AbstractServer] = []
@@ -422,7 +448,7 @@ class TLSMITMServer:
 
     # ── Connection handler ────────────────────────────────────────────────────
 
-    async def _handle_connection(  # noqa: C901, PLR0912, PLR0915
+    async def _handle_connection(  # noqa: C901, PLR0911, PLR0912, PLR0915
         self,
         reader: asyncio.StreamReader,
         writer: asyncio.StreamWriter,
@@ -465,6 +491,20 @@ class TLSMITMServer:
                     "TLS MITM: could not register device %s (SNI=%s)", client_ip, sni, exc_info=True
                 )
 
+        # A device that pins its vendor's certificate refuses the certificate we generate and the
+        # connection would die a moment from now. Where that has already been observed, do not
+        # terminate the TLS at all: forward the connection untouched, so the device keeps working
+        # with its cloud while its identity stays recorded.
+        if sni and self.should_relay_tls:
+            try:
+                relay = await self.should_relay_tls(client_ip)
+            except Exception:
+                logger.warning("TLS MITM: relay decision failed for %s", client_ip, exc_info=True)
+                relay = False
+            if relay:
+                await self._relay_to_upstream(reader, writer, data, sni, client_ip, dst_port)
+                return
+
         # Get a certificate for this hostname
         hostname = sni or f"{client_ip}.local"
         try:
@@ -496,6 +536,18 @@ class TLSMITMServer:
                 writer,
             )
             if not handshake_ok:
+                # The client refused our certificate (a pinning device answers with a TLS alert).
+                # Record it so the next connection from this device is forwarded untouched instead
+                # of being decrypted -- and broken -- a second time.
+                if sni and self.on_handshake_refused:
+                    try:
+                        await self.on_handshake_refused(client_ip, sni)
+                    except Exception:
+                        logger.warning(
+                            "TLS MITM: could not record the refused handshake for %s",
+                            client_ip,
+                            exc_info=True,
+                        )
                 return
 
             # TLS handshake complete — read decrypted HTTP request
@@ -664,6 +716,68 @@ class TLSMITMServer:
         except Exception:
             logger.exception("TLS MITM: failed to create SSL context")
             return None, None
+
+    async def _relay_to_upstream(  # noqa: PLR0913, PLR0917 — streams, hello, sni, peer, port
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+        client_hello: bytes,
+        sni: str,
+        client_ip: str,
+        dst_port: int,
+    ) -> None:
+        """Forward a connection to the real cloud without terminating TLS.
+
+        For devices that pin their vendor's certificate -- they will refuse any certificate we
+        generate, so the only useful thing left is to stay out of the way. The ClientHello already
+        read is replayed to the real server and the two streams are then piped verbatim: the device
+        keeps talking to its cloud, nothing is decrypted, and its identity is already in the
+        registry.
+        """
+        if self.resolve_upstream is None:
+            logger.warning("TLS relay: no upstream resolver wired, dropping %s", client_ip)
+            writer.close()
+            return
+
+        try:
+            upstream_ip = await self.resolve_upstream(sni)
+        except Exception:
+            logger.warning("TLS relay: could not resolve %s", sni, exc_info=True)
+            upstream_ip = None
+
+        if not upstream_ip:
+            logger.warning("TLS relay: %s does not resolve, dropping %s", sni, client_ip)
+            writer.close()
+            return
+
+        try:
+            up_reader, up_writer = await asyncio.wait_for(
+                asyncio.open_connection(upstream_ip, dst_port), timeout=10
+            )
+        except (OSError, TimeoutError) as exc:
+            logger.warning("TLS relay: cannot reach %s:%s (%s)", upstream_ip, dst_port, exc)
+            writer.close()
+            return
+
+        logger.info(
+            "TLS relay: %s -> %s (%s:%s), forwarded without decryption",
+            client_ip,
+            sni,
+            upstream_ip,
+            dst_port,
+        )
+        up_writer.write(client_hello)
+        try:
+            await up_writer.drain()
+            await asyncio.gather(
+                _pipe_stream(reader, up_writer),
+                _pipe_stream(up_reader, writer),
+                return_exceptions=True,
+            )
+        finally:
+            for stream in (up_writer, writer):
+                with suppress(Exception):
+                    stream.close()
 
     async def _pump_tls_handshake(
         self,

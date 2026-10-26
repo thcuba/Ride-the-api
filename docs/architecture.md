@@ -72,6 +72,16 @@ autonomous local responses. Each request passes through the following stages:
 - **CertManager** (`core/cert_manager.py`): automatically generates a root CA (RSA 4096, SHA-256)
   on first startup, and for each new SNI hostname generates a leaf certificate signed by the CA and
   caches it on disk in `./certs/`.
+- **Undecryptable devices are relayed, not broken**: a device that pins its vendor's certificate
+  refuses any certificate we generate — a TLS alert arrives and the handshake dies right there. That
+  refusal is recorded on the device (`extra_attributes.tls_passthrough`, alongside
+  `tls_untrusted_reason`), and from the next connection on the MITM stops terminating TLS for it: the
+  ClientHello it has already read is replayed to the real host — resolved through
+  `dns.dns_servers`, never through the local resolver, which may well be us — and the two streams are
+  piped verbatim. The device keeps talking to its cloud while staying identified, which is the point:
+  the communication is not stopped at the proxy, it is simply not decrypted. Interceptable devices
+  are untouched by this: they are decrypted, learned, and once the local translation is reliable,
+  served locally.
 - **IP-first device routing**: device identity is determined by the **source IP address**,
   not by port or hostname. A device is registered as soon as it **presents itself**: the callback
   fires the moment the `ClientHello` has been read and its SNI extracted, *before* the handshake is

@@ -17,6 +17,9 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
+import dns.asyncquery
+import dns.message
+import dns.rdatatype
 import uvicorn
 from fastapi import FastAPI, File, Form, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -284,6 +287,88 @@ async def handle_device_seen(client_ip: str, sni: str | None) -> None:
         if changed:
             await session.commit()
             db_manager.invalidate_ip_lookup_cache()
+
+
+async def should_relay_tls(client_ip: str) -> bool:
+    """Say whether a connection must be forwarded untouched instead of decrypted.
+
+    True for a device already known to refuse our certificate: decrypting it again would only
+    break its communication a second time, while the point is to keep it talking to its cloud.
+    """
+    if not db_manager:
+        return False
+    device_id = await db_manager.resolve_device_id(client_ip)
+    if not device_id:
+        return False
+    device = await db_manager.get_device(device_id)
+    if not device:
+        return False
+    return bool((device.extra_attributes or {}).get("tls_passthrough"))
+
+
+async def mark_device_untrusted(client_ip: str, sni: str | None) -> None:
+    """Record that a device refused our certificate, so it is relayed from now on.
+
+    A device that pins its vendor's certificate answers our ServerHello with a TLS alert, and no
+    server-side change alters that. The useful response is to stop terminating its TLS: the next
+    connection is forwarded verbatim to its cloud and the device keeps working. Persisted in
+    ``extra_attributes`` under ``tls_passthrough`` -- the field the TLS settings page already
+    exposes -- so the decision survives a restart.
+    """
+    if not db_manager:
+        return
+    device_id = await db_manager.resolve_device_id(client_ip)
+    if not device_id:
+        device_id = device_id_from_ip("ip", client_ip)
+        await db_manager.get_or_create_device(device_id, "unknown")
+    async with db_manager.core_session() as session:
+        result = await session.execute(
+            select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
+        )
+        device = result.scalar_one_or_none()
+        if device is None:
+            return
+        extra = dict(device.extra_attributes or {})
+        if extra.get("tls_passthrough") and extra.get("tls_untrusted_reason"):
+            return  # already recorded: do not rewrite the row on every retry
+        extra["tls_passthrough"] = True
+        extra["tls_untrusted_reason"] = "client_refused_certificate"
+        hostnames = list(extra.get("seen_hostnames") or [])
+        if sni and sni not in hostnames:
+            hostnames.append(sni)
+        extra["seen_hostnames"] = hostnames
+        device.extra_attributes = extra
+        await session.commit()
+    # get_device() serves rows from a 300 s TTL cache: without this the relay decision would keep
+    # reading the device as it was before the refusal and would not take effect for five minutes.
+    db_manager.invalidate_device_cache(device_id)
+    logger.info(
+        "TLS: %s refused our certificate; from now on it is forwarded to its cloud undecrypted",
+        client_ip,
+    )
+
+
+async def resolve_upstream(host: str) -> str | None:
+    """Resolve ``host`` through the configured upstream resolvers.
+
+    Deliberately not ``getaddrinfo``: the proxy may be the machine's own resolver -- that is the
+    point of the DNS interception -- so a local lookup could resolve straight back to us. The
+    ``dns.dns_servers`` list exists for exactly this: loop-free cloud forwarding.
+    """
+    servers = [*config_manager.config.dns.dns_servers, *config_manager.config.dns.dns_servers_v6]
+    if not servers:
+        return None
+    query = dns.message.make_query(host, dns.rdatatype.A)
+    for server in servers:
+        try:
+            response = await dns.asyncquery.udp(query, server, timeout=3)
+        except Exception:
+            continue
+        for answer in response.answer:
+            for item in answer:
+                if item.rdtype == dns.rdatatype.A:
+                    return str(item)
+    return None
 
 
 async def handle_tls_decrypted_request(req: DecryptedRequest) -> dict | None:
@@ -572,6 +657,9 @@ async def lifespan(_app: FastAPI):  # noqa: C901, PLR0912, PLR0915
             )
             tls_mitm_server.request_handler = handle_tls_decrypted_request
             tls_mitm_server.on_device_seen = handle_device_seen
+            tls_mitm_server.should_relay_tls = should_relay_tls
+            tls_mitm_server.on_handshake_refused = mark_device_untrusted
+            tls_mitm_server.resolve_upstream = resolve_upstream
             await tls_mitm_server.start()
             logger.info("TLS MITM server listening on ports %s", config.tls_decrypt.listen_ports)
         except Exception:
@@ -970,6 +1058,10 @@ async def tls_update_device_config(device_id: str, request: Request):
 
             session.add(device)
             await session.commit()
+            # get_device() serves rows from a 300 s TTL cache: without invalidating it the very
+            # change just made (passthrough, pinning bypass) stays invisible to every reader --
+            # including the TLS decision that depends on it -- for five minutes.
+            db_manager.invalidate_device_cache(device_id)
             return {"status": "ok", "device_id": device_id}
 
     except Exception as e:
