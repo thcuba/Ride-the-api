@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import tempfile
+from unittest.mock import AsyncMock
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -116,9 +117,9 @@ class TestReadHttpOverTls:
     async def test_accepts_body_larger_than_fifty_tls_reads(self) -> None:
         body = b"x" * (256 * 1024)
         head = (
-            b"POST /upload HTTP/1.1\\r\\n"
-            b"Host: device.local\\r\\n"
-            + f"Content-Length: {len(body)}\\r\\n\\r\\n".encode()
+            b"POST /upload HTTP/1.1\r\\n"
+            b"Host: device.local\r\\n"
+            + f"Content-Length: {len(body)}\r\\n\r\\n".encode()
         )
 
         class ChunkedSSLObject:
