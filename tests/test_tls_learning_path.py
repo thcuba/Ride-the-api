@@ -83,9 +83,7 @@ async def test_tls_path_persists_pair_and_calls_configured_llm(  # noqa: PLR0915
             server_mod,
             "config_manager",
             SimpleNamespace(
-                config=SimpleNamespace(
-                    core=SimpleNamespace(device_db_dir=str(root / "devices"))
-                )
+                config=SimpleNamespace(core=SimpleNamespace(device_db_dir=str(root / "devices")))
             ),
         )
 
@@ -208,12 +206,16 @@ async def test_tls_path_persists_pair_and_calls_configured_llm(  # noqa: PLR0915
         # The request is registered durably before its upstream response arrives.
         async with dbm.device_session("dev-1") as session:
             request_rows = (
-                await session.execute(
-                    select(SessionCache).where(
-                        SessionCache.correlation_key == result["correlation_key"]
+                (
+                    await session.execute(
+                        select(SessionCache).where(
+                            SessionCache.correlation_key == result["correlation_key"]
+                        )
                     )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
         assert len(request_rows) == 1
         assert request_rows[0].method == "POST"
         assert request_rows[0].path == "/v1.0/device/dev-1/commands"
@@ -251,10 +253,14 @@ async def test_tls_path_persists_pair_and_calls_configured_llm(  # noqa: PLR0915
         # The same per-device SQLite DB holds the buffer row, now marked flushed.
         async with dbm.device_session("dev-1") as session:
             buffer_rows = (
-                await session.execute(
-                    select(LLMContextBuffer).where(LLMContextBuffer.device_id == "dev-1")
+                (
+                    await session.execute(
+                        select(LLMContextBuffer).where(LLMContextBuffer.device_id == "dev-1")
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
         assert len(buffer_rows) == 1
         assert buffer_rows[0].flushed is True
         assert buffer_rows[0].correlated_pair["path"] == "/v1.0/device/dev-1/commands"
