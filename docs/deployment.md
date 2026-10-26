@@ -265,7 +265,6 @@ docker run -d \
   --name ride-the-api \
   --restart unless-stopped \
   -p 8911:8911 \
-  -p 8080:8080 \
   -v "$(pwd)/config:/app/config:ro" \
   -v "$(pwd)/data:/app/data" \
   -v "$(pwd)/certs:/app/certs:ro" \
@@ -275,6 +274,13 @@ docker run -d \
   -e CONFIG_PATH=/app/config/config.yaml \
   ride-the-api:latest
 ```
+
+This single-container setup publishes the proxy and its control-plane API over
+plain HTTP so IoT devices can reach it directly. Use it only on a trusted
+network; the control-plane password is sent in an HTTP header and is visible to
+anyone who can observe that connection. For remote dashboard/API access, use
+the Docker Compose setup below, which routes browser traffic through nginx over
+HTTPS.
 
 > **Important — data paths in Docker.** The container mounts the host `./data`
 > directory at `/app/data`, but the **default** `config/config.yaml` points the
@@ -295,13 +301,18 @@ docker run -d \
 
 The container exposes an automatic health check every 30 seconds at `http://localhost:8911/health`.
 
-Ports exposed by the container:
+Container ports:
 
 | Port | Usage |
 |------|-------|
-| 8911 | Main proxy (traffic interception) |
-| 8080 | Health check / dashboard |
-| 9090 | Prometheus metrics |
+| 8911 | Main proxy, dashboard, control API, and `/health` |
+| 8080 | Optional cleartext HTTP/2 (h2c) listener; disabled by default |
+| 9090 | Prometheus metrics when enabled |
+
+The Docker health check calls `/health` on port 8911; port 8080 is not a health
+or dashboard port. Publish 8080 only when the optional h2c server is enabled.
+Publish 9090 only to a trusted monitoring network because the metrics endpoint
+does not use the control-plane password.
 
 ---
 
@@ -328,6 +339,13 @@ learned state lives (core database + per-device databases): without that mount
 it would stay in the disposable container layer and be lost whenever the
 container is replaced.
 
+The direct HTTP mapping for the dashboard and API binds to `127.0.0.1:8080` on
+the host. This keeps the password-protected control plane off the LAN, where
+HTTP would expose the password in transit. Remote browser access goes through
+nginx on port 443. Do not change the mapping to `8080:8911` unless the host
+port is protected by a trusted HTTPS reverse proxy or an equivalent network
+boundary.
+
 On the very first start, while no control-plane password is set, the API logs a
 **one-time setup token** (also written to `ridebase/setup-token`, mode `0600`).
 Paste it into the setup dialog of the UI, or send it as the `X-Setup-Token`
@@ -345,7 +363,7 @@ ride-the-api:
   container_name: ride-the-api
   restart: unless-stopped
   ports:
-    - "8080:8080"      # Health/dashboard (optional, remove for security)
+    - "127.0.0.1:8080:8911"  # Local HTTP only; remote access via nginx HTTPS
   volumes:
     - ../config:/app/config:ro
     - ../data:/app/data
@@ -456,7 +474,10 @@ networks:
 
 ### Direct execution
 
-In direct execution (`python -m core.server`), the server listens on `0.0.0.0:8911`.
+In direct execution (`python -m core.server`), the server listens on
+`0.0.0.0:8911`. This exposes both device traffic and the password-protected
+control plane over plain HTTP. Use this only on a trusted network; for remote
+dashboard/API access, put the service behind a trusted HTTPS reverse proxy.
 Ensure that:
 
 - The firewall allows inbound traffic on the configured port
