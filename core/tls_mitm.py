@@ -46,6 +46,12 @@ TLS_RECORD_HEADER_SIZE = 5
 TLS_HANDSHAKE_HEADER_SIZE = 4
 TLS_MAX_RECORD_SIZE = 18432
 TLS_SNI_LIST_LENGTH_SIZE = 2
+TLS_VERSION_MAP = {
+    "TLSv1.0": ssl.TLSVersion.TLSv1,
+    "TLSv1.1": ssl.TLSVersion.TLSv1_1,
+    "TLSv1.2": ssl.TLSVersion.TLSv1_2,
+    "TLSv1.3": ssl.TLSVersion.TLSv1_3,
+}
 
 # Cache of valid HTTP status codes (from stdlib) for fast lookup
 _VALID_HTTP_STATUSES = {s.value for s in HTTPStatus}
@@ -306,13 +312,15 @@ class TLSMITMServer:
     6. Send the encrypted response back to the device
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913, PLR0917
         self,
         host: str = "0.0.0.0",
         listen_ports: list[int] | None = None,
         cert_manager: CertManager | None = None,
         device_certs_dir: str = "./data/device_certs",
         request_handler: Callable[[DecryptedRequest], Coroutine] | None = None,
+        min_tls_version: str = "TLSv1.2",
+        max_tls_version: str = "TLSv1.3",
     ) -> None:
         self.host = host
         # Copy so callers' lists are never mutated behind their back, and treat
@@ -322,6 +330,13 @@ class TLSMITMServer:
         self.cert_manager = cert_manager or CertManager(None)
         self.device_certs_dir = Path(device_certs_dir)
         self.device_certs_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            self.min_tls_version = TLS_VERSION_MAP[min_tls_version]
+            self.max_tls_version = TLS_VERSION_MAP[max_tls_version]
+        except KeyError as exc:
+            raise ValueError(f"Unsupported TLS version: {exc.args[0]}") from exc
+        if self.min_tls_version > self.max_tls_version:
+            raise ValueError("min_tls_version must be less than or equal to max_tls_version")
 
         # External handlers, wired by server.py after construction.
         self.request_handler = request_handler
@@ -778,8 +793,8 @@ class TLSMITMServer:
             ctx.load_cert_chain(temp_path)
 
             # Security settings
-            ctx.minimum_version = ssl.TLSVersion.TLSv1_2
-            ctx.maximum_version = ssl.TLSVersion.TLSv1_3
+            ctx.minimum_version = self.min_tls_version
+            ctx.maximum_version = self.max_tls_version
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_NONE
 
@@ -1222,6 +1237,8 @@ def get_tls_mitm_server(
     host: str = "0.0.0.0",
     listen_ports: list[int] | None = None,
     cert_manager: CertManager | None = None,
+    min_tls_version: str = "TLSv1.2",
+    max_tls_version: str = "TLSv1.3",
 ) -> TLSMITMServer:
     """Get or create the global TLSMITMServer instance."""
     global _tls_mitm_server  # noqa: PLW0603
@@ -1230,5 +1247,7 @@ def get_tls_mitm_server(
             host=host,
             listen_ports=listen_ports,
             cert_manager=cert_manager,
+            min_tls_version=min_tls_version,
+            max_tls_version=max_tls_version,
         )
     return _tls_mitm_server
