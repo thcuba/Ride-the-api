@@ -1051,6 +1051,7 @@ async function loadDevices() {
               <div class="dc-meta">${escapeHtml(d.vendor || 'unknown')} · ${escapeHtml(d.device_type || 'generic')}</div>
         <div class="dc-stats">
           ${deviceIps(d).length ? `<span class="dc-stat"><span class="dc-label">IP:</span><span class="dc-value">${escapeHtml(deviceIps(d).join(', '))}</span></span>` : ''}
+          ${d.relayed_connections ? `<span class="dc-stat"><span class="dc-label">Relayed:</span><span class="dc-value" title="Connections forwarded without decryption">${d.relayed_connections}</span></span>` : ''}
           ${rate !== null ? `<span class="dc-stat"><span class="dc-label">Match:</span><span class="dc-value" style="color:${rateColor(rate)}">${rate}%</span></span>` : ''}
           <span class="dc-stat"><span class="dc-label">Last:</span><span class="dc-value">${d.last_seen ? new Date(d.last_seen).toLocaleString() : 'Never'}</span></span>
         </div>

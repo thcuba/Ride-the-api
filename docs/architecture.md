@@ -81,7 +81,11 @@ autonomous local responses. Each request passes through the following stages:
   piped verbatim. The device keeps talking to its cloud while staying identified, which is the point:
   the communication is not stopped at the proxy, it is simply not decrypted. Interceptable devices
   are untouched by this: they are decrypted, learned, and once the local translation is reliable,
-  served locally.
+  served locally. Every relayed connection is also recorded (`relayed_connections`: which device,
+  which host, bytes each way, duration, outcome), because for a device the proxy cannot see inside
+  the contact is the only evidence there is; `GET /api/tls/relayed` lists them and each device card
+  shows its count. Failed attempts are recorded as well -- an attempt reveals the device just as
+  much as a success does.
 - **IP-first device routing**: device identity is determined by the **source IP address**,
   not by port or hostname. A device is registered as soon as it **presents itself**: the callback
   fires the moment the `ClientHello` has been read and its SNI extracted, *before* the handshake is
