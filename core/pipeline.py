@@ -574,6 +574,35 @@ class LearningPipeline:
 
         return corr_key
 
+    async def discard_request(self, device_id: str, correlation_key: str) -> bool:
+        """Remove a request whose upstream exchange failed before a response.
+
+        Failed TLS forwards must not remain eligible for a later response: the
+        correlation fallback matches by device and protocol, so an orphan can
+        otherwise contaminate a future learning pair.
+        """
+        pending = self._correlation_cache.get(device_id)
+        removed_from_memory = False
+        if pending is not None:
+            for entry in tuple(pending):
+                if entry.get("correlation_key") == correlation_key:
+                    pending.remove(entry)
+                    removed_from_memory = True
+                    break
+
+        async with self.db_manager.device_session(device_id) as session:
+            result = await session.execute(
+                delete(SessionCache).where(
+                    and_(
+                        SessionCache.device_id == device_id,
+                        SessionCache.correlation_key == correlation_key,
+                        SessionCache.correlated == False,  # noqa: E712
+                    )
+                )
+            )
+
+        return removed_from_memory or bool(result.rowcount)
+
     async def match_response(  # noqa: PLR0913, C901, PLR0917
         self,
         device_id: str,
@@ -1788,6 +1817,12 @@ class LearningOrchestrator:
             query_params,
             enrichment,
         )
+
+    async def discard_request(self, device_id: str, correlation_key: str) -> bool:
+        """Discard a pending capture after its upstream exchange fails."""
+        if not self.pipeline:
+            return False
+        return await self.pipeline.discard_request(device_id, correlation_key)
 
     async def handle_response(  # noqa: PLR0913, PLR0917
         self,
