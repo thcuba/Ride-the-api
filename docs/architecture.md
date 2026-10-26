@@ -73,8 +73,14 @@ autonomous local responses. Each request passes through the following stages:
   on first startup, and for each new SNI hostname generates a leaf certificate signed by the CA and
   caches it on disk in `./certs/`.
 - **IP-first device routing**: device identity is determined by the **source IP address**,
-  not by port or hostname. Unknown IPs are auto-registered with a dedicated database and
-  `passthrough=ON`.
+  not by port or hostname. A device is registered as soon as it **presents itself**: the callback
+  fires the moment the `ClientHello` has been read and its SNI extracted, *before* the handshake is
+  attempted, recording the source address in `ip_addresses` and the requested hostnames in
+  `extra_attributes.seen_hostnames`. Because the address is the identity, a device whose handshake
+  never completes is identified all the same and appears in the registry and on the dashboard —
+  which matters for the devices that pin their vendor's certificate and answer our ServerHello with
+  a TLS alert: previously they stayed invisible no matter how often they connected. Unknown IPs are
+  auto-registered with a dedicated database and `passthrough=ON`.
 - **REST API**: allows managing ports, viewing statistics, listing unidentified devices,
   and downloading the CA certificate for manual installation on devices.
 - **Frida script injection**: provides a dynamic instrumentation script for devices that
