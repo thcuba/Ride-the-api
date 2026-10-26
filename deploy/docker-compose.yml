@@ -49,7 +49,10 @@ services:
     container_name: ride-the-api
     restart: unless-stopped
     ports:
-      - "8080:8911"    # Health / dashboard (optional, remove to hide)
+      # Keep the HTTP control plane local-only; remote dashboard/API access goes
+      # through nginx over HTTPS. The proxy remains reachable by nginx on the
+      # private Compose network and by IoT devices through nginx's public ports.
+      - "127.0.0.1:8080:8911"  # Local health / dashboard only
     volumes:
       - ../config:/app/config:ro
       - ../data:/app/data
