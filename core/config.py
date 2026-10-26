@@ -5,6 +5,8 @@ Configuration management with hot-reload support.
 from __future__ import annotations
 
 import logging
+import os
+import tempfile
 import threading
 from enum import Enum, StrEnum
 from pathlib import Path
@@ -580,18 +582,16 @@ class ConfigManager:
 
     def load(self) -> Config:
         """Load configuration from file."""
-        if not self.config_path.exists():
-            raise FileNotFoundError(f"Config file not found: {self.config_path}")
-
-        with self.config_path.open(encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-
-        config = Config(**data)
-
         with self._lock:
-            self._config = config
+            if not self.config_path.exists():
+                raise FileNotFoundError(f"Config file not found: {self.config_path}")
 
-        return config
+            with self.config_path.open(encoding="utf-8") as f:
+                data = yaml.safe_load(f)
+
+            config = Config(**data)
+            self._config = config
+            return config
 
     def set_ip_profile_bypass(self, ip: str, bypass: bool) -> bool:
         """Set/clear ``ip_profiles[ip].bypass`` and persist to the config file.
@@ -599,12 +599,12 @@ class ConfigManager:
         Mutates the in-memory config, writes the file atomically and leaves the
         hot-reload watcher to refresh other consumers. Returns True on success.
         """
-        cfg = self.config
         with self._lock:
+            cfg = self.config.model_copy(deep=True)
             profile = cfg.core.ip_profiles.get(ip, IpProfileConfig())
             profile.bypass = bypass
             cfg.core.ip_profiles[ip] = profile
-        return self._write()
+            return self._write(cfg)
 
     def set_security_password(self, password: str) -> bool:
         """Persist the control-plane ``security.password`` back to the config.
@@ -613,10 +613,10 @@ class ConfigManager:
         the hot-reload watcher to refresh other consumers. Returns True on
         success.
         """
-        cfg = self.config
         with self._lock:
+            cfg = self.config.model_copy(deep=True)
             cfg.security.password = password
-        return self._write()
+            return self._write(cfg)
 
     def set_protocol_server_enabled(self, name: str, enabled: bool) -> bool:
         """Set/clear ``protocol_servers.<name>.enabled`` and persist to disk.
@@ -627,13 +627,13 @@ class ConfigManager:
         atomically and leaves the hot-reload watcher to reconcile the running
         plugins. Returns True on success.
         """
-        cfg = self.config
-        sub = getattr(cfg.protocol_servers, name, None)
-        if sub is None:
-            return False
         with self._lock:
+            cfg = self.config.model_copy(deep=True)
+            sub = getattr(cfg.protocol_servers, name, None)
+            if sub is None:
+                return False
             sub.enabled = bool(enabled)
-        return self._write()
+            return self._write(cfg)
 
     def update_config(self, data: dict) -> bool:
         """Replace the full config after validation; atomically persist.
@@ -643,35 +643,57 @@ class ConfigManager:
         password, the current password is kept so it never changes after a
         config update.
         """
-        current = self.config
-        if "security" not in data:
-            data = {**data, "security": current.security.model_dump(mode="json")}
-        else:
-            security = dict(data["security"])
-            if not security.get("password"):
-                security["password"] = current.security.password
-            data = {**data, "security": security}
-        new_config = Config(**data)
         with self._lock:
-            self._config = new_config
-        return self._write()
+            current = self.config
+            if "security" not in data:
+                data = {**data, "security": current.security.model_dump(mode="json")}
+            else:
+                security = dict(data["security"])
+                if not security.get("password"):
+                    security["password"] = current.security.password
+                data = {**data, "security": security}
+            new_config = Config(**data)
+            return self._write(new_config)
 
-    def _write(self) -> bool:
-        """Atomically persist the current config back to the YAML file."""
+    def _write(self, config: Config | None = None) -> bool:
+        """Atomically persist a candidate config before making it active.
+
+        The temporary file is created with mode ``0600`` because the YAML may
+        contain the control-plane password and LLM API keys. The live config is
+        swapped only after the durable file replacement succeeds, so a failed
+        save cannot leave this process running with settings that disappear on
+        restart.
+        """
+        tmp_name: str | None = None
         try:
-            cfg = self.config
-            tmp = self.config_path.with_suffix(".yaml.tmp")
-            with tmp.open("w", encoding="utf-8") as f:
-                yaml.safe_dump(
-                    cfg.model_dump(mode="json", by_alias=False),
-                    f,
+            with self._lock:
+                candidate = config if config is not None else self.config
+                content = yaml.safe_dump(
+                    candidate.model_dump(mode="json", by_alias=False),
                     default_flow_style=False,
                     allow_unicode=True,
                     sort_keys=False,
                 )
-            tmp.replace(self.config_path)
+                self.config_path.parent.mkdir(parents=True, exist_ok=True)
+                fd, tmp_name = tempfile.mkstemp(
+                    dir=str(self.config_path.parent),
+                    prefix=f".{self.config_path.name}.",
+                    suffix=".tmp",
+                )
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write(content)
+                    f.flush()
+                    os.fsync(f.fileno())
+                Path(tmp_name).replace(self.config_path)
+                tmp_name = None
+                self._config = candidate
         except Exception:  # noqa: BLE001 - persist failure should not crash
             logger.exception("ConfigManager: failed to persist config to %s", self.config_path)
+            if tmp_name is not None:
+                try:
+                    Path(tmp_name).unlink(missing_ok=True)
+                except OSError:
+                    logger.warning("ConfigManager: could not remove temporary config %s", tmp_name)
             return False
         return True
 
