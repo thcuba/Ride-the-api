@@ -257,7 +257,7 @@ class TLSMITMServer:
     6. Send the encrypted response back to the device
     """
 
-    def __init__(  # noqa: PLR0913 — host, ports, certs, request handler and device callback
+    def __init__(  # noqa: PLR0913, PLR0917 — host, ports, certs, handler, device callback
         self,
         host: str = "0.0.0.0",
         listen_ports: list[int] | None = None,
