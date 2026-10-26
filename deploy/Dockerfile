@@ -25,7 +25,7 @@ WORKDIR /app
 COPY pyproject.toml ./
 
 # Install Python dependencies
-RUN pip install --no-cache-dir --upgrade pip && \
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -e . --no-build-isolation
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -74,7 +74,7 @@ RUN groupadd -r rideapi && useradd -r -g rideapi -d /app -s /bin/bash rideapi
 WORKDIR /app
 
 # Copy installed packages from base
-COPY --from=base /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=base /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=base /usr/local/bin /usr/local/bin
 
 # Copy application code
@@ -116,7 +116,7 @@ RUN groupadd -r rideapi && useradd -r -g rideapi -d /app -s /bin/bash rideapi
 
 WORKDIR /app
 
-COPY --from=gpu /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=gpu /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=gpu /usr/local/bin /usr/local/bin
 COPY --from=gpu /usr/local/cuda /usr/local/cuda
 
