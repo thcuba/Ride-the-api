@@ -397,6 +397,31 @@ def test_body_size_content_length_rejected():
     assert resp.status_code == 413  # noqa: PLR2004
 
 
+@pytest.mark.asyncio
+async def test_body_size_limit_covers_paths_that_normalize_into_api():
+    """Path normalization must not bypass the control-plane body cap."""
+    sent = []
+
+    async def receive():
+        raise AssertionError("Content-Length rejection should happen before reading the body")
+
+    async def send(message):
+        sent.append(message)
+
+    app = _make_size_app(10)
+    await app(
+        {
+            "type": "http",
+            "path": "/health/../api/echo",
+            "headers": [(b"content-length", b"11")],
+        },
+        receive,
+        send,
+    )
+
+    assert sent[0]["status"] == 413  # noqa: PLR2004
+
+
 def test_body_size_under_limit_ok():
 
     client = TestClient(_make_size_app(100))
