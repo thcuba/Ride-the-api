@@ -40,7 +40,7 @@ _EXPECTED_MATCH_THRESHOLD = 0.85
 _CUSTOM_MATCH_THRESHOLD = 0.9
 _CUSTOM_MIN_PATTERNS = 25
 _CUSTOM_PROXY_PORT = 8080
-_EXPECTED_TLS_DECRYPT_PORT = 8883
+_EXPECTED_TLS_DECRYPT_PORT = 443
 
 # ---------------------------------------------------------------------------
 #  Individual model defaults
@@ -331,7 +331,7 @@ class TestRootConfig:
     def test_tls_decrypt_defaults(self):
         c = Config()
         assert c.tls_decrypt.enabled is False
-        assert _EXPECTED_TLS_DECRYPT_PORT in c.tls_decrypt.listen_ports
+        assert c.tls_decrypt.listen_ports == [443, 8443]
         assert c.tls_decrypt.ca_cert_path == "./certs/ca.pem"
         assert c.tls_decrypt.pinning_bypass == {}
 
