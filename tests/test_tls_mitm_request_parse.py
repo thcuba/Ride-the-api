@@ -14,6 +14,7 @@ import asyncio
 import ssl
 import tempfile
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -33,7 +34,9 @@ from core.tls_mitm import (
 )
 
 
-def _make_test_server() -> TLSMITMServer:
+def _make_test_server(
+    *, min_tls_version: str = "TLSv1.2", max_tls_version: str = "TLSv1.3"
+) -> TLSMITMServer:
     """Build a TLSMITMServer with a throwaway CA for SSL context caching tests."""
     tmp = tempfile.mkdtemp()
     cm = CertManager(
@@ -45,7 +48,11 @@ def _make_test_server() -> TLSMITMServer:
         )
     )
     cm.ensure_ca()
-    server = TLSMITMServer(cert_manager=cm)
+    server = TLSMITMServer(
+        cert_manager=cm,
+        min_tls_version=min_tls_version,
+        max_tls_version=max_tls_version,
+    )
     # Purge the default port list so no sockets are bound.
     server.listen_ports = []
     return server
@@ -294,6 +301,33 @@ class TestSerializeHttpResponse:
 
 
 class TestSslContextCaching:
+    def test_configured_tls_versions_are_applied_to_server_context(self) -> None:
+        server = _make_test_server(min_tls_version="TLSv1.1", max_tls_version="TLSv1.2")
+        cert_pem, key_pem = server.cert_manager.get_cert_for_hostname("device.local")
+
+        context, temp_path = server._make_ssl_context(cert_pem, key_pem)
+
+        assert context is not None
+        assert context.minimum_version == ssl.TLSVersion.TLSv1_1
+        assert context.maximum_version == ssl.TLSVersion.TLSv1_2
+        if temp_path:
+            Path(temp_path).unlink(missing_ok=True)
+
+    def test_invalid_tls_version_range_is_rejected(self, tmp_path) -> None:
+        with pytest.raises(ValueError, match="less than or equal"):
+            TLSMITMServer(
+                device_certs_dir=str(tmp_path / "certs"),
+                min_tls_version="TLSv1.3",
+                max_tls_version="TLSv1.2",
+            )
+
+    def test_unknown_tls_version_is_rejected(self, tmp_path) -> None:
+        with pytest.raises(ValueError, match="Unsupported TLS version"):
+            TLSMITMServer(
+                device_certs_dir=str(tmp_path / "certs"),
+                min_tls_version="TLSv1.4",
+            )
+
     def test_same_cert_returns_cached_context(self) -> None:
         server = _make_test_server()
         hostname = "device.local"
