@@ -188,6 +188,15 @@ jobs:
       - name: List assets
         run: ls -lh assets
 
+      - name: Generate checksums
+        working-directory: assets
+        run: |
+          # The bundle is executed as-is after download, so an installer must be able to prove the
+          # artefact is the one this workflow produced. One file next to the assets, covering every
+          # platform; `files: assets/*` below attaches it to the release with the rest.
+          sha256sum ./* > SHA256SUMS
+          cat SHA256SUMS
+
       - name: Attach assets to the release
         uses: softprops/action-gh-release@v3
         with:

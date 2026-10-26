@@ -88,10 +88,52 @@ echo "▸ Downloading ${ASSET} (${VERSION}) from ${REPO} …"
 echo "  ${DL_URL}"
 curl -fL --retry 3 "${DL_URL}" -o "${TMP}/${ASSET}"
 
+# ── Verify the artefact before anything is unpacked ───────────────────────────
+# The bundle is executed as-is, so a corrupted or substituted archive would run with the
+# installer's privileges. The release publishes SHA256SUMS next to the assets; without a matching
+# digest nothing is unpacked and nothing is installed.
+CHECKSUMS_URL="${DL_URL%/*}/SHA256SUMS"
+echo "▸ Downloading SHA256SUMS …"
+if ! curl -fL --retry 3 "${CHECKSUMS_URL}" -o "${TMP}/SHA256SUMS"; then
+  echo "✖ SHA256SUMS is missing from this release: cannot verify ${ASSET}." >&2
+  echo "  Refusing to install an unverified bundle." >&2
+  exit 1
+fi
+
+if command -v sha256sum >/dev/null 2>&1; then
+  digest_of() { sha256sum "$1" | awk '{print $1}'; }
+else
+  digest_of() { shasum -a 256 "$1" | awk '{print $1}'; }
+fi
+
+expected="$(awk -v n="${ASSET}" '$2 == n || $2 == "./" n || $2 == "*" n {print $1; exit}' \
+  "${TMP}/SHA256SUMS")"
+if [[ -z "${expected}" ]]; then
+  echo "✖ SHA256SUMS lists no entry for ${ASSET}." >&2
+  exit 1
+fi
+actual="$(digest_of "${TMP}/${ASSET}")"
+if [[ "${actual}" != "${expected}" ]]; then
+  echo "✖ Checksum mismatch for ${ASSET}:" >&2
+  echo "    expected ${expected}" >&2
+  echo "    actual   ${actual}" >&2
+  echo "  Refusing to install." >&2
+  exit 1
+fi
+echo "✔ Checksum verified (${ASSET})"
+
 # ── Install (preserve config/data/certs/logs) ─────────────────────────────────
 mkdir -p "${INSTALL_DIR}"
 echo "▸ Installing into ${INSTALL_DIR} …"
-tar -xzf "${TMP}/${ASSET}" -C "${TMP}"
+# tar extracts the paths it is given, so an entry with an absolute path or a parent-relative one
+# would write outside the extraction directory. Inspect the listing first and refuse such an
+# archive: a release we control never contains those.
+tar -tzf "${TMP}/${ASSET}" > "${TMP}/entries.txt"
+if awk '/(^|\/)\.\.(\/|$)/ || /^\// {found = 1} END {exit !found}' "${TMP}/entries.txt"; then
+  echo "✖ ${ASSET} contains absolute or parent-relative paths; refusing to extract." >&2
+  exit 1
+fi
+tar -xzf "${TMP}/${ASSET}" -C "${TMP}" --no-same-owner
 BUNDLE="${TMP}/ride-the-api"
 
 # Replace only the binary bundle; keep runtime dirs if they already exist.

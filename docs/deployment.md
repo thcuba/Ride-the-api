@@ -107,6 +107,17 @@ systemctl --user enable --now ride-the-api
 > source bootstrap below (`deploy/bootstrap.sh`);
 > `tests/test_llm_runtime_deps.py` guards the `openai`↔`httpx` contract in CI.
 
+### Verifying a prebuilt download
+
+The installer runs the bundle it downloads, so it verifies the artefact first. Every release
+publishes a `SHA256SUMS` file next to the platform archives; the installer fetches it and refuses to
+proceed when the digest is missing or does not match. It also inspects the archive listing and
+refuses to extract one containing absolute or parent-relative paths, because `tar` would follow them
+out of the extraction directory.
+
+Both checks fail closed: a release without `SHA256SUMS`, or an asset that does not match it, is not
+installed.
+
 ### Windows — `deploy/install.ps1`
 
 ```powershell
