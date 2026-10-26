@@ -1350,7 +1350,7 @@ async function loadDeviceStats(deviceId) {
           <span class="tc-label">IP Addresses</span>
           <div style="flex:1;display:flex;flex-direction:column;gap:6px;">
             <div id="dc-ips-${escapeHtml(deviceId)}" style="display:flex;flex-wrap:wrap;gap:6px;">
-              ${(s.ip_addresses && s.ip_addresses.length) ? s.ip_addresses.map(ip => `<span class="tb-badge tb-active" role="listitem">${escapeHtml(ip)}</span>`).join('') : '<span style="font-size:12px;color:var(--text2);">none</span>'}
+              ${(s.ip_addresses && s.ip_addresses.length) ? s.ip_addresses.map(ip => `<span class="tb-badge tb-active" style="display:inline-flex;align-items:center;gap:4px;" role="listitem"><span>${escapeHtml(ip)}</span><button class="tb-btn" onclick="copyToClipboard('${escapeJs(ip)}', 'IP address')" aria-label="Copy IP address ${escapeHtml(ip)}" title="Copy IP address"><svg class="icon-svg-sm" style="width:12px;height:12px;" aria-hidden="true" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></span>`).join('') : '<span style="font-size:12px;color:var(--text2);">none</span>'}
             </div>
             <div style="display:flex;gap:6px;">
               <input type="text" id="dc-ip-new-${escapeHtml(deviceId)}" placeholder="e.g. 192.168.1.50" style="flex:1;" aria-label="New IP address for device">
