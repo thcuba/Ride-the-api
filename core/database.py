@@ -924,6 +924,10 @@ class DatabaseManager:
                     "vendor": d.vendor,
                     "device_type": d.device_type,
                     "name": d.name,
+                    # Already stored on the registry and populated by
+                    # POST /api/devices/{device_id}/ip, but it was never returned here, so the
+                    # dashboard had nothing to display.
+                    "ip_addresses": list(d.ip_addresses or []),
                     "mode": d.mode,
                     "match_threshold": d.match_threshold,
                     "status": d.status,

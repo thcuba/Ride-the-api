@@ -216,6 +216,34 @@ class TestDeviceRegistry:
         assert resolved is None
 
     @pytest.mark.asyncio
+    async def test_list_devices_exposes_ip_addresses(self, db_manager):
+        """``list_devices`` must return the IPs it stores on the registry.
+
+        The dashboard renders its cards from ``/api/devices``, and the addresses live on
+        ``DeviceRegistry.ip_addresses`` (populated by ``POST /api/devices/{id}/ip``), but they
+        were missing from the listing, so the UI had nothing to display even though
+        ``docs/api.md`` already documented the field.
+        """
+        await db_manager.get_or_create_device(
+            device_id="device-003", vendor="example", device_type="ac", name="Room AC"
+        )
+        await db_manager.get_or_create_device(
+            device_id="device-004", vendor="example", device_type="ac", name="No IP yet"
+        )
+        async with db_manager.core_session() as session:
+            result = await session.execute(
+                select(DeviceRegistry).where(DeviceRegistry.device_id == "device-003")
+            )
+            dev = result.scalar_one()
+            dev.ip_addresses = ["192.168.1.55", "192.168.1.56"]
+            await session.commit()
+
+        by_id = {d["device_id"]: d for d in await db_manager.list_devices()}
+        assert by_id["device-003"]["ip_addresses"] == ["192.168.1.55", "192.168.1.56"]
+        # A device without addresses must expose an empty list, not a missing key.
+        assert by_id["device-004"]["ip_addresses"] == []
+
+    @pytest.mark.asyncio
     async def test_resolve_device_id_partial_ip_does_not_match(self, db_manager):
         """A partial IPv4 prefix must NOT resolve to a device storing a longer IP.
 
