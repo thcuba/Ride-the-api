@@ -734,6 +734,8 @@ async def lifespan(_app: FastAPI):  # noqa: C901, PLR0912, PLR0915
             tls_mitm_server = get_tls_mitm_server(
                 cert_manager=cert_manager,
                 listen_ports=config.tls_decrypt.listen_ports,
+                min_tls_version=config.tls_decrypt.min_tls_version,
+                max_tls_version=config.tls_decrypt.max_tls_version,
             )
             tls_mitm_server.request_handler = handle_tls_decrypted_request
             tls_mitm_server.response_handler = handle_tls_upstream_response
