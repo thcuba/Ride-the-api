@@ -296,6 +296,33 @@ class TestLearningPipeline:
         assert corr_key.startswith("device-001")
 
     @pytest.mark.asyncio
+    async def test_discard_failed_request_before_matching_later_response(self, db_manager):
+        """A failed upstream exchange must not steal the next response pair."""
+        pipeline = LearningPipeline(
+            db_manager,
+            MagicMock(),
+            ContextBuffer(db_manager),
+            MatchRateTracker(db_manager),
+        )
+        failed_key = await pipeline.register_request(
+            "device-failed-forward", "shelly", "https", "POST", "/failed", {}, {}, {}
+        )
+        live_key = await pipeline.register_request(
+            "device-failed-forward", "shelly", "https", "POST", "/live", {}, {}, {}
+        )
+
+        assert await pipeline.discard_request("device-failed-forward", failed_key)
+        async with db_manager.device_session("device-failed-forward") as session:
+            rows = (await session.execute(select(SessionCache))).scalars().all()
+        assert [row.correlation_key for row in rows] == [live_key]
+
+        pair = await pipeline.match_response(
+            "device-failed-forward", "shelly", "https", 200, {}, {"ok": True}
+        )
+        assert pair is not None
+        assert pair.path == "/live"
+
+    @pytest.mark.asyncio
     async def test_match_response_no_match(self, db_manager):
         llm = MagicMock()
         buffer = ContextBuffer(db_manager)
