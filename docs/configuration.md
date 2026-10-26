@@ -690,7 +690,7 @@ TLS decryption (MITM) to intercept encrypted traffic.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enabled` | `boolean` | `false` | Enable TLS decryption (disabled by default) |
-| `listen_ports` | `array[integer]` | `[443, 8443, 8883, 5684, 802]` | Ports on which to intercept TLS traffic. **Read-only at runtime**: configured only here, never added/removed via the API |
+| `listen_ports` | `array[integer]` | `[443, 8443]` | HTTPS interception ports. This MITM decodes HTTP/1.1 over TLS; MQTT-TLS, DTLS, and other binary protocols need protocol-specific handlers. **Read-only at runtime**: configured only here, never added/removed via the API |
 | `ca_cert_path` | `string` | `"./certs/ca.pem"` | Path to the CA certificate used to sign MITM certificates |
 | `ca_key_path` | `string` | `"./certs/ca.key"` | Path to the CA private key |
 | `device_certs_dir` | `string` | `"./data/device_certs"` | Directory for per-device generated certificates |
@@ -712,8 +712,6 @@ tls_decrypt:
   enabled: false
   listen_ports:
     - 443
-    - 8883
-    - 5684
     - 8443
   ca_cert_path: "./certs/ca.pem"
   ca_key_path: "./certs/ca.key"
@@ -1079,8 +1077,6 @@ tls_decrypt:
   enabled: false
   listen_ports:
     - 443
-    - 8883
-    - 5684
     - 8443
   ca_cert_path: "./certs/ca.pem"
   ca_key_path: "./certs/ca.key"

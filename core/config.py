@@ -395,7 +395,7 @@ class TLSDecryptConfig(BaseModel):
     """TLS Decryption / MITM engine configuration."""
 
     enabled: bool = False  # disabled by default
-    listen_ports: list[int] = Field(default_factory=lambda: [443, 8443, 8883, 5684, 802])
+    listen_ports: list[int] = Field(default_factory=lambda: [443, 8443])
     ca_cert_path: str = "./certs/ca.pem"
     ca_key_path: str = "./certs/ca.key"
     device_certs_dir: str = "./data/device_certs"

@@ -317,9 +317,7 @@ class TLSMITMServer:
         # Copy so callers' lists are never mutated behind their back, and treat
         # an empty list as an intentional "start with no listeners" (dynamic
         # add via add_port must work on a server that starts with zero ports).
-        self.listen_ports = (
-            list(listen_ports) if listen_ports is not None else [443, 8883, 5684, 8443]
-        )
+        self.listen_ports = list(listen_ports) if listen_ports is not None else [443, 8443]
         self.cert_manager = cert_manager or CertManager(None)
         self.device_certs_dir = Path(device_certs_dir)
         self.device_certs_dir.mkdir(parents=True, exist_ok=True)

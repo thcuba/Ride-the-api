@@ -223,7 +223,6 @@ tls_decrypt:
   enabled: true
   listen_ports:
     - 443
-    - 8883
 ```
 
 Download the CA certificate from `http://<server-ip>:8911/api/tls/ca-cert` and install it on the device as a trusted authority.

@@ -425,17 +425,13 @@ connection_watchdog:
 tls_decrypt:
   enabled: false  # disabled by default; enable after setting up DNS routing
 
-  # Ports to listen on for TLS interception
-  # The proxy accepts TLS connections on ALL these ports simultaneously.
+  # HTTPS ports for the HTTP/1.1-over-TLS decryptor.
+  # MQTT-TLS, DTLS, and other binary protocols need protocol-specific handlers.
   # Device identity is determined by SOURCE IP, not by port.
-  # This is the COMPLETE list of TLS/encrypted ports the platform can serve —
-  # it is controlled ONLY here (config.yaml), never added at runtime.
+  # Listener ports are controlled here and are not added at runtime.
   listen_ports:
     - 443
     - 8443
-    - 8883
-    - 5684
-    - 802
 
   # CA certificate for MITM (auto-generated on first run in ./certs/)
   ca_cert_path: "./certs/ca.pem"
