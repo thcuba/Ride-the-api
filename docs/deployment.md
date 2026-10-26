@@ -118,6 +118,23 @@ out of the extraction directory.
 Both checks fail closed: a release without `SHA256SUMS`, or an asset that does not match it, is not
 installed.
 
+### Privileged ports without root
+
+Interception binds 443/8883 and DNS binds 53, all below 1024. Do **not** use `setcap` on the
+interpreter binary: that grants the capability to every invocation of that Python, for any user and
+any script, permanently. The shipped unit requests it for this service only:
+
+```ini
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+```
+
+If the capability was previously set on the binary, remove it after switching:
+
+```bash
+sudo setcap -r "$(readlink -f "$(command -v python3)")"
+```
+
 ### Windows — `deploy/install.ps1`
 
 ```powershell

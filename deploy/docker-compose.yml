@@ -9,10 +9,23 @@ services:
       - "80:80"
       - "443:443"
       - "8883:8883"    # MQTT over TLS (stream proxy)
+    # NOTE: this mounts the whole certs directory, which also contains the CA private key
+    # (ca.key). A compromise of this container is therefore equivalent to holding the CA. Keeping
+    # the key out of the mount would require moving it out of certs/; until then, the hardening
+    # below and the read-only mount are what limit the exposure.
     volumes:
       - ../deploy/nginx.conf.template:/etc/nginx/nginx.conf.template:ro
       - ../deploy/nginx-entrypoint.sh:/docker-entrypoint.sh:ro
       - ../certs:/etc/nginx/certs:ro
+      - nginx-cache:/var/cache/nginx
+      - nginx-run:/var/run
+    # Needs CAP_NET_BIND_SERVICE for :80 and :443 only; everything else is dropped.
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
     environment:
       # Upstream DNS servers for loop-free cloud forwarding
       # Override these to use different DNS providers
@@ -51,6 +64,11 @@ services:
       - PYTHONUNBUFFERED=1
       - LOG_LEVEL=INFO
       - CONFIG_PATH=/app/config/config.yaml
+    # Binds 8911 inside its own namespace (not privileged), so no capability is needed at all.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     networks:
       - ride-the-api-net
 
@@ -59,4 +77,5 @@ networks:
     driver: bridge
 
 volumes:
-  postgres_data:
+  nginx-cache:
+  nginx-run:

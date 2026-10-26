@@ -17,5 +17,34 @@ Environment="PYTHONPATH=/opt/ride-the-api"
 Environment="LOG_LEVEL=INFO"
 Environment="CONFIG_PATH=/opt/ride-the-api/config/config.yaml"
 
+# ── Privileges ────────────────────────────────────────────────────────────────
+# Interception needs to bind 443/8883/53, which are below 1024. Granting the capability to this
+# unit is narrower than `setcap` on the interpreter: that would hand it to every invocation of
+# that Python, for any user, forever. With AmbientCapabilities it exists only inside this service,
+# and CapabilityBoundingSet removes every other capability from it.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+
+# ── Filesystem ────────────────────────────────────────────────────────────────
+# The service writes only its own runtime directories (ridebase/, certs/, logs/, data/).
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/ride-the-api
+
+# ── Kernel / process surface ──────────────────────────────────────────────────
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+
 [Install]
 WantedBy=multi-user.target
