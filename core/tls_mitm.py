@@ -310,6 +310,8 @@ class TLSMITMServer:
         self.on_device_seen: Callable[[str, str | None], Coroutine] | None = None
         # Called after a decrypted request has been forwarded and its upstream response arrives.
         self.response_handler: Callable[[dict, dict], Coroutine] | None = None
+        # Called when a queued learning request's upstream exchange fails.
+        self.request_failure_handler: Callable[[dict], Coroutine] | None = None
         # Asked before the handshake: should this connection be forwarded untouched rather than
         # decrypted? True for devices known to refuse the certificate we would generate.
         self.should_relay_tls: Callable[[str, str | None], Coroutine] | None = None
@@ -628,6 +630,16 @@ class TLSMITMServer:
                                 # Learning must not prevent replaying the real vendor response.
                                 logger.warning(
                                     "TLS: could not record upstream response for %s %s",
+                                    decrypted_req.method,
+                                    decrypted_req.path,
+                                    exc_info=True,
+                                )
+                        elif forwarded is None and self.request_failure_handler:
+                            try:
+                                await self.request_failure_handler(handler_result)
+                            except Exception:
+                                logger.warning(
+                                    "TLS: could not discard failed upstream request %s %s",
                                     decrypted_req.method,
                                     decrypted_req.path,
                                     exc_info=True,
