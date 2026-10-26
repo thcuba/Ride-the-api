@@ -1046,6 +1046,7 @@ async function loadDevices() {
               </div>
               <div class="dc-meta">${escapeHtml(d.vendor || 'unknown')} · ${escapeHtml(d.device_type || 'generic')}</div>
         <div class="dc-stats">
+          ${deviceIps(d).length ? `<span class="dc-stat"><span class="dc-label">IP:</span><span class="dc-value">${escapeHtml(deviceIps(d).join(', '))}</span></span>` : ''}
           ${rate !== null ? `<span class="dc-stat"><span class="dc-label">Match:</span><span class="dc-value" style="color:${rateColor(rate)}">${rate}%</span></span>` : ''}
           <span class="dc-stat"><span class="dc-label">Last:</span><span class="dc-value">${d.last_seen ? new Date(d.last_seen).toLocaleString() : 'Never'}</span></span>
         </div>
@@ -1063,6 +1064,15 @@ async function loadDevices() {
 }
 
 let activeModeFilter = null;
+
+// Addresses to show for a device: the ones registered on the registry, plus the address
+// embedded in an auto-created "ip-<addr>" device id when the device is still unidentified.
+function deviceIps(d) {
+  const ips = Array.isArray(d.ip_addresses) ? d.ip_addresses.filter(Boolean).slice() : [];
+  const embedded = (d.device_id || '').startsWith('ip-') ? (d.device_id || '').slice(3) : '';
+  if (embedded && !ips.includes(embedded)) ips.unshift(embedded);
+  return ips;
+}
 
 function filterByMode(mode) {
   activeModeFilter = (activeModeFilter === mode) ? null : mode;
