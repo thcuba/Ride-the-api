@@ -241,7 +241,10 @@ class MaxBodySizeMiddleware:
             await self.app(scope, receive, send)
             return
         path = scope.get("path") or ""
-        if not path.startswith("/api/"):
+        # Apply the same canonical path decision as the auth middleware. A
+        # dotted path resolving into /api must not bypass its request-size cap.
+        path = posixpath.normpath(path)
+        if path != "/api" and not path.startswith("/api/"):
             await self.app(scope, receive, send)
             return
 
