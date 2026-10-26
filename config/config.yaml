@@ -440,13 +440,10 @@ tls_decrypt:
   # Per-device leaf certificate storage (auto-generated per hostname/SNI)
   device_certs_dir: "./data/device_certs"
 
-  # Certificate pinning bypass strategies per vendor
-  # Options: "mitm_proxy" (default), "frida", "disable_pin_check"
-  # - mitm_proxy: dual-handshake — proxy terminates TLS with dynamic cert,
-  #               opens second TLS to real cloud for forwarding
-  # - frida:       expose a Frida JS script at /api/tls/frida/script.js
-  #               user runs it on-device: frida -U -l script.js <app>
-  # - disable_pin_check: assume device already trusts our CA
+  # Per-vendor device-side TLS handling guidance (metadata only; no bypass is applied here).
+  # - mitm_proxy: the device must trust this proxy's CA; otherwise TLS is relayed encrypted.
+  # - frida:       the operator must manually run /api/tls/frida/script.js on the device.
+  # - disable_pin_check: the operator must change certificate validation on the device.
   pinning_bypass:
     example:
       strategy: "mitm_proxy"

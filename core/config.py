@@ -386,9 +386,13 @@ class LearningConfig(BaseModel):
 
 
 class PinningBypassConfig(BaseModel):
-    """Per-vendor certificate pinning bypass strategy."""
+    """Per-vendor guidance for manual certificate-pinning handling.
 
-    strategy: str = "mitm_proxy"  # mitm_proxy | frida | disable_pin_check
+    The value is configuration metadata; it does not alter client-side TLS
+    validation or make the proxy decrypt a rejected certificate.
+    """
+
+    strategy: str = "mitm_proxy"  # metadata: mitm_proxy | frida | disable_pin_check
 
 
 class TLSDecryptConfig(BaseModel):
