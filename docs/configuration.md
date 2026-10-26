@@ -696,8 +696,8 @@ TLS decryption (MITM) to intercept encrypted traffic.
 | `device_certs_dir` | `string` | `"./data/device_certs"` | Directory for per-device generated certificates |
 | `external_certs_dir` | `string` | `"./data/external_certs"` | Directory for imported external certificates |
 | `pinning_bypass` | `dict[string, PinningBypassConfig]` | `{}` | Per-vendor operator guidance only; Ride-the-API does not apply a client-side pinning bypass. A client that rejects the proxy certificate is relayed as encrypted TLS and contributes no HTTP pair to the LLM buffer. |
-| `min_tls_version` | `string` | `"TLSv1.2"` | Minimum accepted TLS version |
-| `max_tls_version` | `string` | `"TLSv1.3"` | Maximum accepted TLS version |
+| `min_tls_version` | `string` | `"TLSv1.2"` | Minimum TLS version accepted by the intercepted TLS server |
+| `max_tls_version` | `string` | `"TLSv1.3"` | Maximum TLS version accepted by the intercepted TLS server. Both settings accept `TLSv1.0` through `TLSv1.3`; the minimum must not exceed the maximum. |
 
 ### tls_decrypt.pinning_bypass.\<vendor\>
 
