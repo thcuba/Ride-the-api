@@ -709,7 +709,7 @@ A TLS client that rejects the generated certificate is automatically relayed wit
 decryption so its cloud connection can continue. In that state the proxy cannot parse
 HTTP, correlate request/response pairs, or buffer them for the LLM. Install and trust
 the Ride-the-API CA on the device, or manually instrument a supported app with the
-script at `/api/tls/frida/script.js`; the server does not run Frida or alter the app.
+script at `/api/tls/frida/script.js` (an authenticated API route; send `X-API-Key`); the server does not run Frida or alter the app.
 
 Example:
 
