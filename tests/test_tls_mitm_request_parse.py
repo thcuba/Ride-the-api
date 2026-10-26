@@ -10,6 +10,7 @@ hand-rolled regex parser and response serializer:
 
 from __future__ import annotations
 
+import asyncio
 import tempfile
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -108,6 +109,44 @@ class TestParseDecryptedHttpRequest:
         assert target == "/telemetry"
         assert headers["content-type"] == "application/json"
         assert body == b"hello world"
+
+
+class TestReadHttpOverTls:
+    @pytest.mark.asyncio
+    async def test_accepts_body_larger_than_fifty_tls_reads(self) -> None:
+        body = b"x" * (256 * 1024)
+        head = (
+            b"POST /upload HTTP/1.1\\r\\n"
+            b"Host: device.local\\r\\n"
+            + f"Content-Length: {len(body)}\\r\\n\\r\\n".encode()
+        )
+
+        class ChunkedSSLObject:
+            def __init__(self, data: bytes) -> None:
+                self.data = data
+                self.offset = 0
+
+            def read(self, size: int) -> bytes:
+                chunk = self.data[self.offset : self.offset + size]
+                self.offset += len(chunk)
+                return chunk
+
+        server = _make_test_server()
+        request = await server._read_http_over_tls(
+            ssl_obj=ChunkedSSLObject(head + body),  # type: ignore[arg-type]
+            incoming=ssl.MemoryBIO(),
+            outgoing=ssl.MemoryBIO(),
+            reader=asyncio.StreamReader(),
+            writer=AsyncMock(),
+            client_ip="192.0.2.12",
+            client_port=53124,
+            dst_port=443,
+            hostname="device.local",
+        )
+
+        assert request is not None
+        assert request.path == "/upload"
+        assert request.body == body
 
     def test_header_case_normalized_to_lower(self) -> None:
         raw = (
