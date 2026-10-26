@@ -385,8 +385,13 @@ class TestLLMSettingsAPI:
                 }
             },
         }
+
         # Do not touch the real config file on disk.
-        with patch.object(config_manager, "_write", return_value=True):
+        def pretend_write(candidate):
+            config_manager._config = candidate
+            return True
+
+        with patch.object(config_manager, "_write", side_effect=pretend_write):
             resp = client.put("/api/config", headers=headers, json={"config": cfg})
         assert resp.status_code == 200  # noqa: PLR2004
         out = resp.json()["config"]["llm_decipher"]
@@ -407,7 +412,12 @@ class TestLLMSettingsAPI:
         headers = {"X-API-Key": "test-password"}
         cfg = client.get("/api/config", headers=headers).json()["config"]
         cfg.pop("llm_decipher", None)
-        with patch.object(config_manager, "_write", return_value=True):
+
+        def pretend_write(candidate):
+            config_manager._config = candidate
+            return True
+
+        with patch.object(config_manager, "_write", side_effect=pretend_write):
             resp = client.put("/api/config", headers=headers, json={"config": cfg})
         assert resp.status_code == 200  # noqa: PLR2004
         out = resp.json()["config"]["llm_decipher"]
