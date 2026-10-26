@@ -356,6 +356,14 @@ example, `export RTA_UID=$(id -u) RTA_GID=$(id -g)`) before starting Compose.
 The config directory is writable because first-run password setup and dashboard
 settings are persisted to `config.yaml`.
 
+Compose assigns nginx a stable address and configures Uvicorn to accept
+`X-Forwarded-For` and `X-Forwarded-Proto` only from that address. This preserves
+each device's client IP for local/remote classification and per-IP rules while
+keeping forwarded headers from other network clients untrusted. The default
+bridge subnet is `172.30.0.0/24`; if it conflicts with a subnet already used on
+the host, set `RTA_DOCKER_SUBNET` and choose an unused `RTA_NGINX_IP` inside it
+before starting Compose.
+
 The Compose file builds the **CPU** stage (`target: production`) — without an
 explicit target, Compose would build the Dockerfile's last stage,
 `production-gpu`. It also mounts `../ridebase` at `/app/ridebase`, where the
