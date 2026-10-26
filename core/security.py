@@ -24,6 +24,7 @@ import hmac
 import json
 import logging
 import os
+import posixpath
 import secrets
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -146,7 +147,14 @@ class ControlPlaneAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):  # noqa: ANN001, PLR0911
         # Performance optimization: direct scope lookup avoids parsing URL object (~4x speedup)
         path = request.scope.get("path", "")
-        if not path.startswith("/api/"):
+        # Decide on the canonical form, never on the raw spelling: an access-control check that
+        # compares the incoming string can be sidestepped by whichever layer normalises differently
+        # from us. A path that resolves into /api/* must require credentials even if it was written
+        # as /api/../api/... , and one carrying a NUL or a backslash is rejected outright.
+        if "\x00" in path or "\\" in path:
+            return JSONResponse(status_code=400, content={"error": "Invalid request path"})
+        path = posixpath.normpath(path)
+        if path != "/api" and not path.startswith("/api/"):
             return await call_next(request)
         if request.method == "OPTIONS":
             # CORS preflight — never requires credentials.
