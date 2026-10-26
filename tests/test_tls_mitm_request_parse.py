@@ -11,8 +11,8 @@ hand-rolled regex parser and response serializer:
 from __future__ import annotations
 
 import asyncio
+import ssl
 import tempfile
-from unittest.mock import AsyncMock
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
