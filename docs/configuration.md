@@ -14,7 +14,7 @@
 5. [models](#models) — ML models and inference
 6. [control](#control) — Control, policy and online learning
 7. [observability](#observability) — Logging, metrics, tracing and health check
-8. [dns](#dns) — DNS integration (Pi-hole, AdGuard)
+8. [dns](#dns) — DNS integration (a DNS filter, the DNS filter)
 9. [traffic_selection](#traffic_selection) — Traffic selection rules
 10. [llm_decipher](#llm_decipher) — LLM-based deciphering
 11. [modification](#modification) — Request/response modification rules
@@ -216,7 +216,7 @@ ML model (ONNX) configuration for local inference.
 
 > **Note:** the ONNX runtime itself (`onnxruntime`) is **optional** — install it
 > with the `inference` extra (`pip install -e ".[inference]"`). The base install
-> does not ship it, and most setups (LLM via API cloud, e.g. a Raspberry Pi)
+> does not ship it, and most setups (LLM via API cloud, e.g. a a proxy host)
 > do not serve local models.
 
 | Field | Type | Default | Description |
@@ -408,14 +408,14 @@ DNS integration for local resolution and rewriting.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `pihole_custom_dns` | `string` | `""` | Pi-hole API URL for custom DNS (empty = disabled) |
-| `adguard_rewrites` | `string` | `""` | AdGuard Home API URL for DNS rewrites (empty = disabled) |
+| `dnsfilter_custom_dns` | `string` | `""` | a DNS filter API URL for custom DNS (empty = disabled) |
+| `adguard_rewrites` | `string` | `""` | the DNS filter API URL for DNS rewrites (empty = disabled) |
 
 Example:
 
 ```yaml
 dns:
-  pihole_custom_dns: "http://192.168.1.100/admin/api.php"
+  dnsfilter_custom_dns: "http://192.168.1.100/admin/api.php"
   adguard_rewrites: "http://192.168.1.101:80/control/rewrite"
 ```
 
@@ -1032,7 +1032,7 @@ observability:
     path: "/health"
 
 dns:
-  pihole_custom_dns: ""
+  dnsfilter_custom_dns: ""
   adguard_rewrites: ""
 
 traffic_selection:

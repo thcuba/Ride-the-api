@@ -8,11 +8,11 @@
 When Ride-the-API needs to forward an unrecognized request to the real vendor cloud
 (e.g. during learning or when a production miss occurs), it resolves the cloud hostname
 through the system DNS. In a typical setup, the system DNS points to a local DNS server
-(dnsmasq / Pi-hole / AdGuard Home) which returns the proxy's own IP address for those
+(a local DNS server / a DNS filter / an external DNS filter Home) which returns the proxy's own IP address for those
 hostnames. This creates an infinite forwarding loop:
 
 ```
-AdGuard Home → Ride-the-API → forward_to_cloud() → system DNS → "that IP is yours" → Ride-the-API → ...
+an external DNS filter Home → Ride-the-API → forward_to_cloud() → system DNS → "that IP is yours" → Ride-the-API → ...
 ```
 
 ## Solution: nginx sidecar with dedicated DNS resolver

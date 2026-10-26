@@ -31,7 +31,7 @@ and attached to the release under stable names:
 | Asset | Platform |
 |-------|----------|
 | `ride-the-api-linux-x64.tar.gz` | Linux x86_64 |
-| `ride-the-api-linux-arm64.tar.gz` | Linux arm64 — **Raspberry Pi 64-bit** |
+| `ride-the-api-linux-arm64.tar.gz` | Linux arm64 — **a proxy host 64-bit** |
 | `ride-the-api-macos-arm64.tar.gz` | macOS arm64 (Apple Silicon) |
 | `ride-the-api-windows-x64-setup.exe` | Windows x64 (Inno Setup installer) |
 
@@ -39,7 +39,7 @@ Use the **one-shot installer scripts** to fetch and install the **latest**
 release. Rerunning the same script upgrades to a newer release **in place,
 preserving `config/`, `data/`, `certs/` and `logs/`**.
 
-### Linux / macOS / Raspberry Pi — `deploy/rideapi`
+### Linux / macOS / a proxy host — `deploy/rideapi`
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/thcuba/Ride-the-api/main/deploy/rideapi -o rideapi
@@ -70,13 +70,13 @@ Options:
 > environment (`updater_env()`), and the install/update scripts defensively
 > `unset` them too, so the update works from a bundle as it does from a shell.
 
-On any supported 64-bit Linux (Raspberry Pi OS, **Debian**, Ubuntu, Fedora,
+On any supported 64-bit Linux (a proxy host OS, **Debian**, Ubuntu, Fedora,
 Arch), the recommended one-command install is **from source** via the unified
 bootstrap script — it detects the distro and package manager (via
-`/etc/os-release`), verifies the architecture (Raspberry Pi OS requires
+`/etc/os-release`), verifies the architecture (a proxy host OS requires
 `arm64/aarch64`), clones the repo, creates a Python virtualenv with all
 dependencies, and registers an auto-start service.
-See [Quick Start section A1](quickstart.md#a1-linux-raspberry-pi-fully-automatic-install-from-source):
+See [Quick Start section A1](quickstart.md#a1-linux-single-board-host-fully-automatic-install-from-source):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/thcuba/Ride-the-api/main/deploy/bootstrap.sh -o bootstrap.sh
@@ -176,17 +176,17 @@ The server starts on `http://0.0.0.0:8911` (configurable in `config.yaml`).
 To intercept IoT device traffic, you must point their cloud domains to the
 proxy's IP address. Recommended methods:
 
-#### dnsmasq
+#### a local DNS server
 
 ```bash
-# /etc/dnsmasq.d/ride-api.conf
+# /etc/a local DNS server.d/ride-api.conf
 address=/mqtt.example.com/192.168.1.100
 address=/api.example.com/192.168.1.100
 
-sudo systemctl restart dnsmasq
+sudo systemctl restart a local DNS server
 ```
 
-#### Pi-hole / AdGuard Home
+#### a DNS filter / an external DNS filter Home
 
 Add custom rewrites:
 ```
@@ -285,7 +285,7 @@ nginx handles:
 1. TLS termination (port 443)
 2. Routing device traffic to Ride-the-API (internal port 8911)
 3. Forwarding misses to the cloud vendor via a dedicated DNS resolver (8.8.8.8 / 1.1.1.1),
-   **avoiding DNS loops** with the local DNS (dnsmasq / Pi-hole)
+   **avoiding DNS loops** with the local DNS (a local DNS server / a DNS filter)
 
 ### Startup
 
@@ -379,7 +379,7 @@ graph LR
 When Ride-the-API does not recognize a request and `signal_forward_to_cloud` is enabled,
 it returns HTTP 502 with the header `X-Action: forward`. nginx intercepts the error and
 re-forwards the request to the cloud vendor using a dedicated DNS resolver (Google 8.8.8.8 /
-Cloudflare 1.1.1.1), bypassing the local DNS and preventing loops.
+a public resolver 1.1.1.1), bypassing the local DNS and preventing loops.
 
 See [nginx-architecture.md](nginx-architecture.md) for architectural details.
 
@@ -446,7 +446,7 @@ resolver 8.8.8.8 1.1.1.1 valid=300s ipv6=on;
 | Provider | IPv4 | IPv6 |
 |----------|------|------|
 | Google | 8.8.8.8 | 2001:4860:4860::8888 |
-| Cloudflare | 1.1.1.1 | 2606:4700:4700::1111 |
+| a public resolver | 1.1.1.1 | 2606:4700:4700::1111 |
 
 For non-HTTP protocols (CoAP, Modbus, custom), the Python module
 `core/upstream_resolver.py` provides the same dual-stack resolution.
@@ -565,9 +565,9 @@ dns:
   enabled: true
   listen_host: 0.0.0.0
   listen_port: 53
-  answer_ip: 192.168.178.200   # what intercepted names resolve to; empty = detect the LAN address
+  answer_ip: 192.168.1.200   # what intercepted names resolve to; empty = detect the LAN address
   intercept:
-    - ats.prod.eu-da.iot.versuni.com
+    - ats.iot.vendor-cloud.example
     - "*.example.vendor.com"
 ```
 
@@ -599,13 +599,13 @@ the service keeps running.
 Then point the device at the proxy. The common shape is a **per-client upstream DNS**: the local
 resolver stays the DNS of the network and only the chosen client is sent here.
 
-AdGuard Home — *Settings → DNS settings → Upstream DNS servers* → add a client entry for the
-device's address with `192.168.178.200` as its upstream (or the same thing through
-`/control/clients/update`). Pi-hole is the equivalent *per-client* group upstream. The selection is
+an external DNS filter Home — *Settings → DNS settings → Upstream DNS servers* → add a client entry for the
+device's address with `192.168.1.200` as its upstream (or the same thing through
+`/control/clients/update`). a DNS filter is the equivalent *per-client* group upstream. The selection is
 reversible: remove the upstream and that device goes back to the vendor untouched.
 
 The other two shapes are the device (or the router) pointed straight at the proxy, and a resolver
-*rewrite* (`ats.prod.eu-da.iot.versuni.com -> 192.168.178.200`), which is the only one that needs no
+*rewrite* (`ats.iot.vendor-cloud.example -> 192.168.1.200`), which is the only one that needs no
 upstream and no DNS server of ours.
 
 Both listeners report what they actually bound: `/health` carries a `ports` block (`dns`,
@@ -615,8 +615,8 @@ so a missing 443 is visible instead of being guessed at.
 Verify from another machine:
 
 ```bash
-dig +short @192.168.178.200 ats.prod.eu-da.iot.versuni.com   # -> 192.168.178.200 (the proxy)
-dig +short @192.168.178.200 example.org                     # -> the real address (forwarded)
+dig +short @192.168.1.200 ats.iot.vendor-cloud.example   # -> 192.168.1.200 (the proxy)
+dig +short @192.168.1.200 example.org                     # -> the real address (forwarded)
 ```
 
 ---

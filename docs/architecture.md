@@ -401,7 +401,7 @@ cloud. Key features:
   - `MIN_TOTAL_REQUESTS` = 50 (minimum requests for reliable statistics).
 - **Forwarding loop prevention**: the `UpstreamResolver` resolves cloud names directly via
   public DNS (8.8.8.8 / 1.1.1.1, dual-stack IPv4+IPv6), bypassing local DNS
-  (dnsmasq/Pi-hole/AdGuard Home) to prevent the proxy from re-inserting itself. Resolution
+  (a local DNS server/a DNS filter/an external DNS filter Home) to prevent the proxy from re-inserting itself. Resolution
   results are cached with a TTL by the [`cachetools`](https://github.com/tkem/cachetools)
   `TTLCache` (in `core/upstream_resolver.py`).
 
@@ -608,9 +608,9 @@ start. This server is the piece that makes that possible without breaking anythi
 
 The proxy is not meant to replace the network's resolver, and the split is deliberate:
 
-- the **local resolver** (AdGuard Home, Pi-hole, dnsmasq) stays the DNS of the network and
-  decides **which devices** are sent here — a per-client upstream DNS (AdGuard Home,
-  Pi-hole) or a router/client rule;
+- the **local resolver** (an external DNS filter Home, a DNS filter, a local DNS server) stays the DNS of the network and
+  decides **which devices** are sent here — a per-client upstream DNS (an external DNS filter Home,
+  a DNS filter) or a router/client rule;
 - **this server** intercepts the names in `dns.intercept` for those clients, and forwards
   everything else.
 
@@ -621,7 +621,7 @@ by accident, and a device that is sent here keeps resolving everything else norm
 
 The same server also works with the device (or the router) pointed straight at it, for a
 deployment with no resolver of its own; and a resolver *rewrite*
-(`ats.prod.eu-da.iot.versuni.com -> proxy`) is the third shape, which needs no upstream and
+(`ats.iot.vendor-cloud.example -> proxy`) is the third shape, which needs no upstream and
 no DNS server of ours at all.
 
 `tests/test_dns_server.py` covers the pattern matching, the synthesised answers and a

@@ -22,9 +22,9 @@ import pytest
 from core.config import Config
 from core.dns_server import DNSInterceptor, _detect_lan_ip, get_dns_interceptor, set_dns_interceptor
 
-PROXY_IP = "192.168.178.200"
+PROXY_IP = "192.168.1.200"
 UPSTREAM_IP = "203.0.113.7"
-INTERCEPTED = "ats.prod.eu-da.iot.versuni.com"
+INTERCEPTED = "ats.iot.vendor-cloud.example"
 
 
 def _free_port() -> int:
@@ -90,7 +90,7 @@ def test_matches_exact_names_and_wildcards():
     assert interceptor.matches("example.test")  # the bare domain too
     assert interceptor.matches("deep.a.example.test")
 
-    assert not interceptor.matches("ntp.iot.versuni.com")  # real clock: never hijack
+    assert not interceptor.matches("ntp.iot.vendor-cloud.example")  # real clock: never hijack
     assert not interceptor.matches("example.test.evil.com")
     assert not interceptor.matches("notexample.test")
 

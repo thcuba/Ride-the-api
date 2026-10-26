@@ -254,7 +254,7 @@ async def handle_device_seen(client_ip: str, sni: str | None) -> None:
     """Register a device the moment it presents itself on a TLS port.
 
     Called by the TLS MITM before the handshake completes. A device that pins its vendor's
-    certificate (AWS IoT, for example) aborts the handshake, so every step that runs after a
+    certificate (a vendor cloud IoT broker, for example) aborts the handshake, so every step after a
     *successful* handshake never runs for it: such a device stayed invisible in the registry and
     on the dashboard even though the proxy saw each of its connection attempts. The address is the
     identity here, and the SNI is kept as evidence of what the device asked to talk to.

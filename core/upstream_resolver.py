@@ -2,7 +2,7 @@
 Dual-stack upstream DNS resolver.
 
 Resolves cloud hostnames directly via configurable upstream DNS servers,
-bypassing the local DNS (dnsmasq / Pi-hole / AdGuard Home).
+bypassing the local DNS (a local DNS server / a DNS filter / an external DNS filter Home).
 
 This prevents forwarding loops where the proxy re-enters itself when the
 local DNS server returns the proxy's own IP for a cloud hostname.

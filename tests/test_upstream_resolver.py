@@ -475,7 +475,7 @@ def test_apply_config_partial_updates():
 
 
 def test_upstream_dns_default_servers():
-    """The default DNS server lists match Google/Cloudflare."""
+    """The default DNS server lists match Google/a public resolver."""
     assert "8.8.8.8" in _last_dns_servers
     assert "1.1.1.1" in _last_dns_servers
     assert "2001:4860:4860::8888" in _last_dns_servers_v6

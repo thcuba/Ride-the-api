@@ -1,6 +1,7 @@
 """Identify a device that refuses our certificate, then forward it to its cloud.
 
-Two behaviours, both seen live on the Raspberry Pi with a Philips air purifier talking to AWS IoT:
+Two behaviours, both observed live with a consumer IoT device that talks to its vendor cloud and
+pins the vendor certificate, so it refuses the one we generate:
 
 A -- such a device pins its vendor's certificate and answers our ServerHello with a TLS alert (7
      bytes on the wire: ``bad certificate``). Registration used to happen only *after* a successful
@@ -27,9 +28,9 @@ import core.server as server_mod
 from core.database import DatabaseManager, DeviceRegistry
 from core.tls_mitm import TLSMITMServer
 
-CLIENT_IP = "192.168.178.77"  # the purifier, as seen on the Pi
-SNI = "ats.prod.eu-da.iot.versuni.com"  # the hostname it asks for, roughly once a minute
-EXPECTED_DEVICE_ID = "ip-192-168-178-77"
+CLIENT_IP = "192.168.1.77"  # the device, as seen on the proxy
+SNI = "ats.iot.vendor-cloud.example"  # the hostname it asks for, roughly once a minute
+EXPECTED_DEVICE_ID = "ip-192-168-1-77"
 
 
 @pytest.fixture
@@ -162,12 +163,12 @@ class TestDeviceSeenOnFirstContact:
     async def test_second_hostname_from_the_same_device_is_kept(self, db_manager, monkeypatch):
         monkeypatch.setattr(server_mod, "db_manager", db_manager)
         await server_mod.handle_device_seen(CLIENT_IP, SNI)
-        await server_mod.handle_device_seen(CLIENT_IP, "device-metrics.versuni.com")
+        await server_mod.handle_device_seen(CLIENT_IP, "metrics.vendor-cloud.example")
 
         device = await _device(db_manager, EXPECTED_DEVICE_ID)
         assert device.extra_attributes.get("seen_hostnames") == [
             SNI,
-            "device-metrics.versuni.com",
+            "metrics.vendor-cloud.example",
         ]
 
     @pytest.mark.asyncio
@@ -175,11 +176,11 @@ class TestDeviceSeenOnFirstContact:
         """A missing SNI means less evidence, not a failure."""
         monkeypatch.setattr(server_mod, "db_manager", db_manager)
 
-        await server_mod.handle_device_seen("192.168.178.90", None)
+        await server_mod.handle_device_seen("192.168.1.90", None)
 
-        device = await _device(db_manager, "ip-192-168-178-90")
+        device = await _device(db_manager, "ip-192-168-1-90")
         assert device is not None
-        assert device.ip_addresses == ["192.168.178.90"]
+        assert device.ip_addresses == ["192.168.1.90"]
         assert not (device.extra_attributes or {}).get("seen_hostnames")
 
 
@@ -272,7 +273,7 @@ class TestRelayDoesNotStopTheCommunication:
             reader.feed_data(client_hello)
             reader.feed_eof()  # the device sends nothing else in this test
             # the device reached the upstream's port: that is where the relay must connect
-            writer = _FakeWriter((CLIENT_IP, 52431), local=("192.168.178.200", up_port))
+            writer = _FakeWriter((CLIENT_IP, 52431), local=("192.168.1.200", up_port))
 
             await asyncio.wait_for(server._handle_connection(reader, writer), timeout=10)
         finally:

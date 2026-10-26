@@ -29,7 +29,7 @@ That test states its own limits: the pattern *extraction* step is fed a canned a
 of calling a real model, so model quality is not measured. Capture, correlation, persistence,
 matching and serving are production code, and the network exchange is real.
 
-**Verified live on hardware** — on a Raspberry Pi 4, deployed from source, with a **real public
+**Verified live on hardware** — on a a proxy host 4, deployed from source, with a **real public
 vendor** reached over the internet: a vendor `429` arrives as `429`; a non-JSON body keeps its
 `content-type` and its bytes; the vendor receives the device's own bytes unchanged; control-plane
 errors carry no internals; and an unreachable vendor fails loudly (`502`) instead of claiming
@@ -77,7 +77,7 @@ the **latest** release by default and rerunning them upgrades **in place,
 preserving `config/`, `data/`, `certs/` and `logs/`**):
 
 ```bash
-# Linux (x64) or Raspberry Pi (arm64) / macOS (arm64)
+# Linux (x64) or a proxy host (arm64) / macOS (arm64)
 curl -sSL https://raw.githubusercontent.com/thcuba/Ride-the-api/main/deploy/rideapi -o rideapi
 bash rideapi                    # → ~/ride-the-api
 bash rideapi --systemd          # optional: run as a user service
