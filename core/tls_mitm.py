@@ -1067,7 +1067,7 @@ class TLSMITMServer:
                     body_bytes=req.body or None,
                 ),
                 hostname=hostname,
-                port=443,
+                port=req.dst_port or 443,
                 use_tls=True,
             )
         except Exception:  # noqa: BLE001 - a forward failure must not kill the session
