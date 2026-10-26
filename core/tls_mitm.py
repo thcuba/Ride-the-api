@@ -54,6 +54,7 @@ _VALID_HTTP_STATUSES = {s.value for s in HTTPStatus}
 # compromised device from exhausting memory via an unbounded request body.
 MAX_REQUEST_SIZE = 10 * 1024 * 1024  # 10 MiB
 MAX_CLIENT_HELLO_SIZE = 64 * 1024
+MAX_ENCRYPTED_REQUEST_SIZE = 2 * MAX_REQUEST_SIZE
 
 
 def parse_decrypted_http_request(data: bytes) -> tuple[str, str, str, dict[str, str], bytes] | None:
@@ -965,16 +966,16 @@ class TLSMITMServer:
         body = bytearray()
         got_end = False
         total_bytes = 0
-        read_attempts = 0
-        max_read_attempts = 50
+        total_encrypted_bytes = 0
 
-        while read_attempts < max_read_attempts:
-            read_attempts += 1
+        while True:
             chunk = None
 
             # Try to read decrypted data from the SSL object
             try:
                 chunk = ssl_obj.read(4096)
+                if chunk == b"":
+                    break
                 if chunk:
                     total_bytes += len(chunk)
                     if total_bytes > MAX_REQUEST_SIZE:
@@ -992,6 +993,14 @@ class TLSMITMServer:
                     logger.warning("TLS MITM: timeout reading from %s", client_ip)
                     break
                 if not more:
+                    break
+                total_encrypted_bytes += len(more)
+                if total_encrypted_bytes > MAX_ENCRYPTED_REQUEST_SIZE:
+                    logger.warning(
+                        "TLS MITM: encrypted request from %s exceeds %d bytes - dropping",
+                        client_ip,
+                        MAX_ENCRYPTED_REQUEST_SIZE,
+                    )
                     break
                 incoming.write(more)
                 continue
