@@ -557,6 +557,17 @@ async def handle_tls_upstream_response(handler_result: dict, response: dict) -> 
     )
 
 
+async def handle_tls_upstream_failure(handler_result: dict) -> bool:
+    """Remove a queued learning request when its TLS upstream exchange fails."""
+    global orchestrator  # noqa: PLW0602
+
+    correlation_key = handler_result.get("correlation_key")
+    context = handler_result.get("_learning_context")
+    if not orchestrator or not context or not correlation_key:
+        return False
+    return await orchestrator.discard_request(context["device_id"], correlation_key)
+
+
 # ── Application Lifespan ───────────────────────────────────────────────────────
 
 
@@ -726,6 +737,7 @@ async def lifespan(_app: FastAPI):  # noqa: C901, PLR0912, PLR0915
             )
             tls_mitm_server.request_handler = handle_tls_decrypted_request
             tls_mitm_server.response_handler = handle_tls_upstream_response
+            tls_mitm_server.request_failure_handler = handle_tls_upstream_failure
             tls_mitm_server.on_device_seen = handle_device_seen
             tls_mitm_server.should_relay_tls = should_relay_tls
             tls_mitm_server.on_handshake_refused = mark_device_untrusted
