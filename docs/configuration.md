@@ -695,7 +695,7 @@ TLS decryption (MITM) to intercept encrypted traffic.
 | `ca_key_path` | `string` | `"./certs/ca.key"` | Path to the CA private key |
 | `device_certs_dir` | `string` | `"./data/device_certs"` | Directory for per-device generated certificates |
 | `external_certs_dir` | `string` | `"./data/external_certs"` | Directory for imported external certificates |
-| `pinning_bypass` | `dict[string, PinningBypassConfig]` | `{}` | Certificate pinning bypass strategies per vendor (key = vendor name) |
+| `pinning_bypass` | `dict[string, PinningBypassConfig]` | `{}` | Per-vendor operator guidance only; Ride-the-API does not apply a client-side pinning bypass. A client that rejects the proxy certificate is relayed as encrypted TLS and contributes no HTTP pair to the LLM buffer. |
 | `min_tls_version` | `string` | `"TLSv1.2"` | Minimum accepted TLS version |
 | `max_tls_version` | `string` | `"TLSv1.3"` | Maximum accepted TLS version |
 
@@ -703,7 +703,13 @@ TLS decryption (MITM) to intercept encrypted traffic.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `strategy` | `string` | `"mitm_proxy"` | Bypass strategy: `mitm_proxy` (standard MITM proxy), `frida` (Frida hook), `disable_pin_check` (disable verification) |
+| `strategy` | `string` | `"mitm_proxy"` | Manual handling note: `mitm_proxy` requires the device to trust the Ride-the-API CA; `frida` requires the operator to run the script on the device; `disable_pin_check` requires a device-side change. Saving a value does not change TLS behavior. |
+
+A TLS client that rejects the generated certificate is automatically relayed without
+decryption so its cloud connection can continue. In that state the proxy cannot parse
+HTTP, correlate request/response pairs, or buffer them for the LLM. Install and trust
+the Ride-the-API CA on the device, or manually instrument a supported app with the
+script at `/api/tls/frida/script.js`; the server does not run Frida or alter the app.
 
 Example:
 
