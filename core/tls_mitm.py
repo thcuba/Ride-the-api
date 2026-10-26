@@ -308,6 +308,8 @@ class TLSMITMServer:
         self.request_handler = request_handler
         # Called as soon as a client identifies itself (IP + SNI), before the handshake.
         self.on_device_seen: Callable[[str, str | None], Coroutine] | None = None
+        # Called after a decrypted request has been forwarded and its upstream response arrives.
+        self.response_handler: Callable[[dict, dict], Coroutine] | None = None
         # Asked before the handshake: should this connection be forwarded untouched rather than
         # decrypted? True for devices known to refuse the certificate we would generate.
         self.should_relay_tls: Callable[[str, str | None], Coroutine] | None = None
@@ -619,6 +621,17 @@ class TLSMITMServer:
                         forwarded = await self._forward_upstream(
                             decrypted_req, hostname, device_id_from_ip("tls", client_ip)
                         )
+                        if forwarded is not None and self.response_handler:
+                            try:
+                                await self.response_handler(handler_result, forwarded)
+                            except Exception:
+                                # Learning must not prevent replaying the real vendor response.
+                                logger.warning(
+                                    "TLS: could not record upstream response for %s %s",
+                                    decrypted_req.method,
+                                    decrypted_req.path,
+                                    exc_info=True,
+                                )
                         response = (
                             forwarded
                             if forwarded is not None

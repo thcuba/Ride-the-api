@@ -486,8 +486,8 @@ class TestContextBuffer:
         await db_manager.get_or_create_device("test_device_001", "example", "ac", "Test AC")
         buffer = ContextBuffer(db_manager, max_size_bytes=1048576)  # 1MB buffer
 
-        needs_flush = await buffer.add_pair("test_device_001", sample_correlated_pair)
-        assert needs_flush is False  # 1MB buffer shouldn't fill from one pair
+        current_size = await buffer.add_pair("test_device_001", sample_correlated_pair)
+        assert current_size < buffer.max_size_bytes  # noqa: PLR2004
 
         size = await buffer.get_current_size("test_device_001")
         assert size > 0
@@ -497,8 +497,8 @@ class TestContextBuffer:
         await db_manager.get_or_create_device("test_device_001", "example", "ac", "Test AC")
         buffer = ContextBuffer(db_manager, max_size_bytes=1)  # Tiny buffer forces flush
 
-        needs_flush = await buffer.add_pair("test_device_001", sample_correlated_pair)
-        assert needs_flush is True
+        current_size = await buffer.add_pair("test_device_001", sample_correlated_pair)
+        assert current_size >= buffer.max_size_bytes
 
         count = await buffer.flush("test_device_001")
         assert count > 0

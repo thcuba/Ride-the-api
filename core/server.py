@@ -425,10 +425,11 @@ async def handle_tls_decrypted_request(req: DecryptedRequest) -> dict | None:
 
     try:
         # Create or find device by IP
-        device = await db_manager.get_or_create_device(
+        await db_manager.get_or_create_device(
             device_id=device_id,
             vendor="unknown",
         )
+        device = await db_manager.get_device(device_id)
 
         # Apply any per-IP override: custom database + connection type (default auto)
         await db_manager.apply_ip_profile(device_id, req.client_ip)
@@ -508,6 +509,19 @@ async def handle_tls_decrypted_request(req: DecryptedRequest) -> dict | None:
             query_params=intercepted.query_params or {},
         )
 
+        # The TLS server performs its own upstream exchange after this handler
+        # returns. Carry the correlation identity with that pending forward so
+        # the actual upstream response can complete the request/response pair.
+        if result.get("action") == "forward" and result.get("correlation_key"):
+            result = {
+                **result,
+                "_learning_context": {
+                    "device_id": intercepted.device_id or device_id,
+                    "vendor": device_vendor,
+                    "protocol": resolved_protocol,
+                },
+            }
+
         if result["action"] == "local_response":
             logger.debug("TLS: local response for %s %s", req.method, req.path)
         else:
@@ -518,6 +532,29 @@ async def handle_tls_decrypted_request(req: DecryptedRequest) -> dict | None:
     except Exception as e:
         logger.error("TLS handler: error processing %s: %s", req.client_ip, e, exc_info=True)
         return None
+
+
+async def handle_tls_upstream_response(handler_result: dict, response: dict) -> dict | None:
+    """Correlate a TLS MITM upstream response with its captured request.
+
+    The TLS listener owns both sides of the terminated connection, so unlike
+    the HTTP proxy path it cannot rely on nginx to deliver the upstream
+    response to :meth:`LearningOrchestrator.handle_response`.
+    """
+    global orchestrator  # noqa: PLW0602
+
+    context = handler_result.get("_learning_context")
+    if not orchestrator or not context or not handler_result.get("correlation_key"):
+        return None
+
+    return await orchestrator.handle_response(
+        device_id=context["device_id"],
+        vendor=context["vendor"],
+        protocol=context["protocol"],
+        status_code=response.get("status_code", 200),
+        headers=response.get("headers") or {},
+        body=normalize_request_body(response.get("body")),
+    )
 
 
 # ── Application Lifespan ───────────────────────────────────────────────────────
@@ -688,6 +725,7 @@ async def lifespan(_app: FastAPI):  # noqa: C901, PLR0912, PLR0915
                 listen_ports=config.tls_decrypt.listen_ports,
             )
             tls_mitm_server.request_handler = handle_tls_decrypted_request
+            tls_mitm_server.response_handler = handle_tls_upstream_response
             tls_mitm_server.on_device_seen = handle_device_seen
             tls_mitm_server.should_relay_tls = should_relay_tls
             tls_mitm_server.on_handshake_refused = mark_device_untrusted

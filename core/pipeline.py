@@ -176,8 +176,8 @@ class ContextBuffer:
         self.max_size_bytes = max_size_bytes
         self.store: BufferStore = store or create_buffer_store(db_manager)
 
-    async def add_pair(self, device_id: str, pair: CorrelatedPair) -> bool:
-        """Add a correlated pair to the buffer. Returns True if buffer is full and needs flush."""
+    async def add_pair(self, device_id: str, pair: CorrelatedPair) -> int:
+        """Add a pair and return the device's current buffered byte size."""
         pair_json = {
             "pair_id": pair.pair_id,
             "protocol": pair.protocol,
@@ -204,8 +204,7 @@ class ContextBuffer:
         serialized = json.dumps(pair_json)
         estimated_size = len(serialized)
 
-        size = await self.store.add_pair(device_id, pair_json, estimated_size)
-        return size >= self.max_size_bytes
+        return await self.store.add_pair(device_id, pair_json, estimated_size)
 
     async def get_buffer_pairs(self, device_id: str) -> list[dict]:
         """Get all unflushed buffer entries for a device."""

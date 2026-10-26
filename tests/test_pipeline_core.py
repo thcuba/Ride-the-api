@@ -110,8 +110,8 @@ class TestContextBuffer:
     async def test_add_pair_not_full(self, db_manager):
         buffer = ContextBuffer(db_manager, max_size_bytes=1048576)
         pair = make_pair()
-        is_full = await buffer.add_pair("device-001", pair)
-        assert is_full is False
+        current_size = await buffer.add_pair("device-001", pair)
+        assert current_size < buffer.max_size_bytes
         size = await buffer.get_current_size("device-001")
         assert size > 0
 
@@ -148,8 +148,8 @@ class TestContextBuffer:
     async def test_buffer_becomes_full(self, db_manager):
         buffer = ContextBuffer(db_manager, max_size_bytes=100)
         pair = make_pair(request_body="x" * 5000)
-        is_full = await buffer.add_pair("device-001", pair)
-        assert is_full is True
+        current_size = await buffer.add_pair("device-001", pair)
+        assert current_size >= buffer.max_size_bytes
 
     @pytest.mark.asyncio
     async def test_get_current_size_zero_on_new_device(self, db_manager):
