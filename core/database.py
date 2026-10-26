@@ -432,6 +432,35 @@ class InterceptedRequest(Base):
     action: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
+class RelayedConnection(Base):
+    """A connection forwarded to the vendor cloud without terminating TLS.
+
+    Some devices pin their vendor's certificate and will never accept one we generate, so their
+    traffic is relayed verbatim and nothing of the payload is readable. The contact itself is still
+    worth keeping: which device, which host it asked for, how much was exchanged in each direction
+    and how long it lasted. That is the only trace such a device leaves, and the raw material from
+    which its behaviour can be understood over time.
+    """
+
+    __tablename__ = "relayed_connections"
+    __table_args__ = (Index("ix_relayed_device_ts", "device_id", "started_at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    device_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    client_ip: Mapped[str] = mapped_column(String(64), nullable=False)
+    server_name: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    destination_port: Mapped[int] = mapped_column(Integer, nullable=False)
+    upstream_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    bytes_to_cloud: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    bytes_to_device: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    duration_ms: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # relayed | no_server_name | unresolvable | unreachable
+    outcome: Mapped[str] = mapped_column(String(32), nullable=False)
+    started_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+
 class DeviceState(Base):
     """Persisted snapshot of a device's simulated state (single row per device).
 
@@ -562,6 +591,20 @@ class DatabaseManager:
         device routes.
         """
         self._ip_lookup_cache = None
+
+    async def count_relayed_connections(self) -> dict[str, int]:
+        """Count relayed connections per device_id, in a single grouped query.
+
+        Used by the device list. Fetching the count per device would be one query each; a grouped
+        count keeps it at one regardless of how many devices exist.
+        """
+        async with await self.get_core_session() as session:
+            result = await session.execute(
+                select(RelayedConnection.device_id, func.count(RelayedConnection.id)).group_by(
+                    RelayedConnection.device_id
+                )
+            )
+            return {device_id: total for device_id, total in result.all()}
 
     async def resolve_device_id(self, ip_address: str) -> str | None:
         """Resolve device_id from an IP address (reverse lookup).
@@ -914,6 +957,7 @@ class DatabaseManager:
 
     async def list_devices(self) -> list[dict]:
         """List all registered devices."""
+        relayed = await self.count_relayed_connections()
         async with await self.get_core_session() as session:
             result = await session.execute(
                 select(DeviceRegistry).order_by(DeviceRegistry.created_at.desc())
@@ -938,6 +982,9 @@ class DatabaseManager:
                     "llm_profile_name": d.llm_profile_name,
                     "llm_context_notes": d.llm_context_notes,
                     "auto_switch_enabled": d.auto_switch_enabled,
+                    # Connections forwarded without decryption. For a device that pins its
+                    # certificate this is the only visible sign that it is alive and talking.
+                    "relayed_connections": relayed.get(d.device_id, 0),
                 }
                 for d in result.scalars().all()
             ]

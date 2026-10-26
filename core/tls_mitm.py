@@ -18,6 +18,7 @@ import os
 import ssl
 import struct
 import tempfile
+import time
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -156,10 +157,15 @@ class DevicePortInfo:
 # ── SNI Extraction from TLS ClientHello ────────────────────────────────────
 
 
-async def _pipe_stream(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+async def _pipe_stream(
+    reader: asyncio.StreamReader,
+    writer: asyncio.StreamWriter,
+    counter: dict[str, int] | None = None,
+) -> None:
     """Copy one stream to the other verbatim, until either side closes.
 
-    Used only by the relay path, where nothing is decrypted and nothing is inspected.
+    Used only by the relay path, where nothing is decrypted and nothing is inspected. ``counter``
+    accumulates the bytes moved: with the payload unreadable, volume is one of the few facts left.
     """
     try:
         while True:
@@ -168,6 +174,8 @@ async def _pipe_stream(reader: asyncio.StreamReader, writer: asyncio.StreamWrite
                 break
             writer.write(chunk)
             await writer.drain()
+            if counter is not None:
+                counter["bytes"] = counter.get("bytes", 0) + len(chunk)
     except (OSError, TimeoutError):
         return
     finally:
@@ -307,6 +315,8 @@ class TLSMITMServer:
         self.on_handshake_refused: Callable[[str, str | None], Coroutine] | None = None
         # Resolves a hostname to its real address, bypassing our own DNS interception.
         self.resolve_upstream: Callable[[str], Coroutine] | None = None
+        # Called with one dict per relayed connection, once it ends (or fails to start).
+        self.on_relayed: Callable[[dict], Coroutine] | None = None
 
         # Running servers
         self._servers: list[asyncio.AbstractServer] = []
@@ -717,6 +727,23 @@ class TLSMITMServer:
             logger.exception("TLS MITM: failed to create SSL context")
             return None, None
 
+    async def _report_relayed(self, contact: dict) -> None:
+        """Hand one relayed contact to the recorder, best effort.
+
+        Recording must never affect the forwarding itself: a failure here is logged and the
+        connection carries on, because staying connected matters more than being counted.
+        """
+        if self.on_relayed is None:
+            return
+        try:
+            await self.on_relayed(contact)
+        except Exception:
+            logger.warning(
+                "TLS relay: could not record the contact for %s",
+                contact.get("client_ip"),
+                exc_info=True,
+            )
+
     async def _relay_to_upstream(  # noqa: PLR0913, PLR0917 — streams, hello, sni, peer, port
         self,
         reader: asyncio.StreamReader,
@@ -734,8 +761,11 @@ class TLSMITMServer:
         keeps talking to its cloud, nothing is decrypted, and its identity is already in the
         registry.
         """
+        base = {"client_ip": client_ip, "server_name": sni, "destination_port": dst_port}
+
         if self.resolve_upstream is None:
             logger.warning("TLS relay: no upstream resolver wired, dropping %s", client_ip)
+            await self._report_relayed({**base, "outcome": "no_resolver"})
             writer.close()
             return
 
@@ -747,6 +777,7 @@ class TLSMITMServer:
 
         if not upstream_ip:
             logger.warning("TLS relay: %s does not resolve, dropping %s", sni, client_ip)
+            await self._report_relayed({**base, "outcome": "unresolvable"})
             writer.close()
             return
 
@@ -756,6 +787,9 @@ class TLSMITMServer:
             )
         except (OSError, TimeoutError) as exc:
             logger.warning("TLS relay: cannot reach %s:%s (%s)", upstream_ip, dst_port, exc)
+            await self._report_relayed(
+                {**base, "upstream_ip": upstream_ip, "outcome": "unreachable"}
+            )
             writer.close()
             return
 
@@ -766,18 +800,32 @@ class TLSMITMServer:
             upstream_ip,
             dst_port,
         )
+        to_cloud: dict[str, int] = {}
+        to_device: dict[str, int] = {}
+        started = time.monotonic()
         up_writer.write(client_hello)
+        to_cloud["bytes"] = len(client_hello)
         try:
             await up_writer.drain()
             await asyncio.gather(
-                _pipe_stream(reader, up_writer),
-                _pipe_stream(up_reader, writer),
+                _pipe_stream(reader, up_writer, to_cloud),
+                _pipe_stream(up_reader, writer, to_device),
                 return_exceptions=True,
             )
         finally:
             for stream in (up_writer, writer):
                 with suppress(Exception):
                     stream.close()
+            await self._report_relayed(
+                {
+                    **base,
+                    "upstream_ip": upstream_ip,
+                    "bytes_to_cloud": to_cloud.get("bytes", 0),
+                    "bytes_to_device": to_device.get("bytes", 0),
+                    "duration_ms": int((time.monotonic() - started) * 1000),
+                    "outcome": "relayed",
+                }
+            )
 
     async def _pump_tls_handshake(
         self,

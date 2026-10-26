@@ -31,6 +31,11 @@ from core.tls_mitm import TLSMITMServer
 CLIENT_IP = "192.168.1.77"  # the device, as seen on the proxy
 SNI = "ats.iot.vendor-cloud.example"  # the hostname it asks for, roughly once a minute
 EXPECTED_DEVICE_ID = "ip-192-168-1-77"
+BYTES_TO_CLOUD = 1234  # what the device sent, standing in for a real payload
+BYTES_TO_DEVICE = 5678  # what the cloud answered
+DURATION_MS = 910
+RELAYED_COUNT = 3  # how many contacts the retry loop produces
+REPEATED_CONTACTS = 2
 
 
 @pytest.fixture
@@ -319,3 +324,154 @@ class TestRelayDoesNotStopTheCommunication:
         await asyncio.wait_for(server._handle_connection(reader, writer), timeout=10)
 
         assert writer.closed, "senza risoluzione la connessione va chiusa, non lasciata appesa"
+
+
+class TestRelayedContactsAreRecorded:
+    """B leaves a trace: nothing readable, but the contact itself is measured and kept.
+
+    A relayed device used to leave no trace anywhere -- carried by the proxy and invisible in it at
+    the same time. These tests pin down what is recorded and that the relay reports it.
+    """
+
+    @pytest.mark.asyncio
+    async def test_records_a_contact_with_its_measured_facts(self, db_manager, monkeypatch):
+        monkeypatch.setattr(server_mod, "db_manager", db_manager)
+
+        await server_mod.record_relayed_connection(
+            {
+                "client_ip": CLIENT_IP,
+                "server_name": SNI,
+                "destination_port": 443,
+                "upstream_ip": "203.0.113.10",
+                "bytes_to_cloud": BYTES_TO_CLOUD,
+                "bytes_to_device": BYTES_TO_DEVICE,
+                "duration_ms": DURATION_MS,
+                "outcome": "relayed",
+            }
+        )
+
+        async with db_manager.core_session() as session:
+            rows = (await session.execute(select(server_mod.RelayedConnection))).scalars().all()
+        assert len(rows) == 1
+        row = rows[0]
+        assert row.device_id == EXPECTED_DEVICE_ID, "il contatto va attribuito al device"
+        assert row.server_name == SNI
+        assert (row.bytes_to_cloud, row.bytes_to_device) == (BYTES_TO_CLOUD, BYTES_TO_DEVICE)
+        assert row.duration_ms == DURATION_MS
+        assert row.outcome == "relayed"
+
+    @pytest.mark.asyncio
+    async def test_an_unknown_address_still_gets_a_device(self, db_manager, monkeypatch):
+        """Recording must not depend on the device being registered first."""
+        monkeypatch.setattr(server_mod, "db_manager", db_manager)
+
+        await server_mod.record_relayed_connection(
+            {"client_ip": "192.168.1.90", "server_name": SNI}
+        )
+
+        assert await _device(db_manager, "ip-192-168-1-90") is not None
+
+    @pytest.mark.asyncio
+    async def test_failed_attempts_are_recorded_too(self, db_manager, monkeypatch):
+        """A connection that never reached the cloud is evidence as well: it tells you it tried."""
+        monkeypatch.setattr(server_mod, "db_manager", db_manager)
+
+        await server_mod.record_relayed_connection(
+            {"client_ip": CLIENT_IP, "server_name": SNI, "outcome": "unreachable"}
+        )
+
+        async with db_manager.core_session() as session:
+            rows = (await session.execute(select(server_mod.RelayedConnection))).scalars().all()
+        assert [r.outcome for r in rows] == ["unreachable"]
+
+    @pytest.mark.asyncio
+    async def test_device_list_exposes_the_count(self, db_manager, monkeypatch):
+        """The dashboard reads the count from the device list, so it must be there."""
+        monkeypatch.setattr(server_mod, "db_manager", db_manager)
+        for _ in range(RELAYED_COUNT):
+            await server_mod.record_relayed_connection({"client_ip": CLIENT_IP, "server_name": SNI})
+
+        listed = [
+            d for d in await db_manager.list_devices() if d["device_id"] == EXPECTED_DEVICE_ID
+        ]
+
+        assert listed, "il device deve comparire nella lista"
+        assert listed[0]["relayed_connections"] == RELAYED_COUNT
+
+    @pytest.mark.asyncio
+    async def test_counting_is_grouped_per_device(self, db_manager, monkeypatch):
+        monkeypatch.setattr(server_mod, "db_manager", db_manager)
+        await server_mod.record_relayed_connection({"client_ip": CLIENT_IP})
+        await server_mod.record_relayed_connection({"client_ip": CLIENT_IP})
+        await server_mod.record_relayed_connection({"client_ip": "192.168.1.90"})
+
+        counts = await db_manager.count_relayed_connections()
+
+        assert counts[EXPECTED_DEVICE_ID] == REPEATED_CONTACTS
+        assert counts["ip-192-168-1-90"] == 1
+
+    @pytest.mark.asyncio
+    async def test_the_relay_reports_what_it_moved(self):
+        """The numbers that end up in the record are the ones actually moved."""
+        client_hello = _real_client_hello(SNI)
+        reported: list[dict] = []
+
+        async def handle_upstream(up_reader, up_writer):
+            await up_reader.read(4096)
+            up_writer.write(b"REAL-SERVER-HELLO")
+            await up_writer.drain()
+            up_writer.close()
+
+        upstream = await asyncio.start_server(handle_upstream, "127.0.0.1", 0)
+        up_port = upstream.sockets[0].getsockname()[1]
+
+        async def on_relayed(contact):
+            reported.append(contact)
+
+        try:
+            server = _mitm(
+                on_device_seen=AsyncMock(),
+                should_relay_tls=AsyncMock(return_value=True),
+                resolve_upstream=AsyncMock(return_value="127.0.0.1"),
+            )
+            server.on_relayed = on_relayed
+            reader = asyncio.StreamReader()
+            reader.feed_data(client_hello)
+            reader.feed_eof()
+            writer = _FakeWriter((CLIENT_IP, 52431), local=("192.168.1.200", up_port))
+
+            await asyncio.wait_for(server._handle_connection(reader, writer), timeout=10)
+        finally:
+            upstream.close()
+
+        assert len(reported) == 1, "un contatto inoltrato deve essere segnalato una volta"
+        contact = reported[0]
+        assert contact["outcome"] == "relayed"
+        assert contact["client_ip"] == CLIENT_IP
+        assert contact["server_name"] == SNI
+        assert contact["bytes_to_cloud"] >= len(client_hello), "il ClientHello e' stato inoltrato"
+        assert contact["bytes_to_device"] >= len(b"REAL-SERVER-HELLO")
+        assert contact["duration_ms"] >= 0
+
+    @pytest.mark.asyncio
+    async def test_a_hopeless_attempt_is_reported_with_its_reason(self):
+        """Nothing to connect to: the reason is recorded instead of an empty contact."""
+        reported: list[dict] = []
+
+        async def on_relayed(contact):
+            reported.append(contact)
+
+        server = _mitm(
+            on_device_seen=AsyncMock(),
+            should_relay_tls=AsyncMock(return_value=True),
+            resolve_upstream=AsyncMock(return_value=None),
+        )
+        server.on_relayed = on_relayed
+        reader = asyncio.StreamReader()
+        reader.feed_data(_real_client_hello(SNI))
+        reader.feed_eof()
+        writer = _FakeWriter((CLIENT_IP, 52431))
+
+        await asyncio.wait_for(server._handle_connection(reader, writer), timeout=10)
+
+        assert [c["outcome"] for c in reported] == ["unresolvable"]

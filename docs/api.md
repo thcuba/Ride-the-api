@@ -851,6 +851,47 @@ MITM server status and certificate statistics.
 
 ---
 
+### Relayed Connections: `GET /api/tls/relayed`
+
+Connections forwarded to the vendor cloud **without terminating TLS**, newest first. These come from
+devices that pin their vendor's certificate: they refuse any certificate the proxy generates, so
+their payload is never decrypted and cannot be read. The contact itself is still recorded, and for
+such a device it is the only evidence of activity.
+
+Query parameters:
+
+| parameter | default | description |
+| --- | --- | --- |
+| `limit` | 50 | how many entries to return (1-500) |
+
+```json
+{
+  "relayed": [
+    {
+      "device_id": "ip-192.168.1.50",
+      "client_ip": "192.168.1.50",
+      "server_name": "ats.iot.vendor-cloud.example",
+      "destination_port": 443,
+      "upstream_ip": "203.0.113.10",
+      "bytes_to_cloud": 444,
+      "bytes_to_device": 3981,
+      "duration_ms": 62,
+      "outcome": "relayed",
+      "started_at": "2026-01-01T12:00:00+00:00"
+    }
+  ],
+  "total": 1
+}
+```
+
+`outcome` is one of `relayed` (the two ends were connected and bytes moved both ways),
+`no_resolver` (nothing wired to resolve hostnames), `unresolvable` (the name did not resolve),
+`unreachable` (resolved but the connection could not be established). Failed attempts are recorded
+too: an attempt that never got through is still an attempt, and it dates the device.
+
+The count per device is also exposed by `GET /api/devices` as `relayed_connections`, which is what
+the dashboard shows on each device card.
+
 ### TLS Devices: `GET /api/tls/device-ports`
 
 IP → device mapping for all active TLS connections.
