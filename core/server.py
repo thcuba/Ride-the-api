@@ -25,7 +25,7 @@ from fastapi import FastAPI, File, Form, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 
 from adapters import get_registered_registry
 from adapters.base import (
@@ -51,6 +51,7 @@ from core.database import (
     DatabaseManager,
     DeviceRegistry,
     FieldMapping,
+    RelayedConnection,
     RequestPattern,
     ResponseTemplate,
     init_db_manager,
@@ -346,6 +347,37 @@ async def mark_device_untrusted(client_ip: str, sni: str | None) -> None:
         "TLS: %s refused our certificate; from now on it is forwarded to its cloud undecrypted",
         client_ip,
     )
+
+
+async def record_relayed_connection(contact: dict) -> None:
+    """Persist one connection that was forwarded without decryption.
+
+    The payload of such a connection is unreadable by construction, but the contact is real evidence
+    that the device is alive and whom it talks to: which host, how much each way, how long, and
+    whether the attempt even succeeded. For a device we cannot see inside, this is its record.
+    """
+    if not db_manager:
+        return
+    client_ip = contact.get("client_ip") or ""
+    device_id = await db_manager.resolve_device_id(client_ip)
+    if not device_id:
+        device_id = device_id_from_ip("ip", client_ip)
+        await db_manager.get_or_create_device(device_id, "unknown")
+    async with db_manager.core_session() as session:
+        session.add(
+            RelayedConnection(
+                device_id=device_id,
+                client_ip=client_ip,
+                server_name=contact.get("server_name"),
+                destination_port=int(contact.get("destination_port") or 0),
+                upstream_ip=contact.get("upstream_ip"),
+                bytes_to_cloud=int(contact.get("bytes_to_cloud") or 0),
+                bytes_to_device=int(contact.get("bytes_to_device") or 0),
+                duration_ms=int(contact.get("duration_ms") or 0),
+                outcome=contact.get("outcome") or "relayed",
+            )
+        )
+        await session.commit()
 
 
 async def resolve_upstream(host: str) -> str | None:
@@ -660,6 +692,7 @@ async def lifespan(_app: FastAPI):  # noqa: C901, PLR0912, PLR0915
             tls_mitm_server.should_relay_tls = should_relay_tls
             tls_mitm_server.on_handshake_refused = mark_device_untrusted
             tls_mitm_server.resolve_upstream = resolve_upstream
+            tls_mitm_server.on_relayed = record_relayed_connection
             await tls_mitm_server.start()
             logger.info("TLS MITM server listening on ports %s", config.tls_decrypt.listen_ports)
         except Exception:
@@ -997,6 +1030,41 @@ async def tls_stats():
             for dp in tls_mitm_server.device_ports.values()
         ]
     return stats
+
+
+@app.get("/api/tls/relayed")
+async def tls_relayed(limit: int = 50):
+    """List connections forwarded without decryption, newest first.
+
+    A device that pins its vendor's certificate never completes a handshake with us, so nothing of
+    its payload can be read. Its contacts can still be listed -- who, which host, how many bytes in
+    each direction, how long, and whether the attempt succeeded. This is the visible trace of a
+    device the proxy carries but cannot see inside.
+    """
+    if not db_manager:
+        return {"relayed": [], "total": 0}
+    limit = max(1, min(int(limit), 500))
+    async with db_manager.core_session() as session:
+        total = (await session.execute(select(func.count(RelayedConnection.id)))).scalar_one()
+        result = await session.execute(
+            select(RelayedConnection).order_by(RelayedConnection.started_at.desc()).limit(limit)
+        )
+        rows = [
+            {
+                "device_id": row.device_id,
+                "client_ip": row.client_ip,
+                "server_name": row.server_name,
+                "destination_port": row.destination_port,
+                "upstream_ip": row.upstream_ip,
+                "bytes_to_cloud": row.bytes_to_cloud,
+                "bytes_to_device": row.bytes_to_device,
+                "duration_ms": row.duration_ms,
+                "outcome": row.outcome,
+                "started_at": row.started_at.isoformat() if row.started_at else None,
+            }
+            for row in result.scalars().all()
+        ]
+    return {"relayed": rows, "total": total}
 
 
 @app.get("/api/tls/device-ports")
