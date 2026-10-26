@@ -90,7 +90,7 @@ USER rideapi
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:8911/health || exit 1
 
-# Expose ports: 8911 proxy, 8080 health/metrics, 9090 optional metrics
+# Expose ports: 8911 proxy/API/health, 8080 optional h2c, 9090 optional metrics
 EXPOSE 8911 8080 9090
 
 # Entry point
