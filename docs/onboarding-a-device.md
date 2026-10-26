@@ -5,8 +5,8 @@ request/response pair. Every step below has a check you can run, because the fai
 chain are quiet: a listener that never came up, a device that never asked, a model that answers
 with prose instead of JSON.
 
-Worked example: a **Philips Air Purifier 800** (`192.168.178.77`) that talks to
-`ats.prod.eu-da.iot.versuni.com` (AWS IoT, MQTT over WSS on **443**). The measured results of
+Worked example: a **a consumer IoT device** (`192.168.1.77`) that talks to
+`ats.iot.vendor-cloud.example` (a vendor cloud IoT broker, MQTT over WSS on **443**). The measured results of
 that run are at the bottom.
 
 ## 0. What has to be true before starting
@@ -41,7 +41,7 @@ curl -s http://127.0.0.1:8911/health | jq .ports
 
 Two distinct roles, deliberately:
 
-- the **network's resolver** (AdGuard Home, Pi-hole, dnsmasq) decides *which device* is sent
+- the **network's resolver** (an external DNS filter Home, a DNS filter, a local DNS server) decides *which device* is sent
   here — a per-client upstream DNS, reversible by deleting that entry;
 - **this proxy** intercepts the names in `dns.intercept` for that client and forwards
   everything else untouched.
@@ -51,9 +51,9 @@ dns:
   enabled: true
   listen_host: 0.0.0.0
   listen_port: 53
-  answer_ip: 192.168.178.200          # what intercepted names resolve to
+  answer_ip: 192.168.1.200          # what intercepted names resolve to
   intercept:
-    - ats.prod.eu-da.iot.versuni.com  # the vendor cloud, by name
+    - ats.iot.vendor-cloud.example  # the vendor cloud, by name
 ```
 
 Leave time sources (`ntp.*`) out: the device needs its real clock.
@@ -62,8 +62,8 @@ Leave time sources (`ntp.*`) out: the device needs its real clock.
 loopback:
 
 ```bash
-dig +short @192.168.178.200 ats.prod.eu-da.iot.versuni.com   # -> 192.168.178.200 (the proxy)
-dig +short @192.168.178.200 example.org                      # -> the real address (forwarded)
+dig +short @192.168.1.200 ats.iot.vendor-cloud.example   # -> 192.168.1.200 (the proxy)
+dig +short @192.168.1.200 example.org                      # -> the real address (forwarded)
 ```
 
 ## 3. Make the device talk
@@ -76,16 +76,16 @@ DNS then flows resolver -> proxy, the name resolves to the proxy, and it dials 4
 1. the resolver's query log shows the device's name answered by the proxy address;
 2. the proxy logs the TLS session on 443;
 3. the pair appears in the learning store. The device entry is created from the traffic itself
-   (`ip-192-168-178-77`) — there is nothing to pre-register, `/api/devices/{id}/...` answers
+   (`ip-192-168-1-77`) — there is nothing to pre-register, `/api/devices/{id}/...` answers
    *404* until the first packet arrives.
 
 Enrich it as soon as it exists, so the decipher prompt carries the right context instead of
 `vendor: unknown`:
 
 ```bash
-curl -X PUT http://127.0.0.1:8911/api/devices/ip-192-168-178-77/tls-config \
+curl -X PUT http://127.0.0.1:8911/api/devices/ip-192-168-1-77/tls-config \
   -H "X-API-Key: $PASSWORD" -H 'Content-Type: application/json' \
-  -d '{"name": "Air Philips 800", "vendor": "philips", "passthrough": true, "pinning_bypass": "mitm_proxy"}'
+  -d '{"name": "Living room air sensor", "vendor": "example-vendor", "passthrough": true, "pinning_bypass": "mitm_proxy"}'
 ```
 
 ## 4. Turn the traffic into a translation
@@ -114,17 +114,17 @@ good, and it is served locally.
 | Decipher fails with "LLM call failed" | local model produced nothing usable within the timeout | give the profile a capable model (and a `max_tokens` ceiling) |
 | `/health` reports `version: 0.2.0` on a prebuilt | the bundle had no `VERSION` file | fixed in the build workflow; a source deploy writes it in `bootstrap.sh` |
 
-## Measured run — Philips Air Purifier 800
+## Measured run — a consumer IoT device
 
 ```
-proxy          192.168.178.200 (Raspberry Pi), release 1.2.15
-device         192.168.178.77, cloud ats.prod.eu-da.iot.versuni.com (AWS IoT, 443)
-DNS            ats... -> 192.168.178.200 | example.org -> real address | ntp... -> forwarded
+proxy          192.168.1.200 (a proxy host), release 1.2.15
+device         192.168.1.77, cloud ats.iot.vendor-cloud.example (a vendor cloud IoT broker, 443)
+DNS            ats... -> 192.168.1.200 | example.org -> real address | ntp... -> forwarded
 listeners      TLS MITM bound 4/4 ports [443, 8883, 5684, 8443]; DNS on 0.0.0.0:53 (udp+tcp, +ipv6)
-resolver       AdGuard Home, client "Air Philips 800" upstream 192.168.178.200
+resolver       an external DNS filter Home, client "Living room air sensor" upstream 192.168.1.200
 translation    same prompt: local model 56.4s -> prose, invalid JSON; cloud model 11.9s -> 2 patterns
 open           the device has to be power-cycled to retry its cloud connection; whether it
-               accepts the local CA is still unknown (the channel is AWS IoT, so pinning is
+               accepts the local CA is still unknown (the channel is a vendor cloud IoT broker, so pinning is
                the expected obstacle)
 ```
 

@@ -8,7 +8,7 @@ Local cloud replacement proxy that intercepts IoT traffic, learns protocols via 
 
 - **Python ≥ 3.11**
 - **Git**
-- **DNS server** (dnsmasq, Pi-hole, or AdGuard Home) for device routing
+- **DNS server** (a local DNS server, a DNS filter, or an external DNS filter Home) for device routing
 - **LLM API** (OpenAI, local Ollama, vLLM, etc.)
 - **Optional — Docker**: for the full stack (nginx + ride-the-api)
 
@@ -23,7 +23,7 @@ with the one-shot script (rerunning it upgrades in place, preserving
 `config/`, `data/`, `certs/`, `logs/`):
 
 ```bash
-# Linux / macOS / Raspberry Pi
+# Linux / macOS / a proxy host
 curl -sSL https://raw.githubusercontent.com/thcuba/Ride-the-api/main/deploy/rideapi -o rideapi
 bash rideapi            # → ~/ride-the-api
 bash rideapi --systemd  # optional: run as a user service
@@ -37,9 +37,9 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1   # add -Silent for silen
 
 See [Deployment](deployment.md) for all options (`--version`, `--dir`, `RTA_*`).
 
-### A1) Linux / Raspberry Pi — fully automatic (install from source)
+### A1) Linux / a proxy host — fully automatic (install from source)
 
-One bootstrap script works on **any** supported 64-bit Linux — Raspberry Pi OS,
+One bootstrap script works on **any** supported 64-bit Linux — a proxy host OS,
 **Debian**, Ubuntu, Fedora, Arch. It detects the distro (via `/etc/os-release`)
 and the package manager (apt/dnf/pacman), installs prerequisites, clones the
 repo, creates a Python virtualenv with **all dependencies** (`pip install -e .`),
@@ -49,7 +49,7 @@ passes. One command and the machine has Python + the full environment and the
 server running.
 
 Two per-distro specifics, handled automatically:
-- **Raspberry Pi OS** is **64-bit only**: the script requires `arm64/aarch64`
+- **a proxy host OS** is **64-bit only**: the script requires `arm64/aarch64`
   and stops with a clear message otherwise.
 - **Debian / Ubuntu / Fedora / Arch**: script accepts `amd64` or `arm64` and
   picks the right package manager for prerequisites.
@@ -87,7 +87,7 @@ pip install -e .      # or: uv pip install -e .
 > `onnxruntime`/`numpy` are **not** installed by default — they are dead
 > scaffolding (never imported) and add ~100MB+ RAM when loaded. Only install
 > `.[inference]` if you actually serve local models; most setups (LLM via API
-> cloud, e.g. on a Raspberry Pi) do not need it.
+> cloud, e.g. on a a proxy host) do not need it.
 
 ---
 
@@ -116,7 +116,7 @@ llm_decipher:
       model_id: "gpt-4o-mini"
 ```
 
-> **Local Ollama:** change `base_url` to `http://localhost:11434/v1`, `api_key` to `"ollama"`, and `model_id` to a model that is **installed on your Ollama host** (check with `ollama list`; `llama3.2:1b` is a safe small default for a Raspberry Pi).
+> **Local Ollama:** change `base_url` to `http://localhost:11434/v1`, `api_key` to `"ollama"`, and `model_id` to a model that is **installed on your Ollama host** (check with `ollama list`; `llama3.2:1b` is a safe small default for a a proxy host).
 
 Export the environment variable:
 
@@ -151,9 +151,9 @@ learning:
   auto_switch_to_production: false  # true for automatic switch at 99% match rate
 ```
 
-### 3.4 — DNS routing (dnsmasq example)
+### 3.4 — DNS routing (a local DNS server example)
 
-Create `/etc/dnsmasq.d/ride-api.conf`:
+Create `/etc/a local DNS server.d/ride-api.conf`:
 
 ```
 # Replace 192.168.1.100 with the IP of the ride-the-api server
@@ -162,10 +162,10 @@ address=/api.example.com/192.168.1.100
 address=/openapi.example.com/192.168.1.100
 ```
 
-Restart dnsmasq:
+Restart a local DNS server:
 
 ```bash
-sudo systemctl restart dnsmasq
+sudo systemctl restart a local DNS server
 ```
 
 ---

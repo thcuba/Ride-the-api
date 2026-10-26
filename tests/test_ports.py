@@ -41,7 +41,7 @@ def test_a_taken_port_is_not_confused_with_a_privileged_one():
 
 
 def test_the_hint_comes_from_a_real_failure():
-    """The measured case on the Pi, reproduced here when the capability is absent."""
+    """The measured case on the proxy, reproduced here when the capability is absent."""
     sock = socket.socket()
     try:
         sock.bind(("127.0.0.1", 443))

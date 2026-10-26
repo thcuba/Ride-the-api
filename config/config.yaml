@@ -296,7 +296,7 @@ llm_decipher:
     # Local Ollama profile.
     # NOTE: model_id must match a model that is ACTUALLY installed on your
     # Ollama host — check with `ollama list`. The default below (llama3.2:1b)
-    # is small enough for a Raspberry Pi; a 8B-class model (e.g. llama3.1:8b)
+    # is small enough for a a proxy host; a 8B-class model (e.g. llama3.1:8b)
     # does not fit low-RAM boards.
     local_ollama:
       base_url: "http://localhost:11434/v1"
@@ -548,12 +548,12 @@ dns:
   # Exact names or "*.domain" wildcards. Never list time sources (ntp.*): the
   # device needs its real clock.
   intercept: []
-  #  - "ats.prod.eu-da.iot.versuni.com"
+  #  - "ats.iot.vendor-cloud.example"
   #  - "*.example.vendor.com"
 
   # ── Legacy: let an external resolver do the rewriting ───────────────────────
-  # Example dnsmasq configuration for local DNS interception
-  # Add to /etc/dnsmasq.d/ride-api.conf:
+  # Example a local DNS server configuration for local DNS interception
+  # Add to /etc/a local DNS server.d/ride-api.conf:
   #
   # # Device cloud hostnames
   # address=/mqtt.example.com/192.168.1.100
@@ -564,15 +564,15 @@ dns:
   # # iptables -t nat -A PREROUTING -d 192.168.1.100 -p tcp --dport 443 -j REDIRECT --to-port 8911
   # # iptables -t nat -A PREROUTING -d 192.168.1.100 -p tcp --dport 8883 -j REDIRECT --to-port 8911
   #
-  # Then: sudo systemctl restart dnsmasq
+  # Then: sudo systemctl restart a local DNS server
    
-  # Example Pi-hole custom DNS entries
-  pihole_custom_dns: |
+  # Example a DNS filter custom DNS entries
+  dnsfilter_custom_dns: |
     192.168.1.100 mqtt.example.com
     192.168.1.100 api.example.com
     192.168.1.100 openapi.example.com
    
-  # Example AdGuard Home rewrites
+  # Example an external DNS filter Home rewrites
   adguard_rewrites: |
     mqtt.example.com -> 192.168.1.100
     api.example.com -> 192.168.1.100
@@ -581,7 +581,7 @@ dns:
   # Upstream DNS servers for loop-free cloud forwarding.
   # When signal_forward_to_cloud is enabled, the proxy signals nginx to
   # route unmatched requests via these dedicated resolvers, bypassing the
-  # local DNS (dnsmasq / Pi-hole / AdGuard Home).
+  # local DNS (a local DNS server / a DNS filter / an external DNS filter Home).
   # IPv4 DNS servers (tried in order)
   dns_servers:
     - "8.8.8.8"

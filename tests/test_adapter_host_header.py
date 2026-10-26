@@ -6,7 +6,7 @@ where uvicorn/Starlette hand the header names over lower-cased. A literal
 forward silently fell back to the hostname in the adapter configuration — the
 device's traffic could go to the wrong endpoint.
 
-Found by running the live path on the Raspberry Pi: a request with
+Found by running the live path on the a proxy host: a request with
 ``Host: httpbingo.org`` was forwarded to the configured ``api.example.com``.
 """
 
@@ -69,4 +69,4 @@ def test_a_malformed_literal_is_left_whole_not_truncated():
 def test_a_plain_hostname_is_unchanged_by_the_literal_handling():
     assert host_from_request(_request({"host": "vendor.example"})) == "vendor.example"
     assert host_from_request(_request({"host": "vendor.example:8443"})) == "vendor.example"
-    assert host_from_request(_request({"host": "192.168.178.77:8911"})) == "192.168.178.77"
+    assert host_from_request(_request({"host": "192.168.1.77:8911"})) == "192.168.1.77"

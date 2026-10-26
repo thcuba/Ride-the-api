@@ -133,12 +133,12 @@ Logs: `%ProgramData%\ride-the-api\logs\`.
 
 ### Transparent TLS-MITM interception
 
-On Linux the proxy is wired into traffic via **dnsmasq + iptables
+On Linux the proxy is wired into traffic via **a local DNS server + iptables
 REDIRECT**. Windows has **no iptables**; the transparent interception of the
 MITM listeners requires **WinDivert / WFP** and is **not** currently
 implemented. On Windows ride-the-api behaves as a **server**: point your
-device's cloud hostnames at the PC's IP via your **DNS resolver** (dnsmasq /
-Pi-hole / router DNS override) and, optionally, configure the devices to use
+device's cloud hostnames at the PC's IP via your **DNS resolver** (a local DNS server /
+a DNS filter / router DNS override) and, optionally, configure the devices to use
 the PC as a gateway/proxy. The generated CA must be **trusted on the client
 devices**.
 

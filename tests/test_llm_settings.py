@@ -528,7 +528,7 @@ EXPOSED_CEILING = 777
 class TestTokenCeiling:
     """A completion must carry a ceiling, or a model that ignores the JSON format never ends.
 
-    Measured on the Pi with a real prompt: the configured local model answered only because
+    Measured on the proxy with a real prompt: the configured local model answered only because
     a ceiling was imposed by hand (600 tokens, 56s, and the answer was still prose, not the
     JSON the pipeline parses). Without one, the call runs into the client timeout and the
     retryer pays it again.

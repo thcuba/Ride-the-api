@@ -22,11 +22,11 @@ matching and serving are production code, and the network exchange is real.
 
 ## 2. Live verification on hardware
 
-Run on a Raspberry Pi 4 (`pi4ride`), deployed from source, service `ride-the-api` under a
+Run on a a proxy host 4 (`pi4ride`), deployed from source, service `ride-the-api` under a
 systemd user unit, proxy listening on `:8911`, with a **real public vendor**
 (`httpbingo.org`) reached over the internet. Commit `a5e6b51`.
 
-| Check | Command (from the Pi) | Observed |
+| Check | Command (from the proxy) | Observed |
 |-------|----------------------|----------|
 | Status is preserved | `curl -H "Host: httpbingo.org" http://127.0.0.1:8911/example/status/429` | `HTTP 429` |
 | Non-JSON body and content-type are preserved | `curl -D - -H "Host: httpbingo.org" http://127.0.0.1:8911/example/xml` | `HTTP 200`, `content-type: application/xml`, XML body unchanged |

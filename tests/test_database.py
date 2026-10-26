@@ -331,7 +331,7 @@ class TestDeviceCache:
     async def test_get_device_reflected_after_mode_switch(self, db_manager):
         """Changing device mode invalidates the cache so get_device sees it."""
         await db_manager.get_or_create_device(
-            device_id="device-cache-2", vendor="tapo", device_type="plug"
+            device_id="device-cache-2", vendor="example-vendor", device_type="plug"
         )
         assert (await db_manager.get_device("device-cache-2")).mode == "learning"
 
@@ -358,7 +358,7 @@ class TestDeviceCache:
         """invalidate_device_cache(device_id) drops only that device's entry."""
         for i in (1, 2):
             await db_manager.get_or_create_device(
-                device_id=f"inv-{i}", vendor="tapo", device_type="plug"
+                device_id=f"inv-{i}", vendor="example-vendor", device_type="plug"
             )
         d1a = await db_manager.get_device("inv-1")
         d2a = await db_manager.get_device("inv-2")
@@ -376,7 +376,7 @@ class TestDeviceCache:
         """invalidate_device_cache() with no arg clears every device entry."""
         for i in (1, 2):
             await db_manager.get_or_create_device(
-                device_id=f"invall-{i}", vendor="tapo", device_type="plug"
+                device_id=f"invall-{i}", vendor="example-vendor", device_type="plug"
             )
         d1a = await db_manager.get_device("invall-1")
         d2a = await db_manager.get_device("invall-2")

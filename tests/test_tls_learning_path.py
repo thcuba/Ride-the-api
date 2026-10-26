@@ -1,6 +1,6 @@
 """The HTTPS path a real device uses must parse, learn and forward.
 
-Found while proving the path on the Raspberry Pi. ``handle_tls_decrypted_request``
+Found while proving the path on the a proxy host. ``handle_tls_decrypted_request``
 handed the decrypted body over as raw ``bytes``, while ``InterceptedRequest.body``
 is the *parsed* body and ``session_cache.body`` is a JSON column. The INSERT
 raised ``TypeError: Object of type bytes is not JSON serializable``, so on the
@@ -30,7 +30,7 @@ from core.database import DatabaseManager, DeviceRegistry, SessionCache
 from core.pipeline import LearningOrchestrator, LearningPipeline
 from core.tls_mitm import DecryptedRequest
 
-CLIENT_IP = "192.168.178.77"  # the phone/app talking to the device's local API
+CLIENT_IP = "192.168.1.77"  # the phone/app talking to the device's local API
 DEVICE_BODY = b'<command><temp_set value="240"/></command>'
 
 VENDOR_STATUS = 200
