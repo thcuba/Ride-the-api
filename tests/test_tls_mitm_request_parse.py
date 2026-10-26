@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import tempfile
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import h11
 import pytest
@@ -22,6 +24,7 @@ from cryptography.x509.oid import NameOID
 
 from core.cert_manager import CertManager, CertManagerConfig
 from core.tls_mitm import (
+    DecryptedRequest,
     TLSMITMServer,
     parse_decrypted_http_request,
     serialize_http_response,
@@ -171,6 +174,44 @@ class TestParseDecryptedHttpRequest:
         method, target, _, _, _ = parsed
         assert method == "GET"
         assert target == "/one"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("dst_port", "expected_upstream_port"), [(443, 443), (8443, 8443), (0, 443)]
+)
+async def test_tls_forward_preserves_destination_port(
+    monkeypatch, dst_port, expected_upstream_port
+):
+    """An HTTPS service on a non-default TLS port must receive traffic on that port."""
+    server = _make_test_server()
+    forward = AsyncMock(
+        return_value=SimpleNamespace(
+            success=True,
+            status_code=200,
+            response_headers={"content-type": "application/json"},
+            body_bytes=b"{}",
+            response={},
+        )
+    )
+    monkeypatch.setattr("core.tls_mitm.forward_intercepted", forward)
+    request = DecryptedRequest(
+        client_ip="192.168.1.77",
+        client_port=50000,
+        dst_port=dst_port,
+        sni="api.example.com",
+        method="GET",
+        path="/status",
+        http_version="1.1",
+        headers={"host": "api.example.com"},
+        body=b"",
+    )
+
+    result = await server._forward_upstream(request, "api.example.com", "device-1")
+
+    assert result is not None
+    assert forward.await_args is not None
+    assert forward.await_args.kwargs["port"] == expected_upstream_port
 
 
 class TestSerializeHttpResponse:
