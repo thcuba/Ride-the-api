@@ -5,7 +5,7 @@
 # BASE STAGE
 # ═══════════════════════════════════════════════════════════════════════════════
 
-FROM python:3.11-slim AS base
+FROM python:3.12-slim AS base
 
 # System dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -25,7 +25,7 @@ WORKDIR /app
 COPY pyproject.toml ./
 
 # Install Python dependencies
-RUN pip install --no-cache-dir --upgrade pip && \
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -e . --no-build-isolation
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -59,7 +59,7 @@ RUN pip install --no-cache-dir \
 # PRODUCTION STAGE
 # ═══════════════════════════════════════════════════════════════════════════════
 
-FROM python:3.11-slim AS production
+FROM python:3.12-slim AS production
 
 # Runtime dependencies only
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -74,7 +74,7 @@ RUN groupadd -r rideapi && useradd -r -g rideapi -d /app -s /bin/bash rideapi
 WORKDIR /app
 
 # Copy installed packages from base
-COPY --from=base /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=base /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=base /usr/local/bin /usr/local/bin
 
 # Copy application code
@@ -100,7 +100,7 @@ ENTRYPOINT ["python", "-m", "core.server"]
 # GPU PRODUCTION STAGE
 # ═══════════════════════════════════════════════════════════════════════════════
 
-FROM python:3.11-slim AS production-gpu
+FROM python:3.12-slim AS production-gpu
 
 # NVIDIA runtime dependencies
 ENV NVIDIA_VISIBLE_DEVICES=all
@@ -116,7 +116,7 @@ RUN groupadd -r rideapi && useradd -r -g rideapi -d /app -s /bin/bash rideapi
 
 WORKDIR /app
 
-COPY --from=gpu /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=gpu /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=gpu /usr/local/bin /usr/local/bin
 COPY --from=gpu /usr/local/cuda /usr/local/cuda
 
