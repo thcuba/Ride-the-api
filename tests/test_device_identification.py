@@ -108,6 +108,16 @@ class _FakeWriter:
         return None
 
 
+class _ChunkedReader:
+    """Return prescribed TCP fragments to exercise ClientHello reassembly."""
+
+    def __init__(self, chunks: list[bytes]) -> None:
+        self._chunks = iter(chunks)
+
+    async def read(self, _size: int) -> bytes:
+        return next(self._chunks, b"")
+
+
 def _mitm(**hooks) -> TLSMITMServer:
     """Build a MITM with the handlers server.py would wire, for a single connection."""
     server = TLSMITMServer(listen_ports=[])
@@ -119,6 +129,25 @@ def _mitm(**hooks) -> TLSMITMServer:
 
 
 class TestDeviceSeenOnFirstContact:
+    @pytest.mark.asyncio
+    async def test_sni_survives_client_hello_split_across_tcp_reads(self):
+        """TCP segmentation must not make the MITM choose a generic certificate."""
+        hello = _real_client_hello(SNI)
+        seen = AsyncMock()
+        server = _mitm(
+            on_device_seen=seen,
+            should_relay_tls=AsyncMock(return_value=True),
+            resolve_upstream=AsyncMock(return_value=None),
+        )
+        reader = _ChunkedReader([hello[:3], hello[3:9], hello[9:]])
+        writer = _FakeWriter((CLIENT_IP, 52431))
+
+        await server._handle_connection(reader, writer)
+
+        assert seen.await_count == 1
+        assert seen.await_args is not None
+        assert seen.await_args.args[:2] == (CLIENT_IP, SNI)
+
     @pytest.mark.asyncio
     async def test_mitm_reports_the_device_before_the_handshake_completes(self):
         """The callback must fire even though the handshake then fails.
