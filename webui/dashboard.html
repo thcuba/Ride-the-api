@@ -90,6 +90,29 @@
   .global-stat.gs-yellow .gs-num { color: var(--yellow); }
   .global-stat.gs-red .gs-num { color: var(--red); }
 
+  /* ── Dashboard hierarchy ──────────────────────────────────────────────── */
+  .primary-nav { display: flex; align-items: center; gap: 4px; margin-top: 12px; }
+  .primary-nav a { color: var(--text2); font-size: 13px; font-weight: 650; text-decoration: none; padding: 6px 9px; border-radius: 7px; }
+  .primary-nav a:hover { color: var(--text); background: var(--surface2); }
+  .primary-nav a[aria-current="page"] { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .workspace-controls { position: relative; }
+  .workspace-controls summary, .operations-panel summary { cursor: pointer; list-style: none; }
+  .workspace-controls summary::-webkit-details-marker, .operations-panel summary::-webkit-details-marker { display: none; }
+  .workspace-controls summary { display: inline-flex; align-items: center; gap: 7px; min-height: 40px; padding: 9px 13px; border: 1px solid var(--border); border-radius: 9px; color: var(--text); background: var(--surface2); font-size: 13px; font-weight: 600; }
+  .workspace-controls summary::after, .operations-panel summary::after { content: '⌄'; color: var(--text2); font-size: 15px; transition: transform .18s ease; }
+  .workspace-controls[open] summary::after, .operations-panel[open] summary::after { transform: rotate(180deg); }
+  .workspace-controls__content { position: absolute; right: 0; z-index: 20; width: min(420px, calc(100vw - 32px)); margin-top: 8px; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); }
+  .workspace-controls__content .control-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .workspace-controls__content .control-help { margin: 10px 0 0; color: var(--text2); font-size: 12px; line-height: 1.45; }
+  .operations-panel { margin-bottom: 20px; border: 1px solid var(--border); border-radius: var(--radius); background: color-mix(in srgb, var(--surface) 92%, transparent); }
+  .operations-panel > summary { display: flex; align-items: center; gap: 9px; padding: 13px 16px; color: var(--text); font-size: 14px; font-weight: 700; }
+  .operations-panel > summary span { color: var(--text2); font-size: 12px; font-weight: 500; }
+  .operations-panel__content { display: grid; gap: 8px; padding: 0 12px 12px; }
+  .operations-panel .tls-bar { margin: 0 !important; box-shadow: none; }
+  .device-workspace { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+  .device-workspace h2 { margin: 0 0 3px; font-size: 18px; letter-spacing: -.02em; }
+  .device-workspace p { margin: 0; color: var(--text2); font-size: 13px; }
+
   /* ── Grid / Cards ──────────────────────────────────────────────────────── */
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
   .device-card {
@@ -442,6 +465,9 @@
     .llm-actions { justify-content: stretch; }
     .llm-actions .btn { flex: 1; }
     .global-stat .gs-num, .stat-box .num { font-size: 20px; }
+    .primary-nav { overflow-x: auto; padding-bottom: 2px; }
+    .device-workspace { align-items: start; flex-direction: column; gap: 8px; }
+    .workspace-controls__content { right: auto; left: 0; }
   }
 </style>
 <link rel="stylesheet" href="/static/app.css">
@@ -458,8 +484,18 @@
         <h1>Ride the API</h1>
       </div>
       <span class="subtitle">Local Cloud Replacement — Device Protocol Learning &amp; Response Dashboard</span>
+      <nav class="primary-nav" aria-label="Primary navigation">
+        <a href="/" aria-current="page">Dashboard</a>
+        <a href="/patterns">Patterns</a>
+        <a href="/config">Configuration</a>
+        <a href="/options">Options</a>
+      </nav>
     </div>
   <div class="header-right">
+      <details class="workspace-controls">
+        <summary aria-label="Open workspace controls">Workspace controls</summary>
+        <div class="workspace-controls__content">
+          <div class="control-row">
       <div style="position:relative;display:inline-flex;align-items:center;">
         <input type="password" id="apiKeyInput" placeholder="Password" autocomplete="off"
                aria-label="Control-plane password"
@@ -481,18 +517,14 @@
           <span class="ram-slider"></span>
         </label>
       </div>
+          </div>
       <button class="btn btn-ghost" id="llmSettingsBtn" onclick="openLLMSettings()" aria-label="Configure LLM settings" title="Configure LLM settings">
       <svg class="icon-svg" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
       <span>LLM Settings</span>
     </button>
-      <a class="btn btn-ghost" href="/config" aria-label="Open configuration page" title="Open configuration page">
-      <svg class="icon-svg" aria-hidden="true" viewBox="0 0 24 24"><circle cx="4" cy="4" r="2"/><circle cx="20" cy="4" r="2"/><circle cx="4" cy="20" r="2"/><circle cx="20" cy="20" r="2"/><rect x="6" y="2" width="12" height="4" rx="1"/><rect x="6" y="9" width="12" height="4" rx="1"/><rect x="6" y="16" width="12" height="4" rx="1"/><path d="M8 4h2M16 4h2M8 11h2M16 11h2M8 18h2M16 18h2"/></svg>
-      <span>Config</span>
-    </a>
-    <a class="btn btn-ghost" href="/options" aria-label="Open options page" title="Open options page">
-    <svg class="icon-svg" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-    <span>Options</span>
-  </a>
+          <p class="control-help">Control-plane access, local-buffer mode and LLM profiles are collected here so the device workspace stays focused.</p>
+        </div>
+      </details>
       <button class="btn btn-ghost btn-icon" id="themeToggleBtn" onclick="toggleTheme()" aria-label="Switch to light theme" title="Switch to light theme">
       <svg class="icon-svg" id="themeToggleIcon" aria-hidden="true" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
     </button>
@@ -503,6 +535,9 @@
   </div>
 </div>
 
+<details class="operations-panel" aria-label="Network and protocol controls">
+  <summary><span aria-hidden="true">◌</span> Network &amp; protocol controls <span>Ports, certificates and listeners</span></summary>
+  <div class="operations-panel__content">
 <!-- Monitored Ports (TLS) -->
 <div class="tls-bar" id="tlsBar" role="region" aria-label="Monitored TLS ports">
   <span class="tb-label">
@@ -542,6 +577,8 @@
   </div>
   <div id="protoServersList" style="margin-top:8px;display:flex;flex-wrap:wrap;gap:8px;">loading…</div>
 </div>
+  </div>
+</details>
 </div>
 
 <!-- Global stats bar -->
@@ -569,6 +606,12 @@
 </div>
 
 <div id="main-content">
+  <div class="device-workspace">
+    <div>
+      <h2>Device workspace</h2>
+      <p>Search, filter and open a device to review its learning and local-response status.</p>
+    </div>
+  </div>
   <div class="device-filter-bar">
     <svg class="search-icon icon-svg-sm" aria-hidden="true" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
     <input type="search" id="deviceSearchInput" placeholder="Filter devices by name, ID, vendor..." aria-label="Filter devices" oninput="filterDevices()" onkeydown="if(event.key==='Escape'){clearDeviceSearch();event.stopPropagation();}">
