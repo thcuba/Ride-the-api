@@ -6,8 +6,15 @@ this proxy instead of the real cloud. Everything else is forwarded **verbatim**
 to the configured upstream resolvers, so the server can be the DNS for a whole
 network without breaking anything that is not being intercepted.
 
-Which names are intercepted is explicit configuration (``dns.intercept``): exact
-names and ``*.domain`` wildcards. A name that is not listed is forwarded, never
+Which names are intercepted comes from two sources, matched with the same rule
+(exact name or ``*.domain`` wildcard):
+
+  * ``dns.intercept`` — names configured explicitly, for anything with no adapter;
+  * the hostnames the **registered adapters** claim (``vendor_hostnames``).
+
+The second source is what keeps this general: an adapter declares the names of the
+service it implements, so adding an adapter makes that service interceptable
+without touching configuration. A name that no source claims is forwarded, never
 guessed — guessing would silently black-hole a device.
 
 Intercepted A queries are answered with the proxy's own address; AAAA is answered
@@ -20,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import fnmatch
 import logging
 import socket
 from typing import TYPE_CHECKING
@@ -41,6 +49,57 @@ logger = logging.getLogger(__name__)
 # A single DNS message over UDP carries at most 512 bytes without EDNS, and the
 # TCP length prefix is a 16-bit field: anything larger is a malformed message.
 _MAX_TCP_MESSAGE = 65535
+
+# Hostnames claimed by the registered adapters, resolved once. The registry is a
+# process-wide singleton populated on first use, so a name accepted early stays accepted.
+_adapter_hostnames_cache: list[str] | None = None
+
+
+def _name_matches(name: str, candidate: str) -> bool:
+    """Does ``name`` match ``candidate``?
+
+    Three shapes are in use, so all three are honoured:
+
+      * ``*.domain`` — the domain and everything under it (how ``dns.intercept`` is written);
+      * a glob such as ``device-*`` — what an adapter declares for a family of devices on the LAN;
+      * a plain name — matched exactly.
+    """
+    candidate = candidate.strip().rstrip(".").lower()
+    if not candidate:
+        return False
+    if candidate.startswith("*."):
+        domain = candidate[2:]
+        # both the domain itself and everything under it
+        return name == domain or name.endswith("." + domain)
+    if "*" in candidate or "?" in candidate:
+        return fnmatch.fnmatchcase(name, candidate)
+    return name == candidate
+
+
+def _adapter_hostnames() -> list[str]:
+    """Hostnames the registered adapters claim.
+
+    Imported lazily: the adapters package pulls in the cloud-forwarding path, which imports back
+    into this module's package. Falling back to an empty list keeps interception on the configured
+    names - the pre-existing behaviour - rather than failing to match anything.
+    """
+    global _adapter_hostnames_cache  # noqa: PLW0603
+    if _adapter_hostnames_cache is None:
+        try:
+            from adapters import register_all_adapters  # noqa: PLC0415
+
+            _adapter_hostnames_cache = register_all_adapters().list_hostnames()
+            if _adapter_hostnames_cache:
+                logger.info(
+                    "DNS: %d hostname(s) come from protocol adapters", len(_adapter_hostnames_cache)
+                )
+        except Exception:
+            logger.warning(
+                "DNS: adapter registry unavailable, intercepting configured names only",
+                exc_info=True,
+            )
+            _adapter_hostnames_cache = []
+    return _adapter_hostnames_cache
 
 
 class _DNSUDPProtocol(asyncio.DatagramProtocol):
@@ -260,20 +319,15 @@ class DNSInterceptor:
         return _servfail(query).to_wire()
 
     def matches(self, qname: str) -> bool:
-        """Is this name one we intercept? (exact name or ``*.domain`` wildcard)"""
+        """Is this name one we intercept?
+
+        Either explicitly configured, or claimed by a registered adapter - so a service is covered
+        by shipping its adapter, without an operator having to list its domains here.
+        """
         name = qname.rstrip(".").lower()
-        for pattern in self.patterns:
-            candidate = pattern.strip().rstrip(".").lower()
-            if not candidate:
-                continue
-            if candidate.startswith("*."):
-                domain = candidate[2:]
-                # both the domain itself and everything under it
-                if name == domain or name.endswith("." + domain):
-                    return True
-            elif name == candidate:
-                return True
-        return False
+        if any(_name_matches(name, pattern) for pattern in self.patterns):
+            return True
+        return any(_name_matches(name, hostname) for hostname in _adapter_hostnames())
 
     def _intercept_response(self, query: dns.message.Message, question) -> dns.message.Message:
         """A -> the proxy address; everything else an empty NOERROR.

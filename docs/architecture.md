@@ -585,16 +585,23 @@ proprietary protocols the LLM analyses Observation batches directly.
 A device reaches its vendor cloud by name, so the name is where interception has to
 start. This server is the piece that makes that possible without breaking anything else.
 
-- **Intercepted names** (`dns.intercept`) are answered by the proxy itself with
+- **Intercepted names** come from two sources: `dns.intercept` (explicit) and the hostnames the
+  registered protocol adapters declare (`vendor_hostnames`). An adapter owns the naming of the
+  service it implements, so a service becomes interceptable by shipping its adapter — not by an
+  operator appending its domains one at a time, which is how a per-service list drifts out of step.
+  Intercepted names are answered by the proxy itself with
   `dns.answer_ip` (A) and an empty NOERROR for AAAA — NODATA keeps a dual-stack device
   on the IPv4 route we actually serve, instead of letting it prefer a v6 address we
   cannot answer.
 - **Every other name is forwarded verbatim** to the upstream resolvers
   (`dns.dns_servers`, `dns.dns_servers_v6`), so the proxy can be the DNS for a whole
-  network with nothing hijacked by accident. A name that is not listed is **never**
-  guessed: guessing would silently black-hole a device.
-- Patterns are exact names or `*.domain` wildcards, matched case-insensitively. Time
-  sources (`ntp.*`) are deliberately *not* intercepted — the device needs its real clock.
+  network with nothing hijacked by accident. A name that neither source claims is **never**
+  guessed: guessing would silently black-hole a device. If the adapter registry cannot be read,
+  interception falls back to `dns.intercept` alone — it never widens.
+- Patterns are exact names, `*.domain` wildcards (the domain and everything under it), or globs
+  such as `device-*` — the shape an adapter uses for a family of devices on the LAN. All are matched
+  case-insensitively. Time sources (`ntp.*`) are deliberately *not* intercepted — the device needs
+  its real clock.
 - When no upstream can answer, the client gets **SERVFAIL**: an honest failure, never a
   fabricated address.
 - UDP and TCP (length-prefixed) are both served, on **IPv6 too** when `listen_host` is an
