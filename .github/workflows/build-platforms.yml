@@ -32,6 +32,10 @@ jobs:
   build:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    # A wedged runner must not hold the release: on 1.2.25 the macOS job hung for 15 minutes and
+    # was cancelled, which skipped the release job and left the tag with no assets at all. The
+    # matrix builds in a couple of minutes, so fail fast instead of waiting out the default.
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -176,6 +180,7 @@ jobs:
     needs: build
     if: github.event_name == 'release'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write  # attach assets to the GitHub Release
     steps:
