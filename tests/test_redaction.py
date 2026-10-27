@@ -155,3 +155,10 @@ def test_redact_body_non_string_sensitive_values():
 
 def test_redact_value_innocuous_key():
     assert redact_value("name", "bob") == "bob"
+
+
+def test_redact_body_nested_authorization_headers():
+    payload = {"headers": {"Authorization": "Bearer SECRET_TOKEN", "Host": "example.com"}}
+    scrubbed = redact_body(payload)
+    assert scrubbed["headers"]["Authorization"] == REDACTED
+    assert scrubbed["headers"]["Host"] == "example.com"
