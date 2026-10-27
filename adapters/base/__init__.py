@@ -369,6 +369,14 @@ class ProtocolAdapterRegistry:
         """List all registered vendors."""
         return self._vendors_list.copy()
 
+    def list_hostnames(self) -> list[str]:
+        """Every hostname claimed by a registered adapter.
+
+        Adapters own the naming of the service they implement, so this is the authoritative list of
+        the names that belong to a supported service - no separate configuration to keep in step.
+        """
+        return list(self._hostname_map.keys())
+
 
 # Global registry instance
 _adapter_registry: ProtocolAdapterRegistry | None = None
