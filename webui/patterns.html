@@ -456,7 +456,10 @@ if (resp.status === 401 && !sessionStorage.getItem('ride-401-shown')) {
 
   function renderPatterns(list){
     cardsEl.innerHTML='';
-    if(!list.length){ cardsEl.innerHTML = '<div class="empty">No patterns found</div>'; return; }
+    if(!list.length){
+      cardsEl.innerHTML = '<div class="empty"><div style="font-size:16px;font-weight:600;margin-bottom:6px;">No patterns created yet</div><div style="font-size:13px;color:var(--text2);margin-bottom:14px;">Patterns are automatically learned when analyzing device traffic, or you can create one manually.</div><button class="btn btn-primary" onclick="renderNewPatternCard()" aria-label="Create a new pattern">+ Create Pattern</button></div>';
+      return;
+    }
     list.forEach(p=>{
       const card = el('div',{class:'pattern-card'});
       const bodyId = `pc-body-${p.pattern_id}`;
