@@ -52,6 +52,32 @@ log "=== Updater avviato (install dir: $INSTALL_DIR) ==="
 if [[ -d "$INSTALL_DIR/.git" ]]; then
   # Source install via git clone.
   log "Installazione da sorgente: git pull + pip install..."
+
+  # The running service persists resolved options into config/config.yaml, so the file is dirty by
+  # design and `git pull` refuses to touch it:
+  #   error: Your local changes to the following files would be overwritten by merge
+  # Leaving it dirty makes the Update button fail forever on every source install; discarding it
+  # silently would drop the operator's own settings. Set it aside, pull, put it back - and restore
+  # it even if the pull or the install fails, so a broken update never rewrites someone's config.
+  CONFIG_FILE="$INSTALL_DIR/config/config.yaml"
+  CONFIG_BACKUP=""
+  restore_local_config() {
+    if [[ -n "${CONFIG_BACKUP}" && -f "${CONFIG_BACKUP}" ]]; then
+      cp "${CONFIG_BACKUP}" "${CONFIG_FILE}"
+      rm -f "${CONFIG_BACKUP}"
+      log "config/config.yaml locale ripristinato."
+    fi
+  }
+  trap restore_local_config EXIT
+
+  if git -C "$INSTALL_DIR" ls-files --error-unmatch config/config.yaml >/dev/null 2>&1 \
+    && ! git -C "$INSTALL_DIR" diff --quiet -- config/config.yaml 2>/dev/null; then
+    CONFIG_BACKUP="$(mktemp)"
+    cp "${CONFIG_FILE}" "${CONFIG_BACKUP}"
+    git -C "$INSTALL_DIR" checkout -- config/config.yaml
+    log "config/config.yaml locale messo da parte per il pull."
+  fi
+
   (
     cd "$INSTALL_DIR"
     git fetch --quiet origin || { log "git fetch fallito"; exit 1; }
@@ -67,6 +93,7 @@ if [[ -d "$INSTALL_DIR/.git" ]]; then
     python3 -m pip install --quiet -e "$INSTALL_DIR" \
       || { log "pip install fallito"; exit 1; }
   fi
+  restore_local_config
   log "Codice aggiornato (git pull + pip)."
 else
   log "Installazione prebuilt: scarico l'ultima release..."
