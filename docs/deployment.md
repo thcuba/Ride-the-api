@@ -118,6 +118,33 @@ out of the extraction directory.
 Both checks fail closed: a release without `SHA256SUMS`, or an asset that does not match it, is not
 installed.
 
+### Updating from the dashboard
+
+The Update button runs `deploy/update.sh`. On a source install (a git clone) it does `git pull` plus a
+re-install of the package; on a prebuilt install it downloads the newest release asset, verifies its
+checksum and unpacks it.
+
+The running service **persists resolved options into `config/config.yaml`**, so that file is dirty by
+design once the service has started. `git pull` refuses to run over a dirty file:
+
+```
+error: Your local changes to the following files would be overwritten by merge:
+        config/config.yaml
+Aborting
+```
+
+The updater therefore sets the file aside, pulls, and restores it — including when the pull or the
+install step fails, so a failed update never leaves your settings at the repository defaults.
+
+If an update does not seem to apply, read the updater's own log, which is the authoritative record:
+
+```bash
+tail -30 <install-dir>/update.log
+```
+
+`git pull fallito` there means the checkout could not advance; `pip install fallito` means the code
+is current but the re-install failed. Both are reported, and the service is only restarted on success.
+
 ### Privileged ports without root
 
 Interception binds 443/8883 and DNS binds 53, all below 1024, so the process needs
