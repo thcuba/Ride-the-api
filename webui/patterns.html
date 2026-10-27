@@ -118,7 +118,7 @@
                 <img src="/static/logo.png" alt="ride-the-api logo" width="32" height="32" style="border-radius:6px;">
                 <h1 style="font-size:20px;color:var(--accent);">Patterns</h1>
               </div>
-              <div style="color:var(--text2);font-size:13px;">Edit request/response patterns for device</div>
+              <div id="patternsSubtitle" style="color:var(--text2);font-size:13px;">Edit request/response patterns for device</div>
             </div>
       <div>
               <button class="btn btn-primary" id="newPatternBtn" aria-label="Create a new pattern" title="Create a new pattern">+ New Pattern</button>
@@ -343,8 +343,17 @@ if (resp.status === 401 && !sessionStorage.getItem('ride-401-shown')) {
   };
 })();
 
+  // Derive the device id from the page URL. Bare /patterns carries none: reading the last path
+  // segment (as this used to) made the page name itself the device id on that URL, so the page
+  // asked the API for the patterns of a device literally called "patterns". Kept outside the IIFE
+  // below so its behaviour is directly checkable.
+  function deviceIdFromPath(pathname){
+    const parts = (pathname || '').split('/').filter(Boolean);
+    return parts.length > 1 && parts[0] === 'patterns' ? decodeURIComponent(parts[1]) : '';
+  }
+
   (function(){
-    const deviceId = window.location.pathname.split('/').slice(-1)[0] || '';
+    const deviceId = deviceIdFromPath(window.location.pathname);
   const cardsEl = document.getElementById('cards');
   const toasts = document.getElementById('toasts');
 
@@ -406,6 +415,50 @@ if (resp.status === 401 && !sessionStorage.getItem('ride-401-shown')) {
       const json = await res.json();
       renderPatterns(json.patterns || []);
     }catch(e){ cardsEl.innerHTML = '<div class="empty">Failed to load patterns</div>'; showToast('Failed to load patterns','error'); }
+  }
+
+  // No device in the URL: list the devices so the page is a usable entry point, instead of asking
+  // the API for the patterns of a device named after the page.
+  async function renderDeviceList(){
+    const filterBar = document.querySelector('.pattern-filter-bar');
+    if (filterBar) filterBar.style.display = 'none';
+    const newBtn = document.getElementById('newPatternBtn');
+    if (newBtn) newBtn.style.display = 'none';
+    const subtitle = document.getElementById('patternsSubtitle');
+    if (subtitle) subtitle.textContent = 'Choose a device to see what it has learned';
+
+    try{
+      const res = await fetch('/api/devices');
+      if(!res.ok) throw new Error('Failed to load');
+      const json = await res.json();
+      const devices = json.devices || [];
+      cardsEl.innerHTML = '';
+      if(!devices.length){
+        cardsEl.innerHTML = '<div class="empty"><div style="font-size:16px;font-weight:600;margin-bottom:6px;">No devices yet</div><div style="font-size:13px;color:var(--text2);">A device appears here once its traffic goes through the proxy.</div></div>';
+        return;
+      }
+      devices.forEach(function(d){
+        const id = d.device_id || '';
+        if(!id) return;
+        const card = el('div',{class:'pattern-card'});
+        const header = el('div',{class:'pc-header'});
+        header.appendChild(el('div',{class:'pc-title'}, d.name || id));
+        const right = el('div',{},[]);
+        right.appendChild(el('span',{class:'badge badge-low'}, d.mode || 'unknown'));
+        header.appendChild(right);
+        card.appendChild(header);
+
+        const body = el('div',{},[]);
+        const meta = t => el('div',{style:'font-size:13px;color:var(--text2);margin-top:4px;'}, t);
+        body.appendChild(meta(`device id: ${id}`));
+        const ips = (d.ip_addresses || []).join(', ');
+        if(ips) body.appendChild(meta(`ip: ${ips}`));
+        if(d.status) body.appendChild(meta(`status: ${d.status}`));
+        body.appendChild(el('a',{class:'btn btn-primary',style:'margin-top:10px;display:inline-block;',href:`/patterns/${encodeURIComponent(id)}`},'View Patterns'));
+        card.appendChild(body);
+        cardsEl.appendChild(card);
+      });
+    }catch(e){ cardsEl.innerHTML = '<div class="empty">Failed to load devices</div>'; showToast('Failed to load devices','error'); }
   }
 
   function clearPatternSearch() {
@@ -760,6 +813,12 @@ if (resp.status === 401 && !sessionStorage.getItem('ride-401-shown')) {
 
       cardsEl.prepend(card);
       card.scrollIntoView({behavior:'smooth', block:'start'});
+    }
+
+    // Without a device there is nothing per-device to wire up: list the devices and stop.
+    if (!deviceId) {
+      renderDeviceList();
+      return;
     }
 
     document.getElementById('newPatternBtn').addEventListener('click', renderNewPatternCard);

@@ -2935,6 +2935,17 @@ async def dashboard():
     return await _serve_webui(DASHBOARD_HTML, "Dashboard", "webui/dashboard.html")
 
 
+@app.get("/patterns", response_class=HTMLResponse)
+async def patterns_index_page():
+    """Serve the Patterns web UI with no device selected.
+
+    The dashboard navigates here. Without this route the path is picked up by the device-proxy
+    catch-all below, which reads it as a vendor name and answers "Protocol 'patterns' not
+    supported" - a page request mistaken for intercepted traffic.
+    """
+    return await _serve_webui(PATTERNS_HTML, "Patterns page", "webui/patterns.html")
+
+
 @app.get("/patterns/{device_id}", response_class=HTMLResponse)
 async def patterns_page(device_id: str):  # noqa: ARG001
     """Serve the Patterns web UI for a device."""
