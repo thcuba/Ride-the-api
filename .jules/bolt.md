@@ -221,3 +221,7 @@
 ## 2026-03-31 - Memoized SSRF Guard Check in Upstream Resolver
 **Learning:** `is_blocked_ip` in `core/upstream_resolver.py` parsed IP strings via `ipaddress.ip_address` and evaluated 7 IP address properties on every DNS resolution / SSRF check (~67x slower). Decorating `is_blocked_ip` with `@functools.lru_cache(maxsize=2048)` bypasses parsing and object property inspection for active IP addresses (~0.018s vs ~1.237s per 20,000 checks).
 **Action:** Memoize pure IP validation / SSRF guard functions that accept string IP literals to eliminate `ipaddress.ip_address` object parsing and property evaluation overhead.
+
+## 2026-03-31 - Zero-Allocation Byte Check for CoAP Message Payload JSON Parsing
+**Learning:** In `CoAPServerPlugin.handle_coap_request`, passing raw byte payloads directly to `json.loads` caused `json.JSONDecodeError` / `UnicodeDecodeError` on every non-JSON or binary CoAP packet (e.g. CBOR, Sensor binary data), creating exception instances and unrolling stack frames (~10x slower). Adding a zero-allocation byte check for leading `{` (123) or `[` (91) characters before calling `json.loads()` avoids exception creation for binary/non-JSON CoAP payloads.
+**Action:** In protocol server request handlers processing binary or non-JSON payloads, check the leading payload byte for JSON structural characters (`{`, `[`) prior to attempting `json.loads()`.
