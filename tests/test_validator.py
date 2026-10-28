@@ -7,8 +7,8 @@ import json
 import pytest
 
 from core.pattern_db.validator import (
-    ValidationResult,
     ValidationError,
+    ValidationResult,
     get_capture_schema,
     get_pattern_schema,
     validate_capture,
@@ -440,7 +440,7 @@ def test_validation_result_merge_both_valid():
 
 
 @pytest.mark.parametrize(
-    "valid1, valid2, expected_valid",
+    ("valid1", "valid2", "expected_valid"),
     [
         (True, False, False),
         (False, True, False),
