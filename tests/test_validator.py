@@ -7,6 +7,7 @@ import json
 import pytest
 
 from core.pattern_db.validator import (
+    ValidationResult,
     ValidationError,
     get_capture_schema,
     get_pattern_schema,
@@ -419,6 +420,52 @@ def test_validate_file_invalid_json(tmp_path):
 # ═══════════════════════════════════════════════════════════════════════════════
 # ValidationError
 # ═══════════════════════════════════════════════════════════════════════════════
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ValidationResult.merge
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def test_validation_result_merge_both_valid():
+    res1 = ValidationResult(valid=True, warnings=["warn1"])
+    res2 = ValidationResult(valid=True, warnings=["warn2"])
+
+    merged = res1.merge(res2)
+
+    assert merged is res1
+    assert res1.valid is True
+    assert res1.errors == []
+    assert res1.warnings == ["warn1", "warn2"]
+
+
+@pytest.mark.parametrize(
+    "valid1, valid2, expected_valid",
+    [
+        (True, False, False),
+        (False, True, False),
+        (False, False, False),
+    ],
+)
+def test_validation_result_merge_invalid_combinations(valid1, valid2, expected_valid):
+    res1 = ValidationResult(valid=valid1, errors=["err1"] if not valid1 else [])
+    res2 = ValidationResult(valid=valid2, errors=["err2"] if not valid2 else [])
+
+    merged = res1.merge(res2)
+
+    assert merged is res1
+    assert res1.valid is expected_valid
+
+
+def test_validation_result_merge_errors_and_warnings():
+    res1 = ValidationResult(valid=True, errors=["err1"], warnings=["warn1"])
+    res2 = ValidationResult(valid=False, errors=["err2"], warnings=["warn2"])
+
+    res1.merge(res2)
+
+    assert res1.valid is False
+    assert res1.errors == ["err1", "err2"]
+    assert res1.warnings == ["warn1", "warn2"]
 
 
 def test_validation_error_dict(valid_capture):
