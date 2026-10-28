@@ -65,7 +65,9 @@
     background: var(--surface2); border: 1px solid var(--border); color: var(--text);
     padding: 8px 12px; border-radius: 8px; font-family: inherit; font-size: 13px; cursor: pointer;
   }
-  .opt-row select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .opt-row select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-color: var(--accent); }
+  .theme-icon-wrap { display: inline-flex; align-items: center; justify-content: center; color: var(--accent); }
+  .icon-svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
   .status { display: block; font-size: 13px; margin-top: 12px; }
   .status.ok { color: var(--green); }
   .status.err { color: var(--red); }
@@ -121,10 +123,15 @@
         <p class="desc" id="theme-desc">Choose the colour theme. Applied across all pages and saved on this device.</p>
         <div class="opt-row">
           <label for="themeSelect">Theme</label>
-          <select id="themeSelect" onchange="setTheme(this.value)" aria-label="Colour theme" aria-describedby="theme-desc">
-            <option value="dark">Dark</option>
-            <option value="light">Light</option>
-          </select>
+          <div style="display:inline-flex;align-items:center;gap:8px;">
+            <span class="theme-icon-wrap" id="themeIconWrap" aria-hidden="true">
+              <svg class="icon-svg" id="themeIcon" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+            </span>
+            <select id="themeSelect" onchange="setTheme(this.value)" aria-label="Colour theme, currently Dark" aria-describedby="theme-desc">
+              <option value="dark">Dark</option>
+              <option value="light">Light</option>
+            </select>
+          </div>
         </div>
       </section>
 
@@ -162,9 +169,24 @@
   }
 
   // ── Theme ───────────────────────────────────────────────────────────────────
+  function updateThemeUI(theme) {
+    var sel = document.getElementById('themeSelect');
+    var icon = document.getElementById('themeIcon');
+    var isLight = theme === 'light';
+    if (sel) {
+      sel.setAttribute('aria-label', 'Colour theme, currently ' + (isLight ? 'Light' : 'Dark'));
+    }
+    if (icon) {
+      icon.innerHTML = isLight
+        ? '<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>'
+        : '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>';
+    }
+  }
+
   function setTheme(theme) {
     document.documentElement.setAttribute('data-theme', theme);
     try { localStorage.setItem('rta-theme', theme); } catch (e) {}
+    updateThemeUI(theme);
     showToast('Theme updated to ' + (theme.charAt(0).toUpperCase() + theme.slice(1)), 'info');
   }
 
@@ -174,6 +196,7 @@
     var current = 'dark';
     try { current = localStorage.getItem('rta-theme') || 'dark'; } catch (e) {}
     sel.value = ['dark', 'light'].indexOf(current) >= 0 ? current : 'dark';
+    updateThemeUI(sel.value);
   })();
 
   // ── Version info ────────────────────────────────────────────────────────────
