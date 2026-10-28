@@ -5,7 +5,15 @@ from typing import Any
 
 import pytest
 
-from adapters.base import InterceptedRequest, ProtocolAdapter, ProtocolType, CommandResult, DeviceInfo, DeviceState, Command
+from adapters.base import (
+    Command,
+    CommandResult,
+    DeviceInfo,
+    DeviceState,
+    InterceptedRequest,
+    ProtocolAdapter,
+    ProtocolType,
+)
 
 
 class DummyAdapter(ProtocolAdapter):
@@ -23,23 +31,29 @@ class DummyAdapter(ProtocolAdapter):
         return request
 
     async def handle_request(self, request: InterceptedRequest) -> CommandResult:
+        _ = request
         return CommandResult(success=True)
 
     async def forward_to_cloud(self, request: InterceptedRequest) -> CommandResult:
+        _ = request
         return CommandResult(success=True)
 
     async def build_response(
         self, request: InterceptedRequest, result: CommandResult
     ) -> dict[str, Any]:
+        _ = (request, result)
         return {}
 
     async def get_device_info(self, device_id: str) -> DeviceInfo | None:
+        _ = device_id
         return None
 
     async def get_device_state(self, device_id: str) -> DeviceState | None:
+        _ = device_id
         return None
 
     async def send_command(self, device_id: str, command: Command) -> CommandResult:
+        _ = (device_id, command)
         return CommandResult(success=True)
 
 
