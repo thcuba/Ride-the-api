@@ -763,21 +763,36 @@ class DatabaseManager:
         logger.info(f"Device {device_id} database renamed: {old_path.name} -> {new_path.name}")
         return new_url
 
+    def _default_device_db_url(self, device_id: str) -> str:
+        """The URL a device's database has when nothing else was configured."""
+        db_path = self.device_db_dir / self._safe_db_name(device_id)
+        return f"sqlite+aiosqlite:///{db_path}"
+
     async def list_databases(self) -> list[dict]:
-        """List all device databases with their assignments."""
+        """List the device databases that exist, with their assignments.
+
+        Reading the open engines alone listed a database only once its device had
+        touched it during this process, so a database sitting on disk was missing
+        from the inventory and the whole list emptied on restart. The registry is
+        the source of truth; ``is_active`` says whether its engine is open now.
+        """
         databases: list[dict] = []
-        for device_id, engine in self._device_engines.items():
-            db_url = self._device_db_urls.get(device_id, "")
-            if not db_url:
-                db_path = self.device_db_dir / self._safe_db_name(device_id)
-                db_url = f"sqlite+aiosqlite:///{db_path}"
-            databases.append(
-                {
-                    "device_id": device_id,
-                    "database_url": db_url,
-                    "is_active": True,
-                }
+        async with await self.get_core_session() as session:
+            result = await session.execute(
+                select(DeviceRegistry).order_by(DeviceRegistry.device_id)
             )
+            for device in result.scalars():
+                databases.append(
+                    {
+                        "device_id": device.device_id,
+                        "database_url": (
+                            self._device_db_urls.get(device.device_id)
+                            or device.database_url
+                            or self._default_device_db_url(device.device_id)
+                        ),
+                        "is_active": device.device_id in self._device_engines,
+                    }
+                )
         return databases
 
     async def get_device_engine(self, device_id: str) -> AsyncEngine:

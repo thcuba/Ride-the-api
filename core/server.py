@@ -251,6 +251,22 @@ async def _resolve_device_for_ip(db, client_ip: str | None) -> str | None:
     return await db.resolve_device_id(client_ip)
 
 
+# A device that reconnects constantly would rewrite its registry row on every
+# connection. One write per interval per device keeps the dashboard honest
+# without wearing the disk for information nobody can perceive as fresher.
+_LAST_SEEN_WRITE_INTERVAL_S = 60
+
+
+def _last_seen_is_stale(stored: datetime | None, now: datetime) -> bool:
+    """Say whether ``last_seen`` is old enough to be worth writing again."""
+    if stored is None:
+        return True
+    # SQLite can hand back a naive datetime; comparing it to an aware "now" raises.
+    if stored.tzinfo is None:
+        stored = stored.replace(tzinfo=UTC)
+    return (now - stored).total_seconds() >= _LAST_SEEN_WRITE_INTERVAL_S
+
+
 async def handle_device_seen(client_ip: str, sni: str | None) -> None:
     """Register a device the moment it presents itself on a TLS port.
 
@@ -285,6 +301,13 @@ async def handle_device_seen(client_ip: str, sni: str | None) -> None:
                 attributes["seen_hostnames"] = hostnames
                 device.extra_attributes = attributes
                 changed = True
+        # When the device was last seen is what the dashboard shows, and it has to
+        # survive a restart: the in-memory view in tls_mitm is lost on every
+        # service restart, so a device that was obviously alive read as never seen.
+        now = datetime.now(UTC)
+        if _last_seen_is_stale(device.last_seen, now):
+            device.last_seen = now
+            changed = True
         if changed:
             await session.commit()
             db_manager.invalidate_ip_lookup_cache()

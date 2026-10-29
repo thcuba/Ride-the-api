@@ -215,11 +215,18 @@ Returns all registered devices.
       "auto_switch_enabled": false,
       "database_url": "sqlite+aiosqlite:///./ridebase/devices/ip-192-168-1-42.db",
       "ip_addresses": ["192.168.1.42"],
+      "last_seen": "2025-06-15T11:30:00Z",
       "created_at": "2025-06-15T10:30:00Z"
     }
   ]
 }
 ```
+
+`last_seen` is when the proxy last saw the device present itself on a TLS port.
+It is **stored in the registry**, so it survives a restart. Because a device may
+reconnect continuously, the row is rewritten only once every 60 seconds per
+device: the timestamp is accurate to that interval, and a write per connection
+would wear the disk for a difference nobody can perceive.
 
 **Status codes**: `200` OK, `503` Service not ready
 
@@ -416,6 +423,25 @@ OR
 ```
 
 ---
+
+### Database Inventory: `GET /api/databases`
+
+Lists every device database that exists, taken from the device registry, so a
+database is listed as soon as its device is known — including right after a
+restart, before anything has touched it. `is_active` says whether that device's
+engine is currently open in this process.
+
+```json
+{
+  "databases": [
+    {
+      "device_id": "ip-192-168-1-42",
+      "database_url": "sqlite+aiosqlite:///./ridebase/devices/ip-192-168-1-42.db",
+      "is_active": true
+    }
+  ]
+}
+```
 
 ### Database Rename: `POST /api/devices/{device_id}/database/rename`
 
