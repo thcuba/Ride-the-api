@@ -107,6 +107,7 @@ from core.tls_mitm import (
     peek_tls_mitm_server,
 )
 from core.traffic_selector import TrafficRequestInfo, get_traffic_selector, is_local_ip
+from core.upstream_resolver import is_loopback_ip
 
 # Path to webui directory (bundle-aware: works in source and PyInstaller builds)
 WEBUI_DIR = resource_path("webui")
@@ -278,6 +279,9 @@ async def handle_device_seen(client_ip: str, sni: str | None) -> None:
     """
     if not db_manager:
         return
+    if is_loopback_ip(client_ip):
+        # The proxy talking to itself is not a device to register.
+        return
     device_id = device_id_from_ip("ip", client_ip)
     await db_manager.get_or_create_device(device_id, "unknown")
     async with db_manager.core_session() as session:
@@ -341,6 +345,9 @@ async def mark_device_untrusted(client_ip: str, sni: str | None) -> None:
     """
     if not db_manager:
         return
+    if is_loopback_ip(client_ip):
+        # A loopback peer is never a device, so there is nothing to mark.
+        return
     device_id = await db_manager.resolve_device_id(client_ip)
     if not device_id:
         device_id = device_id_from_ip("ip", client_ip)
@@ -382,6 +389,9 @@ async def record_relayed_connection(contact: dict) -> None:
     if not db_manager:
         return
     client_ip = contact.get("client_ip") or ""
+    if is_loopback_ip(client_ip):
+        # A relayed connection from this machine is not evidence about a device.
+        return
     device_id = await db_manager.resolve_device_id(client_ip)
     if not device_id:
         device_id = device_id_from_ip("ip", client_ip)
@@ -440,6 +450,18 @@ async def handle_tls_decrypted_request(req: DecryptedRequest) -> dict | None:
         return None
 
     config = config_manager.config
+    # Never intercept our own traffic: a request coming from the loopback
+    # interface belongs to this machine, not to a device. Forward it untouched
+    # (like a bypassed IP) and do not create a device, DB or buffered pair for it.
+    if is_loopback_ip(req.client_ip):
+        logger.debug(
+            "TLS: loopback client %s is never intercepted, forwarding %s %s",
+            req.client_ip,
+            req.method,
+            req.path,
+        )
+        return {"action": "forward", "reason": "loopback"}
+
     # Automatic device recognition: if this source IP is already bound to a
     # known device (device.ip_addresses), use THAT device instead of a fresh
     # per-IP id. The same physical device keeps one identity across ports.
@@ -594,7 +616,7 @@ async def handle_tls_upstream_failure(handler_result: dict) -> bool:
 # ── Application Lifespan ───────────────────────────────────────────────────────
 
 
-async def handle_protocol_request(request: InterceptedRequest) -> dict | None:
+async def handle_protocol_request(request: InterceptedRequest) -> dict | None:  # noqa: C901
     """Handle an intercepted request from a protocol server plugin.
 
     Common handler wired into every protocol server plugin (MQTT, CoAP, Modbus,
@@ -608,6 +630,17 @@ async def handle_protocol_request(request: InterceptedRequest) -> dict | None:
     if not db_manager or not orchestrator:
         logger.warning("Protocol handler: service not ready, dropping %s", request.device_id)
         return None
+
+    # Never intercept our own traffic: a plugin that reports a loopback source IP
+    # is looking at this machine talking to itself. Forward it untouched instead
+    # of registering a device and buffering a pair for the proxy itself.
+    if is_loopback_ip(getattr(request, "client_ip", None)):
+        logger.debug(
+            "Protocol handler: loopback client %s is never intercepted, forwarding %s",
+            request.client_ip,
+            getattr(request, "path", None) or getattr(request, "topic", None) or "request",
+        )
+        return {"action": "forward", "reason": "loopback"}
 
     device_id = request.device_id or "unknown"
 
@@ -1985,7 +2018,7 @@ async def set_ip_bypass(ip_address: str, request: Request):
 
 
 @app.post("/api/devices/{device_id}/ip")
-async def register_device_ip(device_id: str, request: Request):
+async def register_device_ip(device_id: str, request: Request):  # noqa: PLR0911
     """Register an IP address for a device."""
     if not db_manager:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
@@ -1999,6 +2032,14 @@ async def register_device_ip(device_id: str, request: Request):
         return JSONResponse(status_code=400, content={"error": "Provide 'ip_address'"})
     if not isinstance(ip_address, str) or not db_manager._is_ip(ip_address):
         return JSONResponse(status_code=400, content={"error": "Invalid IP address format"})
+    if is_loopback_ip(ip_address):
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": "Loopback addresses cannot be bound to a device: "
+                "the proxy never intercepts its own traffic"
+            },
+        )
     async with db_manager.core_session() as session:
         result = await session.execute(
             select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)

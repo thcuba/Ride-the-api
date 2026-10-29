@@ -88,6 +88,33 @@ def filter_safe_ips(ips: list[str]) -> list[str]:
     return [ip for ip in ips if not is_blocked_ip(ip)]
 
 
+@functools.lru_cache(maxsize=512)
+def is_loopback_ip(ip_str: str | None) -> bool:
+    """Return True if ``ip_str`` is a loopback address (the proxy talking to itself).
+
+    Ride-the-API must never intercept its own traffic: a request whose source is
+    the loopback interface belongs to this machine, not to a device on the
+    network, so it is forwarded untouched -- no device record, no buffered pair,
+    no entry in the device/port tracking.
+
+    Unlike ``is_blocked_ip`` this deliberately does NOT match private LAN ranges:
+    a device on the local network is exactly what the proxy is meant to intercept.
+    IPv4 ``127.0.0.0/8``, IPv6 ``::1`` and the IPv4-mapped ``::ffff:127.x`` forms
+    all count; a zone suffix (``fe80::1%eth0``) is stripped first.
+    """
+    if not ip_str:
+        return False
+    literal = ip_str.split("%", 1)[0].strip().strip("[]")
+    try:
+        addr = ipaddress.ip_address(literal)
+    except ValueError:
+        return False
+    mapped = getattr(addr, "ipv4_mapped", None)
+    if mapped is not None:
+        return bool(mapped.is_loopback)
+    return addr.is_loopback
+
+
 def _apply_config(config: Config) -> None:
     """Update cached DNS server lists from a loaded Config object."""
     global _last_dns_servers, _last_dns_servers_v6  # noqa: PLW0603
