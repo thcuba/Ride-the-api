@@ -94,11 +94,13 @@
   .primary-nav { display: flex; align-items: center; gap: 4px; margin-top: 12px; }
   .primary-nav a { color: var(--text2); font-size: 13px; font-weight: 650; text-decoration: none; padding: 6px 9px; border-radius: 7px; }
   .primary-nav a:hover { color: var(--text); background: var(--surface2); }
+  .primary-nav a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .primary-nav a[aria-current="page"] { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
   .workspace-controls { position: relative; }
   .workspace-controls summary, .operations-panel summary { cursor: pointer; list-style: none; }
   .workspace-controls summary::-webkit-details-marker, .operations-panel summary::-webkit-details-marker { display: none; }
   .workspace-controls summary { display: inline-flex; align-items: center; gap: 7px; min-height: 40px; padding: 9px 13px; border: 1px solid var(--border); border-radius: 9px; color: var(--text); background: var(--surface2); font-size: 13px; font-weight: 600; }
+  .workspace-controls summary:focus-visible, .operations-panel > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .workspace-controls summary::after, .operations-panel summary::after { content: '⌄'; color: var(--text2); font-size: 15px; transition: transform .18s ease; }
   .workspace-controls[open] summary::after, .operations-panel[open] summary::after { transform: rotate(180deg); }
   .workspace-controls__content { position: absolute; right: 0; z-index: 20; width: min(420px, calc(100vw - 32px)); margin-top: 8px; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); }
