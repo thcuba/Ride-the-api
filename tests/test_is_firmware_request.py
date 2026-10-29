@@ -227,3 +227,49 @@ class TestIsAuthRequest:
     def test_edge_cases(self, adapter: DummyAdapter):
         assert adapter.is_auth_request(_req(path=None)) is False
         assert adapter.is_auth_request(_req(path="")) is False
+
+
+class CustomHeartbeatAdapter(DummyAdapter):
+    """Subclass overriding on_heartbeat to verify custom behavior."""
+
+    def __init__(self, vendor: str, config: dict[str, Any]) -> None:
+        super().__init__(vendor, config)
+        self.heartbeats: list[str] = []
+
+    async def on_heartbeat(self, device_id: str) -> None:
+        self.heartbeats.append(device_id)
+
+
+class TestProtocolAdapterLifecycle:
+    """Test suite for ProtocolAdapter lifecycle methods, including on_heartbeat."""
+
+    @pytest.mark.asyncio
+    async def test_on_heartbeat_default_noop(self, adapter: DummyAdapter):
+        """Default on_heartbeat implementation completes without error."""
+        res = await adapter.on_heartbeat("dev-123")
+        assert res is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("device_id", ["", "dev-456", "device@home:123", "a" * 256])
+    async def test_on_heartbeat_various_device_ids(self, adapter: DummyAdapter, device_id: str):
+        """on_heartbeat handles different device ID formats gracefully."""
+        res = await adapter.on_heartbeat(device_id)
+        assert res is None
+
+    @pytest.mark.asyncio
+    async def test_on_device_connect_disconnect_default_noop(self, adapter: DummyAdapter):
+        """Default on_device_connect and on_device_disconnect complete without error."""
+        res_connect = await adapter.on_device_connect("dev-123", {"fw": "1.0"})
+        assert res_connect is None
+
+        res_disconnect = await adapter.on_device_disconnect("dev-123")
+        assert res_disconnect is None
+
+    @pytest.mark.asyncio
+    async def test_on_heartbeat_subclass_override(self):
+        """Subclasses can override on_heartbeat to track keepalive signals."""
+        custom_adapter = CustomHeartbeatAdapter(vendor="custom", config={})
+        await custom_adapter.on_heartbeat("dev-001")
+        await custom_adapter.on_heartbeat("dev-002")
+
+        assert custom_adapter.heartbeats == ["dev-001", "dev-002"]
