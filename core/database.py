@@ -38,6 +38,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.pool import NullPool
 
+from core.atomic_io import sanitize_filename_component
 from core.config import get_config
 from core.migrations import SchemaMigrator
 from core.pattern_db.schemas import DeviceMeta
@@ -659,6 +660,108 @@ class DatabaseManager:
             self.invalidate_device_cache(device_id)
             logger.info(f"Device {device_id} database assigned: {database_url or database_name}")
             return True
+
+    async def _resolve_device_db_path(self, device_id: str) -> Path | None:
+        """Return the on-disk SQLite file backing a device, or ``None``.
+
+        Resolution order matches :meth:`get_device_engine`: the runtime URL
+        override, then the registry's ``database_url``, then the default file
+        derived from the device id. Only local ``sqlite`` URLs map to a file;
+        anything else (PostgreSQL, an in-memory database) has no path to move.
+        """
+        db_url = self._device_db_urls.get(device_id)
+        if not db_url:
+            db_url = await self._get_device_db_url(device_id)
+        if not db_url:
+            return self.device_db_dir / self._safe_db_name(device_id)
+        prefix = "sqlite+aiosqlite:///"
+        if not db_url.startswith(prefix):
+            return None
+        return Path(db_url[len(prefix) :])
+
+    async def rename_device_database(
+        self,
+        device_id: str,
+        new_name: str,
+        *,
+        move_file: bool = True,
+    ) -> str | None:
+        """Rename a device's database file and repoint the device at it.
+
+        The file name follows the device name, so a device that is named after
+        the fact ("living room purifier") stops being stored under a bare
+        address. ``new_name`` is sanitized into a filename segment; the ``.db``
+        suffix is added when missing.
+
+        ``move_file`` renames the file on disk. Pass ``False`` to only record
+        the new name and URL, which is useful when the file is not on this
+        machine (a PostgreSQL database, or a host-mounted directory).
+
+        Returns the new database URL, or ``None`` when the device is unknown or
+        its database is not a local SQLite file. Raises ``ValueError`` when the
+        target name is empty or already used by another device's file.
+        """
+        # A human name ("Purifier Soggiorno // 2") is normalized first: whitespace
+        # and separators become hyphens, then the strict validator runs as a final
+        # guard so nothing unsafe can reach the filesystem.
+        slug = re.sub(r"\s+", "-", new_name.strip())
+        slug = re.sub(r"[^A-Za-z0-9._-]", "-", slug)
+        slug = re.sub(r"-{2,}", "-", slug).strip("-.")
+        target = self._safe_db_name(sanitize_filename_component(slug))
+        if not target.endswith(".db"):
+            target = f"{target}.db"
+
+        async with await self.get_core_session() as session:
+            result = await session.execute(
+                select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
+            )
+            device = result.scalar_one_or_none()
+            if not device:
+                return None
+
+            old_path = await self._resolve_device_db_path(device_id)
+            if old_path is None:
+                # Not a local SQLite database: record the name only.
+                device.database_name = new_name
+                await session.commit()
+                logger.info(f"Device {device_id} database name set to '{new_name}' (no file)")
+                return None
+
+            new_path = self.device_db_dir / target
+            if old_path == new_path:
+                device.database_name = new_name
+                await session.commit()
+                return f"sqlite+aiosqlite:///{new_path}"
+
+            if new_path.exists():
+                raise ValueError(f"database '{target}' already exists")
+
+            # Close the engine before touching the file: SQLite keeps the file
+            # handle open for the life of the engine.
+            engine = self._device_engines.pop(device_id, None)
+            if engine is not None:
+                await engine.dispose()
+            self._device_sessions.pop(device_id, None)
+
+            if move_file and old_path.exists():
+                new_path.parent.mkdir(parents=True, exist_ok=True)
+                old_path.rename(new_path)
+                # SQLite write-ahead log and shared-memory sidecars travel with
+                # the database; leaving them behind loses recent writes.
+                for suffix in ("-wal", "-shm"):
+                    sidecar = Path(f"{old_path}{suffix}")
+                    if sidecar.exists():
+                        sidecar.rename(Path(f"{new_path}{suffix}"))
+
+            new_url = f"sqlite+aiosqlite:///{new_path}"
+            device.database_url = new_url
+            device.database_name = new_name
+            await session.commit()
+
+        self._device_db_urls[device_id] = new_url
+        self.invalidate_device_cache(device_id)
+        logger.info(f"Device {device_id} database renamed: {old_path.name} -> {new_path.name}")
+        return new_url
 
     async def list_databases(self) -> list[dict]:
         """List all device databases with their assignments."""

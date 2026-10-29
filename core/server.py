@@ -1148,6 +1148,23 @@ async def tls_unidentified():
     return {"unidentified": unidentified}
 
 
+async def _move_device_db_to_name(device_id: str, new_name: str) -> None:
+    """Move a device's database file so it follows the device's name.
+
+    A failure to move the file must not fail the rename that already happened in
+    the registry: the device keeps working on its current file, and the reason is
+    logged. The common failure is a name already taken by another device's file.
+    """
+    try:
+        if db_manager is None:
+            return
+        await db_manager.rename_device_database(device_id, new_name)
+    except ValueError as e:
+        logger.warning(f"Device {device_id} renamed, database not moved: {e}")
+    except OSError as e:
+        logger.warning(f"Device {device_id} renamed, database file not moved: {e}")
+
+
 @app.put("/api/devices/{device_id}/tls-config")
 async def tls_update_device_config(device_id: str, request: Request):
     """Update TLS config for a specific device (name, vendor, passthrough, pinning_bypass)."""
@@ -1164,7 +1181,10 @@ async def tls_update_device_config(device_id: str, request: Request):
                 return JSONResponse(status_code=404, content={"error": "Device not found"})
 
             # Update editable fields
+            renamed_to = None
             if "name" in body and body["name"]:
+                if body["name"] != device.name:
+                    renamed_to = body["name"]
                 device.name = body["name"]
             if "vendor" in body and body["vendor"]:
                 device.vendor = body["vendor"]
@@ -1182,6 +1202,11 @@ async def tls_update_device_config(device_id: str, request: Request):
             # change just made (passthrough, pinning bypass) stays invisible to every reader --
             # including the TLS decision that depends on it -- for five minutes.
             db_manager.invalidate_device_cache(device_id)
+            # A device's database follows its name: a device renamed after the
+            # fact otherwise keeps a file titled with a bare IP address, and the
+            # name shown in the UI would no longer match anything on disk.
+            if renamed_to:
+                await _move_device_db_to_name(device_id, renamed_to)
             return {"status": "ok", "device_id": device_id}
 
     except Exception as e:
@@ -1787,6 +1812,33 @@ async def assign_device_database(device_id: str, request: Request):
         "database_url": database_url,
         "database_name": database_name,
     }
+
+
+@app.post("/api/devices/{device_id}/database/rename")
+async def rename_device_database(device_id: str, request: Request):
+    """Rename a device's database file.
+
+    The new name is sanitized into a filename segment and the ``.db`` suffix is
+    added when missing. The device keeps working: its engine is closed, the file
+    (with its SQLite sidecars) is moved, and the device is repointed at it.
+    """
+    if not db_manager:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
+    body = await request.json()
+    if not isinstance(body, dict):
+        return JSONResponse(
+            status_code=400, content={"error": "Invalid JSON body: expected an object"}
+        )
+    new_name = body.get("name") or body.get("database_name")
+    if not new_name or not isinstance(new_name, str):
+        return JSONResponse(status_code=400, content={"error": "Provide 'name'"})
+    try:
+        database_url = await db_manager.rename_device_database(device_id, new_name)
+    except ValueError as e:
+        return JSONResponse(status_code=409, content={"error": str(e)})
+    if database_url is None:
+        return JSONResponse(status_code=404, content={"error": "Device not found"})
+    return {"device_id": device_id, "name": new_name, "database_url": database_url}
 
 
 @app.get("/api/databases")
