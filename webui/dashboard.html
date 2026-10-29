@@ -1398,11 +1398,13 @@ async function loadDeviceStats(deviceId) {
 
         <div class="tc-row">
           <label for="dc-db-name-${escapeHtml(deviceId)}" class="tc-label">Database Name</label>
-          <input type="text" id="dc-db-name-${escapeHtml(deviceId)}" value="${escapeHtml(s.database_name || '')}" placeholder="e.g. my_ac_protocol">
+          <input type="text" id="dc-db-name-${escapeHtml(deviceId)}" value="${escapeHtml(deviceDatabaseName(deviceId, s))}" list="dc-db-names-${escapeHtml(deviceId)}" placeholder="e.g. my_ac_protocol" onfocus="loadDatabaseOptions('${escapeJs(deviceId)}')">
+          <datalist id="dc-db-names-${escapeHtml(deviceId)}"></datalist>
         </div>
         <div class="tc-row">
           <label for="dc-db-url-${escapeHtml(deviceId)}" class="tc-label">Database URL</label>
-          <input type="text" id="dc-db-url-${escapeHtml(deviceId)}" value="${escapeHtml(s.database_url || '')}" placeholder="e.g. sqlite:///./my_ac.db">
+          <input type="text" id="dc-db-url-${escapeHtml(deviceId)}" value="${escapeHtml(deviceDatabaseUrl(deviceId, s))}" list="dc-db-urls-${escapeHtml(deviceId)}" placeholder="e.g. sqlite:///./my_ac.db" onfocus="loadDatabaseOptions('${escapeJs(deviceId)}')">
+          <datalist id="dc-db-urls-${escapeHtml(deviceId)}"></datalist>
         </div>
 
         <div class="tc-row" style="align-items:flex-start;">
@@ -1424,6 +1426,7 @@ async function loadDeviceStats(deviceId) {
             <button type="button" class="btn btn-ghost" onclick="saveDeviceConnection('${escapeJs(deviceId)}', this)" style="padding:6px 12px;font-size:12px;" aria-label="Save connection type for ${escapeHtml(s.name || deviceId)}" title="Save connection type">Save Connection</button>
             <button type="button" class="btn btn-ghost" onclick="saveDeviceLLM('${escapeJs(deviceId)}', this)" style="padding:6px 12px;font-size:12px;" aria-label="Save LLM configuration for ${escapeHtml(s.name || deviceId)}" title="Save LLM configuration">Save LLM</button>
             <button type="button" class="btn btn-primary" onclick="assignDeviceDatabase('${escapeJs(deviceId)}', this)" style="padding:6px 16px;font-size:12px;" aria-label="Assign database for ${escapeHtml(s.name || deviceId)}" title="Assign protocol database to device">Assign Database</button>
+            <button type="button" class="btn btn-ghost" onclick="renameDeviceDatabase('${escapeJs(deviceId)}', this)" style="padding:6px 12px;font-size:12px;" aria-label="Rename database of ${escapeHtml(s.name || deviceId)}" title="Rename the device database file so it follows the name above">Rename Database</button>
           </div>
         </div>
       </div>
@@ -2108,6 +2111,93 @@ async function addDeviceIp(deviceId, btn) {
     loadDeviceStats(deviceId);
   } catch(e) { showToast(await errorFrom(e, 'Failed to add IP'), 'error'); }
   finally { if (targetBtn) { targetBtn.disabled = false; targetBtn.textContent = origText; } }
+}
+
+// ── Database fields: standard values, already-used options ───────────────────
+// The database fields arrive filled in: the name follows the device name and the
+// URL points at the per-device file, so the common case needs no typing. The
+// datalists offer what is already in use, so an existing database can be picked
+// instead of retyped.
+
+function suggestDatabaseName(deviceId, s) {
+  const raw = (s && s.name) ? String(s.name) : '';
+  // A device still named after its address ("ip-192-168-1-42") has no human name
+  // to follow: fall back to the bare address, which stays unique on disk.
+  const base = raw || String(deviceId || 'device').replace(/^ip-/, '');
+  return base.replace(/\s+/g, '-').replace(/[^A-Za-z0-9._-]/g, '-').replace(/-{2,}/g, '-').replace(/^[-.]+|[-.]+$/g, '') || 'device';
+}
+
+function deviceDatabaseName(deviceId, s) {
+  return (s && s.database_name) ? s.database_name : suggestDatabaseName(deviceId, s);
+}
+
+function deviceDatabaseUrl(deviceId, s) {
+  if (s && s.database_url) return s.database_url;
+  return `sqlite+aiosqlite:///./ridebase/devices/${suggestDatabaseName(deviceId, s)}.db`;
+}
+
+async function loadDatabaseOptions(deviceId) {
+  const names = document.getElementById('dc-db-names-' + deviceId);
+  const urls = document.getElementById('dc-db-urls-' + deviceId);
+  if (!names && !urls) return;
+  try {
+    const res = await fetch('/api/databases');
+    if (!res.ok) return;
+    const data = await res.json();
+    const seen = new Set();
+    const options = [];
+    (data.databases || []).forEach(d => {
+      const name = d.database_name || (d.database_url || '').split('/').pop().replace(/\.db$/, '');
+      if (name && !seen.has('n:' + name)) {
+        seen.add('n:' + name);
+        options.push(`<option value="${escapeHtml(name)}"></option>`);
+      }
+    });
+    if (names) names.innerHTML = options.join('');
+    if (urls) {
+      const urlOptions = (data.databases || [])
+        .map(d => d.database_url)
+        .filter(Boolean)
+        .map(u => `<option value="${escapeHtml(u)}"></option>`);
+      urls.innerHTML = urlOptions.join('');
+    }
+    // Every value above goes through escapeHtml(): the datalist holds text, so
+    // markup from a database name cannot become DOM here.
+  } catch (e) { /* options are a convenience: the fields already hold valid values */ }
+}
+
+async function renameDeviceDatabase(deviceId, btn) {
+  const name = (document.getElementById('dc-db-name-' + deviceId) || {}).value || '';
+  if (!name) {
+    showToast('Provide a database name', 'warning');
+    return;
+  }
+  const targetBtn = btn instanceof HTMLElement ? btn : (btn?.target?.closest('button') || null);
+  const origText = targetBtn ? targetBtn.textContent : '';
+  if (targetBtn) { targetBtn.disabled = true; targetBtn.textContent = 'Renaming...'; }
+  const statusEl = document.getElementById('dc-status-' + deviceId);
+  if (statusEl) statusEl.textContent = 'Renaming...';
+  try {
+    const res = await fetch(`/api/devices/${deviceId}/database/rename`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name}),
+    });
+    if (!res.ok) { showToast(await errorFrom(res, 'Failed to rename database'), 'error'); }
+    else {
+      const out = await res.json();
+      showToast(`Database renamed to ${name}`, 'success');
+      // Mirror what the server recorded so the fields keep showing the truth.
+      const urlEl = document.getElementById('dc-db-url-' + deviceId);
+      if (urlEl && out.database_url) urlEl.value = out.database_url;
+    }
+    if (statusEl) statusEl.textContent = '';
+    loadDeviceStats(deviceId);
+  } catch(e) {
+    showToast(await errorFrom(e, 'Failed to rename database'), 'error');
+    if (statusEl) statusEl.textContent = '';
+  } finally {
+    if (targetBtn) { targetBtn.disabled = false; targetBtn.textContent = origText; }
+  }
 }
 
 async function assignDeviceDatabase(deviceId, btn) {

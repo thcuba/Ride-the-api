@@ -417,6 +417,43 @@ OR
 
 ---
 
+### Database Rename: `POST /api/devices/{device_id}/database/rename`
+
+Renames a device's database file so it follows the device name. The name is
+normalized into a filename segment (whitespace and separators become hyphens)
+and the `.db` suffix is added when missing. The device keeps working: its engine
+is closed, the file together with its SQLite `-wal`/`-shm` sidecars is moved, and
+the device is repointed at the new file.
+
+This is also what happens automatically when a device is given a name through
+`PUT /api/devices/{device_id}/tls-config`: a device named after the fact stops
+being stored under a bare address. If the target name is already taken by
+another device's file, the device is renamed anyway and only the file keeps its
+name.
+
+**JSON Body**
+
+```json
+{
+  "name": "Purifier Soggiorno"
+}
+```
+
+**Response**
+
+```json
+{
+  "device_id": "ip-192-168-1-42",
+  "name": "Purifier Soggiorno",
+  "database_url": "sqlite+aiosqlite:///./ridebase/devices/Purifier-Soggiorno.db"
+}
+```
+
+Errors: `400` when no name is given, `404` when the device is unknown, `409` when
+another device already uses that file name.
+
+---
+
 ### IP Resolution: `GET /api/devices/by-ip/{ip_address}`
 
 Looks up a device by IP address.
