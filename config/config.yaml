@@ -543,6 +543,25 @@ dns:
   intercept: []
   #  - "ats.iot.vendor-cloud.example"
   #  - "*.example.vendor.com"
+  # Answer EVERY name with this proxy's address, so every device using this host as
+  # its resolver reaches the proxy -- the way to fill the capture buffer without
+  # listing domains one by one. Off by default: switch it on deliberately.
+  intercept_all: false
+  # Names never intercepted, always forwarded, whatever `intercept` and
+  # `intercept_all` say (exclude wins) -- except for a name a registered adapter
+  # explicitly claims. The defaults keep the clock, certificate revocation and
+  # local names out of the proxy: hijacking them only breaks devices.
+  exclude:
+    - "ntp.*"
+    - "time.*"
+    - "ocsp.*"
+    - "crl.*"
+    - "*.local"
+    - "*.lan"
+    - "*.localdomain"
+  # What each client asked for is logged in the core DB (dns_query_log) and shown in
+  # the dashboard's "DNS Discovery" panel, where a discovered name can be promoted to
+  # `intercept` with one click.
 
   # ── Legacy: let an external resolver do the rewriting ───────────────────────
   # Example a local DNS server configuration for local DNS interception

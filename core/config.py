@@ -236,6 +236,35 @@ class DNSConfig(BaseModel):
             "wildcards. Anything not listed is forwarded to the upstream resolvers."
         ),
     )
+    intercept_all: bool = Field(
+        default=False,
+        description=(
+            "Answer EVERY name with this proxy's address, so every device that uses "
+            "this host as its resolver reaches the proxy (the way to fill the capture "
+            "buffer without listing domains one by one). Off by default: it must be a "
+            "deliberate choice, and 'exclude' is what keeps it from touching names "
+            "that have nothing to do with device learning."
+        ),
+    )
+    exclude: list[str] = Field(
+        default_factory=lambda: [
+            "ntp.*",
+            "time.*",
+            "ocsp.*",
+            "crl.*",
+            "*.local",
+            "*.lan",
+            "*.localdomain",
+        ],
+        description=(
+            "Names never answered by the proxy and always forwarded, whatever "
+            "'intercept' or 'intercept_all' say. Evaluated first, so exclude wins over "
+            "intercept -- with one exception: a name a registered adapter explicitly "
+            "claims is always intercepted, so a default exclusion cannot neutralise a "
+            "shipped adapter. Time/OCSP/CRL and local names are here by default: "
+            "hijacking them only breaks devices without teaching the proxy anything."
+        ),
+    )
     answer_ip: str = Field(
         default="",
         description="Address returned for intercepted names; empty = detect the LAN address",
@@ -608,6 +637,32 @@ class ConfigManager:
             profile = cfg.core.ip_profiles.get(ip, IpProfileConfig())
             profile.bypass = bypass
             cfg.core.ip_profiles[ip] = profile
+            return self._write(cfg)
+
+    def set_dns_settings(
+        self,
+        *,
+        intercept: list[str] | None = None,
+        intercept_all: bool | None = None,
+        exclude: list[str] | None = None,
+    ) -> bool:
+        """Persist the DNS interception settings (intercept list, "all", exclude).
+
+        Called by the DNS discovery API when an operator promotes a discovered
+        hostname to an intercepted one, or flips ``intercept_all``. Only the
+        arguments that are not ``None`` are touched, so the UI updates one field
+        without resending (and risking) the others. Mutates the in-memory config,
+        writes the file atomically and leaves the hot-reload watcher to refresh
+        other consumers. Returns True on success.
+        """
+        with self._lock:
+            cfg = self.config.model_copy(deep=True)
+            if intercept is not None:
+                cfg.dns.intercept = [str(item).strip() for item in intercept if str(item).strip()]
+            if intercept_all is not None:
+                cfg.dns.intercept_all = bool(intercept_all)
+            if exclude is not None:
+                cfg.dns.exclude = [str(item).strip() for item in exclude if str(item).strip()]
             return self._write(cfg)
 
     def set_security_password(self, password: str) -> bool:

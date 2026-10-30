@@ -60,6 +60,12 @@
   - [Frida Script](#frida-script-get-apitlsfridascriptjs)
 - [LLM Profiles](#llm-profiles)
 - [Protocol Servers](#protocol-servers)
+- [DNS Interception / Discovery](#dns-interception--discovery)
+  - [DNS Settings](#dns-settings-getput-apidnssettings)
+  - [DNS Discovery](#dns-discovery-get-apidnsdiscovery)
+  - [Promote Intercept](#promote-intercept-post-apidnsintercept)
+  - [Remove Intercept](#remove-intercept-delete-apidnsintercepthostname)
+  - [Clear Discovery](#clear-discovery-delete-apidnsdiscovery)
 - [Cloud Independence](#cloud-independence)
 
 ---
@@ -1180,6 +1186,90 @@ it stays stopped after a restart.
 ### `GET /api/protocol-servers/{name}/config`
 
 Configuration of a specific protocol server.
+
+---
+
+## DNS Interception / Discovery
+
+The DNS interception server and its discovery log. The policy precedence is
+`exclude` > `intercept` > `intercept_all`; the one exception is a name a
+registered adapter explicitly claims, which is always intercepted.
+
+### `GET /api/dns/settings`
+
+The full interception policy plus the ports actually bound.
+
+```json
+{
+  "enabled": true, "listen_host": "0.0.0.0", "listen_port": 53,
+  "answer_ip": "192.168.1.200", "answer_ttl": 60,
+  "dns_servers": ["8.8.8.8", "1.1.1.1"],
+  "intercept": ["ats.iot.vendor-cloud.example"], "intercept_all": false,
+  "exclude": ["ntp.*", "time.*", "ocsp.*", "crl.*", "*.local", "*.lan", "*.localdomain"],
+  "listen": {"host": "0.0.0.0", "port": 53, "udp": true, "tcp": true}
+}
+```
+
+### `PUT /api/dns/settings`
+
+Updates the policy and applies it **without a restart**. Only the fields present in
+the body are touched, so one switch can be flipped without resending the others.
+
+```json
+{ "intercept_all": true, "exclude": ["ntp.*", "*.local"] }
+```
+
+`intercept` and `exclude` are lists of names or `*.domain` patterns (entries that
+are not plausible names are dropped); `intercept_all` must be a boolean, otherwise
+the request is rejected with `400`.
+
+### `GET /api/dns/discovery`
+
+What each client asked the DNS for, and what the proxy does with it now --
+including the names still being forwarded, which are the candidates for
+`intercept`. Counters not yet flushed to the database are merged in.
+
+Query parameter `limit` (default 500, max 5000).
+
+```json
+{
+  "enabled": true, "intercept": ["ats.iot.vendor-cloud.example"],
+  "intercept_all": false, "exclude": ["ntp.*"],
+  "listen": {"host": "0.0.0.0", "port": 53, "udp": true, "tcp": true},
+  "stats": {"intercepted": 3, "forwarded": 12, "excluded": 4},
+  "pending_pairs": 2,
+  "entries": [
+    {"client_ip": "192.168.1.77", "hostname": "ats.iot.vendor.example", "qtype": "A",
+     "status": "forwarded", "hit_count": 12, "first_seen": "2026-01-01T10:00:00+00:00",
+     "last_seen": "2026-01-01T11:30:00+00:00",
+     "intercepted": false, "excluded": false, "suggested": true}
+  ]
+}
+```
+
+### `POST /api/dns/intercept`
+
+Promotes a discovered name (or pattern) to the intercept list: persisted to
+`dns.intercept` and applied live.
+
+```json
+{ "hostname": "*.iot.vendor.example" }
+```
+
+`400` for anything that is not a plausible name (an IP literal is refused).
+
+### `DELETE /api/dns/intercept/{hostname}`
+
+Removes a name from the intercept list: it goes back to being forwarded (and
+discovered). The response carries `removed`.
+
+### `DELETE /api/dns/discovery`
+
+Forgets every recorded query, in memory and in the `dns_query_log` table.
+
+```json
+{ "removed": 25 }
+```
 
 ---
 

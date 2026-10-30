@@ -410,6 +410,15 @@ DNS integration for local resolution and rewriting.
 |-------|------|---------|-------------|
 | `dnsfilter_custom_dns` | `string` | `""` | a DNS filter API URL for custom DNS (empty = disabled) |
 | `adguard_rewrites` | `string` | `""` | the DNS filter API URL for DNS rewrites (empty = disabled) |
+| `enabled` | `boolean` | `false` | run the DNS interception server (port 53 needs `CAP_NET_BIND_SERVICE` or root) |
+| `listen_host` / `listen_port` | `string` / `integer` | `"0.0.0.0"` / `53` | where the DNS server listens |
+| `answer_ip` | `string` | `""` | address returned for intercepted names; empty = detect the LAN address |
+| `answer_ttl` | `integer` | `60` | TTL of the synthesised answers |
+| `forward_timeout` | `float` | `5.0` | per-upstream timeout, seconds |
+| `dns_servers` / `dns_servers_v6` | `array[string]` | `8.8.8.8`, `1.1.1.1` / Google and Cloudflare v6 | upstream resolvers, tried in order |
+| `intercept` | `array[string]` | `[]` | names answered with this proxy's address: exact names or `*.domain` wildcards |
+| `intercept_all` | `boolean` | `false` | answer **every** name with this proxy's address |
+| `exclude` | `array[string]` | `ntp.*`, `time.*`, `ocsp.*`, `crl.*`, `*.local`, `*.lan`, `*.localdomain` | names that are **never** intercepted and always forwarded |
 
 Example:
 
@@ -417,6 +426,47 @@ Example:
 dns:
   dnsfilter_custom_dns: "http://192.168.1.100/admin/api.php"
   adguard_rewrites: "http://192.168.1.101:80/control/rewrite"
+  enabled: true
+  intercept:
+    - "ats.iot.vendor-cloud.example"
+  intercept_all: false
+  exclude:
+    - "ntp.*"
+    - "*.local"
+```
+
+### Intercepting every name (and why the exclusions matter)
+
+Listing domains one by one only works for the devices you already know about. With
+`intercept_all: true` every device that uses this host as its DNS resolver reaches the
+proxy, whether or not its domain was ever listed — which is what actually fills the
+capture buffer.
+
+Precedence is **`exclude` > `intercept` > `intercept_all`**: a name in `exclude` is
+always forwarded, even when `intercept` lists it too — with one exception: a name a
+registered adapter explicitly claims (its own service) is always intercepted, so a
+default exclusion can never neutralise a shipped adapter. The defaults keep clock (NTP),
+certificate (OCSP/CRL) and local names out of the proxy: hijacking those breaks
+devices without teaching the proxy anything. Devices that pin their vendor
+certificate still refuse our certificate, so their traffic is relayed undecrypted —
+they show up as contacts, not as buffered request/response pairs.
+
+### Discovery: which domains *should* be intercepted
+
+Every query answered on the DNS port is recorded (one row per device + name, with a
+hit counter) in the core DB table `dns_query_log`, batched — never on the query path.
+The dashboard panel **DNS Discovery** lists what each device asked for, marks each
+name as `intercepted`, `excluded` or `forwarded`, and promotes a discovered name to
+the intercept list with one click (persisted to `dns.intercept`, applied without a
+restart).
+
+```http
+GET    /api/dns/discovery              # what devices asked for, with its current state
+POST   /api/dns/intercept              # {"hostname": "*.iot.vendor.example"}
+DELETE /api/dns/intercept/{hostname}
+GET    /api/dns/settings
+PUT    /api/dns/settings               # {"intercept_all": true, "exclude": [...]}
+DELETE /api/dns/discovery              # clear the log
 ```
 
 ---

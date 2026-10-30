@@ -25,6 +25,8 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    UniqueConstraint,
+    delete,
     event,
     func,
     select,
@@ -495,6 +497,34 @@ class DeviceMetaRow(Base):
     updated_at: Mapped[DateTime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class DNSQueryLog(Base):
+    """One (device, hostname) pair seen on the DNS interception port.
+
+    The DNS server is the first place a device reveals what it talks to, whether
+    or not the name is being intercepted: what a client asks for, how often and
+    when is what lets an operator decide what to intercept next instead of
+    guessing domain names. One row per (client_ip, hostname, qtype) with a hit
+    counter, so the table grows with the number of distinct pairs rather than
+    with the number of queries; the oldest rows are pruned past a cap.
+    """
+
+    __tablename__ = "dns_query_log"
+    __table_args__ = (
+        UniqueConstraint("client_ip", "hostname", "qtype", name="uq_dns_query_pair"),
+        Index("ix_dns_query_last_seen", "last_seen"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    client_ip: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    hostname: Mapped[str] = mapped_column(String(255), index=True, nullable=False)
+    qtype: Mapped[str] = mapped_column(String(16), nullable=False, default="A")
+    # intercepted | excluded | forwarded -- what the proxy did with this name.
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="forwarded")
+    hit_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    first_seen: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_seen: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•  # noqa: E501
@@ -1046,6 +1076,95 @@ class DatabaseManager:
 
         # Level 3: what this ingress path actually speaks.
         return ingress_default
+
+    # ── DNS discovery log ────────────────────────────────────────────────────
+
+    #: Rows kept in ``dns_query_log``: the discovery view is a working set, not
+    #: an archive, and one row is one (client, hostname) pair.
+    DNS_QUERY_LOG_MAX_ROWS = 5000
+
+    async def record_dns_queries(self, observations: list[dict]) -> int:
+        """Upsert observed DNS queries: one row per (client_ip, hostname, qtype).
+
+        ``observations`` carries counters already aggregated by the caller
+        (``client_ip``, ``hostname``, ``qtype``, ``status``, ``hit_count``,
+        ``first_seen``, ``last_seen``), so an existing pair has its hit counter
+        increased and its ``last_seen``/``status`` refreshed instead of adding a
+        row per query. Writes are batched by the discovery recorder, and the
+        single writer is that recorder, so the read-then-write below cannot race.
+        """
+        if not observations:
+            return 0
+        async with self.core_session() as session:
+            for obs in observations:
+                existing = (
+                    await session.execute(
+                        select(DNSQueryLog).where(
+                            DNSQueryLog.client_ip == obs["client_ip"],
+                            DNSQueryLog.hostname == obs["hostname"],
+                            DNSQueryLog.qtype == obs["qtype"],
+                        )
+                    )
+                ).scalar_one_or_none()
+                if existing is None:
+                    session.add(DNSQueryLog(**obs))
+                    continue
+                existing.hit_count += int(obs.get("hit_count", 1))
+                existing.last_seen = obs["last_seen"]
+                existing.status = obs["status"]
+        return len(observations)
+
+    async def list_dns_queries(self, limit: int = 500) -> list[dict]:
+        """Most recently seen (client, hostname) pairs, newest first."""
+        async with self.core_session() as session:
+            result = await session.execute(
+                select(DNSQueryLog).order_by(DNSQueryLog.last_seen.desc()).limit(limit)
+            )
+            rows = list(result.scalars().all())
+        return [
+            {
+                "client_ip": row.client_ip,
+                "hostname": row.hostname,
+                "qtype": row.qtype,
+                "status": row.status,
+                "hit_count": row.hit_count,
+                "first_seen": row.first_seen.isoformat() if row.first_seen else None,
+                "last_seen": row.last_seen.isoformat() if row.last_seen else None,
+            }
+            for row in rows
+        ]
+
+    async def clear_dns_queries(self) -> int:
+        """Empty the discovery log and return how many rows were removed."""
+        async with self.core_session() as session:
+            count = (
+                await session.execute(select(func.count()).select_from(DNSQueryLog))
+            ).scalar_one()
+            await session.execute(delete(DNSQueryLog))
+        return int(count)
+
+    async def prune_dns_queries(self, max_rows: int | None = None) -> int:
+        """Drop the oldest pairs so the log stays under ``max_rows``."""
+        cap = self.DNS_QUERY_LOG_MAX_ROWS if max_rows is None else int(max_rows)
+        async with self.core_session() as session:
+            count = (
+                await session.execute(select(func.count()).select_from(DNSQueryLog))
+            ).scalar_one()
+            excess = int(count) - cap
+            if excess <= 0:
+                return 0
+            oldest = (
+                (
+                    await session.execute(
+                        select(DNSQueryLog.id).order_by(DNSQueryLog.last_seen.asc()).limit(excess)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if oldest:
+                await session.execute(delete(DNSQueryLog).where(DNSQueryLog.id.in_(oldest)))
+        return len(oldest)
 
     @contextlib.asynccontextmanager
     async def core_session(self) -> AsyncGenerator[AsyncSession, None]:
