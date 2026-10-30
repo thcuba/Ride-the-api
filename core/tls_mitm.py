@@ -23,6 +23,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from http import HTTPStatus
+from itertools import count
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -366,6 +367,15 @@ class TLSMITMServer:
         # Device metadata: ip -> DevicePortInfo
         self.device_ports: dict[str, DevicePortInfo] = {}
         self._device_ports_lock = asyncio.Lock()
+
+        # Relayed connections that are open right now, key -> live view. A relayed contact is
+        # recorded only when it ENDS, and a device that pins its certificate can hold one session
+        # open for hours: during that time the contact list looks empty exactly while the device is
+        # busy talking to its cloud. The byte counters are the same dicts the piping writes into,
+        # so they move by themselves while the session lives.
+        self.live_relays: dict[str, dict] = {}
+        self._live_relays_lock = asyncio.Lock()
+        self._relay_sequence = count()
 
         # Cache of parsed SSLContexts keyed by (cert_pem, key_pem). Building a
         # context writes a temp file and parses the PEM on every TLS connection;
@@ -885,6 +895,17 @@ class TLSMITMServer:
         started = time.monotonic()
         up_writer.write(client_hello)
         to_cloud["bytes"] = len(client_hello)
+        # Visible from here on: a session that stays open for hours must not look like silence.
+        relay_key = f"{client_ip}:{dst_port}:{next(self._relay_sequence)}"
+        await self._register_live_relay(
+            relay_key,
+            {
+                **base,
+                "upstream_ip": upstream_ip,
+                "to_cloud": to_cloud,
+                "to_device": to_device,
+            },
+        )
         try:
             await up_writer.drain()
             await asyncio.gather(
@@ -893,6 +914,9 @@ class TLSMITMServer:
                 return_exceptions=True,
             )
         finally:
+            # The contact record below becomes the visible trace of this session, so the live view
+            # goes away in the same breath.
+            self._finish_live_relay(relay_key)
             for stream in (up_writer, writer):
                 with suppress(Exception):
                     stream.close()
@@ -1192,6 +1216,51 @@ class TLSMITMServer:
                     first_seen=now,
                     last_seen=now,
                 )
+
+    async def _register_live_relay(self, key: str, view: dict) -> None:
+        """Remember a relayed connection that is open right now.
+
+        ``on_relayed`` fires only once the connection ends, so a session that lasts hours is
+        invisible for hours: no contact in the list, no bytes anywhere, nothing that says the
+        device is alive and working. Keeping the ``to_cloud``/``to_device`` dicts by reference
+        means the byte counts update themselves as the streams are piped.
+        """
+        async with self._live_relays_lock:
+            view["started_monotonic"] = time.monotonic()
+            view["started_at"] = datetime.now(UTC).isoformat()
+            view["key"] = key
+            self.live_relays[key] = view
+
+    def _finish_live_relay(self, key: str) -> None:
+        """Forget a relayed connection: its contact record takes over from here.
+
+        Deliberately synchronous and lock-free: it runs in a ``finally``, including when the task
+        is being cancelled, and awaiting a lock there can be interrupted and leave the live view
+        hanging forever. Removing one key is atomic in a single-threaded event loop, and
+        ``get_live_relays`` never awaits mid-iteration, so no lock is needed either side.
+        """
+        self.live_relays.pop(key, None)
+
+    def get_live_relays(self) -> list[dict]:
+        """Describe the relayed connections open at this instant, with current byte counts."""
+        now = time.monotonic()
+        views: list[dict] = []
+        for view in self.live_relays.values():
+            started = view.get("started_monotonic", now)
+            views.append(
+                {
+                    "client_ip": view.get("client_ip"),
+                    "server_name": view.get("server_name"),
+                    "destination_port": view.get("destination_port"),
+                    "upstream_ip": view.get("upstream_ip"),
+                    "bytes_to_cloud": (view.get("to_cloud") or {}).get("bytes", 0),
+                    "bytes_to_device": (view.get("to_device") or {}).get("bytes", 0),
+                    "duration_ms": int((now - started) * 1000),
+                    "started_at": view.get("started_at"),
+                    "in_progress": True,
+                }
+            )
+        return views
 
     def get_device_ip_info(self, device_id: str) -> DevicePortInfo | None:
         """Look up a device's IP/port info."""

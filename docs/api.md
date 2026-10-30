@@ -962,6 +962,7 @@ MITM server status and certificate statistics.
   },
   "mitm_server": true,
   "listen_ports": [443, 8883, 8443],
+  "open_relays": 1,
   "device_ports": [
     {
       "ip": "192.168.1.42",
@@ -982,6 +983,12 @@ Connections forwarded to the vendor cloud **without terminating TLS**, newest fi
 devices that pin their vendor's certificate: they refuse any certificate the proxy generates, so
 their payload is never decrypted and cannot be read. The contact itself is still recorded, and for
 such a device it is the only evidence of activity.
+
+A contact is written **when the connection ends**, and a device can hold one session open for hours
+(measured: ~4 h with ~32 KB up and ~22 KB down). The list below would therefore look empty for
+exactly as long as the device is busy, so the connections being forwarded at this instant are listed
+separately in `in_progress` (`open` is how many there are). One call answers both "has it ever
+connected" and "is it connected now".
 
 Query parameters:
 
@@ -1005,9 +1012,31 @@ Query parameters:
       "started_at": "2026-01-01T12:00:00+00:00"
     }
   ],
-  "total": 1
+  "total": 1,
+  "open": 1,
+  "in_progress": [
+    {
+      "client_ip": "192.168.1.50",
+      "server_name": "ats.iot.vendor-cloud.example",
+      "destination_port": 443,
+      "upstream_ip": "203.0.113.10",
+      "bytes_to_cloud": 32626,
+      "bytes_to_device": 22014,
+      "duration_ms": 8130000,
+      "started_at": "2026-01-01T08:44:07+00:00",
+      "in_progress": true
+    }
+  ]
 }
 ```
+
+`in_progress` entries carry the same shape as a recorded contact (same field names, so a client can
+render them with the same code) plus `in_progress: true`, and they have no `device_id`: resolving
+the device would mean a database read on the forwarding path, so the client maps `client_ip`
+itself. Their byte counts and `duration_ms`
+are the values **so far** — they grow while the session lives. `started_at` here is a real start
+time; for recorded contacts it is when the record was written, i.e. the moment the session ended
+(compute the start as `started_at - duration_ms`).
 
 `outcome` is one of `relayed` (the two ends were connected and bytes moved both ways),
 `no_resolver` (nothing wired to resolve hostnames), `unresolvable` (the name did not resolve),
@@ -1015,7 +1044,8 @@ Query parameters:
 too: an attempt that never got through is still an attempt, and it dates the device.
 
 The count per device is also exposed by `GET /api/devices` as `relayed_connections`, which is what
-the dashboard shows on each device card.
+the dashboard shows on each device card. `GET /api/tls/stats` exposes the live aggregate as
+`open_relays`.
 
 ### TLS Devices: `GET /api/tls/device-ports`
 
