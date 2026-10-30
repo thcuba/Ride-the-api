@@ -16,10 +16,11 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 import core.server as server_mod
+import core.upstream_resolver as resolver
 from adapters.base import InterceptedRequest, ProtocolType
 from core.database import DatabaseManager, DeviceRegistry
 from core.tls_mitm import DecryptedRequest, TLSMITMServer
-from core.upstream_resolver import is_loopback_ip
+from core.upstream_resolver import is_loopback_ip, is_self_address, self_connection_reason
 
 LOOPBACK = "127.0.0.1"
 LAN_IP = "192.168.1.77"
@@ -241,4 +242,74 @@ def test_binding_a_loopback_ip_to_a_device_is_rejected(monkeypatch, tmp_path):
     )
 
     assert response.status_code == 400  # noqa: PLR2004
-    assert "Loopback" in response.json()["error"]
+    assert "this machine" in response.json()["error"]
+
+
+# ── the proxy's own LAN address is just as much "not a device" ───────────────
+
+
+OWN_LAN_ADDRESS = "10.9.8.7"
+
+
+@pytest.fixture
+def own_address(monkeypatch):
+    """Pin the host's address list, so the test does not depend on the machine it runs on."""
+    monkeypatch.setattr(resolver, "_self_addresses", frozenset({OWN_LAN_ADDRESS, "127.0.0.1"}))
+    return OWN_LAN_ADDRESS
+
+
+def test_a_foreign_lan_address_is_still_a_device():
+    """The check must not swallow the LAN: that is where the devices are."""
+    assert is_self_address(LAN_IP) is False
+    assert is_self_address("8.8.8.8") is False
+    assert self_connection_reason(LAN_IP) is None
+
+
+def test_this_machines_own_addresses_are_recognised(own_address):
+    assert is_self_address(own_address) is True
+    assert self_connection_reason(own_address) == "own-address"
+    # Loopback keeps its own reason, so the logs say which of the two it was.
+    assert self_connection_reason("127.0.0.1") == "loopback"
+    assert self_connection_reason(own_address + "%eth0") == "own-address"
+
+
+def test_garbage_is_not_an_address_of_this_machine():
+    for value in ("", "not-an-ip", "ca:75:7a:af:96:7e", None):
+        assert is_self_address(value) is False
+
+
+def test_the_address_list_holds_ip_literals_only(monkeypatch):
+    """psutil also lists link-layer entries; a MAC must not enter the comparison set."""
+    monkeypatch.setattr(resolver, "_self_addresses", None)
+    addresses = resolver.self_addresses()
+
+    assert addresses
+    for value in addresses:
+        assert resolver._is_ip_literal(value), value  # noqa: SLF001 - the guard under test
+
+
+@pytest.mark.asyncio
+async def test_tls_request_from_our_own_lan_address_is_forwarded(
+    monkeypatch, db_manager, own_address
+):
+    """A process on this host reaching the proxy on its own IP looks exactly like a device."""
+    orch = _FakeOrchestrator()
+    monkeypatch.setattr(server_mod, "db_manager", db_manager)
+    monkeypatch.setattr(server_mod, "orchestrator", orch)
+
+    req = DecryptedRequest(
+        method="POST",
+        path="/v1/status",
+        http_version="HTTP/1.1",
+        headers={"host": SNI},
+        body=b"{}",
+        client_ip=own_address,
+        client_port=51000,
+        sni=SNI,
+        dst_port=443,
+    )
+    result = await server_mod.handle_tls_decrypted_request(req)
+
+    assert result == {"action": "forward", "reason": "own-address"}
+    assert orch.calls == []
+    assert await _devices(db_manager) == []
