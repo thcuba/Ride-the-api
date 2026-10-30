@@ -442,7 +442,8 @@ Listing domains one by one only works for the devices you already know about. Wi
 proxy, whether or not its domain was ever listed — which is what actually fills the
 capture buffer.
 
-The proxy never applies `intercept_all` to its **own** queries (a loopback client):
+The proxy never applies `intercept_all` to its **own** queries (a client that is this machine,
+loopback or one of its own interface addresses):
 answering its own resolution with its own address would be a resolution loop, not a
 capture. A name listed in `intercept` is still honoured for a local query, so a
 `dig` from the box itself shows the real policy, and the proxy's own queries are

@@ -32,7 +32,7 @@ from adapters.base import InterceptedRequest, ProtocolType, device_id_from_ip
 from core.cert_manager import CertManager
 from core.cloud_forward import forward_intercepted
 from core.ports import bind_failure_hint
-from core.upstream_resolver import is_loopback_ip
+from core.upstream_resolver import self_connection_reason
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
@@ -1174,7 +1174,7 @@ class TLSMITMServer:
         dst_port: int,
     ) -> None:
         """Register a device connection for port/IP tracking."""
-        if is_loopback_ip(client_ip):
+        if self_connection_reason(client_ip):
             # This machine talking to itself is not a device: keeping it out of the
             # tracking keeps it out of the device/port lists in the UI.
             return

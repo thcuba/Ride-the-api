@@ -17,6 +17,7 @@ import asyncio
 import functools
 import ipaddress
 import logging
+import socket
 from typing import TYPE_CHECKING
 
 import dns.asyncresolver
@@ -113,6 +114,114 @@ def is_loopback_ip(ip_str: str | None) -> bool:
     if mapped is not None:
         return bool(mapped.is_loopback)
     return addr.is_loopback
+
+
+#: Addresses this machine answers on, cached: a connection whose source is one of them
+#: is the proxy talking to itself on its own LAN address, which is exactly as much "not
+#: a device" as a loopback peer. ``is_loopback_ip`` deliberately does not match LAN
+#: ranges (devices live there), so the distinction has to come from the host's own
+#: interface list instead of from the address class.
+_self_addresses: frozenset[str] | None = None
+
+
+def self_addresses() -> frozenset[str]:
+    """Every address this machine is reachable on (best effort), cached.
+
+    Sources in order of reliability: ``psutil`` when importable (all interfaces, IPv6
+    included), then this host's own name, then the address the OS would use to reach the
+    internet, plus loopback. Missing an address fails safe -- that traffic is treated as
+    a device again, exactly as it was before.
+    """
+    global _self_addresses  # noqa: PLW0603
+    if _self_addresses is not None:
+        return _self_addresses
+
+    found: set[str] = {"127.0.0.1", "::1"}
+    try:
+        import psutil  # noqa: PLC0415 - optional: not a declared dependency
+
+        for addrs in psutil.net_if_addrs().values():
+            found.update(_normalise_address(addr.address) for addr in addrs)
+    except Exception:  # noqa: BLE001 - any failure just narrows the list
+        logger.debug("psutil unavailable: identifying this host by name and route only")
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None):
+            found.add(_normalise_address(info[4][0]))
+    except Exception:  # noqa: BLE001 - an unresolvable host name is not fatal
+        logger.debug("could not resolve this host's own name")
+    found.add(_normalise_address(_default_route_address()))
+
+    # Keep IP literals only: psutil also lists link-layer entries, whose "address" is a
+    # MAC (or an all-zero placeholder), and those have no business in a set compared
+    # against client IPs.
+    _self_addresses = frozenset(address for address in found if _is_ip_literal(address))
+    logger.info("Proxy: %d address(es) belong to this machine", len(_self_addresses))
+    return _self_addresses
+
+
+def invalidate_self_addresses() -> None:
+    """Forget the cached list (a DHCP lease or an interface change makes it stale)."""
+    global _self_addresses  # noqa: PLW0603
+    _self_addresses = None
+
+
+def _default_route_address() -> str:
+    """The address the OS would use to reach the internet (one interface), or ""."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            probe.settimeout(0.2)
+            probe.connect(("8.8.8.8", 53))
+            return str(probe.getsockname()[0])
+    except OSError:
+        return ""
+
+
+def _normalise_address(value: object) -> str:
+    """A bare IP literal: no zone suffix, no brackets."""
+    return str(value or "").split("%", 1)[0].strip().strip("[]")
+
+
+def _is_ip_literal(value: str) -> bool:
+    """True for something ``ipaddress`` accepts (a MAC is not an address here)."""
+    try:
+        ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return True
+
+
+def is_self_address(ip_str: str | None) -> bool:
+    """True if ``ip_str`` belongs to this machine: loopback or one of its own addresses.
+
+    The LAN-IP half of the invariant ``is_loopback_ip`` enforces for 127.0.0.0/8: a
+    process on this host reaching the proxy on its own interface address used to look
+    like a device to learn, and ended up in the device list with a buffered pair.
+    """
+    return self_connection_reason(ip_str) is not None
+
+
+def self_connection_reason(ip_str: str | None) -> str | None:
+    """Why ``ip_str`` is this machine talking to itself, or ``None`` for a real client.
+
+    The reason is returned rather than a boolean so the callers can log *which* of the
+    two cases it is (``loopback`` or ``own-address``) without testing twice.
+    """
+    if not ip_str:
+        return None
+    literal = _normalise_address(ip_str)
+    if is_loopback_ip(literal):
+        return "loopback"
+    try:
+        addr = ipaddress.ip_address(literal)
+    except ValueError:
+        return None
+    mapped = getattr(addr, "ipv4_mapped", None)
+    if mapped is not None:
+        literal = str(mapped)
+    mine = self_addresses()
+    if literal in mine or f"::ffff:{literal}" in mine:
+        return "own-address"
+    return None
 
 
 def _apply_config(config: Config) -> None:

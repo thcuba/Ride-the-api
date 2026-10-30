@@ -47,7 +47,7 @@ from core.dns_discovery import (
     get_dns_recorder,
 )
 from core.ports import bind_failure_hint
-from core.upstream_resolver import is_loopback_ip
+from core.upstream_resolver import is_self_address
 
 if TYPE_CHECKING:
     from core.config import Config
@@ -327,7 +327,7 @@ class DNSInterceptor:
         # through us is a resolution loop -- and nothing is recorded, because a
         # self-query is not a device to discover. An explicitly listed name is
         # still intercepted, so a local probe can verify the configuration.
-        from_self = is_loopback_ip(client)
+        from_self = is_self_address(client)
         decision = self.classify(qname, from_self=from_self)
         if not from_self:
             self._note_query(decision, client, qname, qtype)

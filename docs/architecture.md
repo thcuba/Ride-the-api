@@ -383,6 +383,15 @@ central mechanism for IP-first routing: **the source IP is the key to the device
 database**. IP validation and classification (private/loopback) use the stdlib
 [`ipaddress`](https://docs.python.org/3/library/ipaddress.html) module.
 
+A client whose address belongs to **this machine** is never a device: no record, no buffered
+pair, no entry in the device/port lists, and no interception. Two cases, one predicate
+(`core.upstream_resolver.self_connection_reason`): `loopback` for `127.0.0.0/8` / `::1` /
+IPv4-mapped and zonal forms (`is_loopback_ip`), and `own-address` for any other address the
+host answers on — a process on this box reaching the proxy at its own LAN IP looked exactly
+like a device, and was captured as one. The address list comes from `psutil` when available,
+then the host's own name and the default route; a miss fails safe (that traffic is treated as
+a device again, as before).
+
 ### 4.4 Custom Databases
 
 Each device can have a completely separate database (custom URL) via the
@@ -610,10 +619,10 @@ start. This server is the piece that makes that possible without breaking anythi
 - **`dns.exclude` is what makes `intercept_all` safe**: the defaults (`ntp.*`, `time.*`, `ocsp.*`,
   `crl.*`, `*.local`, `*.lan`, `*.localdomain`) keep the clock, certificate revocation and local
   names out of the proxy, because hijacking those breaks devices without teaching anything.
-- **The proxy never captures itself**: a loopback client is answered by the upstream, never by
-  `intercept_all` — resolving our own queries to ourselves would be a loop, not a capture — and it is
-  never written to the discovery log. A name in `dns.intercept` is still honoured for a local query,
-  so a `dig` from the box itself shows the policy that is actually in force.
+- **The proxy never captures itself**: a client that *is* this machine is answered by the upstream,
+  never by `intercept_all` — resolving our own queries to ourselves would be a loop, not a capture —
+  and it is never written to the discovery log. A name in `dns.intercept` is still honoured for a
+  local query, so a `dig` from the box itself shows the policy that is actually in force.
 - **What devices ask for is recorded** in the core DB (`dns_query_log`, one row per
   client + hostname + qtype with a hit counter, oldest pruned past a cap): the DNS port is the only
   place a device the proxy is *not* yet intercepting reveals the name it is about to talk to. Counters

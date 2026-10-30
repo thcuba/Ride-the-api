@@ -108,7 +108,7 @@ from core.tls_mitm import (
     peek_tls_mitm_server,
 )
 from core.traffic_selector import TrafficRequestInfo, get_traffic_selector, is_local_ip
-from core.upstream_resolver import _apply_config, is_loopback_ip
+from core.upstream_resolver import _apply_config, self_connection_reason
 
 # Path to webui directory (bundle-aware: works in source and PyInstaller builds)
 WEBUI_DIR = resource_path("webui")
@@ -280,7 +280,7 @@ async def handle_device_seen(client_ip: str, sni: str | None) -> None:
     """
     if not db_manager:
         return
-    if is_loopback_ip(client_ip):
+    if self_connection_reason(client_ip):
         # The proxy talking to itself is not a device to register.
         return
     device_id = device_id_from_ip("ip", client_ip)
@@ -346,8 +346,8 @@ async def mark_device_untrusted(client_ip: str, sni: str | None) -> None:
     """
     if not db_manager:
         return
-    if is_loopback_ip(client_ip):
-        # A loopback peer is never a device, so there is nothing to mark.
+    if self_connection_reason(client_ip):
+        # The proxy talking to itself is never a device, so there is nothing to mark.
         return
     device_id = await db_manager.resolve_device_id(client_ip)
     if not device_id:
@@ -390,7 +390,7 @@ async def record_relayed_connection(contact: dict) -> None:
     if not db_manager:
         return
     client_ip = contact.get("client_ip") or ""
-    if is_loopback_ip(client_ip):
+    if self_connection_reason(client_ip):
         # A relayed connection from this machine is not evidence about a device.
         return
     device_id = await db_manager.resolve_device_id(client_ip)
@@ -454,14 +454,16 @@ async def handle_tls_decrypted_request(req: DecryptedRequest) -> dict | None:
     # Never intercept our own traffic: a request coming from the loopback
     # interface belongs to this machine, not to a device. Forward it untouched
     # (like a bypassed IP) and do not create a device, DB or buffered pair for it.
-    if is_loopback_ip(req.client_ip):
+    self_reason = self_connection_reason(req.client_ip)
+    if self_reason:
         logger.debug(
-            "TLS: loopback client %s is never intercepted, forwarding %s %s",
+            "TLS: %s client %s is never intercepted, forwarding %s %s",
+            self_reason,
             req.client_ip,
             req.method,
             req.path,
         )
-        return {"action": "forward", "reason": "loopback"}
+        return {"action": "forward", "reason": self_reason}
 
     # Automatic device recognition: if this source IP is already bound to a
     # known device (device.ip_addresses), use THAT device instead of a fresh
@@ -635,13 +637,15 @@ async def handle_protocol_request(request: InterceptedRequest) -> dict | None:  
     # Never intercept our own traffic: a plugin that reports a loopback source IP
     # is looking at this machine talking to itself. Forward it untouched instead
     # of registering a device and buffering a pair for the proxy itself.
-    if is_loopback_ip(getattr(request, "client_ip", None)):
+    self_reason = self_connection_reason(getattr(request, "client_ip", None))
+    if self_reason:
         logger.debug(
-            "Protocol handler: loopback client %s is never intercepted, forwarding %s",
+            "Protocol handler: %s client %s is never intercepted, forwarding %s",
+            self_reason,
             request.client_ip,
             getattr(request, "path", None) or getattr(request, "topic", None) or "request",
         )
-        return {"action": "forward", "reason": "loopback"}
+        return {"action": "forward", "reason": self_reason}
 
     device_id = request.device_id or "unknown"
 
@@ -2322,11 +2326,11 @@ async def register_device_ip(device_id: str, request: Request):  # noqa: PLR0911
         return JSONResponse(status_code=400, content={"error": "Provide 'ip_address'"})
     if not isinstance(ip_address, str) or not db_manager._is_ip(ip_address):
         return JSONResponse(status_code=400, content={"error": "Invalid IP address format"})
-    if is_loopback_ip(ip_address):
+    if self_connection_reason(ip_address):
         return JSONResponse(
             status_code=400,
             content={
-                "error": "Loopback addresses cannot be bound to a device: "
+                "error": "Addresses of this machine cannot be bound to a device: "
                 "the proxy never intercepts its own traffic"
             },
         )
