@@ -1956,9 +1956,11 @@ async function loadDnsDiscovery() {
       // Say *why* a name is not interceptable instead of offering a button that
       // would change nothing: an adapter claim wins over the list, and a name kept
       // out by an exclusion pattern stays out whatever the list says.
-      const reason = e.claimed_by
-        ? `<span style="font-size:11px;color:var(--text2);">declared by the ${escapeHtml(e.claimed_by)} adapter</span>`
-        : (e.excluded_by ? `<span style="font-size:11px;color:var(--text2);">kept out by the exclusion ${escapeHtml(e.excluded_by)}</span>` : '');
+      // The exclusion comes first: when one is in force it is the rule that decides
+      // (it beats an adapter claim), so naming the claim would explain the loser.
+      const reason = e.excluded_by
+        ? `<span style="font-size:11px;color:var(--text2);">kept out by the exclusion ${escapeHtml(e.excluded_by)}</span>`
+        : (e.claimed_by ? `<span style="font-size:11px;color:var(--text2);">declared by the ${escapeHtml(e.claimed_by)} adapter</span>` : '');
       let action = '';
       if (e.suggested) {
         action = `<button class="tb-btn" onclick="dnsIntercept('${escapeJs(host)}', this)" aria-label="Intercept ${escapeHtml(host)}">+ intercept</button>`;

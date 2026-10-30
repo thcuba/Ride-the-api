@@ -217,6 +217,23 @@ class ObservabilityConfig(BaseModel):
     health_check: HealthCheckConfig = Field(default_factory=HealthCheckConfig)
 
 
+#: Exclusions shipped as defaults. They are **soft**: they yield to a name a
+#: registered adapter explicitly claims, so shipping an adapter is still enough to
+#: make its service interceptable (the ``shelly-*.local`` family lives inside
+#: ``*.local``). An exclusion written by the operator is hard and wins over
+#: everything, adapter claims included, because overriding what someone typed by
+#: hand is exactly the kind of silence this project avoids.
+DEFAULT_DNS_EXCLUSIONS: tuple[str, ...] = (
+    "ntp.*",
+    "time.*",
+    "ocsp.*",
+    "crl.*",
+    "*.local",
+    "*.lan",
+    "*.localdomain",
+)
+
+
 class DNSConfig(BaseModel):
     """DNS interception server and the upstream resolvers it forwards to."""
 
@@ -249,22 +266,16 @@ class DNSConfig(BaseModel):
         ),
     )
     exclude: list[str] = Field(
-        default_factory=lambda: [
-            "ntp.*",
-            "time.*",
-            "ocsp.*",
-            "crl.*",
-            "*.local",
-            "*.lan",
-            "*.localdomain",
-        ],
+        default_factory=lambda: list(DEFAULT_DNS_EXCLUSIONS),
         description=(
-            "Names never answered by the proxy and always forwarded, whatever "
-            "'intercept' or 'intercept_all' say. Evaluated first, so exclude wins over "
-            "intercept -- with one exception: a name a registered adapter explicitly "
-            "claims is always intercepted, so a default exclusion cannot neutralise a "
-            "shipped adapter. Time/OCSP/CRL and local names are here by default: "
-            "hijacking them only breaks devices without teaching the proxy anything."
+            "Names never answered by the proxy and always forwarded. The ones you write "
+            "here win over everything ('intercept', 'intercept_all' and even a name a "
+            "registered adapter claims), because an exclusion typed by hand must mean "
+            "what it says. The values shipped by default are soft instead: they yield "
+            "to a name an adapter explicitly claims, so shipping an adapter is still "
+            "enough to make its service interceptable -- the 'shelly-*.local' family "
+            "lives inside the default '*.local'. Time/OCSP/CRL and local names are here "
+            "by default: hijacking them only breaks devices without teaching anything."
         ),
     )
     answer_ip: str = Field(
