@@ -442,6 +442,12 @@ Listing domains one by one only works for the devices you already know about. Wi
 proxy, whether or not its domain was ever listed — which is what actually fills the
 capture buffer.
 
+The proxy never applies `intercept_all` to its **own** queries (a loopback client):
+answering its own resolution with its own address would be a resolution loop, not a
+capture. A name listed in `intercept` is still honoured for a local query, so a
+`dig` from the box itself shows the real policy, and the proxy's own queries are
+never recorded in the discovery log — the log is about devices.
+
 Precedence is **`exclude` > `intercept` > `intercept_all`**: a name in `exclude` is
 always forwarded, even when `intercept` lists it too — with one exception: a name a
 registered adapter explicitly claims (its own service) is always intercepted, so a

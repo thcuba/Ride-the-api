@@ -1928,8 +1928,14 @@ async function loadDnsDiscovery() {
     const stats = data.stats || {};
     if (status) {
       status.textContent = `${entries.length} name(s) seen · DNS ${listening}`
-        + ` · ${stats.intercepted || 0} intercepted / ${stats.forwarded || 0} forwarded`
-        + (data.pending_pairs ? ` · ${data.pending_pairs} pending` : '');
+        + ` · ${stats.intercepted || 0} intercepted · ${stats.excluded || 0} excluded`
+        + ` · ${stats.forwarded || 0} forwarded`
+        + (data.pending_pairs ? ` · ${data.pending_pairs} pending` : '')
+        // A recorder that cannot reach the database is otherwise invisible here:
+        // only a log line says so, and the operator is looking at this panel.
+        + (data.flush_errors ? ` · ${data.flush_errors} write error(s), the log is not reaching the database` : '');
+      status.title = 'An excluded name is still forwarded upstream, so it is counted in both totals.'
+        + (data.flushed_pairs ? ` ${data.flushed_pairs} pair(s) written so far.` : '');
     }
     if (!entries.length) {
       list.innerHTML = '<span style="font-size:12px;color:var(--text2);">No query recorded yet. Point a device at this host as its DNS resolver (AdGuard: an upstream or a rewrite) — or switch on "Intercept all" — and its requests appear here.</span>';

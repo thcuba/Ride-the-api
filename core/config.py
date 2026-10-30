@@ -243,7 +243,9 @@ class DNSConfig(BaseModel):
             "this host as its resolver reaches the proxy (the way to fill the capture "
             "buffer without listing domains one by one). Off by default: it must be a "
             "deliberate choice, and 'exclude' is what keeps it from touching names "
-            "that have nothing to do with device learning."
+            "that have nothing to do with device learning. It never applies to the "
+            "proxy's own queries (loopback client): answering our own resolution with "
+            "our own address would be a loop, not a capture."
         ),
     )
     exclude: list[str] = Field(

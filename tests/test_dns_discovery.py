@@ -572,8 +572,8 @@ async def test_a_duplicated_pair_in_one_batch_is_merged_not_rejected(db_manager)
     rows = await db_manager.list_dns_queries()
     assert len(rows) == 1
     assert rows[0]["hit_count"] == 5  # noqa: PLR2004
-    # SQLite stores the timestamp naive, so compare it as it comes back.
-    assert rows[0]["last_seen"] == second["last_seen"].replace(tzinfo=None).isoformat()
+    # SQLite stores the row naive; the API hands it back as explicit UTC.
+    assert rows[0]["last_seen"] == second["last_seen"].isoformat()
 
 
 @pytest.mark.asyncio
@@ -675,3 +675,95 @@ async def test_discovery_names_the_adapter_that_claims_a_name(api):
 
     assert entry["claimed_by"] == claimed[0]
     assert entry["intercepted"] is True
+
+
+# ── the proxy never captures its own resolution ──────────────────────────────
+
+
+def test_intercept_all_does_not_capture_the_proxys_own_queries():
+    """Redirecting our own resolution to ourselves is a loop, not a capture."""
+    interceptor = DNSInterceptor(_config(intercept=[], exclude=[], intercept_all=True))
+
+    assert interceptor.classify("anything.at.all.example", from_self=True) == "forwarded"
+    assert interceptor.classify("anything.at.all.example") == "intercepted"
+
+
+def test_a_listed_name_is_still_intercepted_for_a_local_probe():
+    """A list entry is a deliberate choice: `dig @127.0.0.1` must see it applied."""
+    interceptor = DNSInterceptor(_config(intercept=[DEVICE_HOST], intercept_all=True))
+
+    assert interceptor.classify(DEVICE_HOST, from_self=True) == "intercepted"
+
+
+@pytest.mark.asyncio
+async def test_a_loopback_query_is_forwarded_and_not_recorded(monkeypatch):
+    interceptor = DNSInterceptor(_config(intercept=[], exclude=[], intercept_all=True))
+    recorder = DNSDiscoveryRecorder(sink=None)
+    interceptor.query_recorder = recorder
+    forwarded: list[str] = []
+
+    async def _fake_forward(query):
+        forwarded.append(query.question[0].name.to_text())
+        return b"from-the-upstream"
+
+    monkeypatch.setattr(interceptor, "_forward", _fake_forward)
+    query = dns.message.make_query("brand-new.example", dns.rdatatype.A)
+
+    answer = await interceptor.handle_query(query.to_wire(), client="127.0.0.1")
+
+    assert answer == b"from-the-upstream"  # not answered with our own address
+    assert forwarded == ["brand-new.example."]
+    assert recorder.pending_pairs == 0  # a self-query is not a device to discover
+    assert interceptor.stats["intercepted"] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_device_query_is_still_intercepted_and_recorded(monkeypatch):
+    """The same rule, on the other side: a real client keeps the wide behaviour."""
+    interceptor = DNSInterceptor(_config(intercept=[], exclude=[], intercept_all=True))
+    recorder = DNSDiscoveryRecorder(sink=None)
+    interceptor.query_recorder = recorder
+
+    async def _never_called(_query):  # pragma: no cover - must not be reached
+        raise AssertionError("an intercepted name must not be forwarded")
+
+    monkeypatch.setattr(interceptor, "_forward", _never_called)
+    query = dns.message.make_query("brand-new.example", dns.rdatatype.A)
+
+    answer = dns.message.from_wire(
+        await interceptor.handle_query(query.to_wire(), client=CLIENT_IP)
+    )
+
+    assert [rdata.address for rrset in answer.answer for rdata in rrset] == [PROXY_IP]
+    assert recorder.pending_pairs == 1
+
+
+@pytest.mark.asyncio
+async def test_the_discovery_log_hands_out_utc_timestamps(db_manager):
+    """A caller must not have to guess the zone of a timestamp it is given."""
+    await db_manager.record_dns_queries([_observation(DEVICE_HOST, hits=1, seen=datetime.now(UTC))])
+
+    row = (await db_manager.list_dns_queries())[0]
+
+    assert row["last_seen"].endswith("+00:00")
+    assert row["first_seen"].endswith("+00:00")
+
+
+@pytest.mark.asyncio
+async def test_discovery_reports_a_failing_recorder(api):
+    """A recorder that cannot reach the database must not fail silently.
+
+    The log line is easy to miss; the panel counter is not.
+    """
+    failing = DNSDiscoveryRecorder(_FakeSink(fail=True), flush_interval_s=3600)
+    failing.note(CLIENT_IP, DEVICE_HOST, "A", "forwarded")
+    await failing.flush()  # the sink refuses: one error, and the counter is kept
+    set_dns_recorder(failing)
+    try:
+        body = (await api["client"].get("/api/dns/discovery")).json()
+    finally:
+        set_dns_recorder(api["recorder"])
+
+    assert body["flush_errors"] == 1
+    assert body["pending_pairs"] == 1
+    assert body["flushed_pairs"] == 0

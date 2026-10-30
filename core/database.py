@@ -11,6 +11,7 @@ import hashlib
 import ipaddress
 import logging
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -529,6 +530,18 @@ class DNSQueryLog(Base):
 
 
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•  # noqa: E501
+def _iso_utc(value: datetime | None) -> str | None:
+    """Render a stored timestamp as ISO-8601 UTC.
+
+    SQLite hands the rows back naive (it has no timezone type), so an unqualified
+    ``isoformat()`` would leave the caller guessing -- and comparing a naive string
+    with the aware one of a not-yet-flushed counter is not the same comparison.
+    """
+    if value is None:
+        return None
+    return (value if value.tzinfo else value.replace(tzinfo=UTC)).isoformat()
+
+
 def _collapse_dns_observations(observations: list[dict]) -> list[dict]:
     """Merge observations sharing (client_ip, hostname, qtype) into one row each.
 
@@ -1144,8 +1157,8 @@ class DatabaseManager:
                 "qtype": row.qtype,
                 "status": row.status,
                 "hit_count": row.hit_count,
-                "first_seen": row.first_seen.isoformat() if row.first_seen else None,
-                "last_seen": row.last_seen.isoformat() if row.last_seen else None,
+                "first_seen": _iso_utc(row.first_seen),
+                "last_seen": _iso_utc(row.last_seen),
             }
             for row in rows
         ]

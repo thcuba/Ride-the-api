@@ -46,6 +46,7 @@ from core.dns_discovery import (
     get_dns_recorder,
 )
 from core.ports import bind_failure_hint
+from core.upstream_resolver import is_loopback_ip
 
 if TYPE_CHECKING:
     from core.config import Config
@@ -313,8 +314,16 @@ class DNSInterceptor:
         qname = question.name.to_text().lower()
         qtype = question.rdtype
 
-        decision = self.classify(qname)
-        self._note_query(decision, client, qname, qtype)
+        # The proxy must never capture itself. Two consequences for a query coming
+        # from this machine: the blanket rule (``intercept_all``) does not apply --
+        # answering every name with our own address while this host resolves
+        # through us is a resolution loop -- and nothing is recorded, because a
+        # self-query is not a device to discover. An explicitly listed name is
+        # still intercepted, so a local probe can verify the configuration.
+        from_self = is_loopback_ip(client)
+        decision = self.classify(qname, from_self=from_self)
+        if not from_self:
+            self._note_query(decision, client, qname, qtype)
 
         if decision == STATUS_INTERCEPTED:
             self.stats["intercepted"] += 1
@@ -353,8 +362,13 @@ class DNSInterceptor:
         except Exception:  # noqa: BLE001 - the DNS answer matters more
             logger.debug("DNS: could not record the query for %s", qname, exc_info=True)
 
-    def classify(self, qname: str) -> str:
+    def classify(self, qname: str, *, from_self: bool = False) -> str:
         """What the proxy does with ``qname``: intercepted, excluded or forwarded.
+
+        ``from_self`` marks a query made by this machine (loopback client): the
+        blanket ``intercept_all`` rule is not applied to it, since redirecting the
+        proxy's own resolutions to the proxy is a loop, not a capture. Listed names
+        are still honoured, so a local probe sees the real policy.
 
         A name a registered adapter explicitly claims is always intercepted: the
         adapter declares exactly the names of the service it implements, so the
@@ -371,7 +385,7 @@ class DNSInterceptor:
             return STATUS_INTERCEPTED
         if self.matching_exclusion(name):
             return STATUS_EXCLUDED
-        return self._matches_configured(name)
+        return self._matches_configured(name, from_self=from_self)
 
     def matching_exclusion(self, qname: str) -> str | None:
         """The exclusion pattern that keeps ``qname`` forwarded, if any.
@@ -389,11 +403,11 @@ class DNSInterceptor:
             (hostname for hostname in _adapter_hostnames() if _name_matches(name, hostname)), None
         )
 
-    def _matches_configured(self, name: str) -> str:
-        """Intercepted when listed, or when intercepting all."""
+    def _matches_configured(self, name: str, *, from_self: bool = False) -> str:
+        """Intercepted when listed, or when intercepting all (not for ourselves)."""
         if any(_name_matches(name, pattern) for pattern in self.patterns):
             return STATUS_INTERCEPTED
-        if self.intercept_all:
+        if self.intercept_all and not from_self:
             return STATUS_INTERCEPTED
         return STATUS_FORWARDED
 

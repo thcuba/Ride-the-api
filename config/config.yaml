@@ -545,7 +545,9 @@ dns:
   #  - "*.example.vendor.com"
   # Answer EVERY name with this proxy's address, so every device using this host as
   # its resolver reaches the proxy -- the way to fill the capture buffer without
-  # listing domains one by one. Off by default: switch it on deliberately.
+  # listing domains one by one. Off by default: switch it on deliberately. Never
+  # applied to the proxy's own queries (loopback client): answering our own
+  # resolution with our own address would be a loop, not a capture.
   intercept_all: false
   # Names never intercepted, always forwarded, whatever `intercept` and
   # `intercept_all` say (exclude wins) -- except for a name a registered adapter
