@@ -266,6 +266,9 @@ Returns complete details and statistics for a device.
     "bypass": false,
     "tls_passthrough": false,
     "tls_untrusted_reason": null,
+    "tls_refusals": 0,
+    "tls_first_refusal_at": null,
+    "tls_last_refusal_at": null,
     "seen_hostnames": ["ats.iot.vendor-cloud.example"],
     "capture": {
       "state": "capturing",
@@ -292,6 +295,14 @@ reason, or empty) and `capture.hint` is one sentence ready for a human. The stat
 in the order the runtime hits them: bypass, then relay (settled during the handshake), then mode.
 `seen_hostnames` lists the SNI values the device has asked for (evidence of what it talks to) and
 `tls_untrusted_reason` is why its TLS is relayed, if it is.
+
+**How many times a device refused.** `tls_refusals` counts the handshakes the device aborted, with
+`tls_first_refusal_at` and `tls_last_refusal_at` (ISO 8601, UTC) saying when it started and when it
+last did. A relayed device that refused once and is forwarded ever since reads `1`; a count that
+keeps growing means the device is still opening connections that reach the handshake, which is a
+different situation from a settled one. When a count exists it is repeated inside `capture` as
+`refusals` (plus `last_refusal_at`), so a client reading only `capture` still sees whether the
+relay was a one-off. A device that never refused reports `tls_refusals: 0`.
 
 **Status codes**: `200` OK, `404` Device not found, `503` Service not ready
 

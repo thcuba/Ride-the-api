@@ -1947,6 +1947,14 @@ class LearningOrchestrator:
                 attributes = device.extra_attributes or {}
                 stats["tls_untrusted_reason"] = attributes.get("tls_untrusted_reason")
                 stats["seen_hostnames"] = list(attributes.get("seen_hostnames") or [])
+                # How many times the device refused our certificate, and when. Written on every
+                # refusal, so a count that keeps growing means a device still trying to negotiate
+                # instead of one that refused once and is relayed from then on. Read defensively:
+                # extra_attributes is free-form JSON, and a device view must not 500 over it.
+                refusals = attributes.get("tls_refusals")
+                stats["tls_refusals"] = refusals if isinstance(refusals, int) else 0
+                stats["tls_first_refusal_at"] = attributes.get("tls_first_refusal_at")
+                stats["tls_last_refusal_at"] = attributes.get("tls_last_refusal_at")
                 stats["llm_base_url"] = device.llm_base_url
                 stats["llm_model_id"] = device.llm_model_id
                 stats["llm_profile_name"] = device.llm_profile_name
@@ -1960,6 +1968,8 @@ class LearningOrchestrator:
                     mode=device.mode,
                     tls_passthrough=bool(stats["tls_passthrough"]),
                     untrusted_reason=stats["tls_untrusted_reason"],
+                    refusals=stats["tls_refusals"],
+                    last_refusal_at=stats["tls_last_refusal_at"],
                 )
         return stats
 

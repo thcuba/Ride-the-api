@@ -34,13 +34,15 @@ CONFIGURED_RELAY: Final = "configured"
 _PASSTHROUGH_MODES: Final[frozenset[str]] = frozenset({"passthrough"})
 
 
-def describe_capture(
+def describe_capture(  # noqa: PLR0913 — keyword-only, one parameter per documented fact
     *,
     bypass: bool = False,
     mode: str | None = None,
     tls_passthrough: bool = False,
     untrusted_reason: str | None = None,
-) -> dict[str, str]:
+    refusals: int | None = None,
+    last_refusal_at: str | None = None,
+) -> dict[str, str | int]:
     """Describe a device's capture outlook as ``{"state", "reason", "hint"}``.
 
     The order mimics the runtime: a bypassed IP never reaches the pipeline, a relayed
@@ -50,6 +52,12 @@ def describe_capture(
     ``state == CAPTURING`` (with an empty ``reason``) means nothing is in the way: the
     device *can* produce pairs, and a device that still shows none simply is not talking
     to the proxy.
+
+    ``refusals``/``last_refusal_at`` are context, not a cause: for a relayed device they
+    say how many times it refused our certificate and when it last did, which separates a
+    device that refused once and is relayed from then on from one still trying to
+    negotiate. They are reported only when known and non-zero, so the payload stays
+    ``{"state", "reason", "hint"}`` for the ordinary cases.
     """
     if bypass:
         return {
@@ -68,7 +76,12 @@ def describe_capture(
             "TLS passthrough is on for this device: its connections are forwarded "
             "encrypted and no HTTP pairs are extracted",
         )
-        return {"state": RELAYED, "reason": reason, "hint": hint}
+        described: dict[str, str | int] = {"state": RELAYED, "reason": reason, "hint": hint}
+        if refusals:
+            described["refusals"] = refusals
+        if last_refusal_at:
+            described["last_refusal_at"] = last_refusal_at
+        return described
 
     if (mode or "").strip().lower() in _PASSTHROUGH_MODES:
         return {
