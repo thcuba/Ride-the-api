@@ -177,6 +177,14 @@ class ContextBuffer:
         self.max_size_bytes = max_size_bytes
         self.store: BufferStore = store or create_buffer_store(db_manager)
 
+    def rebind_store(self, store: BufferStore) -> None:
+        """Point this buffer at another store (used when the backend switches).
+
+        Rebinding beats rebuilding the buffer: the pairs already in flight stay in the
+        buffer they were carried into, and the next pair lands in the new backend.
+        """
+        self.store = store
+
     async def add_pair(self, device_id: str, pair: CorrelatedPair) -> int:
         """Add a pair and return the device's current buffered byte size."""
         pair_json = {
@@ -1535,6 +1543,19 @@ class LearningOrchestrator:
         self.buffer.clear()
         # The lazy LearningPipeline captured its ContextBuffer at construction;
         # drop it too so a backend switch cannot keep writing to the stale store.
+        self.pipeline = None
+
+    def rebind_buffer_store(self, store: BufferStore) -> None:
+        """Repoint every live context buffer at ``store`` (a buffer backend switch).
+
+        The pairs in flight have already been carried into the new backend by
+        ``core.buffer.switch_backend``; rebinding is what stops the next capture from
+        landing in the store the proxy just left, which otherwise only took effect after
+        a restart.
+        """
+        for buffer in self.buffer.values():
+            buffer.rebind_store(store)
+        # The lazy pipeline captured the store at construction: rebuild it on next use.
         self.pipeline = None
 
     async def prune_stores(self) -> int:

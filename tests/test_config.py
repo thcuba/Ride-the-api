@@ -11,6 +11,7 @@ import yaml
 from pydantic import ValidationError
 
 from core.config import (
+    BufferConfig,
     Config,
     ConfigManager,
     ConnectionType,
@@ -641,3 +642,19 @@ class TestGlobalHelpers:
             cm.update_config({"proxy": {"port": "not-a-port"}})
         # config preserved (unchanged)
         assert cm.config.core.database_url == "sqlite:///x.db"
+
+
+class TestBufferBackendConfig:
+    """``buffer.backend`` must accept the documented names and refuse the others."""
+
+    def test_documented_alias_is_normalised(self):
+        assert BufferConfig(backend="sqlite").backend == "disk"
+        assert BufferConfig(backend="SQLite").backend == "disk"
+        assert BufferConfig(backend="ram").backend == "memory"
+
+    def test_the_default_is_the_sqlite_backend(self):
+        assert BufferConfig().backend == "disk"
+
+    def test_an_unknown_backend_is_an_error_not_a_silent_fallback(self):
+        with pytest.raises(ValidationError, match="buffer.backend"):
+            BufferConfig(backend="postgres")

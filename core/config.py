@@ -13,9 +13,10 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from watchfiles import Change, watch
 
+from core.backend_names import normalise_backend
 from core.modification import ModificationAction
 
 logger = logging.getLogger(__name__)
@@ -81,6 +82,22 @@ class BufferConfig(BaseModel):
     """
 
     backend: str = "disk"
+
+    @field_validator("backend")
+    @classmethod
+    def _normalise_backend(cls, value: str) -> str:
+        """Accept the documented spellings, and refuse an unknown one by name.
+
+        A silent fallback here is how an operator ends up believing captures survive a
+        restart while the proxy quietly runs the volatile backend.
+        """
+        canonical = normalise_backend(value)
+        if canonical is None:
+            raise ValueError(
+                f"buffer.backend must be 'disk' (SQLite, survives a restart) or 'memory' "
+                f"(RAM), got {value!r}"
+            )
+        return canonical
 
 
 class TLSConfig(BaseModel):

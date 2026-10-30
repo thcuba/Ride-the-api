@@ -661,14 +661,33 @@ Returns the active buffer storage backend (`disk` or `memory`).
 
 Switches the active buffer backend at runtime and persists the choice for the next start.
 
-**JSON Body** `{"backend": "memory"}`
+**JSON Body** `{"backend": "sqlite"}`
 
-| Value | Description |
+| Value | Aliases | Description |
+|-------|---------|-------------|
+| `disk` | `sqlite` | Durable per-device buffer database — **captured pairs survive a restart** (default) |
+| `memory` | `ram` | In-process RAM buffer: faster, and gone when the process ends |
+
+**Switching is lossless.** Whatever has not been flushed yet is copied into the new store
+before the old one is marked flushed, and every live buffer is repointed at the new store, so
+no capture is lost in one direction and none is buffered twice in the other. An unknown name
+is refused with `400` naming the accepted ones — never a silent fallback, which is how an
+operator ends up believing captures are durable while the proxy runs the volatile backend.
+
+**Response `200 OK`**
+
+```json
+{ "backend": "disk", "from": "memory", "devices": 1, "pairs": 3 }
+```
+
+| Field | Description |
 |-------|-------------|
-| `disk` | Durable per-device buffer database (default) |
-| `memory` | In-process RAM buffer (volatile, faster, lost on restart) |
+| `backend` | The backend now in force |
+| `from` | The backend that was in force |
+| `devices` | How many devices had unflushed pairs carried over |
+| `pairs` | How many pairs were carried over |
 
-**Response `200 OK`** `{"backend": "memory"}`
+**Status codes**: `200` OK, `400` invalid body or unknown backend, `503` Service not ready
 
 ---
 
