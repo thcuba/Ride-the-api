@@ -1180,7 +1180,7 @@ async def tls_download_ca():
 @app.get("/api/tls/stats")
 async def tls_stats():
     """Return TLS/MITM statistics."""
-    stats = {"cert_manager": {}, "mitm_server": False, "device_ports": []}
+    stats = {"cert_manager": {}, "mitm_server": False, "device_ports": [], "open_relays": 0}
     if cert_manager:
         stats["cert_manager"] = cert_manager.stats()
     if tls_mitm_server:
@@ -1196,6 +1196,9 @@ async def tls_stats():
             }
             for dp in tls_mitm_server.device_ports.values()
         ]
+        # Connections being forwarded right now. A pinned device can hold one open for hours and
+        # only leaves a contact record when it ends, so this is the only live count available.
+        stats["open_relays"] = len(tls_mitm_server.get_live_relays())
     return stats
 
 
@@ -1207,9 +1210,14 @@ async def tls_relayed(limit: int = 50):
     its payload can be read. Its contacts can still be listed -- who, which host, how many bytes in
     each direction, how long, and whether the attempt succeeded. This is the visible trace of a
     device the proxy carries but cannot see inside.
+
+    A contact is recorded when the connection **ends**, and such a device can hold one session open
+    for hours: ``in_progress`` lists the ones being forwarded at this instant (with their byte
+    counts so far), because otherwise a device that is working looks like a device that is silent.
     """
+    live = tls_mitm_server.get_live_relays() if tls_mitm_server else []
     if not db_manager:
-        return {"relayed": [], "total": 0}
+        return {"relayed": [], "total": 0, "in_progress": live, "open": len(live)}
     limit = max(1, min(int(limit), 500))
     async with db_manager.core_session() as session:
         total = (await session.execute(select(func.count(RelayedConnection.id)))).scalar_one()
@@ -1231,7 +1239,7 @@ async def tls_relayed(limit: int = 50):
             }
             for row in result.scalars().all()
         ]
-    return {"relayed": rows, "total": total}
+    return {"relayed": rows, "total": total, "in_progress": live, "open": len(live)}
 
 
 @app.get("/api/tls/device-ports")

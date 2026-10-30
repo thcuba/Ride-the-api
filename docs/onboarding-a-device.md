@@ -147,7 +147,9 @@ open           the device has to be power-cycled to retry its cloud connection; 
                REFUSED the local CA (tls_untrusted_reason=client_refused_certificate, a vendor cloud IoT
                broker pinning its trust anchor) and the proxy relayed it encrypted from then on, so no
                pairs reached the buffer -- the working capture for that device is DNS-level (the names
-               it asks for) plus the relayed-contact record, not the LLM buffer
+               it asks for) plus the relayed contact: recorded when the session ENDS, so hours of
+               real activity show up as nothing until it closes (the open ones are listed by
+               GET /api/tls/relayed in in_progress), not the LLM buffer
 ```
 
 ## References
