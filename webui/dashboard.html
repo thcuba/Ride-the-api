@@ -218,6 +218,11 @@
   @keyframes slideIn { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: translateX(0); } }
   @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
   .btn-spinning .icon-svg { animation: spin .75s linear infinite; }
+  /* Why a device is not producing pairs: the answer to "the buffer stays empty". */
+  .capture-note { margin: 10px 0 2px; padding: 8px 10px; border-radius: 6px; font-size: 12px; line-height: 1.45; border: 1px solid rgba(255,255,255,.14); }
+  .capture-note strong { display: block; margin-bottom: 2px; }
+  .capture-warn { background: rgba(255,176,32,.12); border-color: rgba(255,176,32,.45); }
+  .capture-info { background: rgba(90,150,255,.10); border-color: rgba(90,150,255,.40); }
   @media (prefers-reduced-motion: reduce) {
     .toast { animation: none; }
     .device-card, .btn { transition: none; }
@@ -998,6 +1003,17 @@
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function rateClass(pct) { return pct >= 80 ? 'good' : pct >= 50 ? 'warning' : 'danger'; }
 function rateColor(pct) { return pct >= 80 ? '#34d399' : pct >= 50 ? '#fbbf24' : '#f87171'; }
+function captureNote(s) {
+  // The proxy explains itself: bypass / relay / passthrough all mean "no pairs", and
+  // reading the wrong switch is how an empty buffer looks like a broken pipeline.
+  const c = s && s.capture;
+  if (!c || !c.state || c.state === 'capturing') return '';
+  const title = c.state === 'relayed' ? 'No pairs: TLS is relayed encrypted'
+    : c.state === 'bypassed' ? 'No pairs: this IP is in bypass'
+    : 'No pairs: the device mode is passthrough';
+  const tone = c.state === 'relayed' ? 'capture-warn' : 'capture-info';
+  return `<div class="capture-note ${tone}" role="note"><strong>${title}</strong>${escapeHtml(c.hint || '')}</div>`;
+}
 function modeBadge(mode) {
   const cls = mode === 'production' ? 'badge-production' : mode === 'hybrid' ? 'badge-hybrid' : mode === 'passthrough' ? 'badge-hybrid' : 'badge-learning';
   return `<span class="badge ${cls}">${mode}</span>`;
@@ -1282,6 +1298,7 @@ async function loadDeviceStats(deviceId) {
         <div class="detail-row"><span class="dr-label">Flushes</span><span class="dr-value">${s.buffer_flushes}</span></div>
         <div class="detail-row"><span class="dr-label">Templates</span><span class="dr-value">${s.templates_created}</span></div>
       </div>
+      ${captureNote(s)}
       ${spark}
       <div class="mode-area">
         <label for="mode-select-${escapeHtml(deviceId)}">Mode:</label>

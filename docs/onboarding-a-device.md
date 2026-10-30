@@ -111,11 +111,25 @@ good, and it is served locally.
 
 ## What goes wrong, and what it looks like
 
+**Diagnose in this order.** A healthy proxy that captures nothing is almost always one of the
+three switches above, and they are checked in the order the runtime hits them:
+
+1. `GET /api/devices/<id>` → `capture.state`. `capturing` means nothing is in the way.
+2. Is the device actually resolving to the proxy? `dig @<proxy> <its hostname>` must answer the
+   proxy address, and the resolver in front of it must forward here (a client-specific upstream
+   entry in a DNS filter only applies to clients it matched).
+3. Is the proxy decrypting at all? `echo | openssl s_client -connect <proxy>:443 -servername
+   <hostname> | openssl x509 -noout -issuer` — `Ride the API Local CA` means it will decrypt; the
+   vendor's real issuer (e.g. `Amazon RSA 2048 M01`) means the connection is only relayed and no
+   amount of pipeline debugging will produce a pair.
+
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | Device resolves to the proxy but nothing is intercepted | 443 not listening (no `CAP_NET_BIND_SERVICE`) | step 1; `ports.tls_mitm.missing` shows it |
 | Device works normally, nothing is seen | its names are in neither `dns.intercept` nor any adapter's declared hostnames | open the dashboard's *DNS Discovery* panel and promote the name it asked for, add the name here, or add the adapter for that service so every name it uses is covered — an unclaimed name is forwarded, never guessed |
 | Device has no DNS at all | it was pointed at a resolver that does not answer | point it at a resolver that forwards here, or at this proxy with `dns.enabled` |
+| Device talks to the proxy but its buffer stays empty | one of the three capture switches is off: per-IP `bypass`, TLS passthrough, or device mode `passthrough` | read `capture.state` in `GET /api/devices/{id}`: it names the switch that is off and why. `relayed` means TLS passthrough (the device refused our certificate), not a broken pipeline |
+| `last_seen` is null / 0 requests on a device whose buffer has bytes | the match counters only record requests the pipeline *analysed*; a device parked in bypass or passthrough is never analysed | look at `capture.state`; a device that is `capturing` and still shows numbers here is simply not reaching the proxy |
 | TLS session fails after the proxy certificate | the app does not trust the proxy CA or pins the vendor certificate | Install/trust the Ride CA, or download the Frida script with an authenticated `GET /api/tls/frida/script.js` request (send the control-plane password in `X-API-Key`) and run it manually. The saved `pinning_bypass` value is guidance only; until the device accepts the proxy certificate, traffic is relayed encrypted and cannot be buffered for the LLM. |
 | Decipher fails with "LLM call failed" | local model produced nothing usable within the timeout | give the profile a capable model (and a `max_tokens` ceiling) |
 | `/health` reports `version: 0.2.0` on a prebuilt | the bundle had no `VERSION` file | fixed in the build workflow; a source deploy writes it in `bootstrap.sh` |
@@ -129,9 +143,11 @@ DNS            ats... -> 192.168.1.200 | example.org -> real address | ntp... ->
 listeners      TLS MITM bound 4/4 ports [443, 8883, 5684, 8443]; DNS on 0.0.0.0:53 (udp+tcp, +ipv6)
 resolver       an external DNS filter Home, client "Living room air sensor" upstream 192.168.1.200
 translation    same prompt: local model 56.4s -> prose, invalid JSON; cloud model 11.9s -> 2 patterns
-open           the device has to be power-cycled to retry its cloud connection; whether it
-               accepts the local CA is still unknown (the channel is a vendor cloud IoT broker, so pinning is
-               the expected obstacle)
+open           the device has to be power-cycled to retry its cloud connection; when it did, it
+               REFUSED the local CA (tls_untrusted_reason=client_refused_certificate, a vendor cloud IoT
+               broker pinning its trust anchor) and the proxy relayed it encrypted from then on, so no
+               pairs reached the buffer -- the working capture for that device is DNS-level (the names
+               it asks for) plus the relayed-contact record, not the LLM buffer
 ```
 
 ## References

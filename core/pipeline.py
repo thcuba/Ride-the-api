@@ -22,6 +22,7 @@ from sqlalchemy import and_, delete, select, update
 
 from core.atomic_io import _SAFE_FILENAME_RE
 from core.buffer import create_buffer_store
+from core.capture_state import describe_capture
 from core.database import (
     DatabaseManager,
     DeviceRegistry,
@@ -589,6 +590,10 @@ class LearningPipeline:
                     pending.remove(entry)
                     removed_from_memory = True
                     break
+        if removed_from_memory:
+            # A forward that never came back is an error, and it has to be visible in the
+            # counters: otherwise a device whose upstream is failing looks idle.
+            await self.tracker.record_result(device_id, MatchResult.ERROR)
 
         async with self.db_manager.device_session(device_id) as session:
             result = await session.execute(
@@ -1744,6 +1749,10 @@ class LearningOrchestrator:
         corr_key = await self._register_for_learning(
             device, protocol, method, path, headers, body, query_params, enrichment
         )
+        # Every learning request goes to the cloud: without this the match counters and the
+        # rolling window stayed empty in the one mode that captures pairs, so a device whose
+        # buffer was filling still read "0 requests / never seen" on the dashboard.
+        await self.tracker.record_result(device.device_id, MatchResult.CLOUD_MISS)
         return {
             "action": "forward",
             "correlation_key": corr_key,
@@ -1910,6 +1919,13 @@ class LearningOrchestrator:
                 stats["tls_pinning_bypass"] = (device.extra_attributes or {}).get(
                     "tls_pinning_bypass", "mitm_proxy"
                 )
+                # Why the device is or is not producing pairs, in one field: the reasons
+                # otherwise live in three different switches (per-IP bypass, tls
+                # passthrough, device mode) and reading the wrong one is how "no data in
+                # the buffer" turns into a false alarm.
+                attributes = device.extra_attributes or {}
+                stats["tls_untrusted_reason"] = attributes.get("tls_untrusted_reason")
+                stats["seen_hostnames"] = list(attributes.get("seen_hostnames") or [])
                 stats["llm_base_url"] = device.llm_base_url
                 stats["llm_model_id"] = device.llm_model_id
                 stats["llm_profile_name"] = device.llm_profile_name
@@ -1918,6 +1934,12 @@ class LearningOrchestrator:
                 # Bypass state (per-IP: from any profile IP, else config default).
                 bypass_flags = [await self.db_manager.is_ips_bypassed(ip) for ip in ips]
                 stats["bypass"] = any(bypass_flags)
+                stats["capture"] = describe_capture(
+                    bypass=stats["bypass"],
+                    mode=device.mode,
+                    tls_passthrough=bool(stats["tls_passthrough"]),
+                    untrusted_reason=stats["tls_untrusted_reason"],
+                )
         return stats
 
 

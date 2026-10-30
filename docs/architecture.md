@@ -623,6 +623,17 @@ start. This server is the piece that makes that possible without breaking anythi
   never by `intercept_all` — resolving our own queries to ourselves would be a loop, not a capture —
   and it is never written to the discovery log. A name in `dns.intercept` is still honoured for a
   local query, so a `dig` from the box itself shows the policy that is actually in force.
+- **Nothing captured is explained, not silent**: every device payload carries a `capture` block
+  (`state`, `reason`, `hint`) computed from the switches that would stop a capture — per-IP bypass,
+  TLS passthrough (configured, or set automatically when a device refuses our certificate), device
+  mode — evaluated in the order the runtime hits them. A bypassed, relayed or passthrough device is
+  reported as such instead of looking like a broken pipeline, and the match counters (`total_requests`,
+  `cloud_misses`, `recent_results`) are updated by the learning path too, which is the mode that
+  captures pairs.
+- **The proxy never captures itself**: a loopback client is answered by the upstream, never by
+  `intercept_all` — resolving our own queries to ourselves would be a loop, not a capture — and it is
+  never written to the discovery log. A name in `dns.intercept` is still honoured for a local query,
+  so a `dig` from the box itself shows the policy that is actually in force.
 - **What devices ask for is recorded** in the core DB (`dns_query_log`, one row per
   client + hostname + qtype with a hit counter, oldest pruned past a cap): the DNS port is the only
   place a device the proxy is *not* yet intercepting reveals the name it is about to talk to. Counters
