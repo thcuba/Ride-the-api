@@ -1984,10 +1984,14 @@ async def delete_device(device_id: str):
     """Delete a device and its data (registry row, per-device DB, pattern file)."""
     if not db_manager:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    success = await db_manager.delete_device(device_id)
+    try:
+        safe_id = sanitize_filename_component(device_id)
+    except ValueError as e:
+        return _client_error(e, "Invalid device_id")
+    success = await db_manager.delete_device(safe_id)
     if not success:
         return JSONResponse(status_code=404, content={"error": "Device not found"})
-    return {"device_id": device_id, "status": "deleted"}
+    return {"device_id": safe_id, "status": "deleted"}
 
 
 @app.get("/api/devices/{device_id}/match-rate")

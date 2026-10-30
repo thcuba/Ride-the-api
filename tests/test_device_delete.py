@@ -11,7 +11,11 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
+from fastapi.testclient import TestClient
+
+import core.server as server_mod
 from core.database import DatabaseManager
+from core.server import app
 
 
 @pytest_asyncio.fixture
@@ -60,6 +64,20 @@ class TestDeleteDevice:
     @pytest.mark.asyncio
     async def test_delete_missing_device_returns_false(self, dm):
         assert await dm.delete_device("ghost-device") is False
+
+    @pytest.mark.asyncio
+    async def test_delete_api_rejects_path_traversal(self, dm, monkeypatch):
+        monkeypatch.setattr(server_mod, "db_manager", dm)
+        cfg = server_mod.config_manager.config
+        saved_auth = cfg.security.auth_enabled
+        cfg.security.auth_enabled = False
+        try:
+            client = TestClient(app)
+            resp = client.delete("/api/devices/invalid%20id")
+            assert resp.status_code == 400
+            assert "Invalid device_id" in resp.json()["error"]
+        finally:
+            cfg.security.auth_enabled = saved_auth
 
     @pytest.mark.asyncio
     async def test_recreate_after_delete_is_fresh(self, dm):
