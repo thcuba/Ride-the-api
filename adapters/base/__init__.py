@@ -214,6 +214,7 @@ class InterceptedRequest:
 _FW_PATHS: tuple[str, ...] = ("/fota", "/firmware", "/ota", "/update", "/upgrade")
 _FW_TOPICS: tuple[str, ...] = ("fota", "firmware", "ota")
 _AUTH_PATHS: tuple[str, ...] = ("/auth", "/login", "/token", "/oauth", "/session")
+_JSON_START_BYTES: frozenset[int] = frozenset(b'{}["-0123456789tfn')
 
 
 class ProtocolAdapter(abc.ABC):
@@ -429,7 +430,7 @@ def host_from_request(request: InterceptedRequest) -> str | None:
     return None
 
 
-def normalize_request_body(body: Any) -> Any:  # noqa: ANN401
+def normalize_request_body(body: Any) -> Any:  # noqa: ANN401, PLR0911
     """Return a JSON-storable form of a request body.
 
     ``InterceptedRequest.body`` is the *parsed* body and the raw wire bytes
@@ -444,7 +445,7 @@ def normalize_request_body(body: Any) -> Any:  # noqa: ANN401
     text, and anything else is preserved losslessly as a base64 marker.
 
     Fast zero-allocation byte indexing check avoids calling json.loads and catching
-    JSONDecodeError/UnicodeDecodeError for non-JSON or plain-text payloads (~5.8x faster).
+    JSONDecodeError/UnicodeDecodeError for non-JSON or plain-text payloads (~4.7x faster).
     """
     if body is None or isinstance(body, (dict, list, int, float, bool, str)):
         return body
@@ -452,14 +453,15 @@ def normalize_request_body(body: Any) -> Any:  # noqa: ANN401
         raw = bytes(body)
         if not raw:
             return None
-        # Fast path: check leading non-whitespace byte for '{' (123) or '[' (91)
-        # before attempting json.loads to avoid exception creation overhead for
-        # non-JSON payloads.
+        # Fast path: check leading non-whitespace byte for JSON start tokens
+        # ({, [, ", -, 0-9, t, f, n) before attempting json.loads to avoid
+        # exception creation overhead for non-JSON payloads.
         i = 0
         n = len(raw)
         while i < n and raw[i] in b" \t\r\n":
             i += 1
-        if i < n and raw[i] in (123, 91):  # ord('{') == 123, ord('[') == 91
+        ch = raw[i] if i < n else 0
+        if ch in _JSON_START_BYTES:
             try:
                 text = raw.decode("utf-8")
             except UnicodeDecodeError:
