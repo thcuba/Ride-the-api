@@ -495,7 +495,7 @@
     </div>
   <div class="header-right">
       <details class="workspace-controls">
-        <summary aria-label="Open workspace controls">Workspace controls</summary>
+        <summary aria-label="Workspace controls">Workspace controls</summary>
         <div class="workspace-controls__content">
           <div class="control-row">
       <div style="position:relative;display:inline-flex;align-items:center;">
@@ -1567,13 +1567,18 @@ async function deleteDevice(deviceId, btn) {
 }
 
   async function toggleAutoSwitch(deviceId, enabled) {
+    const el = document.getElementById('auto-switch-' + deviceId);
     try {
-      await fetch(`/api/devices/${deviceId}/auto-switch`, {
+      const res = await fetch(`/api/devices/${deviceId}/auto-switch`, {
         method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({enabled}),
       });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
       showToast('Auto-switch ' + (enabled ? 'enabled' : 'disabled'), 'success');
       loadDevices();
-    } catch(e) { showToast('Failed to toggle auto-switch', 'error'); }
+    } catch(e) {
+      showToast('Failed to toggle auto-switch', 'error');
+      if (el) el.checked = !enabled;
+    }
   }
 
   // ── Theme toggle ─────────────────────────────────────────────────────────────
