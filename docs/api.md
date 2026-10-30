@@ -1272,10 +1272,18 @@ Promotes a discovered name (or pattern) to the intercept list: persisted to
 
 `400` for anything that is not a plausible name (an IP literal is refused).
 
+```json
+{ "hostname": "*.iot.vendor.example", "intercept": ["*.iot.vendor.example"], "changed": true }
+```
+
+`changed` is `false` when the name was already listed: the call then changes nothing
+at all, config file included.
+
 ### `DELETE /api/dns/intercept/{hostname}`
 
 Removes a name from the intercept list: it goes back to being forwarded (and
-discovered). The response carries `removed`.
+discovered). The response carries `removed`, which is `0` when the name was not
+listed -- in that case nothing is written.
 
 ### `DELETE /api/dns/discovery`
 

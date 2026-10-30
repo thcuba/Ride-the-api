@@ -794,3 +794,34 @@ async def test_a_hand_edited_config_reaches_the_running_interceptor(tmp_path):
     finally:
         server_mod.config_manager = previous
         set_dns_interceptor(None)
+
+
+@pytest.mark.asyncio
+async def test_promoting_a_name_twice_does_not_write_the_config_again(api):
+    """No change means no write: rewriting the file restarts the watcher for nothing."""
+    before = api["config_path"].read_text(encoding="utf-8")
+
+    response = await api["client"].post("/api/dns/intercept", json={"hostname": DEVICE_HOST})
+
+    assert response.status_code == 200  # noqa: PLR2004
+    assert response.json()["changed"] is False
+    assert api["config_path"].read_text(encoding="utf-8") == before
+
+
+@pytest.mark.asyncio
+async def test_removing_a_name_that_is_not_listed_writes_nothing(api):
+    before = api["config_path"].read_text(encoding="utf-8")
+
+    response = await api["client"].delete("/api/dns/intercept/never-listed.example")
+
+    assert response.status_code == 200  # noqa: PLR2004
+    assert response.json()["removed"] == 0
+    assert api["config_path"].read_text(encoding="utf-8") == before
+
+
+@pytest.mark.asyncio
+async def test_promoting_a_new_name_reports_the_change(api):
+    response = await api["client"].post("/api/dns/intercept", json={"hostname": "fresh.example"})
+
+    assert response.json()["changed"] is True
+    assert api["manager"].config.dns.intercept == [DEVICE_HOST, "fresh.example"]

@@ -1692,12 +1692,15 @@ async def dns_add_intercept(request: Request):
             content={"error": "Provide a valid 'hostname' or pattern (e.g. *.example.com)"},
         )
     current = list(config_manager.config.dns.intercept or [])
-    if hostname not in current:
-        current.append(hostname)
+    if hostname in current:
+        # Already covered: writing the file again would be a no-op that still
+        # rewrites it (and triggers the watcher's reload) for nothing.
+        return {"hostname": hostname, "intercept": current, "changed": False}
+    current.append(hostname)
     if not config_manager.set_dns_settings(intercept=current):
         return JSONResponse(status_code=500, content={"error": "Failed to persist config"})
     _apply_dns_settings()
-    return {"hostname": hostname, "intercept": current}
+    return {"hostname": hostname, "intercept": current, "changed": True}
 
 
 @app.delete("/api/dns/intercept/{hostname}")
@@ -1710,6 +1713,9 @@ async def dns_remove_intercept(hostname: str):
         return JSONResponse(status_code=400, content={"error": "Invalid hostname"})
     previous = list(config_manager.config.dns.intercept or [])
     current = [pattern for pattern in previous if pattern.strip().lower().rstrip(".") != clean]
+    if len(current) == len(previous):
+        # Not in the list: deleting it changed nothing, so do not rewrite the file.
+        return {"hostname": clean, "intercept": current, "removed": 0}
     if not config_manager.set_dns_settings(intercept=current):
         return JSONResponse(status_code=500, content={"error": "Failed to persist config"})
     _apply_dns_settings()
