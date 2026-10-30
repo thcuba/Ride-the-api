@@ -343,6 +343,12 @@ async def mark_device_untrusted(client_ip: str, sni: str | None) -> None:
     connection is forwarded verbatim to its cloud and the device keeps working. Persisted in
     ``extra_attributes`` under ``tls_passthrough`` -- the field the TLS settings page already
     exposes -- so the decision survives a restart.
+
+    Every refusal is also **counted** (``tls_refusals``, plus first/last timestamps). Recording only
+    the first one could not tell a settled device -- it refuses once and is relayed from then on --
+    from one that keeps trying to negotiate, which is the difference between a device the proxy
+    carries and one it keeps breaking. The write is not throttled like ``last_seen``: a refusal is a
+    rare, deliberate event, and losing counts to save disk would defeat the point of counting.
     """
     if not db_manager:
         return
@@ -361,10 +367,22 @@ async def mark_device_untrusted(client_ip: str, sni: str | None) -> None:
         if device is None:
             return
         extra = dict(device.extra_attributes or {})
-        if extra.get("tls_passthrough") and extra.get("tls_untrusted_reason"):
-            return  # already recorded: do not rewrite the row on every retry
+        now = datetime.now(UTC)
+        # Counted on every refusal; the relay decision and the reason stay idempotent so a retry
+        # does not rewrite what is already settled. ``extra_attributes`` is free-form JSON written
+        # by other code paths, so a corrupted count must not stop the refusal being recorded.
+        # Read-then-write, like ``handle_device_seen``: two refusals arriving at the same instant
+        # can lose one increment. Under-counting a burst is acceptable, losing the refusal is not.
+        previous = extra.get("tls_refusals")
+        extra["tls_refusals"] = (previous if isinstance(previous, int) else 0) + 1
+        extra["tls_last_refusal_at"] = now.isoformat()
+        if not extra.get("tls_first_refusal_at"):
+            extra["tls_first_refusal_at"] = now.isoformat()
         extra["tls_passthrough"] = True
-        extra["tls_untrusted_reason"] = "client_refused_certificate"
+        # Falsy rather than "missing": a reason stored as an empty string or null is no reason, and
+        # `setdefault` would happily keep it and leave the relay unexplained.
+        if not extra.get("tls_untrusted_reason"):
+            extra["tls_untrusted_reason"] = "client_refused_certificate"
         hostnames = list(extra.get("seen_hostnames") or [])
         if sni and sni not in hostnames:
             hostnames.append(sni)
@@ -375,8 +393,10 @@ async def mark_device_untrusted(client_ip: str, sni: str | None) -> None:
     # reading the device as it was before the refusal and would not take effect for five minutes.
     db_manager.invalidate_device_cache(device_id)
     logger.info(
-        "TLS: %s refused our certificate; from now on it is forwarded to its cloud undecrypted",
+        "TLS: %s refused our certificate (%d time(s)); from now on it is forwarded to its cloud "
+        "undecrypted",
         client_ip,
+        extra["tls_refusals"],
     )
 
 

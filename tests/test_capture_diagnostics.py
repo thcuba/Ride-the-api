@@ -30,6 +30,10 @@ from core.capture_state import (
 from core.database import DatabaseManager, DeviceRegistry
 from core.pipeline import LearningOrchestrator
 
+#: How many refusals each test records, named so the assertions read as facts.
+REFUSALS_REPORTED = 3
+REFUSALS_RECORDED = 2
+
 
 @pytest_asyncio.fixture
 async def db_manager(tmp_path):
@@ -115,6 +119,27 @@ class TestDescribeCapture:
     def test_production_is_not_reported_as_blocked(self):
         """Production captures only unmatched requests: it is not a "no pairs" state."""
         assert describe_capture(mode="production")["state"] == CAPTURING
+
+    def test_a_counted_refusal_is_reported_alongside_the_reason(self):
+        """How many times, not only why: one refusal and twenty are different situations."""
+        described = describe_capture(
+            tls_passthrough=True,
+            untrusted_reason="client_refused_certificate",
+            refusals=3,
+            last_refusal_at="2026-10-30T12:44:07+00:00",
+        )
+
+        assert described["state"] == RELAYED
+        assert described["refusals"] == REFUSALS_REPORTED
+        assert described["last_refusal_at"] == "2026-10-30T12:44:07+00:00"
+
+    def test_an_uncounted_device_keeps_the_three_field_payload(self):
+        """No count, no extra field: the ordinary payload must keep its shape."""
+        described = describe_capture(
+            tls_passthrough=True, untrusted_reason="client_refused_certificate"
+        )
+
+        assert set(described) == {"state", "reason", "hint"}
 
 
 class TestLearningCounters:
@@ -209,3 +234,55 @@ class TestDeviceStatsExplainThemselves:
         assert stats["capture"]["state"] == CAPTURING
         assert stats["tls_untrusted_reason"] is None
         assert stats["seen_hostnames"] == []
+
+    @pytest.mark.asyncio
+    async def test_refusal_count_reaches_the_device_payload(self, db_manager):
+        """The count and its timestamps belong to the device view, not only to extra_attributes."""
+        await db_manager.get_or_create_device("dev-refused", "unknown")
+        await _set_attributes(
+            db_manager,
+            "dev-refused",
+            {
+                "tls_passthrough": True,
+                "tls_untrusted_reason": "client_refused_certificate",
+                "tls_refusals": 2,
+                "tls_first_refusal_at": "2026-10-30T12:44:07+00:00",
+                "tls_last_refusal_at": "2026-10-30T17:32:30+00:00",
+            },
+        )
+        orchestrator = LearningOrchestrator(db_manager)
+        orchestrator.initialize(MagicMock())
+
+        stats = await orchestrator.get_device_stats("dev-refused")
+
+        assert stats["tls_refusals"] == REFUSALS_RECORDED
+        assert stats["tls_first_refusal_at"] == "2026-10-30T12:44:07+00:00"
+        assert stats["tls_last_refusal_at"] == "2026-10-30T17:32:30+00:00"
+        assert stats["capture"]["refusals"] == REFUSALS_RECORDED
+        assert stats["capture"]["last_refusal_at"] == "2026-10-30T17:32:30+00:00"
+
+    @pytest.mark.asyncio
+    async def test_a_device_that_never_refused_reports_zero(self, db_manager):
+        """Absence of refusals is a fact worth reporting, not a missing key."""
+        await db_manager.get_or_create_device("dev-never-refused", "unknown")
+        orchestrator = LearningOrchestrator(db_manager)
+        orchestrator.initialize(MagicMock())
+
+        stats = await orchestrator.get_device_stats("dev-never-refused")
+
+        assert stats["tls_refusals"] == 0
+        assert stats["tls_first_refusal_at"] is None
+        assert stats["tls_last_refusal_at"] is None
+        assert "refusals" not in stats["capture"]
+
+    @pytest.mark.asyncio
+    async def test_a_corrupted_count_reads_as_zero(self, db_manager):
+        """A device view must not 500 because free-form JSON holds a bad count."""
+        await db_manager.get_or_create_device("dev-corrupt", "unknown")
+        await _set_attributes(db_manager, "dev-corrupt", {"tls_refusals": "molti"})
+        orchestrator = LearningOrchestrator(db_manager)
+        orchestrator.initialize(MagicMock())
+
+        stats = await orchestrator.get_device_stats("dev-corrupt")
+
+        assert stats["tls_refusals"] == 0
