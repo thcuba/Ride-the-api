@@ -579,6 +579,25 @@
   </div>
   <div id="protoServersList" style="margin-top:8px;display:flex;flex-wrap:wrap;gap:8px;">loading…</div>
 </div>
+
+<!-- DNS Discovery panel: what devices ask the DNS for, and what we do with it -->
+<div class="tls-bar" id="dnsDiscoveryBar" role="region" aria-label="DNS discovery and interception policy" style="display:block;margin-top:8px;">
+  <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+    <span class="tb-label">
+      <svg class="icon-svg-sm" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v4"/><path d="M12 18v4"/><path d="M2 12h4"/><path d="M18 12h4"/></svg>
+      DNS Discovery
+    </span>
+    <label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;" title="Answer every name with this proxy's address, so every device that uses it as its resolver is captured. Names in the exclusion list are still forwarded untouched.">
+      <input type="checkbox" id="dnsInterceptAllToggle" role="switch" aria-label="Intercept every name" onchange="dnsSetInterceptAll(this.checked)">
+      Intercept all
+    </label>
+    <input type="text" id="dnsExcludeInput" placeholder="exclusions, comma separated (ntp.*, *.local)" aria-label="Names excluded from interception" style="padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:12px;width:260px;">
+    <button class="btn btn-ghost" onclick="dnsSaveExclusions(this)" style="padding:4px 10px;font-size:12px;" aria-label="Save the excluded names">Save exclusions</button>
+    <button class="btn btn-ghost" onclick="dnsClearDiscovery(this)" style="padding:4px 10px;font-size:12px;" aria-label="Clear the discovery log">Clear log</button>
+    <span style="font-size:11px;color:var(--text2);" id="dnsDiscoveryStatus"></span>
+  </div>
+  <div id="dnsDiscoveryList" style="margin-top:8px;">loading…</div>
+</div>
   </div>
 </details>
 </div>
@@ -1651,12 +1670,14 @@ async function deleteDevice(deviceId, btn) {
 loadTlsBar();
 loadTlsCerts();
 loadProtoServers();
+loadDnsDiscovery();
 loadVendors();
 // Deep link used by the Configuration page: /#llm-settings opens the LLM page,
 // which owns the profiles (the config page only mirrors them, read-only).
 if (window.location.hash === '#llm-settings') { openLLMSettings(); }
 setInterval(loadDevices, 8000);
 setInterval(loadTlsBar, 15000);
+setInterval(loadDnsDiscovery, 20000);
 
 document.addEventListener('keydown', function(event) {
   if (event.key === 'Escape') {
@@ -1887,6 +1908,167 @@ const PROTO_DISPLAY = {
   raw_tcp: 'Raw TCP', http2: 'HTTP/2', zigbee_bridge: 'Zigbee Bridge',
   zwave_bridge: 'Z-Wave Bridge', matter_bridge: 'Matter Bridge',
 };
+
+// ── DNS discovery ──────────────────────────────────────────────────────────
+// Answers "what should we intercept next?" from real traffic: the names devices
+// asked the DNS for, with the state the proxy gives each of them right now.
+async function loadDnsDiscovery() {
+  const list = document.getElementById('dnsDiscoveryList');
+  if (!list) return;
+  const status = document.getElementById('dnsDiscoveryStatus');
+  try {
+    const res = await fetch('/api/dns/discovery');
+    if (!res.ok) { list.innerHTML = '<span class="tb-badge tb-inactive">error</span>'; return; }
+    const data = await res.json();
+    const toggle = document.getElementById('dnsInterceptAllToggle');
+    if (toggle) toggle.checked = !!data.intercept_all;
+    const excludeInput = document.getElementById('dnsExcludeInput');
+    // Never overwrite what the operator is typing.
+    if (excludeInput && document.activeElement !== excludeInput) {
+      excludeInput.value = (data.exclude || []).join(', ');
+    }
+    const entries = data.entries || [];
+    const listen = data.listen || {};
+    const listening = (listen.udp || listen.tcp) ? 'listening' : 'not listening';
+    const stats = data.stats || {};
+    if (status) {
+      status.textContent = `${entries.length} name(s) seen · DNS ${listening}`
+        + ` · ${stats.intercepted || 0} intercepted · ${stats.excluded || 0} excluded`
+        + ` · ${stats.forwarded || 0} forwarded`
+        + (data.pending_pairs ? ` · ${data.pending_pairs} pending` : '')
+        // A recorder that cannot reach the database is otherwise invisible here:
+        // only a log line says so, and the operator is looking at this panel.
+        + (data.flush_errors ? ` · ${data.flush_errors} write error(s), the log is not reaching the database` : '')
+        + (data.dropped_pairs ? ` · ${data.dropped_pairs} name(s) dropped: the in-memory working set is full` : '');
+      status.title = 'An excluded name is still forwarded upstream, so it is counted in both totals.'
+        + (data.flushed_pairs ? ` ${data.flushed_pairs} pair(s) written so far.` : '');
+    }
+    if (!entries.length) {
+      list.innerHTML = '<span style="font-size:12px;color:var(--text2);">No query recorded yet. Point a device at this host as its DNS resolver (AdGuard: an upstream or a rewrite) — or switch on "Intercept all" — and its requests appear here.</span>';
+      return;
+    }
+    list.innerHTML = entries.map(e => {
+      const host = e.hostname || '';
+      const seen = e.last_seen ? e.last_seen.replace('T', ' ').slice(0, 19) : '';
+      const state = e.intercepted
+        ? '<span class="tb-badge tb-active">intercepted</span>'
+        : (e.excluded ? '<span class="tb-badge tb-inactive">excluded</span>' : '<span class="tb-badge" style="opacity:.85;">forwarded</span>');
+      // Say *why* a name is not interceptable instead of offering a button that
+      // would change nothing: an adapter claim wins over the list, and a name kept
+      // out by an exclusion pattern stays out whatever the list says.
+      const reason = e.claimed_by
+        ? `<span style="font-size:11px;color:var(--text2);">declared by the ${escapeHtml(e.claimed_by)} adapter</span>`
+        : (e.excluded_by ? `<span style="font-size:11px;color:var(--text2);">kept out by the exclusion ${escapeHtml(e.excluded_by)}</span>` : '');
+      let action = '';
+      if (e.suggested) {
+        action = `<button class="tb-btn" onclick="dnsIntercept('${escapeJs(host)}', this)" aria-label="Intercept ${escapeHtml(host)}">+ intercept</button>`;
+      } else if (e.intercepted && !e.claimed_by) {
+        action = `<button class="tb-btn" onclick="dnsUnintercept('${escapeJs(host)}', this)" aria-label="Stop intercepting ${escapeHtml(host)}">− stop</button>`;
+      }
+      return `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-top:1px solid var(--border);flex-wrap:wrap;">
+        <code style="font-size:12px;word-break:break-all;">${escapeHtml(host)}</code>
+        <span style="font-size:11px;color:var(--text2);">${escapeHtml(e.client_ip || '')} · ${e.hit_count || 0}× · ${escapeHtml(seen)}</span>
+        ${state}${reason}${action}
+      </div>`;
+    }).join('');
+  } catch (_e) {
+    list.innerHTML = '<span class="tb-badge tb-inactive">error</span>';
+  }
+}
+
+async function dnsIntercept(hostname, btn) {
+  const target = btn instanceof HTMLElement ? btn : (btn?.target?.closest('button') || null);
+  if (target) target.disabled = true;
+  try {
+    const res = await fetch('/api/dns/intercept', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hostname: hostname }),
+    });
+    if (!res.ok) { showToast(await errorFrom(res, 'Failed to intercept ' + hostname), 'error'); return; }
+    showToast('Intercepting ' + hostname + ' — restart the device so it re-resolves it', 'success');
+    await loadDnsDiscovery();
+  } catch (e) {
+    showToast(await errorFrom(e, 'Failed to intercept ' + hostname), 'error');
+  } finally {
+    if (target) target.disabled = false;
+  }
+}
+
+async function dnsUnintercept(hostname, btn) {
+  const target = btn instanceof HTMLElement ? btn : (btn?.target?.closest('button') || null);
+  if (target) target.disabled = true;
+  try {
+    const res = await fetch(`/api/dns/intercept/${encodeURIComponent(hostname)}`, { method: 'DELETE' });
+    if (!res.ok) { showToast(await errorFrom(res, 'Failed to stop intercepting ' + hostname), 'error'); return; }
+    showToast(hostname + ' is forwarded again', 'success');
+    await loadDnsDiscovery();
+  } catch (e) {
+    showToast(await errorFrom(e, 'Failed to stop intercepting ' + hostname), 'error');
+  } finally {
+    if (target) target.disabled = false;
+  }
+}
+
+async function dnsSetInterceptAll(enabled) {
+  const toggle = document.getElementById('dnsInterceptAllToggle');
+  try {
+    const res = await fetch('/api/dns/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ intercept_all: !!enabled }),
+    });
+    if (!res.ok) {
+      if (toggle) toggle.checked = !enabled;
+      showToast(await errorFrom(res, 'Failed to change the interception mode'), 'error');
+      return;
+    }
+    showToast(enabled ? 'Intercepting every name (exclusions still forwarded)' : 'Only the listed names are intercepted', 'success');
+    await loadDnsDiscovery();
+  } catch (e) {
+    if (toggle) toggle.checked = !enabled;
+    showToast(await errorFrom(e, 'Failed to change the interception mode'), 'error');
+  }
+}
+
+async function dnsSaveExclusions(btn) {
+  const input = document.getElementById('dnsExcludeInput');
+  if (!input) return;
+  const target = btn instanceof HTMLElement ? btn : (btn?.target?.closest('button') || null);
+  const names = input.value.split(',').map(s => s.trim()).filter(Boolean);
+  if (target) target.disabled = true;
+  try {
+    const res = await fetch('/api/dns/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ exclude: names }),
+    });
+    if (!res.ok) { showToast(await errorFrom(res, 'Failed to save the exclusions'), 'error'); return; }
+    const saved = (await res.json()).exclude || [];
+    input.value = saved.join(', ');
+    showToast('Exclusions saved (' + saved.length + ')', 'success');
+    await loadDnsDiscovery();
+  } catch (e) {
+    showToast(await errorFrom(e, 'Failed to save the exclusions'), 'error');
+  } finally {
+    if (target) target.disabled = false;
+  }
+}
+
+async function dnsClearDiscovery(btn) {
+  const target = btn instanceof HTMLElement ? btn : (btn?.target?.closest('button') || null);
+  if (target) target.disabled = true;
+  try {
+    const res = await fetch('/api/dns/discovery', { method: 'DELETE' });
+    if (!res.ok) { showToast(await errorFrom(res, 'Failed to clear the log'), 'error'); return; }
+    showToast('Discovery log cleared', 'success');
+    await loadDnsDiscovery();
+  } catch (e) {
+    showToast(await errorFrom(e, 'Failed to clear the log'), 'error');
+  } finally {
+    if (target) target.disabled = false;
+  }
+}
 
 async function loadProtoServers() {
   const list = document.getElementById('protoServersList');

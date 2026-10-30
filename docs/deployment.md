@@ -688,6 +688,30 @@ Names in `intercept` are answered with `answer_ip`; **every other name is forwar
 `dns.dns_servers` / `dns.dns_servers_v6`, so nothing else in the network loses resolution. Leave
 time sources (`ntp.*`) out of the list — the device needs its real clock.
 
+When listing domains one by one is not enough — a device with an unlisted cloud name is invisible to
+the proxy and never fills the buffer — turn on the wide mode instead:
+
+```yaml
+dns:
+  intercept_all: true   # answer EVERY name with answer_ip
+  exclude:              # never intercepted, always forwarded (exclude wins)
+    - "ntp.*"
+    - "time.*"
+    - "ocsp.*"
+    - "crl.*"
+    - "*.local"
+    - "*.lan"
+    - "*.localdomain"
+```
+
+`exclude` is what keeps that safe: the shipped defaults keep the clock, certificate revocation and
+local names out of the proxy, because hijacking those breaks devices without teaching anything. The
+proxy's own queries are never captured by the wide mode (answering our own resolution with our own
+address would be a loop). Every query answered here is logged in the core DB (`dns_query_log`, batched
+— no DNS answer waits for it) and listed in the dashboard's **DNS Discovery** panel, where a name
+still being forwarded can be promoted to `intercept` with one click; the change is persisted and
+applied live, without a restart.
+
 Port 53 is privileged, like 443 for TLS interception. Grant the capability once, which covers both
 — but **on the interpreter the virtualenv points to, not on the symlink**:
 

@@ -30,7 +30,7 @@ import contextlib
 import fnmatch
 import logging
 import socket
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import dns.asyncquery
 import dns.flags
@@ -39,7 +39,14 @@ import dns.rdataclass
 import dns.rdatatype
 import dns.rrset
 
+from core.dns_discovery import (
+    STATUS_EXCLUDED,
+    STATUS_FORWARDED,
+    STATUS_INTERCEPTED,
+    get_dns_recorder,
+)
 from core.ports import bind_failure_hint
+from core.upstream_resolver import is_loopback_ip
 
 if TYPE_CHECKING:
     from core.config import Config
@@ -143,6 +150,14 @@ class DNSInterceptor:
         self.host = dns_cfg.listen_host
         self.port = int(dns_cfg.listen_port)
         self.patterns = list(dns_cfg.intercept or [])
+        # Names that must never be answered by the proxy, whatever else says
+        # otherwise; evaluated first, so it also overrides ``intercept_all``.
+        self.exclude = list(dns_cfg.exclude or [])
+        # Answer every name with our own address: the way to capture devices
+        # without listing every domain they talk to.
+        self.intercept_all = bool(dns_cfg.intercept_all)
+        # Set by the service (or a test) to record what each client asks for.
+        self.query_recorder: Any | None = None
         self.answer_ip = dns_cfg.answer_ip or _detect_lan_ip()
         self.ttl = int(dns_cfg.answer_ttl)
         self.forward_timeout = float(dns_cfg.forward_timeout)
@@ -155,6 +170,7 @@ class DNSInterceptor:
         self.stats = {
             "intercepted": 0,
             "forwarded": 0,
+            "excluded": 0,
             "tcp_retries": 0,
             "refused": 0,
             "errors": 0,
@@ -298,7 +314,18 @@ class DNSInterceptor:
         qname = question.name.to_text().lower()
         qtype = question.rdtype
 
-        if self.matches(qname):
+        # The proxy must never capture itself. Two consequences for a query coming
+        # from this machine: the blanket rule (``intercept_all``) does not apply --
+        # answering every name with our own address while this host resolves
+        # through us is a resolution loop -- and nothing is recorded, because a
+        # self-query is not a device to discover. An explicitly listed name is
+        # still intercepted, so a local probe can verify the configuration.
+        from_self = is_loopback_ip(client)
+        decision = self.classify(qname, from_self=from_self)
+        if not from_self:
+            self._note_query(decision, client, qname, qtype)
+
+        if decision == STATUS_INTERCEPTED:
             self.stats["intercepted"] += 1
             logger.info(
                 "DNS: intercepted %s %s from %s -> %s",
@@ -309,6 +336,9 @@ class DNSInterceptor:
             )
             return self._intercept_response(query, question).to_wire()
 
+        if decision == STATUS_EXCLUDED:
+            self.stats["excluded"] += 1
+
         self.stats["forwarded"] += 1
         forwarded = await self._forward(query)
         if forwarded is not None:
@@ -318,16 +348,88 @@ class DNSInterceptor:
         logger.warning("DNS: no upstream could answer %s from %s", qname, client)
         return _servfail(query).to_wire()
 
-    def matches(self, qname: str) -> bool:
-        """Is this name one we intercept?
+    def _note_query(self, decision: str, client: str, qname: str, qtype: int) -> None:
+        """Hand one observation to the discovery recorder, if there is one.
 
-        Either explicitly configured, or claimed by a registered adapter - so a service is covered
-        by shipping its adapter, without an operator having to list its domains here.
+        Wrapped so a discovery problem can never turn into a DNS failure: the
+        recorder only counts in memory here and persists asynchronously.
+        """
+        recorder = self.query_recorder or get_dns_recorder()
+        if recorder is None:
+            return
+        try:
+            recorder.note(client, qname, dns.rdatatype.to_text(qtype), decision)
+        except Exception:  # noqa: BLE001 - the DNS answer matters more
+            logger.debug("DNS: could not record the query for %s", qname, exc_info=True)
+
+    def classify(self, qname: str, *, from_self: bool = False) -> str:
+        """What the proxy does with ``qname``: intercepted, excluded or forwarded.
+
+        ``from_self`` marks a query made by this machine (loopback client): the
+        blanket ``intercept_all`` rule is not applied to it, since redirecting the
+        proxy's own resolutions to the proxy is a loop, not a capture. Listed names
+        are still honoured, so a local probe sees the real policy.
+
+        A name a registered adapter explicitly claims is always intercepted: the
+        adapter declares exactly the names of the service it implements, so the
+        exclusions can never silently neutralise a shipped adapter (the
+        ``shelly-*.local`` family lives inside the ``*.local`` default exclusion).
+
+        Beyond that, ``exclude`` is evaluated first and wins over the rest: a name
+        listed there is always forwarded, even when ``intercept`` lists it too or
+        ``intercept_all`` is on. Time (NTP), OCSP/CRL and local names are excluded
+        by default -- hijacking those breaks devices without teaching anything.
         """
         name = qname.rstrip(".").lower()
+        if self.adapter_claim(name):
+            return STATUS_INTERCEPTED
+        if self.matching_exclusion(name):
+            return STATUS_EXCLUDED
+        return self._matches_configured(name, from_self=from_self)
+
+    def matching_exclusion(self, qname: str) -> str | None:
+        """The exclusion pattern that keeps ``qname`` forwarded, if any.
+
+        Reported to the API so the UI can say *why* a name is not intercepted
+        instead of offering to "intercept" something that would change nothing.
+        """
+        name = qname.rstrip(".").lower()
+        return next((pattern for pattern in self.exclude if _name_matches(name, pattern)), None)
+
+    def adapter_claim(self, qname: str) -> str | None:
+        """The hostname a registered adapter claims for ``qname``, if any."""
+        name = qname.rstrip(".").lower()
+        return next(
+            (hostname for hostname in _adapter_hostnames() if _name_matches(name, hostname)), None
+        )
+
+    def _matches_configured(self, name: str, *, from_self: bool = False) -> str:
+        """Intercepted when listed, or when intercepting all (not for ourselves)."""
         if any(_name_matches(name, pattern) for pattern in self.patterns):
-            return True
-        return any(_name_matches(name, hostname) for hostname in _adapter_hostnames())
+            return STATUS_INTERCEPTED
+        if self.intercept_all and not from_self:
+            return STATUS_INTERCEPTED
+        return STATUS_FORWARDED
+
+    def matches(self, qname: str) -> bool:
+        """Is this name one we answer ourselves? (``classify`` == intercepted)"""
+        return self.classify(qname) == STATUS_INTERCEPTED
+
+    def apply_settings(self, config: Config) -> None:
+        """Re-read the interception settings from a config, without a restart.
+
+        Called after the discovery API writes ``dns.intercept`` /
+        ``intercept_all`` / ``exclude``: the listening sockets stay up and the
+        next query already follows the new rule.
+        """
+        dns_cfg = config.dns
+        self.patterns = list(dns_cfg.intercept or [])
+        self.exclude = list(dns_cfg.exclude or [])
+        self.intercept_all = bool(dns_cfg.intercept_all)
+        self.answer_ip = dns_cfg.answer_ip or self.answer_ip or _detect_lan_ip()
+        self.ttl = int(dns_cfg.answer_ttl)
+        self.forward_timeout = float(dns_cfg.forward_timeout)
+        self.upstreams = [*dns_cfg.dns_servers, *dns_cfg.dns_servers_v6]
 
     def _intercept_response(self, query: dns.message.Message, question) -> dns.message.Message:
         """A -> the proxy address; everything else an empty NOERROR.

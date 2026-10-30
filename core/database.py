@@ -11,6 +11,7 @@ import hashlib
 import ipaddress
 import logging
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -25,10 +26,13 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    UniqueConstraint,
+    delete,
     event,
     func,
     select,
 )
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -497,7 +501,68 @@ class DeviceMetaRow(Base):
     )
 
 
+class DNSQueryLog(Base):
+    """One (device, hostname) pair seen on the DNS interception port.
+
+    The DNS server is the first place a device reveals what it talks to, whether
+    or not the name is being intercepted: what a client asks for, how often and
+    when is what lets an operator decide what to intercept next instead of
+    guessing domain names. One row per (client_ip, hostname, qtype) with a hit
+    counter, so the table grows with the number of distinct pairs rather than
+    with the number of queries; the oldest rows are pruned past a cap.
+    """
+
+    __tablename__ = "dns_query_log"
+    __table_args__ = (
+        UniqueConstraint("client_ip", "hostname", "qtype", name="uq_dns_query_pair"),
+        Index("ix_dns_query_last_seen", "last_seen"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    client_ip: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    hostname: Mapped[str] = mapped_column(String(255), index=True, nullable=False)
+    qtype: Mapped[str] = mapped_column(String(16), nullable=False, default="A")
+    # intercepted | excluded | forwarded -- what the proxy did with this name.
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="forwarded")
+    hit_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    first_seen: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_seen: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•  # noqa: E501
+def _iso_utc(value: datetime | None) -> str | None:
+    """Render a stored timestamp as ISO-8601 UTC.
+
+    SQLite hands the rows back naive (it has no timezone type), so an unqualified
+    ``isoformat()`` would leave the caller guessing -- and comparing a naive string
+    with the aware one of a not-yet-flushed counter is not the same comparison.
+    """
+    if value is None:
+        return None
+    return (value if value.tzinfo else value.replace(tzinfo=UTC)).isoformat()
+
+
+def _collapse_dns_observations(observations: list[dict]) -> list[dict]:
+    """Merge observations sharing (client_ip, hostname, qtype) into one row each.
+
+    A batch must not carry the same unique key twice: SQLite refuses a single
+    ``ON CONFLICT DO UPDATE`` statement that would touch one row two times, so
+    collapsing here keeps a duplicated pair a hit counter, not a failed flush.
+    """
+    merged: dict[tuple, dict] = {}
+    for obs in observations:
+        key = (obs["client_ip"], obs["hostname"], obs["qtype"])
+        current = merged.get(key)
+        if current is None:
+            merged[key] = dict(obs)
+            continue
+        current["hit_count"] = int(current.get("hit_count") or 1) + int(obs.get("hit_count") or 1)
+        current["first_seen"] = min(current["first_seen"], obs["first_seen"])
+        current["last_seen"] = max(current["last_seen"], obs["last_seen"])
+        current["status"] = obs["status"]
+    return list(merged.values())
+
+
 # DATABASE MANAGER
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•  # noqa: E501
 
@@ -1046,6 +1111,89 @@ class DatabaseManager:
 
         # Level 3: what this ingress path actually speaks.
         return ingress_default
+
+    # ── DNS discovery log ────────────────────────────────────────────────────
+
+    #: Rows kept in ``dns_query_log``: the discovery view is a working set, not
+    #: an archive, and one row is one (client, hostname) pair.
+    DNS_QUERY_LOG_MAX_ROWS = 5000
+
+    async def record_dns_queries(self, observations: list[dict]) -> int:
+        """Upsert observed DNS queries: one row per (client_ip, hostname, qtype).
+
+        One statement per batch (SQLite ``ON CONFLICT``), not a read-then-write per
+        observation: a flush can carry hundreds of pairs and each one would
+        otherwise cost a round trip to the database. An existing pair keeps its
+        ``first_seen``, gains the hits and refreshes ``last_seen``/``status``, so
+        the table grows with the number of distinct pairs, not with the number of
+        queries. Writes come from the single discovery recorder.
+        """
+        if not observations:
+            return 0
+        statement = sqlite_insert(DNSQueryLog).values(_collapse_dns_observations(observations))
+        statement = statement.on_conflict_do_update(
+            index_elements=["client_ip", "hostname", "qtype"],
+            set_={
+                "hit_count": DNSQueryLog.hit_count + statement.excluded.hit_count,
+                "status": statement.excluded.status,
+                "last_seen": statement.excluded.last_seen,
+            },
+        )
+        async with self.core_session() as session:
+            await session.execute(statement)
+        return len(observations)
+
+    async def list_dns_queries(self, limit: int = 500) -> list[dict]:
+        """Most recently seen (client, hostname) pairs, newest first."""
+        async with self.core_session() as session:
+            result = await session.execute(
+                select(DNSQueryLog).order_by(DNSQueryLog.last_seen.desc()).limit(limit)
+            )
+            rows = list(result.scalars().all())
+        return [
+            {
+                "client_ip": row.client_ip,
+                "hostname": row.hostname,
+                "qtype": row.qtype,
+                "status": row.status,
+                "hit_count": row.hit_count,
+                "first_seen": _iso_utc(row.first_seen),
+                "last_seen": _iso_utc(row.last_seen),
+            }
+            for row in rows
+        ]
+
+    async def clear_dns_queries(self) -> int:
+        """Empty the discovery log and return how many rows were removed."""
+        async with self.core_session() as session:
+            count = (
+                await session.execute(select(func.count()).select_from(DNSQueryLog))
+            ).scalar_one()
+            await session.execute(delete(DNSQueryLog))
+        return int(count)
+
+    async def prune_dns_queries(self, max_rows: int | None = None) -> int:
+        """Drop the oldest pairs so the log stays under ``max_rows``."""
+        cap = self.DNS_QUERY_LOG_MAX_ROWS if max_rows is None else int(max_rows)
+        async with self.core_session() as session:
+            count = (
+                await session.execute(select(func.count()).select_from(DNSQueryLog))
+            ).scalar_one()
+            excess = int(count) - cap
+            if excess <= 0:
+                return 0
+            oldest = (
+                (
+                    await session.execute(
+                        select(DNSQueryLog.id).order_by(DNSQueryLog.last_seen.asc()).limit(excess)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if oldest:
+                await session.execute(delete(DNSQueryLog).where(DNSQueryLog.id.in_(oldest)))
+        return len(oldest)
 
     @contextlib.asynccontextmanager
     async def core_session(self) -> AsyncGenerator[AsyncSession, None]:

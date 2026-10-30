@@ -434,7 +434,7 @@ if (resp.status === 401 && !sessionStorage.getItem('ride-config-401')) {
   models: 'Local model registry and inference settings',
   control: 'Policy engine and online learning tuning',
   observability: 'Logging, metrics, tracing and health check',
-  dns: 'Interception and upstream resolvers. Intercepted names are the ones listed here plus the hostnames every registered protocol adapter declares — one service per adapter, so adding an adapter is enough.',
+  dns: 'Interception and upstream resolvers. Intercepted names are the ones listed here plus the hostnames every registered protocol adapter declares — one service per adapter, so adding an adapter is enough. `intercept_all` widens that to every name and `exclude` draws the boundary; the dashboard DNS Discovery panel lists what devices actually asked for and promotes a name here in one click.',
   traffic_selection: 'Rules that decide intercept vs passthrough for traffic',
   llm_decipher: 'LLM service profiles used to decode protocols',
   modification: 'On-the-fly request/response transformation rules',

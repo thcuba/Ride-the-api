@@ -23,7 +23,11 @@ truthful request/response path in order, against a *real* HTTP vendor on a socke
 **And the piece that makes interception reachable at all**: `core/dns_server.py` answers the names
 listed in `dns.intercept` with the proxy's own address and **forwards every other name verbatim** to
 the real resolvers — so the proxy can be the DNS for a network without hijacking anything by
-accident (`tests/test_dns_server.py`, real socket round trip included).
+accident (`tests/test_dns_server.py`, real socket round trip included). When listing domains one by
+one is not enough, `dns.intercept_all` widens that to every name, with `dns.exclude` drawing the
+boundary (clock, OCSP/CRL and local names stay out), and every query is logged in
+`dns_query_log` so the next name to intercept is read off real traffic instead of guessed
+(`tests/test_dns_discovery.py`).
 
 That test states its own limits: the pattern *extraction* step is fed a canned analysis instead
 of calling a real model, so model quality is not measured. Capture, correlation, persistence,

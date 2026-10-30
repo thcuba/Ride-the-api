@@ -60,6 +60,12 @@
   - [Frida Script](#frida-script-get-apitlsfridascriptjs)
 - [LLM Profiles](#llm-profiles)
 - [Protocol Servers](#protocol-servers)
+- [DNS Interception / Discovery](#dns-interception--discovery)
+  - [DNS Settings](#dns-settings-getput-apidnssettings)
+  - [DNS Discovery](#dns-discovery-get-apidnsdiscovery)
+  - [Promote Intercept](#promote-intercept-post-apidnsintercept)
+  - [Remove Intercept](#remove-intercept-delete-apidnsintercepthostname)
+  - [Clear Discovery](#clear-discovery-delete-apidnsdiscovery)
 - [Cloud Independence](#cloud-independence)
 
 ---
@@ -1180,6 +1186,118 @@ it stays stopped after a restart.
 ### `GET /api/protocol-servers/{name}/config`
 
 Configuration of a specific protocol server.
+
+---
+
+## DNS Interception / Discovery
+
+The DNS interception server and its discovery log. The policy precedence is
+`exclude` > `intercept` > `intercept_all`; the one exception is a name a
+registered adapter explicitly claims, which is always intercepted.
+
+### `GET /api/dns/settings`
+
+The full interception policy plus the ports actually bound.
+
+```json
+{
+  "enabled": true, "listen_host": "0.0.0.0", "listen_port": 53,
+  "answer_ip": "192.168.1.200", "answer_ttl": 60,
+  "dns_servers": ["8.8.8.8", "1.1.1.1"],
+  "intercept": ["ats.iot.vendor-cloud.example"], "intercept_all": false,
+  "exclude": ["ntp.*", "time.*", "ocsp.*", "crl.*", "*.local", "*.lan", "*.localdomain"],
+  "listen": {"host": "0.0.0.0", "port": 53, "udp": true, "tcp": true}
+}
+```
+
+### `PUT /api/dns/settings`
+
+Updates the policy and applies it **without a restart**. Only the fields present in
+the body are touched, so one switch can be flipped without resending the others.
+
+```json
+{ "intercept_all": true, "exclude": ["ntp.*", "*.local"] }
+```
+
+`intercept` and `exclude` are lists of names or `*.domain` patterns; `intercept_all`
+must be a boolean. Anything else is refused with `400`.
+
+A body that carries a field which is not a list, or a value that is not a name
+(`not a name`, `http://x/`, an IP literal), is refused with `400` and the message
+names the offending values: a typo must not look like it was saved. The whole body
+is rejected together, so a valid switch sent next to an invalid name is not applied
+either -- a half-applied policy is worse than none. Duplicates collapse, so the
+stored list is a set of rules.
+
+### `GET /api/dns/discovery`
+
+What each client asked the DNS for, and what the proxy does with it now --
+including the names still being forwarded, which are the candidates for
+`intercept`. Counters not yet flushed to the database are merged in.
+
+Query parameter `limit` (default 500, max 5000).
+
+```json
+{
+  "enabled": true, "intercept": ["ats.iot.vendor-cloud.example"],
+  "intercept_all": false, "exclude": ["ntp.*"],
+  "listen": {"host": "0.0.0.0", "port": 53, "udp": true, "tcp": true},
+  "stats": {"intercepted": 3, "forwarded": 12, "excluded": 4},
+  "pending_pairs": 2, "flushed_pairs": 118, "flush_errors": 0, "dropped_pairs": 0,
+  "entries": [
+    {"client_ip": "192.168.1.77", "hostname": "ats.iot.vendor.example", "qtype": "A",
+     "status": "forwarded", "hit_count": 12, "first_seen": "2026-01-01T10:00:00+00:00",
+     "last_seen": "2026-01-01T11:30:00+00:00",
+     "intercepted": false, "excluded": false, "suggested": true,
+     "excluded_by": null, "claimed_by": null}
+  ]
+}
+```
+
+`pending_pairs` counts the pairs still in memory (a query just made is already in this
+response), `flushed_pairs` how many have reached the database, `flush_errors` how many
+writes failed and `dropped_pairs` how many names the in-memory working set refused because
+it was full — the last two are zero in a healthy service and say why the log is not
+growing when they are not.
+
+`excluded_by` is the exclusion pattern keeping the name out (e.g. `ntp.*`) and
+`claimed_by` the hostname a registered adapter declares for it; both are `null`
+when they do not apply. They exist so a client can explain the state instead of
+offering an action that would change nothing: promoting a name held out by an
+exclusion pattern, or one an adapter already claims, is a no-op. `suggested`
+(=`forwarded`) is the only state where `POST /api/dns/intercept` has an effect.
+
+### `POST /api/dns/intercept`
+
+Promotes a discovered name (or pattern) to the intercept list: persisted to
+`dns.intercept` and applied live.
+
+```json
+{ "hostname": "*.iot.vendor.example" }
+```
+
+`400` for anything that is not a plausible name (an IP literal is refused).
+
+```json
+{ "hostname": "*.iot.vendor.example", "intercept": ["*.iot.vendor.example"], "changed": true }
+```
+
+`changed` is `false` when the name was already listed: the call then changes nothing
+at all, config file included.
+
+### `DELETE /api/dns/intercept/{hostname}`
+
+Removes a name from the intercept list: it goes back to being forwarded (and
+discovered). The response carries `removed`, which is `0` when the name was not
+listed -- in that case nothing is written.
+
+### `DELETE /api/dns/discovery`
+
+Forgets every recorded query, in memory and in the `dns_query_log` table.
+
+```json
+{ "removed": 25 }
+```
 
 ---
 
