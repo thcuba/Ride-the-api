@@ -687,11 +687,13 @@ class DatabaseManager:
         """
         if self._ip_lookup_cache is None:
             async with await self.get_core_session() as session:
-                result = await session.execute(select(DeviceRegistry))
+                result = await session.execute(
+                    select(DeviceRegistry.device_id, DeviceRegistry.ip_addresses)
+                )
                 index: dict[str, str] = {}
-                for device in result.scalars().all():
-                    for ip in device.ip_addresses or []:
-                        index.setdefault(ip, device.device_id)
+                for device_id, ip_addresses in result.all():
+                    for ip in ip_addresses or []:
+                        index.setdefault(ip, device_id)
                 self._ip_lookup_cache = index
         return self._ip_lookup_cache.get(ip_address)
 
