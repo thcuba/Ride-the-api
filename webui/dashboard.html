@@ -1933,7 +1933,8 @@ async function loadDnsDiscovery() {
         + (data.pending_pairs ? ` · ${data.pending_pairs} pending` : '')
         // A recorder that cannot reach the database is otherwise invisible here:
         // only a log line says so, and the operator is looking at this panel.
-        + (data.flush_errors ? ` · ${data.flush_errors} write error(s), the log is not reaching the database` : '');
+        + (data.flush_errors ? ` · ${data.flush_errors} write error(s), the log is not reaching the database` : '')
+        + (data.dropped_pairs ? ` · ${data.dropped_pairs} name(s) dropped: the in-memory working set is full` : '');
       status.title = 'An excluded name is still forwarded upstream, so it is counted in both totals.'
         + (data.flushed_pairs ? ` ${data.flushed_pairs} pair(s) written so far.` : '');
     }

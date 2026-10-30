@@ -109,6 +109,7 @@ class DNSDiscoveryRecorder:
         self.pairs: dict[tuple[str, str, str], _PairCounters] = {}
         self.flushed_pairs = 0
         self.flush_errors = 0
+        self.dropped_pairs = 0
         self._task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
         self._next_prune = 0.0
@@ -123,6 +124,12 @@ class DNSDiscoveryRecorder:
         now = datetime.now(UTC)
         counters = self.pairs.get(key)
         if counters is None:
+            if len(self.pairs) >= self.max_rows:
+                # Bounded even with no sink to prune: the live view is a working set,
+                # not an archive, so a device resolving random names cannot grow this
+                # process's memory. Counted, never silent.
+                self.dropped_pairs += 1
+                return
             counters = _PairCounters(
                 client_ip=key[0],
                 hostname=key[1],

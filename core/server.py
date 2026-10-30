@@ -1669,6 +1669,7 @@ async def dns_discovery(limit: int = 500):
         # log line is easy to miss, the panel is not.
         "flushed_pairs": recorder.flushed_pairs if recorder else 0,
         "flush_errors": recorder.flush_errors if recorder else 0,
+        "dropped_pairs": recorder.dropped_pairs if recorder else 0,
         "entries": sorted(entries.values(), key=lambda e: e["last_seen"] or "", reverse=True)[
             :bounded
         ],

@@ -825,3 +825,18 @@ async def test_promoting_a_new_name_reports_the_change(api):
 
     assert response.json()["changed"] is True
     assert api["manager"].config.dns.intercept == [DEVICE_HOST, "fresh.example"]
+
+
+@pytest.mark.asyncio
+async def test_the_in_memory_working_set_is_bounded_without_a_sink():
+    """A device resolving random names must not grow the process without limit."""
+    recorder = DNSDiscoveryRecorder(sink=None, max_rows=2)
+
+    for index in range(5):
+        recorder.note(CLIENT_IP, f"host{index}.example", "A", "forwarded")
+    recorder.note(CLIENT_IP, "host0.example", "A", "forwarded")  # a known pair: counted
+
+    assert recorder.pending_pairs == 2  # noqa: PLR2004
+    assert recorder.dropped_pairs == 3  # noqa: PLR2004
+    counts = {item["hostname"]: item["hit_count"] for item in recorder.snapshot()}
+    assert counts["host0.example"] == 2  # noqa: PLR2004
