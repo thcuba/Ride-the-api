@@ -1243,7 +1243,7 @@ Query parameter `limit` (default 500, max 5000).
   "intercept_all": false, "exclude": ["ntp.*"],
   "listen": {"host": "0.0.0.0", "port": 53, "udp": true, "tcp": true},
   "stats": {"intercepted": 3, "forwarded": 12, "excluded": 4},
-  "pending_pairs": 2,
+  "pending_pairs": 2, "flushed_pairs": 118, "flush_errors": 0, "dropped_pairs": 0,
   "entries": [
     {"client_ip": "192.168.1.77", "hostname": "ats.iot.vendor.example", "qtype": "A",
      "status": "forwarded", "hit_count": 12, "first_seen": "2026-01-01T10:00:00+00:00",
@@ -1253,6 +1253,12 @@ Query parameter `limit` (default 500, max 5000).
   ]
 }
 ```
+
+`pending_pairs` counts the pairs still in memory (a query just made is already in this
+response), `flushed_pairs` how many have reached the database, `flush_errors` how many
+writes failed and `dropped_pairs` how many names the in-memory working set refused because
+it was full — the last two are zero in a healthy service and say why the log is not
+growing when they are not.
 
 `excluded_by` is the exclusion pattern keeping the name out (e.g. `ntp.*`) and
 `claimed_by` the hostname a registered adapter declares for it; both are `null`
