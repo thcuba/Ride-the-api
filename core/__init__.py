@@ -5,7 +5,6 @@ Core package initialization.
 from core.config import Config, ConfigManager, get_config, get_config_manager
 from core.database import (
     Base,
-    DatabaseManager,
     DeviceRegistry,
     FieldMapping,
     LLMContextBuffer,
@@ -31,7 +30,6 @@ __all__ = [
     "ConfigManager",
     "get_config",
     "get_config_manager",
-    "DatabaseManager",
     "Base",
     "DeviceRegistry",
     "ModelRegistry",
