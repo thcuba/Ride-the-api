@@ -154,30 +154,37 @@ class DNSDiscoveryRecorder:
         while the flush is in flight are counted, not lost -- and put back if the
         write did not go through, so a database that is down never loses
         observations. How many pairs the sink reported is what comes back.
+
+        The write itself happens under the lock, which is what keeps a clear() from
+        racing it: a batch taken before the operator emptied the log must not land
+        after it and repopulate what they just cleared. ``note()`` is synchronous and
+        never takes the lock, so the DNS path stays free.
         """
         async with self._lock:
             if not self.pairs:
                 return 0
             pending = self.pairs
             self.pairs = {}
+
+            if self.sink is None:
+                # Nothing to persist to: keep counting in memory instead of dropping.
+                self._merge_back(pending)
+                return 0
+
             observations = [counters.as_observation() for counters in pending.values()]
-
-        if self.sink is None:
-            # Nothing to persist to: keep counting in memory instead of dropping.
-            self._merge_back(pending)
-            return 0
-
-        try:
-            written = await self.sink.record_dns_queries(observations)
-        except BaseException as exc:  # noqa: BLE001
-            # BaseException on purpose: a cancellation (shutdown, task cancel)
-            # must put the counters back too, or they are lost silently.
-            self._merge_back(pending)
-            if not isinstance(exc, Exception):
-                raise
-            self.flush_errors += 1
-            logger.warning("DNS discovery: flush of %d pairs failed: %s", len(observations), exc)
-            return 0
+            try:
+                written = await self.sink.record_dns_queries(observations)
+            except BaseException as exc:  # noqa: BLE001
+                # BaseException on purpose: a cancellation (shutdown, task cancel)
+                # must put the counters back too, or they are lost silently.
+                self._merge_back(pending)
+                if not isinstance(exc, Exception):
+                    raise
+                self.flush_errors += 1
+                logger.warning(
+                    "DNS discovery: flush of %d pairs failed: %s", len(observations), exc
+                )
+                return 0
 
         self.flushed_pairs += len(observations)
         if written:
@@ -220,17 +227,21 @@ class DNSDiscoveryRecorder:
             return 0
 
     async def clear(self) -> int:
-        """Forget every recorded pair, in memory and (through the sink) on disk."""
+        """Forget every recorded pair, in memory and (through the sink) on disk.
+
+        Memory and storage are emptied under the same lock ``flush`` uses, so a flush
+        in flight cannot write its batch after the clear and bring the rows back.
+        """
         async with self._lock:
             self.pairs.clear()
-        if self.sink is None:
-            return 0
-        try:
-            return int(await self.sink.clear_dns_queries())
-        except Exception as exc:  # noqa: BLE001 - clearing must not raise into the API
-            self.flush_errors += 1
-            logger.warning("DNS discovery: could not clear the log: %s", exc)
-            return 0
+            if self.sink is None:
+                return 0
+            try:
+                return int(await self.sink.clear_dns_queries())
+            except Exception as exc:  # noqa: BLE001 - clearing must not raise into the API
+                self.flush_errors += 1
+                logger.warning("DNS discovery: could not clear the log: %s", exc)
+                return 0
 
     async def _flush_loop(self) -> None:
         while True:
@@ -257,7 +268,8 @@ class DNSDiscoveryRecorder:
         return len(self.pairs)
 
     def snapshot(self) -> list[dict[str, Any]]:
-        """The in-memory counters, for tests and diagnostics."""
+        """The in-memory counters: the API merges them into the discovery view, and
+        tests read them directly."""
         return [counters.as_observation() for counters in self.pairs.values()]
 
 

@@ -840,3 +840,35 @@ async def test_the_in_memory_working_set_is_bounded_without_a_sink():
     assert recorder.dropped_pairs == 3  # noqa: PLR2004
     counts = {item["hostname"]: item["hit_count"] for item in recorder.snapshot()}
     assert counts["host0.example"] == 2  # noqa: PLR2004
+
+
+@pytest.mark.asyncio
+async def test_a_batch_in_flight_cannot_repopulate_a_cleared_log():
+    """Clearing is a decision: a batch taken before it must not land after it."""
+    gate = asyncio.Event()
+    events: list[str] = []
+
+    class _SlowSink(_FakeSink):
+        async def record_dns_queries(self, observations):  # noqa: ARG002
+            await gate.wait()
+            events.append("write")
+            return 1
+
+        async def clear_dns_queries(self) -> int:
+            events.append("clear")
+            return 1
+
+    recorder = DNSDiscoveryRecorder(_SlowSink(), flush_interval_s=3600)
+    recorder.note(CLIENT_IP, DEVICE_HOST, "A", "forwarded")
+
+    flushing = asyncio.create_task(recorder.flush())
+    await asyncio.sleep(0)  # the flush holds the lock and waits on the sink
+    clearing = asyncio.create_task(recorder.clear())
+    await asyncio.sleep(0)  # the clear waits for the same lock
+    gate.set()
+    await flushing
+    await clearing
+
+    # Write then clear. The other order would leave the log repopulated with the
+    # rows the operator had just thrown away.
+    assert events == ["write", "clear"]
