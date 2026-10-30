@@ -39,6 +39,7 @@ import dns.rdataclass
 import dns.rdatatype
 import dns.rrset
 
+from core.config import DEFAULT_DNS_EXCLUSIONS
 from core.dns_discovery import (
     STATUS_EXCLUDED,
     STATUS_FORWARDED,
@@ -60,6 +61,12 @@ _MAX_TCP_MESSAGE = 65535
 # Hostnames claimed by the registered adapters, resolved once. The registry is a
 # process-wide singleton populated on first use, so a name accepted early stays accepted.
 _adapter_hostnames_cache: list[str] | None = None
+
+
+#: The shipped exclusions, normalised the way ``exclude`` entries are compared.
+_DEFAULT_EXCLUSIONS = frozenset(
+    pattern.strip().lower().rstrip(".") for pattern in DEFAULT_DNS_EXCLUSIONS
+)
 
 
 def _name_matches(name: str, candidate: str) -> bool:
@@ -381,6 +388,13 @@ class DNSInterceptor:
         by default -- hijacking those breaks devices without teaching anything.
         """
         name = qname.rstrip(".").lower()
+        # An exclusion the operator wrote wins over everything, adapter claims
+        # included: silently overriding a hand-typed rule is the kind of surprise
+        # this project avoids. The shipped defaults are soft and yield to an adapter
+        # claim, so shipping an adapter still makes its service interceptable
+        # (``shelly-*.local`` lives inside the default ``*.local``).
+        if self.matching_operator_exclusion(name):
+            return STATUS_EXCLUDED
         if self.adapter_claim(name):
             return STATUS_INTERCEPTED
         if self.matching_exclusion(name):
@@ -395,6 +409,24 @@ class DNSInterceptor:
         """
         name = qname.rstrip(".").lower()
         return next((pattern for pattern in self.exclude if _name_matches(name, pattern)), None)
+
+    def matching_operator_exclusion(self, qname: str) -> str | None:
+        """The matching exclusion that is not one of the shipped defaults, if any.
+
+        Those are the exclusions an operator typed himself, and they beat every other
+        rule; the defaults only beat what is left once the adapter claims are applied.
+        """
+        name = qname.rstrip(".").lower()
+        defaults = _DEFAULT_EXCLUSIONS
+        return next(
+            (
+                pattern
+                for pattern in self.exclude
+                if pattern.strip().lower().rstrip(".") not in defaults
+                and _name_matches(name, pattern)
+            ),
+            None,
+        )
 
     def adapter_claim(self, qname: str) -> str | None:
         """The hostname a registered adapter claims for ``qname``, if any."""

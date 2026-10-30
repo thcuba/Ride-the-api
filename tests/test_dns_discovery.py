@@ -872,3 +872,76 @@ async def test_a_batch_in_flight_cannot_repopulate_a_cleared_log():
     # Write then clear. The other order would leave the log repopulated with the
     # rows the operator had just thrown away.
     assert events == ["write", "clear"]
+
+
+def test_the_shipped_exclusions_are_soft_and_what_i_wrote_is_hard():
+    """The two tiers, which is what lets both invariants hold at once."""
+    interceptor = DNSInterceptor(Config())
+
+    # A shipped default matches, and is still not an operator exclusion.
+    assert interceptor.matching_exclusion("ntp.pool.example") == "ntp.*"
+    assert interceptor.matching_operator_exclusion("ntp.pool.example") is None
+
+    interceptor.exclude = [*interceptor.exclude, "custom.example"]
+    assert interceptor.matching_operator_exclusion("custom.example") == "custom.example"
+    assert interceptor.classify("custom.example") == "excluded"
+
+
+def test_an_exclusion_i_wrote_beats_an_adapter_claim():
+    """Hand-typed beats an adapter; the shipped default does not (see the next test)."""
+    claimed = register_all_adapters().list_hostnames()
+    if not claimed:
+        pytest.skip("nessun adapter registrato in questa configurazione")
+    hostname = claimed[0].replace("*", "abc123")
+
+    assert DNSInterceptor(Config()).classify(hostname) == "intercepted"
+
+    interceptor = DNSInterceptor(Config())
+    interceptor.exclude = [*interceptor.exclude, claimed[0]]
+
+    assert interceptor.classify(hostname) == "excluded"
+    assert interceptor.matching_operator_exclusion(hostname) == claimed[0]
+
+
+def test_retyping_a_default_exclusion_does_not_harden_it():
+    """The list cannot record where a value came from: `*.local` stays soft.
+
+    Documented limit: to keep a specific adapter-claimed family out, exclude that
+    family, not the default pattern it happens to live inside.
+    """
+    interceptor = DNSInterceptor(_config(exclude=["*.local"]))
+
+    assert interceptor.matching_exclusion("printer.local") == "*.local"
+    assert interceptor.matching_operator_exclusion("printer.local") is None
+
+
+@pytest.mark.asyncio
+async def test_a_hand_written_exclusion_beats_an_adapter_claim_through_the_api(api):
+    claimed = register_all_adapters().list_hostnames()
+    if not claimed:
+        pytest.skip("nessun adapter registrato in questa configurazione")
+    hostname = claimed[0].replace("*", "abc123")
+
+    response = await api["client"].put("/api/dns/settings", json={"exclude": [claimed[0]]})
+
+    assert response.status_code == 200  # noqa: PLR2004
+    assert api["interceptor"].classify(hostname) == "excluded"
+
+
+@pytest.mark.asyncio
+async def test_discovery_reports_the_exclusion_as_the_deciding_rule(api):
+    """With both an exclusion and an adapter claim on a name, the exclusion decides."""
+    claimed = register_all_adapters().list_hostnames()
+    if not claimed:
+        pytest.skip("nessun adapter registrato in questa configurazione")
+    hostname = claimed[0].replace("*", "abc123")
+    await api["client"].put("/api/dns/settings", json={"exclude": [claimed[0]]})
+    api["recorder"].note(CLIENT_IP, hostname, "A", "excluded")
+
+    body = (await api["client"].get("/api/dns/discovery")).json()
+    entry = next(e for e in body["entries"] if e["hostname"] == hostname)
+
+    assert entry["excluded"] is True
+    assert entry["excluded_by"] == claimed[0]  # the rule in force, shown by the panel
+    assert entry["claimed_by"] == claimed[0]  # informational: who else wanted it
+    assert entry["suggested"] is False

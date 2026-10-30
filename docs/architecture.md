@@ -590,14 +590,15 @@ proprietary protocols the LLM analyses Observation batches directly.
 A device reaches its vendor cloud by name, so the name is where interception has to
 start. This server is the piece that makes that possible without breaking anything else.
 
-- **Intercepted names** come from three sources, resolved in this order:
-  `dns.exclude` (never intercepted, wins over everything), then `dns.intercept` (explicit) plus the
-  hostnames the registered protocol adapters declare (`vendor_hostnames`), then
-  `dns.intercept_all` (opt-in: answer *every* name). An adapter owns the naming of the service it
-  implements, so a service becomes interceptable by shipping its adapter — not by an operator
-  appending its domains one at a time, which is how a per-service list drifts out of step; and it
-  is checked *before* the exclusions, so a default exclusion (`*.local`) cannot neutralise a shipped
-  adapter (`shelly-*.local`). Intercepted names are answered by the proxy itself with
+- **Intercepted names** are resolved in this order: an exclusion the operator wrote
+  (`dns.exclude`) wins over everything; then a hostname a registered protocol adapter declares
+  (`vendor_hostnames`); then the *shipped default* exclusions (`ntp.*`, `*.local`, …); then
+  `dns.intercept` (explicit); then `dns.intercept_all` (opt-in: answer *every* name). The two tiers
+  of exclusion are the point: a hand-typed rule must never be overridden silently, while a default
+  one must not neutralise a shipped adapter — an adapter owns the naming of the service it
+  implements, so a service becomes interceptable by shipping its adapter, not by an operator
+  appending its domains one at a time, which is how a per-service list drifts out of step.
+  Intercepted names are answered by the proxy itself with
   `dns.answer_ip` (A) and an empty NOERROR for AAAA — NODATA keeps a dual-stack device
   on the IPv4 route we actually serve, instead of letting it prefer a v6 address we
   cannot answer.

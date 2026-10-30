@@ -1192,8 +1192,10 @@ Configuration of a specific protocol server.
 ## DNS Interception / Discovery
 
 The DNS interception server and its discovery log. The policy precedence is
-`exclude` > `intercept` > `intercept_all`; the one exception is a name a
-registered adapter explicitly claims, which is always intercepted.
+**an exclusion you wrote > adapter claim > the shipped default exclusions >
+`intercept` > `intercept_all`**: a hand-typed exclusion wins over everything (adapter
+claims included), while the exclusions shipped by default yield to a name an adapter
+explicitly claims — see `configuration.md` for why both tiers exist.
 
 ### `GET /api/dns/settings`
 
@@ -1262,7 +1264,9 @@ growing when they are not.
 
 `excluded_by` is the exclusion pattern keeping the name out (e.g. `ntp.*`) and
 `claimed_by` the hostname a registered adapter declares for it; both are `null`
-when they do not apply. They exist so a client can explain the state instead of
+when they do not apply. When `excluded_by` is set it is the rule that decides — an
+exclusion you wrote beats an adapter claim — while `claimed_by` then only records who
+else was interested in the name. They exist so a client can explain the state instead of
 offering an action that would change nothing: promoting a name held out by an
 exclusion pattern, or one an adapter already claims, is a no-op. `suggested`
 (=`forwarded`) is the only state where `POST /api/dns/intercept` has an effect.

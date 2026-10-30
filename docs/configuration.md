@@ -448,10 +448,21 @@ capture. A name listed in `intercept` is still honoured for a local query, so a
 `dig` from the box itself shows the real policy, and the proxy's own queries are
 never recorded in the discovery log — the log is about devices.
 
-Precedence is **`exclude` > `intercept` > `intercept_all`**: a name in `exclude` is
-always forwarded, even when `intercept` lists it too — with one exception: a name a
-registered adapter explicitly claims (its own service) is always intercepted, so a
-default exclusion can never neutralise a shipped adapter. The defaults keep clock (NTP),
+Precedence, highest first: **an exclusion you wrote > adapter claim > the shipped default
+exclusions > `intercept` > `intercept_all`**.
+
+- An exclusion **you** write always wins: over `intercept`, over `intercept_all` and even
+  over a name a registered adapter claims. A rule typed by hand must mean what it says,
+  never be overridden silently.
+- The exclusions **shipped by default** (`ntp.*`, `time.*`, `ocsp.*`, `crl.*`, `*.local`,
+  `*.lan`, `*.localdomain`) are soft: they yield to a name an adapter explicitly claims, so
+  shipping an adapter is still enough to make its service interceptable — `shelly-*.local`
+  lives inside the default `*.local`.
+- The list cannot record where a value came from, so retyping `*.local` by hand does not
+  harden it. To keep one adapter-claimed family out, exclude that family
+  (`shelly-*.local`), not the default pattern it falls inside.
+
+The defaults keep clock (NTP),
 certificate (OCSP/CRL) and local names out of the proxy: hijacking those breaks
 devices without teaching the proxy anything. Devices that pin their vendor
 certificate still refuse our certificate, so their traffic is relayed undecrypted —
