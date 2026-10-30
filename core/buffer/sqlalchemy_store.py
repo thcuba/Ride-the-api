@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime
 
@@ -65,9 +65,14 @@ class SqlAlchemyBufferStore(BufferStore):
         self,
         session_provider: SessionProvider,
         durable_stats_provider: SessionProvider | None = None,
+        device_ids_provider: Callable[[], Awaitable[list[str]]] | None = None,
     ) -> None:
         self._session = session_provider
         self._durable_stats = durable_stats_provider
+        # ``None`` means the sessions are shared (RAM mode): one query already sees every
+        # device. On disk each device has its own database, so the candidate ids must come
+        # from somewhere that knows them (the registry).
+        self._device_ids = device_ids_provider
         self._locks: dict[str, asyncio.Lock] = {}
         self._locks_guard = threading.Lock()
         self._sequence_cache: dict[str, int] = {}
@@ -102,6 +107,29 @@ class SqlAlchemyBufferStore(BufferStore):
                 # Invalidate cached sequence on transaction failure/rollback
                 self._sequence_cache.pop(device_id, None)
                 raise
+
+    async def pending_device_ids(self) -> list[str]:
+        """Devices holding unflushed entries — what a backend switch has to carry over.
+
+        RAM mode asks the shared engine once. In ``disk`` mode every device has its own
+        database, so each candidate is checked individually: passing an empty device id to
+        the file-based session provider (which a single shared query would require) opens
+        the database of a device called "" and finds nothing at all.
+        """
+        if self._device_ids is None:
+            async with self._session("") as session:
+                result = await session.execute(
+                    select(LLMContextBuffer.device_id)
+                    .where(LLMContextBuffer.flushed == False)  # noqa: E712
+                    .distinct()
+                )
+                return [row[0] for row in result.all()]
+
+        found: list[str] = []
+        for device_id in await self._device_ids():
+            if await self.get_buffer_pairs(device_id):
+                found.append(device_id)
+        return found
 
     async def get_buffer_pairs(self, device_id: str) -> list[dict]:
         async with self._session(device_id) as session:

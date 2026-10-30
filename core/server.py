@@ -41,8 +41,8 @@ from core.buffer import (
     dispose_memory_db,
     get_buffer_backend,
     initialize_buffer_backend,
-    persist_backend,
-    set_buffer_backend,
+    normalise_backend,
+    switch_backend,
 )
 from core.cert_manager import CertManager, get_cert_manager
 from core.config import Config, ConnectionType, get_config_manager
@@ -2959,13 +2959,24 @@ async def delete_buffer_entry(device_id: str, entry_id: int):
 
 @app.get("/api/settings/buffer-backend")
 async def get_buffer_backend_setting():
-    """Return the currently active buffer backend (disk | memory)."""
+    """Return the currently active buffer backend (``disk`` = SQLite, or ``memory``)."""
     return {"backend": get_buffer_backend()}
 
 
 @app.put("/api/settings/buffer-backend")
 async def set_buffer_backend_setting(request: Request):
-    """Switch the runtime buffer backend (disk | memory) and persist it."""
+    """Switch the buffer backend, carrying the pairs in flight, and persist the choice.
+
+    ``disk`` (alias: ``sqlite``) is the SQLite backend: buffered pairs live in the device
+    database and survive a restart. ``memory`` (alias: ``ram``) keeps them in a
+    process-shared in-memory engine.
+
+    The switch is lossless in both directions: whatever has not been flushed yet is copied
+    into the new store before the old one is marked flushed, and the live buffers are
+    repointed at it, so no capture is lost and none is buffered twice.
+    """
+    if not db_manager:
+        return JSONResponse(status_code=503, content={"error": "Service not ready"})
     try:
         body = await request.json()
     except (json.JSONDecodeError, UnicodeDecodeError):
@@ -2974,18 +2985,22 @@ async def set_buffer_backend_setting(request: Request):
         return JSONResponse(
             status_code=400, content={"error": "Invalid JSON body: expected an object"}
         )
-    backend = body.get("backend")
-    if backend not in ("disk", "memory"):
+    backend = normalise_backend(body.get("backend"))
+    if backend is None:
         return JSONResponse(
             status_code=400,
-            content={"error": "backend must be one of 'disk' or 'memory'"},
+            content={
+                "error": "backend must be 'disk' (alias: sqlite) or 'memory' (alias: ram)",
+                "got": body.get("backend"),
+            },
         )
-    set_buffer_backend(backend)
-    persist_backend(backend)
-    if orchestrator:
-        orchestrator.reset_buffers()
+    summary = await switch_backend(
+        db_manager,
+        backend,
+        rebind=orchestrator.rebind_buffer_store if orchestrator else None,
+    )
     logger.info("Buffer backend switched to %s via settings API", backend)
-    return {"backend": get_buffer_backend()}
+    return summary
 
 
 @app.get("/api/config")

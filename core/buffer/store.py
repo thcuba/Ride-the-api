@@ -18,6 +18,10 @@ class BufferStore(ABC):
         """Store one correlated pair. Returns the new cumulative buffer size."""
 
     @abstractmethod
+    async def pending_device_ids(self) -> list[str]:
+        """Return the devices that currently hold unflushed entries."""
+
+    @abstractmethod
     async def get_buffer_pairs(self, device_id: str) -> list[dict]:
         """Return all unflushed entries as ``[{id, pair, size}]`` ordered by sequence."""
 

@@ -623,6 +623,12 @@ start. This server is the piece that makes that possible without breaking anythi
   never by `intercept_all` — resolving our own queries to ourselves would be a loop, not a capture —
   and it is never written to the discovery log. A name in `dns.intercept` is still honoured for a
   local query, so a `dig` from the box itself shows the policy that is actually in force.
+- **The capture buffer has two backends, and switching between them is lossless**: `disk`
+  (the SQLite backend) writes buffered pairs into the per-device database, so they survive a
+  restart; `memory` uses one process-shared in-memory engine, which is faster and volatile. The
+  runtime switch copies the unflushed pairs into the new store *before* marking the old one
+  flushed, then repoints the live buffers — flipping the flag and dropping the buffers, as it
+  used to, either lost them (leaving RAM) or left them to be counted twice (leaving SQLite).
 - **Nothing captured is explained, not silent**: every device payload carries a `capture` block
   (`state`, `reason`, `hint`) computed from the switches that would stop a capture — per-IP bypass,
   TLS passthrough (configured, or set automatically when a device refuses our certificate), device

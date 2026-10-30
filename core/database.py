@@ -1221,6 +1221,26 @@ class DatabaseManager:
         finally:
             await session.close()
 
+    async def list_device_ids(self) -> list[str]:
+        """Every registered device id (one query, no per-device work)."""
+        async with await self.get_core_session() as session:
+            result = await session.execute(select(DeviceRegistry.device_id))
+            return [row[0] for row in result.all()]
+
+    async def list_device_ids_with_storage(self) -> list[str]:
+        """Ids of devices whose own database already exists on disk.
+
+        The buffer backend switch looks for pending pairs in each device database, and it
+        must not create one just to discover it was empty: a device that never had traffic
+        has no storage and nothing to carry.
+        """
+        found: list[str] = []
+        for device_id in await self.list_device_ids():
+            path = await self._resolve_device_db_path(device_id)
+            if path is not None and path.exists():
+                found.append(device_id)
+        return found
+
     async def list_devices(self) -> list[dict]:
         """List all registered devices."""
         relayed = await self.count_relayed_connections()

@@ -66,13 +66,13 @@ core:
 
   | Field | Type | Default | Description |
   |-------|------|---------|-------------|
-  | `backend` | `string` | `"disk"` | Where the raw capture buffer lives until it is flushed to the LLM. `disk` keeps pairs on durable storage (per-device DB); `memory` keeps them in a process-shared in-memory SQLite engine (RAM). Can be switched at runtime from the dashboard toggle or `PUT /api/settings/buffer-backend` |
+  | `backend` | `string` | `"disk"` | Where the raw capture buffer lives until it is flushed to the LLM. `disk` (alias `sqlite`) is the **SQLite backend**: pairs go to the durable per-device database and survive a restart. `memory` (alias `ram`) keeps them in a process-shared in-memory SQLite engine, which is faster and gone with the process. Can be switched at runtime from the dashboard toggle or `PUT /api/settings/buffer-backend`, and the switch carries the pairs in flight. An unknown name is a configuration error, not a silent fallback |
 
   Example:
 
   ```yaml
   buffer:
-    backend: "disk"  # or "memory" for in-process RAM buffering
+    backend: "disk"  # "disk" (SQLite, survives a restart) | "memory" (RAM, volatile)
   ```
 
   Notes:
