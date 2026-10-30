@@ -142,6 +142,23 @@ a { text-underline-offset: .18em; }
 .path-chip, .dc-id, code, pre, .list-badge .lb { font-variant-numeric: tabular-nums; }
 .dc-id, .path-chip { overflow-wrap: anywhere; }
 
+.pw-toggle-btn {
+  position: absolute;
+  right: 6px;
+  background: none;
+  border: none;
+  color: var(--text2);
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: color .2s;
+}
+.pw-toggle-btn:hover { color: var(--text); }
+.pw-toggle-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
 .toast, .toast-container .toast {
   border-radius: 12px;
   box-shadow: var(--shadow);
