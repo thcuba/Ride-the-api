@@ -10,7 +10,6 @@ from pathlib import Path
 
 import pytest
 import pytest_asyncio
-
 from fastapi.testclient import TestClient
 
 import core.server as server_mod
@@ -74,7 +73,7 @@ class TestDeleteDevice:
         try:
             client = TestClient(app)
             resp = client.delete("/api/devices/invalid%20id")
-            assert resp.status_code == 400
+            assert resp.status_code == 400  # noqa: PLR2004
             assert "Invalid device_id" in resp.json()["error"]
         finally:
             cfg.security.auth_enabled = saved_auth
