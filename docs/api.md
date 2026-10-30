@@ -262,10 +262,36 @@ Returns complete details and statistics for a device.
     "cloud_misses": 30,
     "patterns_learned": 12,
     "buffer_flushes": 8,
-    "current_buffer_size_bytes": 128000
+    "current_buffer_size_bytes": 128000,
+    "bypass": false,
+    "tls_passthrough": false,
+    "tls_untrusted_reason": null,
+    "seen_hostnames": ["ats.iot.vendor-cloud.example"],
+    "capture": {
+      "state": "capturing",
+      "reason": "",
+      "hint": "requests are analysed and buffered. ..."
+    }
   }
 }
 ```
+
+**Why a device produces no pairs.** `capture` answers that question in one field, because the
+causes otherwise live in three different switches — and reading the wrong one is how an empty
+buffer looks like a broken pipeline:
+
+| `capture.state` | Meaning |
+|-----------------|---------|
+| `capturing` | nothing is in the way: the device *can* produce pairs, so an empty buffer means it is not reaching the proxy at all |
+| `bypassed` | the IP is in per-IP bypass: traffic goes straight to the cloud, no analysis, no buffering |
+| `relayed` | TLS passthrough is on: either the operator enabled it, or the device refused our certificate (`tls_untrusted_reason`, e.g. `client_refused_certificate`) and the proxy relays it encrypted from then on |
+| `passthrough` | the device mode is `passthrough`: forwarded without analysis or buffering |
+
+`capture.reason` carries the machine-readable cause (`ip_bypass`, `mode_passthrough`, the relay
+reason, or empty) and `capture.hint` is one sentence ready for a human. The states are evaluated
+in the order the runtime hits them: bypass, then relay (settled during the handshake), then mode.
+`seen_hostnames` lists the SNI values the device has asked for (evidence of what it talks to) and
+`tls_untrusted_reason` is why its TLS is relayed, if it is.
 
 **Status codes**: `200` OK, `404` Device not found, `503` Service not ready
 
