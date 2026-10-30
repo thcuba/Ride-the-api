@@ -1550,6 +1550,41 @@ def _clean_dns_hostname(value: object) -> str | None:
     return name
 
 
+def _dns_policy_from_body(body: dict) -> tuple[dict, str | None]:
+    """Validate a DNS settings body: (``{intercept, exclude, intercept_all}``, error).
+
+    Only the fields actually present are returned (``None`` for the others), so the
+    dashboard can flip one switch without resending the rest. A field that is not a
+    list, or that carries something which is not a name, is refused rather than
+    silently dropped: a typo must not look like it was saved. Duplicates collapse,
+    so what ends up in the config is a set of rules.
+    """
+    policy: dict = {"intercept": None, "exclude": None, "intercept_all": None}
+    for field in ("intercept", "exclude"):
+        raw = body.get(field)
+        if raw is None:
+            continue
+        if not isinstance(raw, list):
+            return policy, f"'{field}' must be a list of names"
+        cleaned: list[str] = []
+        rejected: list[str] = []
+        for item in raw:
+            clean = _clean_dns_hostname(item)
+            if clean is None:
+                rejected.append(item if isinstance(item, str) else repr(item))
+            elif clean not in cleaned:
+                cleaned.append(clean)
+        if rejected:
+            return policy, f"'{field}' contains values that are not names: {', '.join(rejected)}"
+        policy[field] = cleaned
+    raw_all = body.get("intercept_all")
+    if raw_all is not None:
+        if not isinstance(raw_all, bool):
+            return policy, "'intercept_all' must be a boolean"
+        policy["intercept_all"] = raw_all
+    return policy, None
+
+
 def _apply_dns_settings() -> None:
     """Push the persisted DNS settings into the running interceptor.
 
@@ -1599,10 +1634,15 @@ async def dns_discovery(limit: int = 500):
             existing["last_seen"] = max(existing["last_seen"] or "", fresh["last_seen"])
 
     for entry in entries.values():
-        decision = interceptor.classify(entry["hostname"]) if interceptor else "forwarded"
+        hostname = entry["hostname"]
+        decision = interceptor.classify(hostname) if interceptor else "forwarded"
         entry["intercepted"] = decision == "intercepted"
         entry["excluded"] = decision == "excluded"
         entry["suggested"] = decision == "forwarded"
+        # Why, so the UI can explain instead of offering an action that would do
+        # nothing: promoting a name kept out by an exclusion pattern is a no-op.
+        entry["excluded_by"] = interceptor.matching_exclusion(hostname) if interceptor else None
+        entry["claimed_by"] = interceptor.adapter_claim(hostname) if interceptor else None
 
     cfg = config_manager.config.dns if config_manager else None
     return {
@@ -1704,25 +1744,10 @@ async def dns_put_settings(request: Request):
             status_code=400, content={"error": "Invalid JSON body: expected an object"}
         )
 
-    def _names(value: object) -> list[str] | None:
-        """Clean a list of names/patterns; None means 'not provided'."""
-        if value is None:
-            return None
-        if not isinstance(value, list):
-            return []
-        return [clean for item in value if (clean := _clean_dns_hostname(item))]
-
-    intercept = _names(body.get("intercept"))
-    exclude = _names(body.get("exclude"))
-    if body.get("intercept") is not None and intercept is None:
-        return JSONResponse(status_code=400, content={"error": "'intercept' must be a list"})
-    if body.get("intercept_all") is not None and not isinstance(body["intercept_all"], bool):
-        return JSONResponse(status_code=400, content={"error": "'intercept_all' must be a boolean"})
-
-    intercept_all = body.get("intercept_all")
-    if not config_manager.set_dns_settings(
-        intercept=intercept, intercept_all=intercept_all, exclude=exclude
-    ):
+    policy, error = _dns_policy_from_body(body)
+    if error:
+        return JSONResponse(status_code=400, content={"error": error})
+    if not config_manager.set_dns_settings(**policy):
         return JSONResponse(status_code=500, content={"error": "Failed to persist config"})
     _apply_dns_settings()
     cfg = config_manager.config.dns

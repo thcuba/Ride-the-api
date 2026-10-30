@@ -367,11 +367,27 @@ class DNSInterceptor:
         by default -- hijacking those breaks devices without teaching anything.
         """
         name = qname.rstrip(".").lower()
-        if any(_name_matches(name, hostname) for hostname in _adapter_hostnames()):
+        if self.adapter_claim(name):
             return STATUS_INTERCEPTED
-        if any(_name_matches(name, pattern) for pattern in self.exclude):
+        if self.matching_exclusion(name):
             return STATUS_EXCLUDED
         return self._matches_configured(name)
+
+    def matching_exclusion(self, qname: str) -> str | None:
+        """The exclusion pattern that keeps ``qname`` forwarded, if any.
+
+        Reported to the API so the UI can say *why* a name is not intercepted
+        instead of offering to "intercept" something that would change nothing.
+        """
+        name = qname.rstrip(".").lower()
+        return next((pattern for pattern in self.exclude if _name_matches(name, pattern)), None)
+
+    def adapter_claim(self, qname: str) -> str | None:
+        """The hostname a registered adapter claims for ``qname``, if any."""
+        name = qname.rstrip(".").lower()
+        return next(
+            (hostname for hostname in _adapter_hostnames() if _name_matches(name, hostname)), None
+        )
 
     def _matches_configured(self, name: str) -> str:
         """Intercepted when listed, or when intercepting all."""

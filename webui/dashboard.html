@@ -1941,13 +1941,22 @@ async function loadDnsDiscovery() {
       const state = e.intercepted
         ? '<span class="tb-badge tb-active">intercepted</span>'
         : (e.excluded ? '<span class="tb-badge tb-inactive">excluded</span>' : '<span class="tb-badge" style="opacity:.85;">forwarded</span>');
-      const action = e.intercepted
-        ? `<button class="tb-btn" onclick="dnsUnintercept('${escapeJs(host)}', this)" aria-label="Stop intercepting ${escapeHtml(host)}">− stop</button>`
-        : `<button class="tb-btn" onclick="dnsIntercept('${escapeJs(host)}', this)" aria-label="Intercept ${escapeHtml(host)}">+ intercept</button>`;
+      // Say *why* a name is not interceptable instead of offering a button that
+      // would change nothing: an adapter claim wins over the list, and a name kept
+      // out by an exclusion pattern stays out whatever the list says.
+      const reason = e.claimed_by
+        ? `<span style="font-size:11px;color:var(--text2);">declared by the ${escapeHtml(e.claimed_by)} adapter</span>`
+        : (e.excluded_by ? `<span style="font-size:11px;color:var(--text2);">kept out by the exclusion ${escapeHtml(e.excluded_by)}</span>` : '');
+      let action = '';
+      if (e.suggested) {
+        action = `<button class="tb-btn" onclick="dnsIntercept('${escapeJs(host)}', this)" aria-label="Intercept ${escapeHtml(host)}">+ intercept</button>`;
+      } else if (e.intercepted && !e.claimed_by) {
+        action = `<button class="tb-btn" onclick="dnsUnintercept('${escapeJs(host)}', this)" aria-label="Stop intercepting ${escapeHtml(host)}">− stop</button>`;
+      }
       return `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-top:1px solid var(--border);flex-wrap:wrap;">
         <code style="font-size:12px;word-break:break-all;">${escapeHtml(host)}</code>
         <span style="font-size:11px;color:var(--text2);">${escapeHtml(e.client_ip || '')} · ${e.hit_count || 0}× · ${escapeHtml(seen)}</span>
-        ${state}${action}
+        ${state}${reason}${action}
       </div>`;
     }).join('');
   } catch (_e) {

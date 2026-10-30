@@ -66,11 +66,12 @@ def _config(**overrides) -> Config:
 class _FakeSink:
     """Stands in for ``DatabaseManager``: records what the recorder hands over."""
 
-    def __init__(self, *, fail: bool = False) -> None:
+    def __init__(self, *, fail: bool = False, fail_prune: bool = False) -> None:
         self.observations: list[dict] = []
         self.pruned: list[int | None] = []
         self.clear_calls = 0
         self.fail = fail
+        self.fail_prune = fail_prune
 
     async def record_dns_queries(self, observations: list[dict]) -> int:
         if self.fail:
@@ -80,6 +81,8 @@ class _FakeSink:
 
     async def prune_dns_queries(self, max_rows: int | None = None) -> int:
         self.pruned.append(max_rows)
+        if self.fail_prune:
+            raise RuntimeError("prune unavailable")
         return 0
 
     async def clear_dns_queries(self) -> int:
@@ -501,3 +504,174 @@ async def test_the_service_records_queries_on_the_dns_path(api):
     assert observation["hostname"] == "brand-new.device.example"
     assert observation["status"] == "forwarded"
     await asyncio.sleep(0)  # let any fire-and-forget task settle
+
+
+# ── failure and shutdown paths (what the review of this feature was about) ───
+
+
+@pytest.mark.asyncio
+async def test_a_failed_prune_is_not_taken_for_a_failed_write():
+    """The counter must not be flushed twice: that would double every hit."""
+    sink = _FakeSink(fail_prune=True)
+    recorder = DNSDiscoveryRecorder(sink, flush_interval_s=3600)
+
+    recorder.note(CLIENT_IP, DEVICE_HOST, "A", "forwarded")
+    written = await recorder.flush()
+
+    assert written == 1
+    assert len(sink.observations) == 1  # the pair did reach the sink
+    assert recorder.pending_pairs == 0  # and was not put back in memory
+    assert recorder.flush_errors == 1  # the prune failure is visible
+
+
+@pytest.mark.asyncio
+async def test_the_log_is_pruned_at_most_once_per_interval():
+    sink = _FakeSink()
+    recorder = DNSDiscoveryRecorder(sink, flush_interval_s=3600, prune_interval_s=3600)
+
+    recorder.note(CLIENT_IP, DEVICE_HOST, "A", "forwarded")
+    await recorder.flush()
+    recorder.note(CLIENT_IP, "other.example", "A", "forwarded")
+    await recorder.flush()
+
+    assert sink.pruned == [recorder.max_rows]  # one COUNT for two flushes, not two
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_flush_keeps_the_counters():
+    """Shutdown must not lose observations the sink never got."""
+    started = asyncio.Event()
+
+    class _BlockingSink(_FakeSink):
+        async def record_dns_queries(self, observations: list[dict]) -> int:  # noqa: ARG002
+            started.set()
+            await asyncio.sleep(60)
+            return 1
+
+    recorder = DNSDiscoveryRecorder(_BlockingSink(), flush_interval_s=3600)
+    recorder.note(CLIENT_IP, DEVICE_HOST, "A", "forwarded")
+
+    task = asyncio.create_task(recorder.flush())
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert recorder.pending_pairs == 1  # back in memory, not silently dropped
+
+
+@pytest.mark.asyncio
+async def test_a_duplicated_pair_in_one_batch_is_merged_not_rejected(db_manager):
+    """SQLite refuses one statement touching a row twice: collapse before sending."""
+    now = datetime.now(UTC)
+    first = _observation(DEVICE_HOST, hits=2, seen=now)
+    second = _observation(DEVICE_HOST, hits=3, seen=now + timedelta(seconds=5))
+
+    assert await db_manager.record_dns_queries([first, second]) == 2  # noqa: PLR2004
+
+    rows = await db_manager.list_dns_queries()
+    assert len(rows) == 1
+    assert rows[0]["hit_count"] == 5  # noqa: PLR2004
+    # SQLite stores the timestamp naive, so compare it as it comes back.
+    assert rows[0]["last_seen"] == second["last_seen"].replace(tzinfo=None).isoformat()
+
+
+@pytest.mark.asyncio
+async def test_settings_refuse_a_field_that_is_not_a_list(api):
+    response = await api["client"].put("/api/dns/settings", json={"intercept": "a.example"})
+
+    assert response.status_code == 400  # noqa: PLR2004
+    assert "must be a list" in response.json()["error"]
+    assert api["manager"].config.dns.intercept == [DEVICE_HOST]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad", ["not a name", "http://x/", 42, ""])
+async def test_settings_name_the_value_they_refuse(api, bad):
+    """A typo must fail loudly: silently dropping it looks like it was saved."""
+    response = await api["client"].put(
+        "/api/dns/settings", json={"exclude": ["ntp.*", bad, "*.local"]}
+    )
+
+    assert response.status_code == 400  # noqa: PLR2004
+    assert "not names" in response.json()["error"]
+    # Nothing was written: the list still holds exactly the shipped defaults.
+    assert api["manager"].config.dns.exclude == Config().dns.exclude
+
+
+@pytest.mark.asyncio
+async def test_settings_collapse_duplicate_names(api):
+    response = await api["client"].put(
+        "/api/dns/settings",
+        json={"intercept": [DEVICE_HOST, DEVICE_HOST.upper() + ".", "*.x.test"]},
+    )
+
+    assert response.status_code == 200  # noqa: PLR2004
+    assert response.json()["intercept"] == [DEVICE_HOST, "*.x.test"]
+    assert api["interceptor"].patterns == [DEVICE_HOST, "*.x.test"]
+
+
+@pytest.mark.asyncio
+async def test_settings_reject_a_non_list_exclude_without_touching_the_rest(api):
+    response = await api["client"].put(
+        "/api/dns/settings", json={"intercept_all": True, "exclude": "ntp.*"}
+    )
+
+    assert response.status_code == 400  # noqa: PLR2004
+    # The whole body is refused, so the flip that was valid in it is not applied
+    # either: a half-applied policy is worse than none.
+    assert api["interceptor"].intercept_all is False
+    assert api["manager"].config.dns.intercept_all is False
+
+
+def test_the_reason_a_name_is_not_interceptable_is_reported():
+    """The UI needs the reason, not only the state: promoting an excluded name is a no-op."""
+    interceptor = DNSInterceptor(_config(intercept=[], exclude=["ntp.*"]))
+
+    assert interceptor.matching_exclusion("NTP.pool.example.") == "ntp.*"
+    assert interceptor.matching_exclusion("cloud.other.example") is None
+
+    claimed = register_all_adapters().list_hostnames()
+    if not claimed:
+        pytest.skip("nessun adapter registrato in questa configurazione")
+    assert interceptor.adapter_claim(claimed[0].replace("*", "abc123")) == claimed[0]
+    assert interceptor.adapter_claim("cloud.other.example") is None
+
+
+@pytest.mark.parametrize("name", ["ntp.pool.example", "cloud.other.example", "time.europa.example"])
+def test_classify_and_the_explainers_never_drift_apart(name):
+    interceptor = DNSInterceptor(_config(intercept=[], exclude=["ntp.*", "time.*"]))
+
+    excluded_by_a_pattern = interceptor.matching_exclusion(name) is not None
+
+    assert (interceptor.classify(name) == "excluded") == excluded_by_a_pattern
+
+
+@pytest.mark.asyncio
+async def test_discovery_explains_why_a_name_is_not_intercepted(api):
+    api["recorder"].note(CLIENT_IP, "ntp.pool.example", "A", "excluded")
+    api["recorder"].note(CLIENT_IP, "promote-me.example", "A", "forwarded")
+
+    body = (await api["client"].get("/api/dns/discovery")).json()
+    by_host = {entry["hostname"]: entry for entry in body["entries"]}
+
+    assert by_host["ntp.pool.example"]["excluded_by"] == "ntp.*"
+    assert by_host["ntp.pool.example"]["suggested"] is False
+    assert by_host["promote-me.example"]["excluded_by"] is None
+    assert by_host["promote-me.example"]["claimed_by"] is None
+    assert by_host["promote-me.example"]["suggested"] is True
+
+
+@pytest.mark.asyncio
+async def test_discovery_names_the_adapter_that_claims_a_name(api):
+    claimed = register_all_adapters().list_hostnames()
+    if not claimed:
+        pytest.skip("nessun adapter registrato in questa configurazione")
+    hostname = claimed[0].replace("*", "abc123")
+
+    api["recorder"].note(CLIENT_IP, hostname, "A", "intercepted")
+    body = (await api["client"].get("/api/dns/discovery")).json()
+    entry = next(e for e in body["entries"] if e["hostname"] == hostname)
+
+    assert entry["claimed_by"] == claimed[0]
+    assert entry["intercepted"] is True

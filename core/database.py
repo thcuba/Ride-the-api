@@ -31,6 +31,7 @@ from sqlalchemy import (
     func,
     select,
 )
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -528,6 +529,27 @@ class DNSQueryLog(Base):
 
 
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•  # noqa: E501
+def _collapse_dns_observations(observations: list[dict]) -> list[dict]:
+    """Merge observations sharing (client_ip, hostname, qtype) into one row each.
+
+    A batch must not carry the same unique key twice: SQLite refuses a single
+    ``ON CONFLICT DO UPDATE`` statement that would touch one row two times, so
+    collapsing here keeps a duplicated pair a hit counter, not a failed flush.
+    """
+    merged: dict[tuple, dict] = {}
+    for obs in observations:
+        key = (obs["client_ip"], obs["hostname"], obs["qtype"])
+        current = merged.get(key)
+        if current is None:
+            merged[key] = dict(obs)
+            continue
+        current["hit_count"] = int(current.get("hit_count") or 1) + int(obs.get("hit_count") or 1)
+        current["first_seen"] = min(current["first_seen"], obs["first_seen"])
+        current["last_seen"] = max(current["last_seen"], obs["last_seen"])
+        current["status"] = obs["status"]
+    return list(merged.values())
+
+
 # DATABASE MANAGER
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•  # noqa: E501
 
@@ -1086,32 +1108,26 @@ class DatabaseManager:
     async def record_dns_queries(self, observations: list[dict]) -> int:
         """Upsert observed DNS queries: one row per (client_ip, hostname, qtype).
 
-        ``observations`` carries counters already aggregated by the caller
-        (``client_ip``, ``hostname``, ``qtype``, ``status``, ``hit_count``,
-        ``first_seen``, ``last_seen``), so an existing pair has its hit counter
-        increased and its ``last_seen``/``status`` refreshed instead of adding a
-        row per query. Writes are batched by the discovery recorder, and the
-        single writer is that recorder, so the read-then-write below cannot race.
+        One statement per batch (SQLite ``ON CONFLICT``), not a read-then-write per
+        observation: a flush can carry hundreds of pairs and each one would
+        otherwise cost a round trip to the database. An existing pair keeps its
+        ``first_seen``, gains the hits and refreshes ``last_seen``/``status``, so
+        the table grows with the number of distinct pairs, not with the number of
+        queries. Writes come from the single discovery recorder.
         """
         if not observations:
             return 0
+        statement = sqlite_insert(DNSQueryLog).values(_collapse_dns_observations(observations))
+        statement = statement.on_conflict_do_update(
+            index_elements=["client_ip", "hostname", "qtype"],
+            set_={
+                "hit_count": DNSQueryLog.hit_count + statement.excluded.hit_count,
+                "status": statement.excluded.status,
+                "last_seen": statement.excluded.last_seen,
+            },
+        )
         async with self.core_session() as session:
-            for obs in observations:
-                existing = (
-                    await session.execute(
-                        select(DNSQueryLog).where(
-                            DNSQueryLog.client_ip == obs["client_ip"],
-                            DNSQueryLog.hostname == obs["hostname"],
-                            DNSQueryLog.qtype == obs["qtype"],
-                        )
-                    )
-                ).scalar_one_or_none()
-                if existing is None:
-                    session.add(DNSQueryLog(**obs))
-                    continue
-                existing.hit_count += int(obs.get("hit_count", 1))
-                existing.last_seen = obs["last_seen"]
-                existing.status = obs["status"]
+            await session.execute(statement)
         return len(observations)
 
     async def list_dns_queries(self, limit: int = 500) -> list[dict]:
