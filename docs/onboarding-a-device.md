@@ -44,7 +44,9 @@ Two distinct roles, deliberately:
 - the **network's resolver** (an external DNS filter Home, a DNS filter, a local DNS server) decides *which device* is sent
   here — a per-client upstream DNS, reversible by deleting that entry;
 - **this proxy** intercepts, for that client, the names in `dns.intercept` **plus** the hostnames
-  every registered protocol adapter declares, and forwards everything else untouched.
+  every registered protocol adapter declares, and forwards everything else untouched — unless
+  `dns.intercept_all` is deliberately switched on, in which case every name is answered by the proxy
+  and only `dns.exclude` (clock, OCSP/CRL, local names) keeps a name out.
 
 The adapters are a source of intercepted names on purpose: a service is covered by shipping the
 adapter that implements it, not by an operator remembering to append its domains one at a time.
@@ -112,7 +114,7 @@ good, and it is served locally.
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | Device resolves to the proxy but nothing is intercepted | 443 not listening (no `CAP_NET_BIND_SERVICE`) | step 1; `ports.tls_mitm.missing` shows it |
-| Device works normally, nothing is seen | its names are in neither `dns.intercept` nor any adapter's declared hostnames | add the name here, or add the adapter for that service so every name it uses is covered — an unclaimed name is forwarded, never guessed |
+| Device works normally, nothing is seen | its names are in neither `dns.intercept` nor any adapter's declared hostnames | open the dashboard's *DNS Discovery* panel and promote the name it asked for, add the name here, or add the adapter for that service so every name it uses is covered — an unclaimed name is forwarded, never guessed |
 | Device has no DNS at all | it was pointed at a resolver that does not answer | point it at a resolver that forwards here, or at this proxy with `dns.enabled` |
 | TLS session fails after the proxy certificate | the app does not trust the proxy CA or pins the vendor certificate | Install/trust the Ride CA, or download the Frida script with an authenticated `GET /api/tls/frida/script.js` request (send the control-plane password in `X-API-Key`) and run it manually. The saved `pinning_bypass` value is guidance only; until the device accepts the proxy certificate, traffic is relayed encrypted and cannot be buffered for the LLM. |
 | Decipher fails with "LLM call failed" | local model produced nothing usable within the timeout | give the profile a capable model (and a `max_tokens` ceiling) |

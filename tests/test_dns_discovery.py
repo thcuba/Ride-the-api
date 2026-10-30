@@ -767,3 +767,30 @@ async def test_discovery_reports_a_failing_recorder(api):
     assert body["flush_errors"] == 1
     assert body["pending_pairs"] == 1
     assert body["flushed_pairs"] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_hand_edited_config_reaches_the_running_interceptor(tmp_path):
+    """The file and the panel must mean the same thing, without a restart."""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(CONFIG_YAML, encoding="utf-8")
+    manager = ConfigManager(config_path=config_path)
+    manager.load()
+    interceptor = DNSInterceptor(manager.config)
+    set_dns_interceptor(interceptor)
+    previous = server_mod.config_manager
+    server_mod.config_manager = manager
+    # Exactly what the lifespan does with the discovery wiring.
+    manager.register_callback(server_mod._apply_dns_settings)
+    try:
+        assert interceptor.classify("anything.example") == "forwarded"
+
+        config_path.write_text(CONFIG_YAML + "  intercept_all: true\n", encoding="utf-8")
+        manager.load()
+        manager._notify_callbacks()  # noqa: SLF001 - the watcher's own path
+
+        assert interceptor.intercept_all is True
+        assert interceptor.classify("anything.example") == "intercepted"
+    finally:
+        server_mod.config_manager = previous
+        set_dns_interceptor(None)

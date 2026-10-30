@@ -45,7 +45,7 @@ from core.buffer import (
     set_buffer_backend,
 )
 from core.cert_manager import CertManager, get_cert_manager
-from core.config import ConnectionType, get_config_manager
+from core.config import Config, ConnectionType, get_config_manager
 from core.connection_watchdog import ConnectionWatchdog
 from core.database import (
     DatabaseManager,
@@ -108,7 +108,7 @@ from core.tls_mitm import (
     peek_tls_mitm_server,
 )
 from core.traffic_selector import TrafficRequestInfo, get_traffic_selector, is_local_ip
-from core.upstream_resolver import is_loopback_ip
+from core.upstream_resolver import _apply_config, is_loopback_ip
 
 # Path to webui directory (bundle-aware: works in source and PyInstaller builds)
 WEBUI_DIR = resource_path("webui")
@@ -834,6 +834,12 @@ async def lifespan(_app: FastAPI):  # noqa: C901, PLR0912, PLR0915
     if dns_interceptor is not None:
         dns_interceptor.query_recorder = dns_recorder
     logger.info("DNS discovery logging is on (batched every %.0fs)", dns_recorder.flush_interval_s)
+
+    # A hand-edited config.yaml must mean what the panel means. Without these two
+    # callbacks the interception policy and the upstream resolvers in the file only
+    # took effect on the next restart, while the API applied them live.
+    config_manager.register_callback(_apply_dns_settings)
+    config_manager.register_callback(_apply_config)
 
     # Start config hot-reload
     config_manager.start_watching()
@@ -1585,18 +1591,20 @@ def _dns_policy_from_body(body: dict) -> tuple[dict, str | None]:
     return policy, None
 
 
-def _apply_dns_settings() -> None:
-    """Push the persisted DNS settings into the running interceptor.
+def _apply_dns_settings(config: Config | None = None) -> None:
+    """Push the interception policy into the running DNS interceptor.
 
-    Lets an operator promote a discovered hostname or flip ``intercept_all``
-    without restarting the service: the listening sockets stay up and the next
-    query already follows the new rule.
+    Called after the discovery API writes the settings -- and, as a config callback,
+    when the file is edited by hand, so the panel and ``config.yaml`` mean the same
+    thing. Either way the listening sockets stay up and the next query already
+    follows the new rule. ``config`` is passed by the watcher; the API path reads the
+    live one.
     """
     interceptor = get_dns_interceptor()
     if interceptor is None:
         return
     try:
-        interceptor.apply_settings(config_manager.config)
+        interceptor.apply_settings(config if config is not None else config_manager.config)
     except Exception:  # noqa: BLE001 - a failed reload must not break the API
         logger.exception("DNS: could not apply the new interception settings")
 
