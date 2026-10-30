@@ -36,6 +36,7 @@ BYTES_TO_DEVICE = 5678  # what the cloud answered
 DURATION_MS = 910
 RELAYED_COUNT = 3  # how many contacts the retry loop produces
 REPEATED_CONTACTS = 2
+REFUSAL_ATTEMPTS = 3  # how many times the device tries to negotiate
 
 
 @pytest.fixture
@@ -250,15 +251,100 @@ class TestRefusalIsRecorded:
         assert device.extra_attributes.get("seen_hostnames") == [SNI]
 
     @pytest.mark.asyncio
-    async def test_recording_twice_changes_nothing(self, db_manager, monkeypatch):
-        """The device retries every minute; the row must not be rewritten each time."""
+    async def test_every_refusal_is_counted(self, db_manager, monkeypatch):
+        """Three attempts at negotiating: three refusals recorded, one settled relay decision.
+
+        This assertion used to be the opposite -- the second refusal returned early and left no
+        trace at all -- which made a device still trying to negotiate indistinguishable from one
+        that had refused once and was relayed from then on.
+        """
         monkeypatch.setattr(server_mod, "db_manager", db_manager)
         await server_mod.mark_device_untrusted(CLIENT_IP, SNI)
         first = (await _device(db_manager, EXPECTED_DEVICE_ID)).extra_attributes
 
         await server_mod.mark_device_untrusted(CLIENT_IP, SNI)
+        await server_mod.mark_device_untrusted(CLIENT_IP, SNI)
+        after = (await _device(db_manager, EXPECTED_DEVICE_ID)).extra_attributes
 
-        assert (await _device(db_manager, EXPECTED_DEVICE_ID)).extra_attributes == first
+        assert after["tls_refusals"] == REFUSAL_ATTEMPTS
+        # The decision itself stays idempotent: same relay flag, same reason, no duplicate hostname.
+        assert after["tls_passthrough"] is True
+        assert after["tls_untrusted_reason"] == "client_refused_certificate"
+        assert after["seen_hostnames"] == [SNI]
+        # The first refusal is history and must not move; the last one is what moves.
+        assert after["tls_first_refusal_at"] == first["tls_first_refusal_at"]
+        assert after["tls_last_refusal_at"] >= first["tls_last_refusal_at"]
+
+    @pytest.mark.asyncio
+    async def test_does_not_overwrite_a_reason_recorded_by_hand(self, db_manager, monkeypatch):
+        """An operator's own reason outlives the automatic one; the refusal is still counted."""
+        monkeypatch.setattr(server_mod, "db_manager", db_manager)
+        await server_mod.handle_device_seen(CLIENT_IP, SNI)
+        async with db_manager.core_session() as session:
+            result = await session.execute(
+                select(DeviceRegistry).where(DeviceRegistry.device_id == EXPECTED_DEVICE_ID)
+            )
+            device = result.scalar_one()
+            device.extra_attributes = {
+                **(device.extra_attributes or {}),
+                "tls_untrusted_reason": "recorded_by_the_operator",
+            }
+            await session.commit()
+        db_manager.invalidate_device_cache(EXPECTED_DEVICE_ID)
+
+        await server_mod.mark_device_untrusted(CLIENT_IP, SNI)
+
+        after = (await _device(db_manager, EXPECTED_DEVICE_ID)).extra_attributes
+        assert after["tls_untrusted_reason"] == "recorded_by_the_operator"
+        assert after["tls_refusals"] == 1
+
+    @pytest.mark.asyncio
+    async def test_a_reason_stored_as_null_is_still_explained(self, db_manager, monkeypatch):
+        """A null or empty reason is no reason: the relay must not stay unexplained.
+
+        ``setdefault`` would keep the null key and leave ``capture`` reporting a relay with an
+        empty reason, which is precisely the payload the operator reads to understand the device.
+        """
+        monkeypatch.setattr(server_mod, "db_manager", db_manager)
+        await server_mod.handle_device_seen(CLIENT_IP, SNI)
+        async with db_manager.core_session() as session:
+            result = await session.execute(
+                select(DeviceRegistry).where(DeviceRegistry.device_id == EXPECTED_DEVICE_ID)
+            )
+            device = result.scalar_one()
+            device.extra_attributes = {
+                **(device.extra_attributes or {}),
+                "tls_untrusted_reason": None,
+            }
+            await session.commit()
+        db_manager.invalidate_device_cache(EXPECTED_DEVICE_ID)
+
+        await server_mod.mark_device_untrusted(CLIENT_IP, SNI)
+
+        after = (await _device(db_manager, EXPECTED_DEVICE_ID)).extra_attributes
+        assert after["tls_untrusted_reason"] == "client_refused_certificate"
+
+    @pytest.mark.asyncio
+    async def test_a_corrupted_count_does_not_block_the_refusal(self, db_manager, monkeypatch):
+        """``extra_attributes`` is free-form JSON: a bad count must not raise on a refusal."""
+        monkeypatch.setattr(server_mod, "db_manager", db_manager)
+        await server_mod.handle_device_seen(CLIENT_IP, SNI)
+        async with db_manager.core_session() as session:
+            result = await session.execute(
+                select(DeviceRegistry).where(DeviceRegistry.device_id == EXPECTED_DEVICE_ID)
+            )
+            device = result.scalar_one()
+            device.extra_attributes = {
+                **(device.extra_attributes or {}),
+                "tls_refusals": "many",
+            }
+            await session.commit()
+        db_manager.invalidate_device_cache(EXPECTED_DEVICE_ID)
+
+        await server_mod.mark_device_untrusted(CLIENT_IP, SNI)
+
+        after = (await _device(db_manager, EXPECTED_DEVICE_ID)).extra_attributes
+        assert after["tls_refusals"] == 1
 
     @pytest.mark.asyncio
     async def test_should_relay_only_after_the_refusal(self, db_manager, monkeypatch):
