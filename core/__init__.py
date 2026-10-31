@@ -12,7 +12,6 @@ from core.database import (
     ModelRegistry,
     RequestPattern,
     ResponseTemplate,
-    SessionCache,
     get_db_manager,
     init_db_manager,
 )
@@ -37,7 +36,6 @@ __all__ = [
     "ResponseTemplate",
     "FieldMapping",
     "LLMContextBuffer",
-    "SessionCache",
     "MatchStats",
     "get_db_manager",
     "init_db_manager",
