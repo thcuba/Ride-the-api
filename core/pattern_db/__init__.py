@@ -15,7 +15,6 @@ from core.pattern_db.schemas import (  # noqa: F401
     ClientEndpoint,
     Command,
     DeviceModel,
-    EndpointVariant,
     FieldMapping,
     Observation,
     ObservationKind,
