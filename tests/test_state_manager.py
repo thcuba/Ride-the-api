@@ -11,7 +11,7 @@ Covers:
 
 import math
 
-from core.pattern_db.schemas import VirtualSensor
+from core.pattern_db.schemas import StateVariable, VirtualSensor
 from core.pattern_db.state_manager import DeviceStateStore, _SensorInstance
 
 
@@ -129,3 +129,85 @@ class TestVirtualSensorBaselineRejectsNaN:
         s = self._sensor(f"{expected}")
         value = s.read({})
         assert value == expected
+
+
+class TestDeviceStateStoreGetAll:
+    def test_get_all_empty_store(self) -> None:
+        store = DeviceStateStore("dev-empty")
+        assert store.get_all() == {}
+
+    def test_get_all_variables_only_and_isolation(self) -> None:
+        store = DeviceStateStore("dev-vars")
+        store.apply_state_variables([
+            StateVariable(name="power", default="off"),
+            StateVariable(name="brightness", default=50),
+        ])
+        store.set("brightness", 75)
+
+        all_state = store.get_all()
+        assert all_state == {"power": "off", "brightness": 75}
+
+        # Verify mutation of returned dictionary does not mutate internal store state
+        all_state["power"] = "on"
+        all_state["new_key"] = 123
+        assert store.get("power") == "off"
+        assert store.get("new_key") is None
+        assert store.get_all() == {"power": "off", "brightness": 75}
+
+    def test_get_all_sensors_only(self) -> None:
+        store = DeviceStateStore("dev-sensors")
+        sensor_cfg = VirtualSensor(
+            name="battery_level",
+            type="float",
+            behavior="static",
+            baseline="95.5",
+            update_interval_s=0,
+        )
+        store.apply_virtual_sensors([sensor_cfg])
+
+        assert store.get_all() == {"battery_level": 95.5}
+
+    def test_get_all_combined_variables_and_dynamic_sensors(self) -> None:
+        store = DeviceStateStore("dev-combined")
+        store.apply_state_variables([
+            StateVariable(name="target_temp", default=21.0),
+            StateVariable(name="mode", default="heat"),
+        ])
+        sensor_cfg = VirtualSensor(
+            name="current_temp",
+            type="float",
+            behavior="static",
+            baseline="{state.target_temp}",
+            update_interval_s=0,
+        )
+        store.apply_virtual_sensors([sensor_cfg])
+
+        result = store.get_all()
+        assert result == {
+            "target_temp": 21.0,
+            "mode": "heat",
+            "current_temp": 21.0,
+        }
+
+    def test_get_all_reflects_updated_state_and_sensor_precedence(self) -> None:
+        store = DeviceStateStore("dev-precedence")
+        store.apply_state_variables([
+            StateVariable(name="target_temp", default=20.0),
+            StateVariable(name="reported_temp", default=18.0),
+        ])
+        # Sensor with the same name as variable 'reported_temp'
+        sensor_cfg = VirtualSensor(
+            name="reported_temp",
+            type="float",
+            behavior="static",
+            baseline="{state.target_temp}",
+            update_interval_s=0,
+        )
+        store.apply_virtual_sensors([sensor_cfg])
+
+        # Sensor reading overrides state variable when names collide
+        assert store.get_all() == {"target_temp": 20.0, "reported_temp": 20.0}
+
+        # Updating the underlying variable triggers dynamic sensor update in get_all
+        store.set("target_temp", 25.5)
+        assert store.get_all() == {"target_temp": 25.5, "reported_temp": 25.5}
