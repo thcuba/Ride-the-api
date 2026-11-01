@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 
 import jsonschema
 
+import core.pattern_db as pdb
 from core.pattern_db.schemas import (
     Command,
     DeviceModel,
@@ -158,3 +159,10 @@ def test_v2_device_model_validates_through_validate_pattern() -> None:
     # observation_history is preserved through the portable round-trip.
     assert len(dump["observation_history"]) == len(dm.observation_history)
     assert dump["observation_history"][0]["kind"] == ObservationKind.PUBLISH.value
+
+
+def test_pattern_db_package_reexports() -> None:
+    """Verify exported symbols in core.pattern_db package."""
+    assert hasattr(pdb, "DeviceModel")
+    assert hasattr(pdb, "PatternDB")
+    assert not hasattr(pdb, "AuthConfig")
