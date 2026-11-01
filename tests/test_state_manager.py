@@ -138,10 +138,12 @@ class TestDeviceStateStoreGetAll:
 
     def test_get_all_variables_only_and_isolation(self) -> None:
         store = DeviceStateStore("dev-vars")
-        store.apply_state_variables([
-            StateVariable(name="power", default="off"),
-            StateVariable(name="brightness", default=50),
-        ])
+        store.apply_state_variables(
+            [
+                StateVariable(name="power", default="off"),
+                StateVariable(name="brightness", default=50),
+            ]
+        )
         store.set("brightness", 75)
 
         all_state = store.get_all()
@@ -169,10 +171,12 @@ class TestDeviceStateStoreGetAll:
 
     def test_get_all_combined_variables_and_dynamic_sensors(self) -> None:
         store = DeviceStateStore("dev-combined")
-        store.apply_state_variables([
-            StateVariable(name="target_temp", default=21.0),
-            StateVariable(name="mode", default="heat"),
-        ])
+        store.apply_state_variables(
+            [
+                StateVariable(name="target_temp", default=21.0),
+                StateVariable(name="mode", default="heat"),
+            ]
+        )
         sensor_cfg = VirtualSensor(
             name="current_temp",
             type="float",
@@ -191,10 +195,12 @@ class TestDeviceStateStoreGetAll:
 
     def test_get_all_reflects_updated_state_and_sensor_precedence(self) -> None:
         store = DeviceStateStore("dev-precedence")
-        store.apply_state_variables([
-            StateVariable(name="target_temp", default=20.0),
-            StateVariable(name="reported_temp", default=18.0),
-        ])
+        store.apply_state_variables(
+            [
+                StateVariable(name="target_temp", default=20.0),
+                StateVariable(name="reported_temp", default=18.0),
+            ]
+        )
         # Sensor with the same name as variable 'reported_temp'
         sensor_cfg = VirtualSensor(
             name="reported_temp",
