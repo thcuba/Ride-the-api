@@ -175,10 +175,12 @@
   .sparkline-wrap { margin: 14px 0; background: var(--surface2); border-radius: 8px; padding: 12px; }
   .sparkline-label { font-size: 12px; color: var(--text2); margin-bottom: 8px; text-transform: uppercase; letter-spacing: .5px; }
   .chart { display: flex; gap: 2px; align-items: flex-end; height: 40px; }
-  .chart .bar { width: 6px; border-radius: 2px 2px 0 0; transition: height .3s; flex-shrink: 0; }
+  .chart .bar { width: 6px; border-radius: 2px 2px 0 0; transition: height .3s, transform .15s, opacity .15s; flex-shrink: 0; cursor: pointer; }
+  .chart .bar:hover { transform: scaleY(1.15); opacity: .85; }
   .bar.hit { background: var(--green); }
   .bar.miss { background: var(--blue); }
   .bar.error { background: var(--red); }
+  .sparkline-empty { font-size: 12px; color: var(--text2); padding: 8px 0 4px; font-style: italic; }
   .legend { display: flex; gap: 14px; margin-top: 8px; font-size: 12px; color: var(--text2); }
   .legend-item { display: flex; align-items: center; gap: 4px; }
   .legend-dot { width: 8px; height: 8px; border-radius: 2px; }
@@ -1257,24 +1259,33 @@ async function loadDeviceStats(deviceId) {
       <circle class="ring-fg" cx="50" cy="50" r="44" stroke="${ringColor}" stroke-dasharray="${circum}" stroke-dashoffset="${offset}"/>
     </svg><div class="ring-label" aria-hidden="true"><span class="pct" style="color:${ringColor}">${pct}%</span><span class="pct-label">Match Rate</span></div></div>`;
 
-    // Sparkline with proportional heights
+    // Sparkline with proportional heights and interactive tooltips
     const recent = (s.recent_results || []).slice(-80);
     let spark = '';
     if (recent.length > 0) {
-      spark = '<div class="sparkline-wrap"><div class="sparkline-label" id="sparkline-label">Recent Activity</div><div class="chart" role="img" aria-labelledby="sparkline-label" aria-description="Bar chart showing local hits in green, cloud misses in blue, and errors in red">';
-      recent.forEach(r => {
-        const cls = r.result === 'local_hit' ? 'hit' : r.result === 'cloud_miss' ? 'miss' : 'error';
-        const h = Math.max(6, (r.confidence || 0.5) * 36);
-        spark += `<div class="bar ${cls}" style="height:${h}px" role="presentation"></div>`;
-      });
       const hits = recent.filter(r => r.result === 'local_hit').length;
       const misses = recent.filter(r => r.result === 'cloud_miss').length;
       const errs = recent.filter(r => r.result !== 'local_hit' && r.result !== 'cloud_miss').length;
+      const chartAria = `Recent activity chart: ${hits} local hit${hits !== 1 ? 's' : ''}, ${misses} cloud miss${misses !== 1 ? 'es' : ''}, ${errs} error${errs !== 1 ? 's' : ''}`;
+
+      spark = `<div class="sparkline-wrap"><div class="sparkline-label" id="sparkline-label">Recent Activity (${recent.length})</div><div class="chart" role="img" aria-labelledby="sparkline-label" aria-label="${escapeHtml(chartAria)}" aria-description="Bar chart showing local hits in green, cloud misses in blue, and errors in red">`;
+      recent.forEach(r => {
+        const isHit = r.result === 'local_hit';
+        const isMiss = r.result === 'cloud_miss';
+        const cls = isHit ? 'hit' : isMiss ? 'miss' : 'error';
+        const h = Math.max(6, (r.confidence || 0.5) * 36);
+        const typeName = isHit ? 'Local hit' : isMiss ? 'Cloud miss' : 'Error';
+        const confText = r.confidence !== undefined && r.confidence !== null ? ` (${Math.round(r.confidence * 100)}% match)` : '';
+        const barDesc = `${typeName}${confText}`;
+        spark += `<div class="bar ${cls}" style="height:${h}px" role="img" title="${escapeHtml(barDesc)}" aria-label="${escapeHtml(barDesc)}"></div>`;
+      });
       spark += '</div><div class="legend">';
       if (hits) spark += `<span class="legend-item"><span class="legend-dot" style="background:var(--green)"></span>${hits} hits</span>`;
       if (misses) spark += `<span class="legend-item"><span class="legend-dot" style="background:var(--blue)"></span>${misses} misses</span>`;
       if (errs) spark += `<span class="legend-item"><span class="legend-dot" style="background:var(--red)"></span>${errs} errors</span>`;
       spark += '</div></div>';
+    } else {
+      spark = '<div class="sparkline-wrap"><div class="sparkline-label" id="sparkline-label">Recent Activity</div><div class="sparkline-empty" role="status">No recent requests recorded yet — activity will appear here as the device communicates.</div></div>';
     }
 
     detail.innerHTML = `<div class="detail-card">
