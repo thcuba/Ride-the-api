@@ -5,7 +5,6 @@ All models are defined in schemas.py; this module re-exports them for convenienc
 """
 
 from core.pattern_db.schemas import (  # noqa: F401
-    AuthConfig,
     BodySchemaProperty,
     CaptureDB,
     CaptureDeviceInfo,
