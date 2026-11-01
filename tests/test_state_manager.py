@@ -217,3 +217,102 @@ class TestDeviceStateStoreGetAll:
         # Updating the underlying variable triggers dynamic sensor update in get_all
         store.set("target_temp", 25.5)
         assert store.get_all() == {"target_temp": 25.5, "reported_temp": 25.5}
+
+
+class TestDeviceStateStoreApplyVirtualSensors:
+    def test_apply_virtual_sensors_populates_sensors_store(self) -> None:
+        store = DeviceStateStore("dev-001")
+        assert len(store._sensors) == 0
+
+        sensors = [
+            VirtualSensor(name="temp", type="float", behavior="static", baseline="21.5"),
+            VirtualSensor(name="humidity", type="float", behavior="static", baseline="45.0"),
+        ]
+        store.apply_virtual_sensors(sensors)
+
+        expected_count = 2
+        assert len(store._sensors) == expected_count
+        assert "temp" in store._sensors
+        assert "humidity" in store._sensors
+        assert isinstance(store._sensors["temp"], _SensorInstance)
+        assert isinstance(store._sensors["humidity"], _SensorInstance)
+        assert store._sensors["temp"].config.name == "temp"
+        assert store._sensors["humidity"].config.name == "humidity"
+
+    def test_apply_virtual_sensors_empty_list(self) -> None:
+        store = DeviceStateStore("dev-001")
+        sensor = VirtualSensor(name="temp", type="float", behavior="static", baseline="20.0")
+        store.apply_virtual_sensors([sensor])
+        assert len(store._sensors) == 1
+
+        store.apply_virtual_sensors([])
+        assert len(store._sensors) == 1
+        assert "temp" in store._sensors
+
+    def test_apply_virtual_sensors_overwrites_existing_sensor(self) -> None:
+        store = DeviceStateStore("dev-001")
+        initial_temp = 20.0
+        sensor_v1 = VirtualSensor(
+            name="temp", type="float", behavior="static", baseline=f"{initial_temp}"
+        )
+        store.apply_virtual_sensors([sensor_v1])
+        first_instance = store._sensors["temp"]
+        assert store.get("temp") == initial_temp
+
+        updated_temp = 25.0
+        sensor_v2 = VirtualSensor(
+            name="temp", type="float", behavior="static", baseline=f"{updated_temp}"
+        )
+        store.apply_virtual_sensors([sensor_v2])
+        second_instance = store._sensors["temp"]
+
+        assert second_instance is not first_instance
+        assert store.get("temp") == updated_temp
+
+    def test_apply_virtual_sensors_retrievable_via_get_and_get_all(self) -> None:
+        store = DeviceStateStore("dev-001")
+        store.set("firmware", "v1.0")
+
+        expected_temp = 22.0
+        expected_pressure = 1013.25
+        sensors = [
+            VirtualSensor(
+                name="temperature", type="float", behavior="static", baseline=f"{expected_temp}"
+            ),
+            VirtualSensor(
+                name="pressure", type="float", behavior="static", baseline=f"{expected_pressure}"
+            ),
+        ]
+        store.apply_virtual_sensors(sensors)
+
+        assert store.get("temperature") == expected_temp
+        assert store.get("pressure") == expected_pressure
+        assert store.get("nonexistent", "fallback") == "fallback"
+
+        all_state = store.get_all()
+        assert all_state == {
+            "firmware": "v1.0",
+            "temperature": expected_temp,
+            "pressure": expected_pressure,
+        }
+
+    def test_apply_virtual_sensors_with_dynamic_baseline(self) -> None:
+        store = DeviceStateStore("dev-001")
+        initial_target = 22.5
+        store.apply_state_variables([StateVariable(name="target_temp", default=initial_target)])
+
+        sensor = VirtualSensor(
+            name="simulated_temp",
+            type="float",
+            behavior="static",
+            baseline="{state.target_temp}",
+            update_interval_s=0,
+        )
+        store.apply_virtual_sensors([sensor])
+
+        assert store.get("simulated_temp") == initial_target
+
+        # Update the state variable and verify sensor reflects changed baseline
+        updated_target = 26.0
+        store.set("target_temp", updated_target)
+        assert store.get("simulated_temp") == updated_target
