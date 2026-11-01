@@ -44,10 +44,24 @@ class _Registry:
 def test_normalize_request_body_never_returns_bytes():
     """Every shape a device can send must become JSON-storable."""
     assert normalize_request_body(b"") is None
+    assert normalize_request_body(b"   ") == "   "
     assert normalize_request_body(b'{"a": 1}') == {"a": 1}
+    assert normalize_request_body(b'  \r\n\t {"nested": [1, 2, 3]}  ') == {"nested": [1, 2, 3]}
+    assert normalize_request_body(b'[{"x": 10}, {"y": 20}]') == [{"x": 10}, {"y": 20}]
     assert normalize_request_body(DEVICE_BODY) == DEVICE_BODY.decode()
+    assert normalize_request_body(b"command=reboot&force=1") == "command=reboot&force=1"
+    assert normalize_request_body(b"{invalid_json: true}") == "{invalid_json: true}"
     assert normalize_request_body({"a": 1}) == {"a": 1}
+    assert normalize_request_body([1, 2, 3]) == [1, 2, 3]
+    assert normalize_request_body("raw string") == "raw string"
+    assert normalize_request_body(123) == 123  # noqa: PLR2004
+    assert normalize_request_body(True) is True
     assert normalize_request_body(None) is None
+
+    # bytearray and memoryview inputs
+    assert normalize_request_body(bytearray(b'{"b": 2}')) == {"b": 2}
+    assert normalize_request_body(memoryview(b'{"c": 3}')) == {"c": 3}
+    assert normalize_request_body(bytearray(b"raw-bytearray")) == "raw-bytearray"
 
     binary = bytes(range(256))
     encoded = normalize_request_body(binary)
