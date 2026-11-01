@@ -29,7 +29,9 @@ import asyncio
 import contextlib
 import fnmatch
 import logging
+import re
 import socket
+from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
 import dns.asyncquery
@@ -69,6 +71,26 @@ _DEFAULT_EXCLUSIONS = frozenset(
 )
 
 
+_PATTERN_EMPTY = 0
+_PATTERN_DOMAIN_WILDCARD = 1
+_PATTERN_GLOB = 2
+_PATTERN_EXACT = 3
+
+
+@lru_cache(maxsize=2048)
+def _compile_candidate(candidate: str) -> tuple[int, Any]:
+    """Normalize and pre-compile DNS matching candidate pattern into matcher tuple."""
+    cand = candidate.strip().rstrip(".").lower()
+    if not cand:
+        return _PATTERN_EMPTY, ""
+    if cand.startswith("*."):
+        domain = cand[2:]
+        return _PATTERN_DOMAIN_WILDCARD, (domain, "." + domain)
+    if "*" in cand or "?" in cand:
+        return _PATTERN_GLOB, re.compile(fnmatch.translate(cand)).match
+    return _PATTERN_EXACT, cand
+
+
 def _name_matches(name: str, candidate: str) -> bool:
     """Does ``name`` match ``candidate``?
 
@@ -78,16 +100,16 @@ def _name_matches(name: str, candidate: str) -> bool:
       * a glob such as ``device-*`` — what an adapter declares for a family of devices on the LAN;
       * a plain name — matched exactly.
     """
-    candidate = candidate.strip().rstrip(".").lower()
-    if not candidate:
-        return False
-    if candidate.startswith("*."):
-        domain = candidate[2:]
-        # both the domain itself and everything under it
-        return name == domain or name.endswith("." + domain)
-    if "*" in candidate or "?" in candidate:
-        return fnmatch.fnmatchcase(name, candidate)
-    return name == candidate
+    # Performance optimization: pre-compile and memoize candidate pattern normalization
+    # and regex compilation to avoid string manipulation and fnmatch overhead on every query.
+    kind, val = _compile_candidate(candidate)
+    if kind == _PATTERN_DOMAIN_WILDCARD:
+        return name == val[0] or name.endswith(val[1])
+    if kind == _PATTERN_GLOB:
+        return bool(val(name))
+    if kind == _PATTERN_EXACT:
+        return name == val
+    return False
 
 
 def _adapter_hostnames() -> list[str]:
