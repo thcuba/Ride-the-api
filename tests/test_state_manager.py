@@ -316,3 +316,112 @@ class TestDeviceStateStoreApplyVirtualSensors:
         updated_target = 26.0
         store.set("target_temp", updated_target)
         assert store.get("simulated_temp") == updated_target
+
+
+class TestDeviceStateStoreApplyStateVariables:
+    def test_apply_state_variables_empty_list(self) -> None:
+        store = DeviceStateStore("dev-001")
+        store.apply_state_variables([])
+        assert store.get_all() == {}
+        assert store.is_dirty is False
+
+    def test_apply_state_variables_populates_defaults_with_diverse_types(self) -> None:
+        store = DeviceStateStore("dev-001")
+        variables = [
+            StateVariable(name="power", type="string", default="off"),
+            StateVariable(name="brightness", type="integer", default=100),
+            StateVariable(name="target_temp", type="float", default=21.5),
+            StateVariable(name="eco_mode", type="boolean", default=True),
+            StateVariable(name="tags", type="array", default=["living_room", "main"]),
+            StateVariable(name="meta", type="object", default={"zone": 1}),
+            StateVariable(name="empty_val", type="string", default=None),
+        ]
+        store.apply_state_variables(variables)
+
+        assert store.get("power") == "off"
+        assert store.get("brightness") == 100  # noqa: PLR2004
+        assert store.get("target_temp") == 21.5  # noqa: PLR2004
+        assert store.get("eco_mode") is True
+        assert store.get("tags") == ["living_room", "main"]
+        assert store.get("meta") == {"zone": 1}
+        assert store.get("empty_val") is None
+
+    def test_apply_state_variables_does_not_overwrite_existing_variables(self) -> None:
+        store = DeviceStateStore("dev-001")
+        store.set("power", "on")
+        store.set("target_temp", 25.0)
+
+        variables = [
+            StateVariable(name="power", default="off"),
+            StateVariable(name="target_temp", default=19.0),
+            StateVariable(name="humidity", default=50),
+        ]
+        store.apply_state_variables(variables)
+
+        # Existing values set prior to apply_state_variables must be preserved
+        assert store.get("power") == "on"
+        assert store.get("target_temp") == 25.0  # noqa: PLR2004
+        # New variable not previously present should receive its default
+        assert store.get("humidity") == 50  # noqa: PLR2004
+
+    def test_apply_state_variables_does_not_overwrite_restored_state(self) -> None:
+        store = DeviceStateStore("dev-001")
+        store.restore({"variables": {"power": "standby", "volume": 35}})
+
+        variables = [
+            StateVariable(name="power", default="off"),
+            StateVariable(name="volume", default=50),
+            StateVariable(name="mute", default=False),
+        ]
+        store.apply_state_variables(variables)
+
+        assert store.get("power") == "standby"
+        assert store.get("volume") == 35  # noqa: PLR2004
+        assert store.get("mute") is False
+
+    def test_apply_state_variables_incremental_addition(self) -> None:
+        store = DeviceStateStore("dev-001")
+        initial_vars = [
+            StateVariable(name="mode", default="auto"),
+            StateVariable(name="temp", default=22.0),
+        ]
+        store.apply_state_variables(initial_vars)
+        store.set("temp", 24.0)
+
+        # Apply a second batch that contains a duplicate with different default and a new variable
+        secondary_vars = [
+            StateVariable(name="temp", default=18.0),
+            StateVariable(name="fan_speed", default=3),
+        ]
+        store.apply_state_variables(secondary_vars)
+
+        assert store.get("mode") == "auto"
+        assert store.get("temp") == 24.0  # noqa: PLR2004
+        assert store.get("fan_speed") == 3  # noqa: PLR2004
+
+    def test_apply_state_variables_does_not_mark_dirty(self) -> None:
+        store = DeviceStateStore("dev-001")
+        assert store.is_dirty is False
+
+        variables = [
+            StateVariable(name="power", default="off"),
+            StateVariable(name="mode", default="heat"),
+        ]
+        store.apply_state_variables(variables)
+
+        # Initializing defaults from schema should not dirty the store
+        assert store.is_dirty is False
+
+    def test_apply_state_variables_integrated_with_get_all_and_snapshot(self) -> None:
+        store = DeviceStateStore("dev-001")
+        variables = [
+            StateVariable(name="status", default="idle"),
+            StateVariable(name="retries", default=0),
+        ]
+        store.apply_state_variables(variables)
+
+        assert store.get_all() == {"status": "idle", "retries": 0}
+        snap = store.snapshot()
+        assert snap["device_id"] == "dev-001"
+        assert snap["variables"] == {"status": "idle", "retries": 0}
+        assert isinstance(snap["updated_at"], float)
