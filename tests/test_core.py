@@ -12,6 +12,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import select
 
+import core
 from adapters.base import InterceptedRequest, ProtocolType, device_id_from_ip
 from adapters.example import ExampleProtocolAdapter
 from core.config import Config, ConnectionType, CoreConfig, IpProfileConfig
@@ -792,6 +793,24 @@ async def test_should_rollback_not_production(device_db, sample_patterns):
     verifier = CloudIndependenceVerifier(device_db)
     result = await verifier.should_rollback_to_learning(sample_patterns)
     assert result is False  # device is in learning mode
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CORE PACKAGE INIT EXPORTS TESTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestCoreExports:
+    """Verify exported symbols and module interface of the core package."""
+
+    def test_core_all_exports(self):
+        """Check that __all__ defines valid public attributes and excludes Base."""
+        assert hasattr(core, "__all__")
+        assert "Base" not in core.__all__
+        assert not hasattr(core, "Base")
+
+        for name in core.__all__:
+            assert hasattr(core, name), f"{name} listed in core.__all__ but not exported"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
