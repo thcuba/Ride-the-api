@@ -566,3 +566,141 @@ def test_get_modification_engine_singleton():
         assert engine1 is engine2
     finally:
         mod_module._modification_engine = original_engine
+
+
+# ---------------------------------------------------------------------------
+#  InterceptedMessage.copy
+# ---------------------------------------------------------------------------
+
+
+class TestInterceptedMessageCopy:
+    """Tests for InterceptedMessage.copy()."""
+
+    def test_copy_all_scalar_and_metadata_attributes(self):
+        msg = InterceptedMessage(
+            direction="request",
+            device_id="dev-42",
+            vendor="tuya",
+            device_type="smart_plug",
+            intent="toggle_power",
+            method="POST",
+            path="/device/rpc",
+            headers={"host": "tuya.iot.com", "content-type": "application/json"},
+            body={"state": "on", "voltage": 120},
+            query_params={"version": "2"},
+            metadata={"source_ip": "192.168.1.50"},
+            blocked=True,
+            block_reason="Security policy violation",
+            modifications=[{"rule": "r1", "action": "block"}],
+        )
+        msg._initial_headers = {"host": "tuya.iot.com", "content-type": "application/json"}
+
+        copied = msg.copy()
+
+        assert copied is not msg
+        assert copied.direction == msg.direction
+        assert copied.device_id == msg.device_id
+        assert copied.vendor == msg.vendor
+        assert copied.device_type == msg.device_type
+        assert copied.intent == msg.intent
+        assert copied.method == msg.method
+        assert copied.path == msg.path
+        assert copied.headers == msg.headers
+        assert copied.body == msg.body
+        assert copied.query_params == msg.query_params
+        assert copied.metadata == msg.metadata
+        assert copied.blocked == msg.blocked
+        assert copied.block_reason == msg.block_reason
+        assert copied.modifications == msg.modifications
+        assert copied._initial_headers == msg._initial_headers
+
+    def test_copy_body_none(self):
+        msg = make_msg(body=None)
+        copied = msg.copy()
+        assert copied.body is None
+
+    def test_copy_body_list_and_string(self):
+        msg_list = make_msg(body=[{"id": 1, "nested": {"val": "a"}}, {"id": 2}])
+        copied_list = msg_list.copy()
+        assert copied_list.body == msg_list.body
+        copied_list.body[0]["nested"]["val"] = "changed"
+        assert msg_list.body[0]["nested"]["val"] == "a"
+
+        msg_str = make_msg(body="raw-payload-string")
+        copied_str = msg_str.copy()
+        assert copied_str.body == "raw-payload-string"
+
+    def test_copy_mutation_isolation(self):
+        """Mutations to copied containers should not affect the original message."""
+        msg = InterceptedMessage(
+            direction="request",
+            device_id="dev-1",
+            vendor="shelly",
+            device_type="relay",
+            intent="switch",
+            method="POST",
+            path="/rpc",
+            headers={"content-type": "application/json", "x-token": "abc"},
+            body={"nested": {"counter": 10, "tags": ["a", "b"]}},
+            query_params={"page": "1"},
+            metadata={"origin": "lan"},
+            blocked=False,
+            block_reason=None,
+            modifications=[{"rule": "rule-init", "action": "modify"}],
+        )
+        copied = msg.copy()
+
+        # Mutate nested body
+        copied.body["nested"]["counter"] = 99
+        copied.body["nested"]["tags"].append("c")
+        copied.body["new_field"] = "added"
+        assert msg.body["nested"]["counter"] == 10  # noqa: PLR2004
+        assert msg.body["nested"]["tags"] == ["a", "b"]
+        assert "new_field" not in msg.body
+
+        # Mutate headers
+        copied.headers["x-token"] = "xyz"
+        copied.headers["new-header"] = "val"
+        assert msg.headers["x-token"] == "abc"
+        assert "new-header" not in msg.headers
+
+        # Mutate query_params
+        copied.query_params["page"] = "2"
+        copied.query_params["limit"] = "50"
+        assert msg.query_params["page"] == "1"
+        assert "limit" not in msg.query_params
+
+        # Mutate metadata
+        copied.metadata["origin"] = "wan"
+        copied.metadata["extra"] = 123
+        assert msg.metadata["origin"] == "lan"
+        assert "extra" not in msg.metadata
+
+        # Mutate modifications list and nested dict
+        copied.modifications[0]["action"] = "tampered"
+        copied.modifications.append({"rule": "rule-new", "action": "inject"})
+        assert msg.modifications[0]["action"] == "modify"
+        assert len(msg.modifications) == 1
+
+        # Mutate scalar/blocked fields
+        copied.blocked = True
+        copied.block_reason = "Blocked now"
+        copied.path = "/new-path"
+        assert msg.blocked is False
+        assert msg.block_reason is None
+        assert msg.path == "/rpc"
+
+    def test_copy_initial_headers_handling(self):
+        # Case 1: _initial_headers is None
+        msg_no_init = make_msg()
+        assert msg_no_init._initial_headers is None
+        copied_no_init = msg_no_init.copy()
+        assert copied_no_init._initial_headers is None
+
+        # Case 2: _initial_headers created via from_request
+        req = make_intercepted_request(headers={"Content-Type": "APPLICATION/JSON"})
+        msg_from_req = InterceptedMessage.from_request(req)
+        assert msg_from_req._initial_headers is not None
+        copied_from_req = msg_from_req.copy()
+        assert copied_from_req._initial_headers == msg_from_req._initial_headers
+        assert copied_from_req._initial_headers is msg_from_req._initial_headers
