@@ -4,6 +4,8 @@ Tests for Traffic Selection Engine.
 
 import ipaddress
 
+import pytest
+
 import core.traffic_selector
 from core.traffic_selector import (
     MatchType,
@@ -15,6 +17,7 @@ from core.traffic_selector import (
     TrafficSelector,
     create_request_info,
     get_traffic_selector,
+    is_local_ip,
 )
 
 
@@ -361,3 +364,98 @@ def test_get_traffic_selector(monkeypatch):
     # Second call should return the exact same instance
     instance2 = get_traffic_selector()
     assert instance1 is instance2
+
+
+class TestIsLocalIp:
+    """Unit tests for the stateless is_local_ip pure function."""
+
+    @pytest.mark.parametrize(
+        "ip",
+        [
+            # IPv4 RFC 1918 private subnets
+            "10.0.0.1",
+            "10.254.255.1",
+            "192.168.0.1",
+            "192.168.1.100",
+            "172.16.0.1",
+            "172.24.10.20",
+            "172.31.255.254",
+            # IPv4 loopback & link-local
+            "127.0.0.1",
+            "127.1.2.3",
+            "169.254.0.1",
+            "169.254.169.254",
+            # IPv6 loopback
+            "::1",
+            "0:0:0:0:0:0:0:1",
+            "::1%eth0",
+            # IPv6 link-local
+            "fe80::1",
+            "fe80::dead:beef",
+            "FE80::1",
+            "FE80::A00:27FF:FE4E:66A1",
+            # IPv6 Unique Local Address (ULA - fc00::/7)
+            "fd00::1",
+            "fd12:3456:789a:1::1",
+            "fc00::1",
+        ],
+    )
+    def test_local_ips_return_true(self, ip: str):
+        assert is_local_ip(ip) is True
+
+    @pytest.mark.parametrize(
+        "ip",
+        [
+            # Public IPv4
+            "8.8.8.8",
+            "1.1.1.1",
+            "93.184.216.34",
+            # 172.x outside 172.16.0.0 - 172.31.255.255
+            "172.15.255.255",
+            "172.32.0.1",
+            "172.0.0.1",
+            # Public IPv6
+            "2001:4860:4860::8888",
+            "2606:4700:4700::1111",
+        ],
+    )
+    def test_public_ips_return_false(self, ip: str):
+        assert is_local_ip(ip) is False
+
+    @pytest.mark.parametrize(
+        "ip",
+        [
+            "",
+            "   ",
+            "not-an-ip",
+            "256.1.1.1",
+            "999.999.999.999",
+            "172.notanumber.1.1",
+            "172.",
+            "8.8.8.8.8",
+            "example.com",
+        ],
+    )
+    def test_invalid_ips_and_edge_cases_return_false(self, ip: str):
+        assert is_local_ip(ip) is False
+
+    def test_lru_cache_behavior(self):
+        """Verify that is_local_ip uses memoization via lru_cache."""
+        is_local_ip.cache_clear()
+        initial_info = is_local_ip.cache_info()
+        assert initial_info.hits == 0
+        assert initial_info.misses == 0
+
+        # First call: cache miss
+        result1 = is_local_ip("192.168.1.50")
+        assert result1 is True
+        info_after_miss = is_local_ip.cache_info()
+        assert info_after_miss.hits == 0
+        assert info_after_miss.misses == 1
+
+        # Second call with same IP: cache hit
+        result2 = is_local_ip("192.168.1.50")
+        assert result2 is True
+        info_after_hit = is_local_ip.cache_info()
+        assert info_after_hit.hits == 1
+        assert info_after_hit.misses == 1
