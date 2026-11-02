@@ -23,8 +23,10 @@ from core.upstream_resolver import (
     clear_cache,
     filter_safe_ips,
     get_cache_stats,
+    invalidate_self_addresses,
     is_blocked_ip,
     resolve_upstream,
+    self_connection_reason,
 )
 
 if TYPE_CHECKING:
@@ -552,3 +554,24 @@ def test_filter_safe_ips_ignores_non_ip_values():
     """Non-IP strings (unresolved literals) are fail-closed: dropped."""
 
     assert filter_safe_ips(["api.example.com", "127.0.0.1"]) == []
+
+
+def test_self_connection_reason_caching():
+    """self_connection_reason caches results and invalidate_self_addresses clears the cache."""
+    self_connection_reason.cache_clear()
+    assert self_connection_reason.cache_info().currsize == 0
+
+    # Initial call causes a cache miss and caches result
+    res1 = self_connection_reason("127.0.0.1")
+    assert res1 == "loopback"
+    assert self_connection_reason.cache_info().hits == 0
+    assert self_connection_reason.cache_info().misses == 1
+
+    # Second call hits cache
+    res2 = self_connection_reason("127.0.0.1")
+    assert res2 == "loopback"
+    assert self_connection_reason.cache_info().hits == 1
+
+    # Invalidate self addresses flushes the LRU cache
+    invalidate_self_addresses()
+    assert self_connection_reason.cache_info().currsize == 0
