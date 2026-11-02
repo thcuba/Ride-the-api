@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from adapters import register_all_adapters
 from adapters.base import (
     Command,
     CommandResult,
@@ -15,6 +16,7 @@ from adapters.base import (
     DeviceState,
     InterceptedRequest,
     ProtocolAdapter,
+    ProtocolAdapterRegistry,
     ProtocolType,
 )
 
@@ -170,3 +172,75 @@ class TestProtocolAdapterHeartbeat:
         # Successive heartbeat increments counter
         await adapter.on_heartbeat(device_id)
         assert adapter._device_sessions[device_id]["heartbeat_count"] == expected_second_count
+
+
+class TestProtocolAdapterRegistryListVendors:
+    """Dedicated test suite for ProtocolAdapterRegistry.list_vendors."""
+
+    def test_list_vendors_empty_registry(self):
+        """An empty registry returns an empty list."""
+        registry = ProtocolAdapterRegistry()
+        assert registry.list_vendors() == []
+
+    def test_list_vendors_single_adapter(self):
+        """Registering a single adapter returns its vendor name."""
+        registry = ProtocolAdapterRegistry()
+        adapter = MockProtocolAdapter(vendor="vendor-alpha", config={})
+        registry.register(adapter)
+
+        assert registry.list_vendors() == ["vendor-alpha"]
+
+    def test_list_vendors_multiple_adapters(self):
+        """Registering multiple distinct adapters returns all vendor names in insertion order."""
+        registry = ProtocolAdapterRegistry()
+        adapter1 = MockProtocolAdapter(vendor="vendor-1", config={})
+        adapter2 = MockProtocolAdapter(vendor="vendor-2", config={})
+        adapter3 = MockProtocolAdapter(vendor="vendor-3", config={})
+
+        registry.register(adapter1)
+        registry.register(adapter2)
+        registry.register(adapter3)
+
+        assert registry.list_vendors() == ["vendor-1", "vendor-2", "vendor-3"]
+
+    def test_list_vendors_reregister_existing_vendor(self):
+        """Re-registering an adapter with the same vendor replaces the entry without duplicates."""
+        registry = ProtocolAdapterRegistry()
+        adapter1 = MockProtocolAdapter(vendor="vendor-dup", config={"v": 1})
+        adapter2 = MockProtocolAdapter(vendor="vendor-dup", config={"v": 2})
+
+        registry.register(adapter1)
+        assert registry.list_vendors() == ["vendor-dup"]
+
+        registry.register(adapter2)
+        assert registry.list_vendors() == ["vendor-dup"]
+        assert registry.get_adapter("vendor-dup") is adapter2
+
+    def test_list_vendors_returns_copy_isolation(self):
+        """list_vendors() returns a shallow copy that does not mutate internal state."""
+        registry = ProtocolAdapterRegistry()
+        adapter = MockProtocolAdapter(vendor="vendor-immutable", config={})
+        registry.register(adapter)
+
+        vendors = registry.list_vendors()
+        vendors.append("injected-vendor")
+        vendors[0] = "mutated"
+
+        assert registry.list_vendors() == ["vendor-immutable"]
+
+    def test_list_vendors_registered_all_adapters_integration(self):
+        """register_all_adapters() includes standard built-in vendors."""
+        registry = register_all_adapters()
+        vendors = registry.list_vendors()
+
+        expected_vendors = [
+            "example",
+            "coap_example",
+            "modbus_example",
+            "shelly",
+            "zigbee",
+            "zwave",
+            "matter",
+        ]
+        for vendor in expected_vendors:
+            assert vendor in vendors
