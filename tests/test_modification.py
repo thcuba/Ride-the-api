@@ -472,7 +472,6 @@ class TestLegacyRuleTranslation:
         # Build a config manager whose modification config holds the given
         # rule objects (as pydantic config rules, like after YAML load).
         try:
-            from core.config import ModificationConfig  # noqa: F401, PLC0415
             from core.config import ModificationRule as ConfigRule  # noqa: PLC0415
         except ImportError:
             # pydantic model not importable in isolation; skip those cases
@@ -547,6 +546,11 @@ class TestLegacyRuleTranslation:
         # requires temp > 20 via match_value match. Use MODIFY to observe.
         modified, was_modified = engine.process_request(req)
         assert isinstance(engine.get_rules(), list)
+
+    def test_engine_with_rules_construction(self):
+        engine = self._engine_with_rules([])
+        assert isinstance(engine, ModificationEngine)
+        assert len(engine.get_rules()) == 0
 
 
 def test_get_modification_engine_singleton():
