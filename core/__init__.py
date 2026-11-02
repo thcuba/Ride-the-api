@@ -2,7 +2,7 @@
 Core package initialization.
 """
 
-from core.config import Config, ConfigManager, get_config, get_config_manager
+from core.config import Config, get_config, get_config_manager
 from core.database import (
     Base,
     DeviceRegistry,
@@ -26,7 +26,6 @@ from core.pipeline import (
 
 __all__ = [
     "Config",
-    "ConfigManager",
     "get_config",
     "get_config_manager",
     "Base",
