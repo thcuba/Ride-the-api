@@ -163,6 +163,7 @@ def invalidate_self_addresses() -> None:
     """Forget the cached list (a DHCP lease or an interface change makes it stale)."""
     global _self_addresses  # noqa: PLW0603
     _self_addresses = None
+    self_connection_reason.cache_clear()
 
 
 def _default_route_address() -> str:
@@ -200,11 +201,15 @@ def is_self_address(ip_str: str | None) -> bool:
     return self_connection_reason(ip_str) is not None
 
 
+@functools.lru_cache(maxsize=1024)
 def self_connection_reason(ip_str: str | None) -> str | None:
     """Why ``ip_str`` is this machine talking to itself, or ``None`` for a real client.
 
     The reason is returned rather than a boolean so the callers can log *which* of the
     two cases it is (``loopback`` or ``own-address``) without testing twice.
+
+    Memoized with lru_cache to eliminate repeated string parsing, loopback checks,
+    and interface set lookups on request interception hot paths.
     """
     if not ip_str:
         return None
