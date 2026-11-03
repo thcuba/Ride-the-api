@@ -20,7 +20,9 @@ import dpath
 if TYPE_CHECKING:
     from adapters.base import InterceptedRequest
 
-from core.atomic_io import append_jsonl
+import asyncio
+
+from core.atomic_io import append_jsonl, append_jsonl_async
 from core.pattern_utils import dot_to_dpath as _dot_to_dpath
 
 
@@ -705,7 +707,14 @@ class ModificationEngine:
         if mod_config and getattr(mod_config, "audit_log_enabled", True):
             audit_path = getattr(mod_config, "audit_log_path", "./logs/modifications.jsonl")
             try:
-                append_jsonl(audit_path, entry)
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = None
+                if loop and loop.is_running():
+                    loop.create_task(append_jsonl_async(audit_path, entry))
+                else:
+                    append_jsonl(audit_path, entry)
             except Exception as e:
                 logger.error(f"Failed to write audit log: {e}")  # noqa: TRY400
 
