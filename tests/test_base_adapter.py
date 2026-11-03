@@ -244,3 +244,146 @@ class TestProtocolAdapterRegistryListVendors:
         ]
         for vendor in expected_vendors:
             assert vendor in vendors
+
+
+class AuthHeaderExtendingAdapter(MockProtocolAdapter):
+    """Subclass overriding is_auth_request to check for custom auth headers or paths."""
+
+    def is_auth_request(self, request: InterceptedRequest) -> bool:
+        # Check custom vendor header or fallback to base path check
+        if request.headers.get("authorization") or request.headers.get("x-auth-token"):
+            return True
+        return super().is_auth_request(request)
+
+
+def _make_request(
+    path: str | None = None,
+    protocol: ProtocolType = ProtocolType.HTTP,
+    headers: dict[str, str] | None = None,
+) -> InterceptedRequest:
+    return InterceptedRequest(
+        device_id="dev-auth-test",
+        timestamp=123456789.0,
+        protocol=protocol,
+        path=path,
+        headers=headers or {},
+    )
+
+
+class TestProtocolAdapterIsAuthRequest:
+    """Dedicated test suite for is_auth_request in adapters/base/__init__.py."""
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/auth",
+            "/auth/v1/login",
+            "/api/auth",
+            "/login",
+            "/device/login",
+            "/token",
+            "/oauth/token",
+            "/api/token/refresh",
+            "/oauth",
+            "/oauth2/authorize",
+            "/session",
+            "/api/session/new",
+            "/user/session/terminate",
+        ],
+    )
+    def test_auth_paths_detected(self, base_adapter: MockProtocolAdapter, path: str):
+        """All canonical auth paths and subpaths are recognized as auth requests."""
+        req = _make_request(path=path)
+        assert base_adapter.is_auth_request(req) is True
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/AUTH",
+            "/Auth/Login",
+            "/LOGIN",
+            "/device/LogIn",
+            "/TOKEN",
+            "/api/Token",
+            "/OAuth",
+            "/OAUTH2/token",
+            "/SESSION",
+            "/Session/Status",
+        ],
+    )
+    def test_auth_paths_case_insensitive(self, base_adapter: MockProtocolAdapter, path: str):
+        """Path matching is case-insensitive for auth keywords."""
+        req = _make_request(path=path)
+        assert base_adapter.is_auth_request(req) is True
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/api/status",
+            "/device/info",
+            "/telemetry/temperature",
+            "/sensors/all",
+            "/v1/control/power",
+            "/health",
+            "/metrics",
+            "/ping",
+            "/firmware/check",
+            "/ota/update",
+        ],
+    )
+    def test_non_auth_paths_rejected(self, base_adapter: MockProtocolAdapter, path: str):
+        """Non-auth paths correctly evaluate to False."""
+        req = _make_request(path=path)
+        assert base_adapter.is_auth_request(req) is False
+
+    @pytest.mark.parametrize(
+        "protocol",
+        [
+            ProtocolType.HTTP,
+            ProtocolType.HTTPS,
+            ProtocolType.WEBSOCKET,
+            ProtocolType.COAP,
+            ProtocolType.MQTT,
+        ],
+    )
+    def test_is_auth_request_across_protocols(
+        self, base_adapter: MockProtocolAdapter, protocol: ProtocolType
+    ):
+        """is_auth_request behaves consistently across different protocol types."""
+        auth_req = _make_request(path="/api/token", protocol=protocol)
+        non_auth_req = _make_request(path="/api/telemetry", protocol=protocol)
+
+        assert base_adapter.is_auth_request(auth_req) is True
+        assert base_adapter.is_auth_request(non_auth_req) is False
+
+    def test_edge_cases_empty_or_none_path(self, base_adapter: MockProtocolAdapter):
+        """Requests with None or empty string paths return False safely."""
+        req_none = _make_request(path=None)
+        req_empty = _make_request(path="")
+
+        assert base_adapter.is_auth_request(req_none) is False
+        assert base_adapter.is_auth_request(req_empty) is False
+
+    def test_path_with_query_string(self, base_adapter: MockProtocolAdapter):
+        """Auth keyword present in path with query parameters is detected."""
+        req = _make_request(path="/oauth?client_id=123&redirect_uri=callback")
+        assert base_adapter.is_auth_request(req) is True
+
+    def test_subclass_override_extending_behavior(self):
+        """Subclasses can override is_auth_request and leverage super().is_auth_request."""
+        custom_adapter = AuthHeaderExtendingAdapter(vendor="custom", config={})
+
+        # Path-based auth detected via super()
+        req_path = _make_request(path="/auth/renew")
+        assert custom_adapter.is_auth_request(req_path) is True
+
+        # Header-based auth detected via override
+        req_header = _make_request(path="/data", headers={"authorization": "Bearer xyz"})
+        assert custom_adapter.is_auth_request(req_header) is True
+
+        req_custom_header = _make_request(path="/data", headers={"x-auth-token": "secret"})
+        assert custom_adapter.is_auth_request(req_custom_header) is True
+
+        # Neither path nor header is auth
+        req_plain = _make_request(path="/data", headers={"content-type": "application/json"})
+        assert custom_adapter.is_auth_request(req_plain) is False
