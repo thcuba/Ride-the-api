@@ -2,7 +2,10 @@
 Tests for the On-the-Fly Modification Engine.
 """
 
+import asyncio
+import json
 from datetime import UTC, datetime
+from unittest.mock import MagicMock
 
 import core.modification as mod_module
 from adapters.base import InterceptedRequest, ProtocolType
@@ -704,3 +707,50 @@ class TestInterceptedMessageCopy:
         copied_from_req = msg_from_req.copy()
         assert copied_from_req._initial_headers == msg_from_req._initial_headers
         assert copied_from_req._initial_headers is msg_from_req._initial_headers
+
+
+class TestAuditLogFileWriting:
+    """Test audit log file writing in sync and async contexts."""
+
+    def test_audit_log_sync_writing(self, tmp_path):
+        log_file = tmp_path / "modifications.jsonl"
+        cm = MagicMock()
+        cm.config.modification.enabled = True
+        cm.config.modification.rules = []
+        cm.config.modification.audit_log_enabled = True
+        cm.config.modification.audit_log_path = str(log_file)
+
+        engine = ModificationEngine(cm)
+        rule = ModificationRule(name="test-rule")
+        msg = make_msg()
+        engine._log_modification(rule, msg, {"old": 1}, None)
+
+        assert log_file.exists()
+        lines = [
+            json.loads(line) for line in log_file.read_text(encoding="utf-8").splitlines() if line
+        ]
+        assert len(lines) == 1
+        assert lines[0]["rule"] == "test-rule"
+
+    async def test_audit_log_async_writing(self, tmp_path):
+        log_file = tmp_path / "modifications_async.jsonl"
+        cm = MagicMock()
+        cm.config.modification.enabled = True
+        cm.config.modification.rules = []
+        cm.config.modification.audit_log_enabled = True
+        cm.config.modification.audit_log_path = str(log_file)
+
+        engine = ModificationEngine(cm)
+        rule = ModificationRule(name="async-rule")
+        msg = make_msg()
+        engine._log_modification(rule, msg, {"old": 2}, None)
+
+        # Allow created task to complete on the loop
+        await asyncio.sleep(0.05)
+
+        assert log_file.exists()
+        lines = [
+            json.loads(line) for line in log_file.read_text(encoding="utf-8").splitlines() if line
+        ]
+        assert len(lines) == 1
+        assert lines[0]["rule"] == "async-rule"
