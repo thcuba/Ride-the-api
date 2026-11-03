@@ -302,13 +302,13 @@
   .tls-config input, .tls-config select { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; color: var(--text); font-size: 13px; font-family: inherit; max-width: 180px; }
   .tls-config input:focus, .tls-config select:focus { outline: none; border-color: var(--accent); }
   .tls-config input:focus-visible, .tls-config select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .tls-config .tc-toggle { position: relative; display: inline-block; width: 40px; height: 22px; }
-  .tls-config .tc-toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
-  .tls-config .tc-slider { position: absolute; cursor: pointer; inset: 0; background: var(--border); border-radius: 22px; transition: .3s; }
-  .tls-config .tc-slider::before { content: ''; position: absolute; height: 16px; width: 16px; left: 3px; bottom: 3px; background: var(--text); border-radius: 50%; transition: .3s; }
-  .tls-config .tc-toggle input:checked + .tc-slider { background: var(--green); }
-  .tls-config .tc-toggle input:checked + .tc-slider::before { transform: translateX(18px); }
-  .tls-config .tc-toggle input:focus-visible + .tc-slider { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .tc-toggle { position: relative; display: inline-block; width: 40px; height: 22px; }
+  .tc-toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
+  .tc-slider { position: absolute; cursor: pointer; inset: 0; background: var(--border); border-radius: 22px; transition: .3s; }
+  .tc-slider::before { content: ''; position: absolute; height: 16px; width: 16px; left: 3px; bottom: 3px; background: var(--text); border-radius: 50%; transition: .3s; }
+  .tc-toggle input:checked + .tc-slider { background: var(--green); }
+  .tc-toggle input:checked + .tc-slider::before { transform: translateX(18px); }
+  .tc-toggle input:focus-visible + .tc-slider { outline: 2px solid var(--accent); outline-offset: 2px; }
     .header-right .ram-toggle { position: relative; display: inline-block; width: 40px; height: 22px; }
     .header-right .ram-toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
     .header-right .ram-slider { position: absolute; cursor: pointer; inset: 0; background: var(--border); border-radius: 22px; transition: .3s; }
@@ -1324,14 +1324,17 @@ async function loadDeviceStats(deviceId) {
 
               <!-- Auto-Switch to Production toggle -->
               <div class="mode-area" style="margin-top: 8px;">
-                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;" title="Automatically switch device mode to Production once match rate reaches 99%">
+                <label for="auto-switch-${escapeHtml(deviceId)}" style="font-size:14px;color:var(--text2);cursor:pointer;" title="Automatically switch device mode to Production once match rate reaches 99%">Auto-Switch to Production (99% match rate)</label>
+                <label class="tc-toggle" aria-label="Toggle auto-switch to production at 99% match rate" title="Toggle auto-switch to production at 99% match rate">
                   <input type="checkbox" id="auto-switch-${escapeHtml(deviceId)}"
+                         role="switch"
+                         aria-checked="${!!s.auto_switch_enabled}"
                          ${s.auto_switch_enabled ? 'checked' : ''}
                          aria-label="Auto-switch to production when match rate reaches 99%"
                          onchange="toggleAutoSwitch('${escapeJs(deviceId)}', this.checked)">
-                  <span>Auto-Switch to Production (99% match rate)</span>
+                  <span class="tc-slider"></span>
                 </label>
-                <div style="font-size:12px;color:var(--text2);margin-top:4px;">
+                <div style="font-size:12px;color:var(--text2);margin-top:4px;width:100%;">
                   Current match rate: ${s.match_rate_pct != null ? s.match_rate_pct.toFixed(1) + '%' : 'N/A'}
                   &middot; Threshold: 99.0%
                 </div>
@@ -1615,6 +1618,7 @@ async function deleteDevice(deviceId, btn) {
 
   async function toggleAutoSwitch(deviceId, enabled) {
     const el = document.getElementById('auto-switch-' + deviceId);
+    if (el) el.setAttribute('aria-checked', enabled ? 'true' : 'false');
     try {
       const res = await fetch(`/api/devices/${deviceId}/auto-switch`, {
         method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({enabled}),
@@ -1624,7 +1628,10 @@ async function deleteDevice(deviceId, btn) {
       loadDevices();
     } catch(e) {
       showToast('Failed to toggle auto-switch', 'error');
-      if (el) el.checked = !enabled;
+      if (el) {
+        el.checked = !enabled;
+        el.setAttribute('aria-checked', (!enabled) ? 'true' : 'false');
+      }
     }
   }
 
