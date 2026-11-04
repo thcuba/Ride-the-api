@@ -1,5 +1,6 @@
 # Installs/uninstalls ride-the-api as a Windows service via NSSM.
-# Requires Administrator. Downloads a portable NSSM if not present.
+# Requires Administrator. Downloads a portable NSSM into the install folder if
+# not present there (set RIDE_NSSM_SHA256 to verify the download).
 #
 # The service runs ride-the-api.exe --service with the working/AppDirectory set
 # to %ProgramData%\ride-the-api and RIDE_THE_API_DATA pointing at it. gui_main.py
@@ -19,23 +20,49 @@ $ServiceName = "ride-the-api"
 $InstallDir  = "${env:ProgramFiles}\ride-the-api"
 $DataDir     = "${env:ProgramData}\ride-the-api"
 $ExePath     = Join-Path $InstallDir "ride-the-api.exe"
-$NssmPath    = Join-Path $env:TEMP "nssm\nssm.exe"
+
+# NSSM becomes the service binary and runs as LocalSystem, so it must live
+# where only administrators can write. It used to be %TEMP%\nssm\nssm.exe:
+# user-writable, and any file already there was reused, so replacing it meant
+# code running as SYSTEM.
+$NssmDir     = Join-Path $InstallDir "nssm"
+$NssmPath    = Join-Path $NssmDir "nssm.exe"
+$NssmUrl     = "https://nssm.cc/release/nssm-2.24.zip"
+# SHA-256 of nssm-2.24.zip; when set, a download that does not match is refused.
+# Compute it once with: Get-FileHash .\nssm-2.24.zip -Algorithm SHA256
+$NssmSha256  = $env:RIDE_NSSM_SHA256
 
 function Get-Nssm {
+    # Under Program Files only administrators can have put it there.
     if (Test-Path $NssmPath) { return $NssmPath }
     Write-Host "==> Downloading NSSM (portable)"
-    $zip = Join-Path $env:TEMP "nssm.zip"
-    Invoke-WebRequest -Uri "https://nssm.cc/release/nssm-2.24.zip" -OutFile $zip
-    Expand-Archive -Path $zip -DestinationPath (Join-Path $env:TEMP "nssm-raw") -Force
-    New-Item -ItemType Directory -Force -Path (Split-Path $NssmPath) | Out-Null
-    Copy-Item (Join-Path $env:TEMP "nssm-raw\nssm-2.24\win64\nssm.exe") $NssmPath -Force
+    # A fresh, unpredictable folder: nothing pre-placed can be picked up.
+    $work = Join-Path ([System.IO.Path]::GetTempPath()) ("nssm-" + [guid]::NewGuid())
+    New-Item -ItemType Directory -Path $work | Out-Null
+    try {
+        $zip = Join-Path $work "nssm.zip"
+        Invoke-WebRequest -Uri $NssmUrl -OutFile $zip -UseBasicParsing
+        $actual = (Get-FileHash -Path $zip -Algorithm SHA256).Hash
+        if ($NssmSha256) {
+            if ($actual -ne $NssmSha256.Trim().ToUpperInvariant()) {
+                throw "NSSM download does not match RIDE_NSSM_SHA256 (got $actual)"
+            }
+        } else {
+            Write-Warning "NSSM download not verified (set RIDE_NSSM_SHA256 to pin it). SHA-256: $actual"
+        }
+        Expand-Archive -Path $zip -DestinationPath $work -Force
+        New-Item -ItemType Directory -Force -Path $NssmDir | Out-Null
+        Copy-Item (Join-Path $work "nssm-2.24\win64\nssm.exe") $NssmPath -Force
+    } finally {
+        Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
+    }
     return $NssmPath
 }
 
 if ($Uninstall) {
-    $nssm = Get-Nssm
-    & $nssm stop $ServiceName 2>$null
-    & $nssm remove $ServiceName confirm 2>$null
+    # Windows' own service tool: nothing is downloaded at uninstall.
+    & sc.exe stop $ServiceName 2>$null | Out-Null
+    & sc.exe delete $ServiceName 2>$null | Out-Null
     Write-Host "Service removed."
     exit 0
 }

@@ -63,6 +63,10 @@ Name: "{group}\ride-the-api"; Filename: "{app}\ride-the-api.exe" ; Comment: "Lan
 Name: "{group}\ride-the-api Dashboard"; Filename: "http://localhost:8911"
 Name: "{group}\Rimuovi ride-the-api"; Filename: "{uninstallexe}"
 
+[UninstallDelete]
+; NSSM is fetched into {app}\nssm by install_service.ps1, not installed by Setup.
+Type: filesandordirs; Name: "{app}\nssm"
+
 [UninstallRun]
 Filename: "{cmd}"; Parameters: "/c powershell -NoProfile -ExecutionPolicy Bypass -File ""{app}\packaging\install_service.ps1"" -Uninstall"; Flags: runhidden runascurrentuser
 
