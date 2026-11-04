@@ -3749,11 +3749,15 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
     try:
         # Parse request to extract device info
         intercepted = await adapter.parse_request(intercepted)
-        device_id = intercepted.device_id or _extract_device_id(request.headers, path)
-
-        if not device_id:
-            logger.warning(f"Could not extract device ID from request to {vendor}")
-            device_id = f"unknown_{vendor}_{hash(str(request.url)) % 10000}"
+        # A source IP bound to a known device decides who is talking, as on the
+        # TLS and protocol paths: the claimed id (a header or a path segment)
+        # is the client's word, and any client could speak for any device.
+        device_id = (
+            await _resolve_device_for_ip(db_manager, client_ip)
+            or intercepted.device_id
+            or _extract_device_id(request.headers, path)
+        )
+        intercepted.device_id = device_id
 
         # Ensure device is registered
         await db_manager.get_or_create_device(device_id, vendor)
@@ -3967,12 +3971,18 @@ def _is_local_ip(ip: str) -> bool:
     return is_local_ip(ip)
 
 
+# Longest device id taken from a request: a claimed id becomes a registry row
+# and a database file name.
+_MAX_CLAIMED_DEVICE_ID = 128
+
+
 def _extract_device_id(headers: dict, path: str) -> str:
-    """Try to extract device ID from headers or path."""
+    """Try to extract device ID from headers or path (never empty)."""
     # Check common headers in priority order
     for header in _DEVICE_ID_HEADERS:
-        if header in headers:
-            return headers[header]
+        value = (headers.get(header) or "").strip()
+        if 0 < len(value) <= _MAX_CLAIMED_DEVICE_ID:
+            return value
     # Check path for common patterns
     parts = path.strip("/").split("/")
     for part in parts:
