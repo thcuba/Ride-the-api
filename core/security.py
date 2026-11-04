@@ -223,28 +223,36 @@ class RequestBodyTooLarge(StarletteHTTPException):
 
 
 class MaxBodySizeMiddleware:
-    """Reject control-plane request bodies larger than ``max_size`` bytes.
+    """Reject request bodies larger than the configured caps.
 
-    Only enforced for ``/api/*`` routes: the catch-all data-plane route
-    legitimately proxies oversized device payloads to the cloud, so it stays
-    exempt. ``Content-Length`` is checked up front; chunked/streamed bodies are
-    guarded by wrapping the ASGI receive channel and raising a 413 as soon as
-    the running total crosses the cap (F-09).
+    ``/api/*`` (control plane) is held to ``max_size``; every other path --
+    the data-plane proxy route -- to ``data_plane_max_size``. Device payloads
+    may legitimately exceed a control-plane request, but the proxy route reads
+    the whole body into memory, so it needs a bound too (it had none). ``0``
+    disables a cap. ``Content-Length`` is checked up front; chunked/streamed
+    bodies are guarded by wrapping the ASGI receive channel and answering 413
+    as soon as the running total crosses the cap (F-09).
     """
 
-    def __init__(self, app, max_size: int) -> None:
+    def __init__(self, app, max_size: int, data_plane_max_size: int = 0) -> None:
         self.app = app
         self.max_size = max_size
+        self.data_plane_max_size = data_plane_max_size
+
+    def _limit_for(self, path: str) -> int:
+        # Same canonical path decision as the auth middleware: a dotted path
+        # resolving into /api must not escape the control-plane cap.
+        path = posixpath.normpath(path or "/")
+        if path == "/api" or path.startswith("/api/"):
+            return self.max_size
+        return self.data_plane_max_size
 
     async def __call__(self, scope, receive, send) -> None:  # noqa: ANN001, C901
-        if scope["type"] != "http" or self.max_size <= 0:
+        if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        path = scope.get("path") or ""
-        # Apply the same canonical path decision as the auth middleware. A
-        # dotted path resolving into /api must not bypass its request-size cap.
-        path = posixpath.normpath(path)
-        if path != "/api" and not path.startswith("/api/"):
+        limit = self._limit_for(scope.get("path") or "")
+        if limit <= 0:
             await self.app(scope, receive, send)
             return
 
@@ -258,13 +266,14 @@ class MaxBodySizeMiddleware:
                 break
         if declared is not None:
             try:
-                if int(declared) > self.max_size:
-                    await self._reply_413(send)
+                if int(declared) > limit:
+                    await self._reply_413(send, limit)
                     return
             except (TypeError, ValueError):
                 pass
 
         received = 0
+        too_large = False
         response_started = False
 
         async def send_wrapper(message):  # noqa: ANN001
@@ -274,25 +283,30 @@ class MaxBodySizeMiddleware:
             await send(message)
 
         async def guarded_receive():  # noqa: ANN202
-            nonlocal received
+            nonlocal received, too_large
             message = await receive()
             if message["type"] == "http.request":
                 received += len(message.get("body") or b"")
-                if received > self.max_size:
-                    raise RequestBodyTooLarge(self.max_size)
+                if received > limit:
+                    too_large = True
+                    raise RequestBodyTooLarge(limit)
             return message
 
         try:
             await self.app(scope, guarded_receive, send_wrapper)
-        except RequestBodyTooLarge:
-            if not response_started:
-                await self._reply_413(send)
-            else:
-                raise
+        except Exception:
+            # BaseHTTPMiddleware layers re-raise the error wrapped in an
+            # ExceptionGroup, which ``except RequestBodyTooLarge`` missed: an
+            # over-limit chunked body came back as a 500.
+            if too_large and not response_started:
+                await self._reply_413(send, limit)
+                return
+            raise
 
-    async def _reply_413(self, send) -> None:  # noqa: ANN001
+    @staticmethod
+    async def _reply_413(send, limit: int) -> None:  # noqa: ANN001
         body = json.dumps(
-            {"error": (f"Request body exceeds the maximum allowed size ({self.max_size} bytes)")}
+            {"error": f"Request body exceeds the maximum allowed size ({limit} bytes)"}
         ).encode("utf-8")
         await send(
             {

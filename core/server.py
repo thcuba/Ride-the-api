@@ -1151,12 +1151,13 @@ app.add_middleware(
     ControlPlaneAuthMiddleware,
     get_security_config=lambda: config_manager.config.security,
 )
-# Control-plane body limits (F-09): reject /api/* request bodies larger than
-# proxy.max_request_size. The catch-all data-plane route stays exempt because
-# it legitimately proxies oversized device payloads to the cloud.
+# Body limits (F-09): /api/* bodies are held to proxy.max_request_size, device
+# (data-plane) bodies to the larger proxy.max_device_request_size -- the proxy
+# route reads them whole into memory, so they cannot be unbounded either.
 app.add_middleware(
     MaxBodySizeMiddleware,
     max_size=config_manager.config.proxy.max_request_size,
+    data_plane_max_size=config_manager.config.proxy.max_device_request_size,
 )
 # Security response headers (defense-in-depth against clickjacking, MIME sniffing, XSS)
 app.add_middleware(SecurityHeadersMiddleware)

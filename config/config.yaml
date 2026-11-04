@@ -65,7 +65,8 @@ proxy:
 
   # Request processing
   request_timeout: 30  # seconds
-  max_request_size: 1048576  # 1MB
+  max_request_size: 1048576  # 1MB, control plane (/api/*)
+  max_device_request_size: 16777216  # 16MB, device traffic through the proxy (0 = no cap)
 
   # Fallback to vendor cloud
   fallback:
