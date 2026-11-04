@@ -29,7 +29,7 @@ import logging
 import ssl
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import h11
 
@@ -45,6 +45,30 @@ _MAX_RESPONSE_BODY = 5 * 1024 * 1024  # 5 MiB cap on forwarded response body
 
 # Pre-computed tuple of hop-by-hop/framing headers stripped before replaying requests
 _HOP_BY_HOP_HEADERS: tuple[str, ...] = ("content-length", "transfer-encoding", "connection")
+
+# Characters kept as-is when percent-encoding a target rebuilt from a decoded
+# path: everything that may legally appear raw in a request target (RFC 3986
+# pchar, "/" and "?", plus "%" so existing escapes survive).
+_TARGET_SAFE = "/?:@!$&'()*+,;=-._~%"
+
+
+def _request_target(request: InterceptedRequest) -> str:
+    """The request target to send upstream.
+
+    The raw target when the ingress kept one (the device's exact bytes).
+    Otherwise the path is percent-encoded where it must be -- a space or a
+    non-latin-1 character used to fail with a 500 -- and the query appended,
+    repeated keys included.
+    """
+    raw = getattr(request, "raw_target", None)
+    if raw:
+        return raw
+    path = quote(request.path or "/", safe=_TARGET_SAFE)
+    if request.query_params:
+        sep = "&" if "?" in path else "?"
+        path = f"{path}{sep}{urlencode(request.query_params, doseq=True)}"
+    return path
+
 
 # A process-wide default TLS context, built lazily and reused for every
 # outbound forward. ``ssl.create_default_context()`` loads and parses the
@@ -319,10 +343,7 @@ async def forward_intercepted(  # noqa: PLR0913
     ips = safe_ips
 
     method = (request.method or "GET").upper()
-    path = request.path or "/"
-    if request.query_params:
-        sep = "&" if "?" in path else "?"
-        path = f"{path}{sep}{urlencode(request.query_params)}"
+    path = _request_target(request)
 
     headers = _norm_headers(request.headers)
     body = _request_body_bytes(request, method, headers)

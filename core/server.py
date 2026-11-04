@@ -3578,6 +3578,22 @@ def _upstream_response(cloud_response, decoded: dict | None = None) -> Response:
     )
 
 
+def _raw_target(request: Request) -> str | None:
+    """``/{path}?{query}`` exactly as the client sent it, minus the vendor prefix.
+
+    The route's ``path`` is decoded ("%3F" becomes "?", "%20" a space) and
+    ``request.query_params`` folds repeated keys, so neither can rebuild what
+    the device asked for.
+    """
+    raw_path = request.scope.get("raw_path")
+    if not raw_path:
+        return None
+    parts = raw_path.decode("latin-1").split("/", 2)
+    target = "/" + (parts[2] if len(parts) > 2 else "")  # noqa: PLR2004 - "", vendor, rest
+    query = request.scope.get("query_string") or b""
+    return f"{target}?{query.decode('latin-1')}" if query else target
+
+
 async def _forward_bypassed_request(  # noqa: PLR0913
     adapter, request: Request, path: str, body, client_ip: str, *, raw_body: bytes | None = None
 ) -> Response:
@@ -3608,6 +3624,7 @@ async def _forward_bypassed_request(  # noqa: PLR0913
             body=body,
             body_bytes=raw_body,
             client_ip=client_ip,
+            raw_target=_raw_target(request),
         )
     )
     if cloud_response and cloud_response.success:
@@ -3714,6 +3731,7 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
         query_params=dict(request.query_params),
         body=body,
         body_bytes=raw_body,
+        raw_target=_raw_target(request),
     )
 
     # Bound before the try so the error path can drop a capture registered by
@@ -3736,6 +3754,9 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
         # mutating the intercepted request in place so the pipeline sees the
         # transformed request while the local-match is served.
         get_modification_engine().process_request(intercepted)
+        if intercepted.path != f"/{path}":
+            # The adapter or a REDIRECT rule chose another path: forward that.
+            intercepted.raw_target = None
         if getattr(intercepted, "blocked", False):
             # A block rule: the request goes neither upstream nor to the
             # pipeline (BLOCK used to be recorded and then ignored).
