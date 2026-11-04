@@ -17,7 +17,7 @@ from typing import Any
 
 import json_repair
 from cachetools import TTLCache
-from openai import AsyncOpenAI
+from openai import APIStatusError, AsyncOpenAI
 from pydantic import BaseModel, Field, SecretStr, ValidationError, field_validator
 
 from core.config import SECRET_MASK, get_config_manager, is_env_reference
@@ -61,6 +61,21 @@ def _raw_secret(value: object) -> str:
     if isinstance(value, SecretStr):
         return value.get_secret_value()
     return value if isinstance(value, str) else ""
+
+
+# HTTP statuses worth retrying: request timeout, conflict, rate limit. Every
+# 5xx is retried too. Other 4xx (bad request, auth, not found, ...) fail the
+# same way on every attempt, so retrying only burns time and provider quota.
+_RETRYABLE_STATUS = frozenset({408, 409, 429})
+_SERVER_ERROR_MIN = 500
+
+
+def _is_retryable_llm_error(exc: BaseException) -> bool:
+    """Whether an LLM call failure is worth another attempt."""
+    if isinstance(exc, APIStatusError):
+        return exc.status_code in _RETRYABLE_STATUS or exc.status_code >= _SERVER_ERROR_MIN
+    # Timeouts, connection errors, empty completions: transient by nature.
+    return True
 
 
 _TRUE_STRINGS = frozenset({"true", "yes"})
@@ -347,7 +362,10 @@ class LLMDecipherService:
             api_key=api_key,
             base_url=profile.base_url.rstrip("/"),
             timeout=profile.timeout,
-            max_retries=profile.max_retries,
+            # Retries are owned by call_llm's retryer. Letting the SDK retry as
+            # well multiplied them: (max_retries + 1)^2 POSTs per call, and a
+            # hung provider cost the timeout that many times.
+            max_retries=0,
         )
 
     def _get_client(self, profile: LLMProfile) -> AsyncOpenAI:
@@ -929,7 +947,9 @@ Response:
         if profile.max_tokens > 0:
             kwargs["max_tokens"] = profile.max_tokens
 
-        retryer = make_retryer(max_attempts=profile.max_retries + 1)
+        retryer = make_retryer(
+            max_attempts=profile.max_retries + 1, retry_if=_is_retryable_llm_error
+        )
         error: str | None = None
         try:
             async for attempt in retryer:

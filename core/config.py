@@ -417,6 +417,13 @@ class LLMDecipherProfile(BaseModel):
     api_key: str = ""
     model_id: str = ""
     prompt_template: str = ""
+    # Declared so values written in config.yaml are kept: an undeclared field
+    # is dropped on load, and the service silently fell back to its defaults.
+    enabled: bool = True
+    timeout: int = Field(default=30, description="Per-request timeout in seconds")
+    max_retries: int = Field(
+        default=2, description="Retries after the first attempt (transient errors only)"
+    )
     max_tokens: int = Field(
         default=2048,
         description=(
