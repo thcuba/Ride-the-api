@@ -11,6 +11,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import contextlib
+import copy
 import functools
 import json
 import logging
@@ -228,51 +229,52 @@ def _split_clean_path(path: str) -> tuple[str, ...]:
     return tuple(clean.split(".")) if clean and clean != "$" else ()
 
 
-def _dpath_set(d: dict, path: str, value: Any) -> None:  # noqa: ANN401, C901, PLR0912
-    """Set a value at a dot/bracket path via dpath, creating intermediates.
+def _format_template_value(value: Any) -> str:  # noqa: ANN401
+    """Text for a placeholder embedded in a longer string, JSON-style."""
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (dict, list)):
+        return json.dumps(value)
+    return str(value)
 
-    dpath does not traverse ``None`` intermediates, so any segment whose value
-    is ``None`` is replaced with an empty dict before the write.
 
-    Fast-path direct dict navigation for simple dot-paths (~5.7x faster).
+def _dpath_set(d: dict, path: str, value: Any) -> None:  # noqa: ANN401, C901
+    """Set a value at a dot/bracket path, creating missing dict levels.
+
+    ``a.b.c``, ``items.0.v`` and ``items[0].v`` are all accepted. A missing or
+    ``None`` dict member becomes an empty dict; lists are walked by index. An
+    index past the end of a list, or a scalar in the way, makes the write a
+    no-op: a mapping aimed at a shape the template does not have must not fail
+    the whole response (``items[0].v`` used to raise ``AttributeError`` on the
+    list).
     """
-    if "[" not in path:
+    if "[" in path:
+        parts: tuple[str, ...] = tuple(p for p in _dot_to_dpath(path).split("/") if p)
+    else:
         parts = _split_clean_path(path)
-        if parts:
-            obj: Any = d
-            for p in parts[:-1]:
-                if isinstance(obj, dict):
-                    nxt = obj.get(p)
-                    if nxt is None:
-                        nxt = {}
-                        obj[p] = nxt
-                    elif not isinstance(nxt, (dict, list)):
-                        return
-                    obj = nxt
-                elif isinstance(obj, list) and p.isdigit():
-                    idx = int(p)
-                    if 0 <= idx < len(obj):
-                        obj = obj[idx]
-                    else:
-                        return
-                else:
-                    return
-            last = parts[-1]
-            if isinstance(obj, dict):
-                obj[last] = value
-                return
-            if isinstance(obj, list) and last.isdigit():
-                idx = int(last)
-                if 0 <= idx < len(obj):
-                    obj[idx] = value
-                return
-    parts = _dot_to_dpath(path).split("/")
+    if not parts:
+        return
     obj: Any = d
     for p in parts[:-1]:
-        if isinstance(obj, dict) and obj.get(p) is None:
-            obj[p] = {}
-        obj = obj.get(p)
-    dpath.new(d, _dot_to_dpath(path), value, separator="/")
+        if isinstance(obj, dict):
+            nxt = obj.get(p)
+            if nxt is None:
+                nxt = {}
+                obj[p] = nxt
+            elif not isinstance(nxt, (dict, list)):
+                return
+            obj = nxt
+        elif isinstance(obj, list) and p.isdigit() and int(p) < len(obj):
+            obj = obj[int(p)]
+        else:
+            return
+    last = parts[-1]
+    if isinstance(obj, dict):
+        obj[last] = value
+    elif isinstance(obj, list) and last.isdigit() and int(last) < len(obj):
+        obj[int(last)] = value
 
 
 def _path_similarity(pattern: str, actual: str) -> float:
@@ -737,29 +739,24 @@ class PatternEngine:
         """
         store = self.get_state_store(device_id)
 
-        body = dict(template.body_template)
+        # Deep copies: field mappings write into nested objects, and a shallow
+        # copy shared them with the cached template, so one request's values
+        # leaked into every later response built from it.
+        body = copy.deepcopy(template.body_template)
         status_code = template.status_code
-        headers = dict(template.headers_template)
+        headers = copy.deepcopy(template.headers_template)
 
         for fm in _get_normalized_field_mappings(template):
-            source = fm["source"]
-            target = fm["target"]
-            transform = fm["transform"]
-            mapping = fm["mapping"]
-
-            val = self._resolve_source(source, original_request, store)
-            if val is not None:
-                if transform == "enum":
-                    enum_map = mapping or {}
-                    val = enum_map.get(str(val), val)
-                elif transform == "formula":
-                    val = self._eval_formula(fm["formula"], original_request, store)
-                # Field mappings targeting state.* mutate the persistent
-                # device state store (survives restart via persist_state).
-                if target.startswith("state."):
-                    store.set(target[6:], val)
-                else:
-                    self._set_nested(body, target, val)
+            try:
+                self._apply_field_mapping(fm, body, original_request, store)
+            except Exception:  # noqa: BLE001 - one bad mapping must not fail the response
+                logger.warning(
+                    "Field mapping %s -> %s failed for %s; keeping the template value",
+                    fm.get("source"),
+                    fm.get("target"),
+                    device_id,
+                    exc_info=True,
+                )
 
         # Resolve template vars ({state.*}, {request.*}, {uuid}) in body (bypass if no placeholders)
         if _template_has_vars(template):
@@ -770,6 +767,25 @@ class PatternEngine:
             "headers": headers,
             "body": body,
         }
+
+    def _apply_field_mapping(
+        self, fm: dict, body: dict, request: dict, store: DeviceStateStore
+    ) -> None:
+        """Apply one normalised field mapping to ``body`` (or to device state)."""
+        val = self._resolve_source(fm["source"], request, store)
+        if val is None:
+            return
+        if fm["transform"] == "enum":
+            val = (fm["mapping"] or {}).get(str(val), val)
+        elif fm["transform"] == "formula":
+            val = self._eval_formula(fm["formula"], request, store)
+        target = fm["target"]
+        # Field mappings targeting state.* mutate the persistent device state
+        # store (survives restart via persist_state).
+        if target.startswith("state."):
+            store.set(target[6:], val)
+        else:
+            self._set_nested(body, target, val)
 
     def _resolve_source(self, source: str, request: dict, store: DeviceStateStore) -> Any:  # noqa: ANN401
         """Resolve a source reference like 'request.body.x.y' or 'state.varname'."""
@@ -808,21 +824,34 @@ class PatternEngine:
     def _set_nested(self, d: dict, path: str, value: Any):  # noqa: ANN401
         _dpath_set(d, path, value)
 
+    def _template_var_value(self, m: re.Match, store: DeviceStateStore, request: dict) -> Any:  # noqa: ANN401
+        """The raw value a ``{state.x}``/``{request.x}``/``{uuid}`` placeholder names."""
+        if m.group(1):  # state.<name>
+            return store.get(m.group(1))
+        if m.group(2):  # request.<path>
+            return self._resolve_source(f"request.{m.group(2)}", request, store)
+        return str(uuid4())  # {uuid}
+
     def _resolve_template_vars(self, obj: Any, store: DeviceStateStore, request: dict) -> Any:  # noqa: ANN401
-        """Recursively resolve {state.x} and {request.x} placeholders in a template."""
+        """Recursively resolve {state.x} and {request.x} placeholders in a template.
+
+        A string that is exactly one placeholder takes the value with its type
+        (``"{state.temp}"`` -> ``21.5``, ``"{state.on}"`` -> ``False``), so a
+        device expecting a number or a boolean gets one. Placeholders embedded in
+        a longer string are formatted the way JSON writes them (``0`` stays
+        ``"0"``, booleans read ``true``/``false``); previously ``0`` and ``False``
+        from the request rendered as an empty string. A missing value is ``""``.
+        """
         if isinstance(obj, str):
             if "{state." in obj or "{request." in obj or "{uuid}" in obj:
-
-                def _replacer(m: re.Match) -> str:
-                    if m.group(1):  # state.<name>
-                        return str(store.get(m.group(1), ""))
-                    if m.group(2):  # request.<path>
-                        val = self._resolve_source(f"request.{m.group(2)}", request, store)
-                        return str(val or "")
-                    # {uuid}  # noqa: ERA001
-                    return str(uuid4())
-
-                obj = _RE_TEMPLATE_VAR.sub(_replacer, obj)
+                whole = _RE_TEMPLATE_VAR.fullmatch(obj)
+                if whole:
+                    value = self._template_var_value(whole, store, request)
+                    return "" if value is None else value
+                obj = _RE_TEMPLATE_VAR.sub(
+                    lambda m: _format_template_value(self._template_var_value(m, store, request)),
+                    obj,
+                )
             return obj
         if isinstance(obj, dict):
             return {k: self._resolve_template_vars(v, store, request) for k, v in obj.items()}

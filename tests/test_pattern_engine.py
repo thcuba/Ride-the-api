@@ -400,7 +400,8 @@ async def test_build_local_response(engine):
         {"body": {"command": "on"}},
     )
     assert result["status_code"] == 200  # noqa: PLR2004
-    assert result["body"]["status"] == "True"
+    # A whole-string placeholder keeps the value's type (was the string "True").
+    assert result["body"]["status"] is True
 
 
 @pytest.mark.asyncio
@@ -459,7 +460,7 @@ def test_resolve_template_vars_state(engine):
         engine.get_state_store("device-1"),
         {},
     )
-    assert result == "True"
+    assert result is True
 
 
 def test_resolve_template_vars_request(engine):
@@ -468,7 +469,7 @@ def test_resolve_template_vars_request(engine):
         engine.get_state_store("device-1"),
         {"body": {"temperature": 25.5}},
     )
-    assert result == "25.5"
+    assert result == 25.5  # noqa: PLR2004
 
 
 def test_resolve_template_vars_uuid(engine):
