@@ -12,11 +12,16 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import os
+import shutil
 import subprocess
+import sys
 import time
 from typing import TYPE_CHECKING
+
+from core.atomic_io import write_json
 
 # httpx is a hard dependency of the project; the try/except only keeps the
 # module importable in the rare case a build omits it (optional at import time).
@@ -26,6 +31,8 @@ except ImportError:  # pragma: no cover - exercised only when httpx is absent
     httpx = None  # type: ignore[assignment]
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from core.config import ConnectionWatchdogConfig
 
 logger = logging.getLogger(__name__)
@@ -40,6 +47,28 @@ def _xdg_runtime_dir() -> str:
     return f"/run/user/{os.geteuid()}"
 
 
+def _child_env() -> dict[str, str]:
+    """Environment for spawned helpers: no bundled loader paths, a runtime dir."""
+    env = {k: v for k, v in os.environ.items() if k not in _LOADER_PATH_ENV}
+    env["XDG_RUNTIME_DIR"] = env.get("XDG_RUNTIME_DIR") or _xdg_runtime_dir()
+    return env
+
+
+# One-shot probe for a fresh interpreter: exit 0 on any HTTP response (even an
+# error status), 1 when the request cannot get through. Proxies are ignored,
+# like the in-process probe (trust_env=False).
+_PY_PROBE = """
+import sys, urllib.error, urllib.request
+opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+try:
+    opener.open(sys.argv[1], timeout=float(sys.argv[2]))
+except urllib.error.HTTPError:
+    pass
+except Exception:
+    sys.exit(1)
+"""
+
+
 class ConnectionWatchdog:
     """Periodically probe outbound reachability and restart on persistent failure.
 
@@ -50,14 +79,39 @@ class ConnectionWatchdog:
     the transport path works, so only transport/timeout errors count as failures.
     """
 
-    def __init__(self, config: ConnectionWatchdogConfig) -> None:
+    def __init__(self, config: ConnectionWatchdogConfig, state_path: Path | None = None) -> None:
         self._cfg = config
         self._failures = 0
-        # ``-inf`` = no previous restart, so the first one is never suppressed by
-        # the cooldown (``time.monotonic()`` is a system-wide clock: on a freshly
-        # booted host it is below ``cooldown`` and a ``0`` sentinel would block).
-        self._last_restart = float("-inf")
+        # The last restart (wall clock) is kept in ``state_path``: the restart
+        # replaces this process, so an in-memory stamp never reached the next
+        # one and the cooldown never applied -- an offline install restarted
+        # every few minutes forever. ``-inf`` = no previous restart.
+        self._state_path = state_path
+        self._last_restart = self._load_last_restart()
         self._task: asyncio.Task | None = None
+
+    def _load_last_restart(self) -> float:
+        if self._state_path is None:
+            return float("-inf")
+        try:
+            return float(json.loads(self._state_path.read_text(encoding="utf-8"))["last_restart"])
+        except (OSError, ValueError, KeyError, TypeError):
+            return float("-inf")
+
+    def _record_restart(self, now: float) -> None:
+        self._last_restart = now
+        if self._state_path is None:
+            return
+        try:
+            write_json(self._state_path, {"last_restart": now})
+        except OSError:
+            logger.warning(
+                "Connection watchdog: could not record the restart in %s", self._state_path
+            )
+
+    def _cooling_down(self, now: float) -> bool:
+        # A stamp from the future (the clock moved back) is not trusted.
+        return 0 <= now - self._last_restart < self._cfg.cooldown
 
     async def start(self) -> None:
         """Begin the periodic probe loop as a background task."""
@@ -91,14 +145,25 @@ class ConnectionWatchdog:
 
             # Only a restart clears the wedge; but never restart onto a reboot
             # loop if the probe is unreachable for unrelated reasons.
-            now = time.monotonic()
-            if now - self._last_restart < self._cfg.cooldown:
+            now = time.time()
+            if self._cooling_down(now):
                 logger.info(
                     "Connection watchdog: restart suppressed by cooldown (%ds)",
                     self._cfg.cooldown,
                 )
                 continue
-            self._last_restart = now
+            if await self._reachable_from_fresh_process() is False:
+                # The wedge breaks outbound HTTP in this process only. When a
+                # new process cannot get through either, the network itself is
+                # down (an offline install, a dead uplink): a restart cannot help.
+                logger.warning(
+                    "Connection watchdog: %s is unreachable from a fresh process too; "
+                    "the network is down, not this process -- not restarting",
+                    self._cfg.probe_url,
+                )
+                self._failures = 0
+                continue
+            self._record_restart(now)
             self._failures = 0
             logger.critical(
                 "Connection watchdog: outgoing HTTP is wedged (%d transport errors), "
@@ -122,6 +187,40 @@ class ConnectionWatchdog:
         else:
             return True
 
+    def _fresh_probe_command(self) -> list[str] | None:
+        """A command that probes ``probe_url`` from a new process, if there is one."""
+        url, timeout = str(self._cfg.probe_url), str(self._cfg.timeout)
+        curl = shutil.which("curl")
+        if curl:
+            return [curl, "-s", "-o", os.devnull, "--noproxy", "*", "--max-time", timeout, url]
+        if not getattr(sys, "frozen", False):  # a frozen bundle has no interpreter to spawn
+            return [sys.executable, "-I", "-c", _PY_PROBE, url, timeout]
+        return None
+
+    async def _reachable_from_fresh_process(self) -> bool | None:
+        """Whether a new process reaches ``probe_url`` (None: cannot tell)."""
+        cmd = self._fresh_probe_command()
+        if cmd is None:
+            return None
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env=_child_env(),
+            )
+        except Exception:  # noqa: BLE001 - cannot tell; never let the watchdog die
+            logger.debug("Connection watchdog: fresh-process probe could not start", exc_info=True)
+            return None
+        try:
+            return await asyncio.wait_for(proc.wait(), timeout=float(self._cfg.timeout) + 5) == 0
+        except TimeoutError:
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+            await proc.wait()
+            return False
+
     async def _trigger_restart(self) -> None:
         cmd = self._cfg.restart_command
         if not cmd:
@@ -130,8 +229,7 @@ class ConnectionWatchdog:
                 "set it in config.yaml or disable the watchdog"
             )
             return
-        env = {k: v for k, v in os.environ.items() if k not in _LOADER_PATH_ENV}
-        env["XDG_RUNTIME_DIR"] = env.get("XDG_RUNTIME_DIR") or _xdg_runtime_dir()
+        env = _child_env()
         try:
             # Detached: start_new_session + explicit /dev/null stdio so the
             # child outlives this process's restart and nothing blocks on pipes.

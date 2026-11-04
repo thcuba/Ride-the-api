@@ -969,7 +969,11 @@ async def lifespan(_app: FastAPI):  # noqa: C901, PLR0912, PLR0915
     watchdog_cfg = config.connection_watchdog
     if watchdog_cfg.enabled:
         try:
-            connection_watchdog = ConnectionWatchdog(watchdog_cfg)
+            # The cooldown must outlive the restart it triggers.
+            connection_watchdog = ConnectionWatchdog(
+                watchdog_cfg,
+                state_path=Path(config.core.device_db_dir).parent / "watchdog-state.json",
+            )
             await connection_watchdog.start()
             logger.info(
                 "Connection watchdog enabled: probe %s every %ds, restart after %d failures",
