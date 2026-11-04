@@ -65,11 +65,21 @@ class ZigbeeBridgePlugin(ProtocolServerPlugin):
         self._loop = asyncio.get_running_loop()
         client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
         self._prefix = cfg.topic_prefix
+        if cfg.mqtt_user:
+            # The configured credentials were never sent: a broker requiring
+            # them refused the bridge.
+            client.username_pw_set(cfg.mqtt_user, cfg.mqtt_pass or None)
+        client.reconnect_delay_set(min_delay=1, max_delay=max(1, int(cfg.reconnect_interval)))
         client.on_connect = self._on_connect
+        client.on_disconnect = self._on_disconnect
         client.on_message = self._on_message
         client.connect_async(cfg.mqtt_host, cfg.mqtt_port)
         self._thread = threading.Thread(
-            target=client.loop_forever, name="zigbee-bridge", daemon=True
+            # Retry the first connection too: otherwise a broker that is not up
+            # yet raises out of loop_forever and the bridge never reconnects.
+            target=lambda: client.loop_forever(retry_first_connection=True),
+            name="zigbee-bridge",
+            daemon=True,
         )
         self._client = client
         self._thread.start()
@@ -80,10 +90,19 @@ class ZigbeeBridgePlugin(ProtocolServerPlugin):
             cfg.mqtt_port,
         )
 
-    def _on_connect(self, client, _userdata, _flags, _reason_code, _properties) -> None:  # noqa: ANN001
+    def _on_connect(self, client, _userdata, _flags, reason_code, _properties) -> None:  # noqa: ANN001
+        if getattr(reason_code, "is_failure", False):
+            # Any CONNACK used to count as connected, "Not authorized" included.
+            self._connected = False
+            logger.error("Zigbee bridge: broker refused the connection: %s", reason_code)
+            return
         self._connected = True
         client.subscribe(f"{self._prefix}/#")
         logger.info("Zigbee bridge connected")
+
+    def _on_disconnect(self, _client, _userdata, _flags, reason_code, _properties) -> None:  # noqa: ANN001
+        self._connected = False
+        logger.warning("Zigbee bridge disconnected (%s); reconnecting", reason_code)
 
     def _on_message(self, _client, _userdata, msg) -> None:  # noqa: ANN001
         if self._loop is None or self._loop.is_closed():
