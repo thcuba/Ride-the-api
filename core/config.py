@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from watchfiles import Change, watch
 
 from core.backend_names import normalise_backend
@@ -710,6 +710,27 @@ class Config(BaseModel):
     tls_decrypt: TLSDecryptConfig = Field(default_factory=TLSDecryptConfig)
     protocol_servers: ProtocolServersConfig = Field(default_factory=ProtocolServersConfig)
     connection_watchdog: ConnectionWatchdogConfig = Field(default_factory=ConnectionWatchdogConfig)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _lift_nested_buffer(cls, data: Any) -> Any:  # noqa: ANN401
+        """Accept ``buffer`` written under ``core:`` (as older config.yaml files have it).
+
+        The shipped config.yaml used to indent the ``buffer:`` block under
+        ``core:``, where it was silently ignored: the backend chosen there never
+        applied and an invalid name never raised. The top-level ``buffer``
+        wins when both are present.
+        """
+        if not isinstance(data, dict):
+            return data
+        core = data.get("core")
+        if isinstance(core, dict) and "buffer" in core:
+            core = dict(core)
+            nested = core.pop("buffer")
+            data = {**data, "core": core}
+            if "buffer" not in data:
+                data["buffer"] = nested
+        return data
 
 
 class ConfigManager:
