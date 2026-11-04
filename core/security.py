@@ -34,7 +34,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable
 
     from starlette.requests import Request
 
@@ -102,6 +102,34 @@ def setup_token(path: str | Path | None = None) -> str:
 def _safe_eq(a: str, b: str) -> bool:
     """Constant-time string comparison to avoid timing side channels."""
     return hmac.compare_digest(a.encode("utf-8"), b.encode("utf-8"))
+
+
+def _password_matches(provided: str, password: str) -> bool:
+    """Whether a header value carries ``password`` (constant time).
+
+    Starlette decodes header bytes as Latin-1, so a non-ASCII password sent
+    as UTF-8 (curl, scripts) arrived as mojibake and never matched. Compare
+    the raw bytes against both encodings a client may use: UTF-8, and the
+    Latin-1 a browser sends for characters up to U+00FF.
+    """
+    raw = provided.encode("latin-1", errors="replace")
+    utf8_ok = hmac.compare_digest(raw, password.encode("utf-8"))
+    latin1_ok = hmac.compare_digest(raw, password.encode("latin-1", errors="replace"))
+    return utf8_ok or latin1_ok
+
+
+def password_problem(password: str) -> str | None:
+    """Why ``password`` cannot be used as the control-plane password, if it cannot.
+
+    It travels in a header: control characters are not allowed there, and a
+    browser cannot put characters above U+00FF in one at all, so such a
+    password would lock the dashboard out.
+    """
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in password):  # noqa: PLR2004
+        return "password must not contain control characters"
+    if any(ord(ch) > 0xFF for ch in password):  # noqa: PLR2004
+        return "password may only use Latin-1 characters (a browser cannot send others)"
+    return None
 
 
 def _extract_key(request: Request) -> str:
@@ -202,7 +230,7 @@ class ControlPlaneAuthMiddleware(BaseHTTPMiddleware):
 
         self._log_once(password_ok=True)
         provided = _extract_key(request)
-        if _safe_eq(provided, password):
+        if _password_matches(provided, password):
             return await call_next(request)
 
         return JSONResponse(
@@ -210,6 +238,80 @@ class ControlPlaneAuthMiddleware(BaseHTTPMiddleware):
             content={"error": "Unauthorized"},
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+
+_UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+def _hostname(value: str) -> str:
+    """The host part of ``host[:port]`` / ``[v6]:port`` / ``scheme://host[:port]``."""
+    value = value.split("://", 1)[-1].split("/", 1)[0].strip().lower()
+    if value.startswith("["):
+        return value[1 : value.find("]")] if "]" in value else value[1:]
+    return value.rsplit(":", 1)[0] if value.count(":") == 1 else value
+
+
+class CrossSiteRequestGuard:
+    """Refuse state-changing ``/api/*`` requests a browser sent for another site.
+
+    With auth disabled -- and for the first-run password endpoint -- nothing
+    stopped a web page from driving the API: ``request.json()`` ignores the
+    Content-Type, so a cross-site ``text/plain`` POST could set the password
+    or start an update. Browsers label such requests: ``Origin`` names the
+    page's origin and ``Sec-Fetch-Site`` says ``cross-site``. Clients that send
+    neither (curl, scripts) are not browser-driven and pass, as do the
+    configured trusted origins and same-host pages. Hostnames are compared
+    without ports so a reverse proxy that rewrites the port cannot lock the
+    dashboard out.
+    """
+
+    def __init__(self, app, allowed_origins: Iterable[str] = ()) -> None:
+        self.app = app
+        self.allowed_origins = frozenset(o.rstrip("/").lower() for o in allowed_origins)
+
+    async def __call__(self, scope, receive, send) -> None:  # noqa: ANN001
+        if (
+            scope["type"] == "http"
+            and scope.get("method") in _UNSAFE_METHODS
+            and _is_control_plane(scope.get("path") or "")
+            and self._cross_site(scope.get("headers") or ())
+        ):
+            body = json.dumps({"error": "Cross-site request refused"}).encode("utf-8")
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 403,
+                    "headers": [
+                        (b"content-type", b"application/json"),
+                        (b"content-length", str(len(body)).encode("latin-1")),
+                    ],
+                }
+            )
+            await send({"type": "http.response.body", "body": body})
+            return
+        await self.app(scope, receive, send)
+
+    def _cross_site(self, raw_headers) -> bool:  # noqa: ANN001
+        headers = {name.lower(): value.decode("latin-1") for name, value in raw_headers}
+        origin = headers.get(b"origin")
+        if origin is None:
+            return headers.get(b"sec-fetch-site", "").lower() == "cross-site"
+        origin = origin.rstrip("/").lower()
+        if origin in self.allowed_origins:
+            return False
+        if origin == "null":  # opaque origin: sandboxed frame, file:// page
+            return True
+        own_hosts = {
+            _hostname(headers[name].split(",", 1)[0])
+            for name in (b"host", b"x-forwarded-host")
+            if headers.get(name)
+        }
+        return _hostname(origin) not in own_hosts
+
+
+def _is_control_plane(path: str) -> bool:
+    path = posixpath.normpath(path or "/")
+    return path == "/api" or path.startswith("/api/")
 
 
 class RequestBodyTooLarge(StarletteHTTPException):
@@ -242,10 +344,7 @@ class MaxBodySizeMiddleware:
     def _limit_for(self, path: str) -> int:
         # Same canonical path decision as the auth middleware: a dotted path
         # resolving into /api must not escape the control-plane cap.
-        path = posixpath.normpath(path or "/")
-        if path == "/api" or path.startswith("/api/"):
-            return self.max_size
-        return self.data_plane_max_size
+        return self.max_size if _is_control_plane(path) else self.data_plane_max_size
 
     async def __call__(self, scope, receive, send) -> None:  # noqa: ANN001, C901
         if scope["type"] != "http":

@@ -106,8 +106,10 @@ from core.resilience import (
 )
 from core.security import (
     ControlPlaneAuthMiddleware,
+    CrossSiteRequestGuard,
     MaxBodySizeMiddleware,
     SecurityHeadersMiddleware,
+    password_problem,
     setup_token,
 )
 from core.tls_mitm import (
@@ -1138,13 +1140,18 @@ app = FastAPI(
     lifespan=lifespan,
 )
 # Restrict CORS to trusted local web UI origins to prevent cross-site request attacks.
+_TRUSTED_ORIGINS = ["http://localhost:8911", "http://127.0.0.1:8911"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8911", "http://127.0.0.1:8911"],
+    allow_origins=_TRUSTED_ORIGINS,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# CORS only governs what a page may read back; a cross-site "simple" POST is
+# still delivered. Refuse state-changing API calls a browser makes for another
+# site (S-17) -- with auth disabled they were the only barrier.
+app.add_middleware(CrossSiteRequestGuard, allowed_origins=_TRUSTED_ORIGINS)
 # Control-plane authentication: every /api/* route requires the single
 # control-plane password (full access, no read-only distinction). See core/security.py.
 app.add_middleware(
@@ -3157,6 +3164,16 @@ def _validation_details(error: Exception) -> list:
 _MIN_PASSWORD_LENGTH = 8
 
 
+def _new_password_problem(password: object) -> str | None:
+    """Why ``password`` cannot become the control-plane password, if it cannot."""
+    if not password or not isinstance(password, str):
+        return "password must be non-empty"
+    if len(password) < _MIN_PASSWORD_LENGTH:
+        return f"password must be at least {_MIN_PASSWORD_LENGTH} characters long"
+    # Header-safe: a password a browser cannot send locks the dashboard out.
+    return password_problem(password)
+
+
 @app.post("/api/auth/password")
 async def set_control_plane_password(request: Request):
     """Set the control-plane ``security.password`` on first run.
@@ -3166,20 +3183,17 @@ async def set_control_plane_password(request: Request):
     password is configured, this endpoint is protected like any other
     ``/api/*`` route.
     """
-    if config_manager.config.security.auth_enabled and config_manager.config.security.password:
+    # First run only. With auth disabled the guard used to let anyone replace
+    # an existing password; change it through the authenticated config API.
+    if config_manager.config.security.password:
         return JSONResponse(status_code=403, content={"error": "A password is already set"})
     try:
         body = await request.json()
     except (json.JSONDecodeError, UnicodeDecodeError):
         return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
     password = (body.get("password") or "") if isinstance(body, dict) else ""
-    if not password:
-        return JSONResponse(status_code=400, content={"error": "password must be non-empty"})
-    if len(password) < _MIN_PASSWORD_LENGTH:
-        return JSONResponse(
-            status_code=400,
-            content={"error": f"password must be at least {_MIN_PASSWORD_LENGTH} characters long"},
-        )
+    if problem := _new_password_problem(password):
+        return JSONResponse(status_code=400, content={"error": problem})
     ok = config_manager.set_security_password(password)
     if not ok:
         return JSONResponse(status_code=500, content={"error": "Failed to persist password"})
