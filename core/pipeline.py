@@ -9,6 +9,8 @@ import asyncio
 import hashlib
 import json
 import logging
+import math
+import time
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -44,9 +46,70 @@ from core.pattern_db.schemas import DeviceModel, PatternDB, ProtocolInfo
 from core.redaction import redact_body, redact_headers, redact_query
 
 if TYPE_CHECKING:
+    from collections.abc import Coroutine
+
     from core.buffer.store import BufferStore
 
 logger = logging.getLogger(__name__)
+
+# After a failed automatic flush, wait this long before trying again.
+_FLUSH_RETRY_COOLDOWN_S = 60
+
+
+class FlushCoordinator:
+    """Per-device flush bookkeeping, shared by every pipeline an orchestrator builds.
+
+    One flush runs per device at a time; the automatic flush is a background
+    task (never on a device's response path); after a failure, automatic
+    flushes wait out a cooldown instead of re-sending the whole buffer on every
+    response. The orchestrator rebuilds its pipeline when the buffer backend
+    changes, so this state lives outside the pipeline: a rebuild must neither
+    allow a second concurrent flush nor lose a running one at shutdown.
+    """
+
+    def __init__(self) -> None:
+        self._locks: dict[str, asyncio.Lock] = {}
+        self._tasks: dict[str, asyncio.Task] = {}
+        self._retry_at: dict[str, float] = {}
+
+    def lock(self, device_id: str) -> asyncio.Lock:
+        lock = self._locks.get(device_id)
+        if lock is None:
+            lock = self._locks[device_id] = asyncio.Lock()
+        return lock
+
+    def is_running(self, device_id: str) -> bool:
+        task = self._tasks.get(device_id)
+        return task is not None and not task.done()
+
+    def cooling_down(self, device_id: str) -> bool:
+        return time.monotonic() < self._retry_at.get(device_id, 0.0)
+
+    def start(self, device_id: str, flush: Coroutine[Any, Any, None]) -> None:
+        self._tasks[device_id] = asyncio.create_task(flush, name=f"flush:{device_id}")
+
+    def record(self, device_id: str, *, failed: bool) -> None:
+        if failed:
+            self._retry_at[device_id] = time.monotonic() + _FLUSH_RETRY_COOLDOWN_S
+        else:
+            self._retry_at.pop(device_id, None)
+
+    async def wait(self, device_id: str) -> None:
+        task = self._tasks.get(device_id)
+        if task is not None:
+            await task
+
+    async def cancel_all(self) -> None:
+        """Cancel the background flushes still running (shutdown).
+
+        An LLM call can take minutes; it must not outlive the database it
+        writes to. The pairs stay unflushed in the buffer for the next run.
+        """
+        tasks = [task for task in self._tasks.values() if not task.done()]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        self._tasks.clear()
 
 
 def _older_than(timestamp: Any, cutoff: datetime) -> bool:  # noqa: ANN401
@@ -91,6 +154,57 @@ def _pattern_query_keys(pattern_data: dict) -> list:
         or pattern_data.get("query_params")
         or pattern_data.get("query_keys")
     )
+
+
+def _listed_patterns(analysis: dict) -> list[dict]:
+    """The pattern list of an LLM analysis, tolerating shape drift.
+
+    A single pattern object instead of a list counts as one pattern; entries
+    that are not objects (and a non-list value) are dropped.
+    """
+    patterns = analysis.get("patterns", analysis.get("decoded_patterns", []))
+    if isinstance(patterns, dict):
+        return [patterns]
+    if isinstance(patterns, list):
+        return [pattern for pattern in patterns if isinstance(pattern, dict)]
+    return []
+
+
+def _confidence(value: Any, default: float = 0.5) -> float:  # noqa: ANN401
+    """An LLM-supplied confidence as a float in [0, 1].
+
+    Models send ``"high"``, ``"0.9"`` or ``null`` as often as a number; the
+    raw value used to be stored as-is in a float column.
+    """
+    if isinstance(value, bool):
+        return default
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(number):
+        return default
+    return min(max(number, 0.0), 1.0)
+
+
+_MIN_STATUS, _MAX_STATUS = 100, 599
+
+
+def _status_code(value: Any, default: int = 200) -> int:  # noqa: ANN401
+    """An LLM-supplied HTTP status as an int in 100-599, else ``default``.
+
+    ``"OK"`` or ``"200 OK"`` used to be stored verbatim and broke the local
+    response built from the template.
+    """
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, str):
+        value = value.strip().split(" ", 1)[0]
+    try:
+        code = int(value)
+    except (TypeError, ValueError):
+        return default
+    return code if _MIN_STATUS <= code <= _MAX_STATUS else default
 
 
 # Pre-computed tuple mapping field names to redaction handlers for LLM prompt pair preparation
@@ -541,6 +655,8 @@ class LearningPipeline:
         buffer: ContextBuffer,
         tracker: MatchRateTracker,
         engine=None,
+        *,
+        flushes: FlushCoordinator | None = None,
     ) -> None:
         self.db_manager = db_manager
         self.llm_decipher = llm_decipher
@@ -548,6 +664,45 @@ class LearningPipeline:
         self.tracker = tracker
         self.engine = engine
         self._correlation_cache: dict[str, deque] = defaultdict(lambda: deque(maxlen=1000))
+        self.flushes = flushes or FlushCoordinator()
+
+    def _schedule_flush(self, device_id: str) -> bool:
+        """Start a background flush for ``device_id``; True if one is running.
+
+        Single-flight: while a flush runs, later triggers do not start another
+        (previously every response arriving during the LLM call ran a full
+        flush of its own, inline). After a failed flush, triggers wait out a
+        cooldown instead of re-sending the whole buffer on every response.
+        """
+        if self.flushes.is_running(device_id):
+            return True
+        if self.flushes.cooling_down(device_id):
+            return False
+        self.flushes.start(device_id, self._background_flush(device_id))
+        return True
+
+    async def _background_flush(self, device_id: str) -> None:
+        try:
+            result = await self.flush_and_learn(device_id)
+            # pairs_count 0: nothing reached the LLM (empty buffer, unknown
+            # device), so there is nothing to back off from.
+            failed = not result.get("success") and bool(result.get("pairs_count"))
+            reason = result.get("error", "error")
+        except Exception:  # noqa: BLE001 - a background task must log, not die silently
+            logger.exception("Background flush failed for %s", device_id)
+            failed, reason = True, "exception"
+        self.flushes.record(device_id, failed=failed)
+        if failed:
+            logger.warning(
+                "Flush for %s failed (%s); next automatic attempt in %ds",
+                device_id,
+                reason,
+                _FLUSH_RETRY_COOLDOWN_S,
+            )
+
+    async def wait_for_flush(self, device_id: str) -> None:
+        """Wait for the background flush of ``device_id`` to finish, if any."""
+        await self.flushes.wait(device_id)
 
     def _correlation_max_age(self) -> timedelta:
         """Max age for a pending request to be correlated.
@@ -919,12 +1074,13 @@ class LearningPipeline:
         ``context_buffer_size`` (not the shared store's fixed max), so each
         device honours its own configured limit.
 
-        Returns: True if buffer was flushed (LLM analysis triggered).
+        Returns: True if a flush was started (or is already running). The flush
+        itself runs in the background -- the LLM call never delays the device's
+        response; use :meth:`wait_for_flush` to wait for it.
         """
         size = await self.buffer.add_pair(device_id, pair)
         if size >= context_buffer_max:
-            await self._flush_and_learn(device_id)
-            return True
+            return self._schedule_flush(device_id)
         return False
 
     async def _load_device(self, device_id: str) -> DeviceRegistry | None:
@@ -974,8 +1130,17 @@ class LearningPipeline:
     ) -> dict:
         """Public flush: filter by optional pair_ids, inject context_notes, save patterns.
 
+        One flush runs per device at a time: a manual flush waits for a
+        background one to finish, so the same pairs are never sent twice.
+
         Returns dict with success, pairs_count, patterns_count.
         """
+        async with self.flushes.lock(device_id):
+            return await self._run_flush(device_id, pair_ids, context_notes)
+
+    async def _run_flush(  # noqa: C901
+        self, device_id: str, pair_ids: list[int] | None, context_notes: str | None
+    ) -> dict:
         logger.info(f"Flushing context buffer for device {device_id}")
 
         all_pairs = await self.buffer.get_buffer_pairs(device_id)
@@ -1028,6 +1193,13 @@ class LearningPipeline:
         llm_analysis = await self._analyze_with_llm(
             context, profile_name, device.llm_base_url, device.llm_model_id
         )
+        # A model that ignores the requested object shape may answer with a
+        # bare list of patterns (or a scalar): accept the list, reject the rest,
+        # instead of crashing in _save_patterns on ``analysis.get``.
+        if isinstance(llm_analysis, list):
+            llm_analysis = {"patterns": llm_analysis}
+        elif not isinstance(llm_analysis, dict):
+            llm_analysis = None
 
         if not llm_analysis:
             return {
@@ -1049,7 +1221,7 @@ class LearningPipeline:
         await self.buffer.flush_selected(device_id, analysed_ids)
         await self.buffer.clear_cache(device_id)
 
-        patterns_count = len(llm_analysis.get("patterns", llm_analysis.get("decoded_patterns", [])))
+        patterns_count = len(_listed_patterns(llm_analysis))
         logger.info(
             f"Learning cycle complete for device {device_id}: {len(pairs)} pairs, "
             f"{patterns_count} patterns"
@@ -1104,10 +1276,6 @@ class LearningPipeline:
             "analysis": llm_analysis,
             "context": context,
         }
-
-    async def _flush_and_learn(self, device_id: str):
-        """Internal flush: all pairs, no context notes override."""
-        await self.flush_and_learn(device_id)
 
     async def _export_and_sync_patterns(self, device_id: str) -> None:
         """Export learned patterns to .ride-pattern.json and sync with PatternEngine.
@@ -1363,10 +1531,16 @@ class LearningPipeline:
             else:
                 return
 
-        patterns = analysis.get("patterns", analysis.get("decoded_patterns", []))
-        if not patterns:
-            # Try to extract from top-level fields
+        listed = "patterns" in analysis or "decoded_patterns" in analysis
+        patterns = _listed_patterns(analysis)
+        if not patterns and not listed:
+            # No pattern list at all: the reply may be one pattern at top level.
+            # An explicit empty list means nothing was learned -- do not turn
+            # the reply itself into a bogus "POST /unknown" pattern.
             patterns = [analysis]
+        if not patterns:
+            logger.info("LLM reported no patterns for %s", device_id)
+            return
 
         # Pre-compute IDs for batch lookup to eliminate N+1 queries
         pattern_ids = []
@@ -1375,14 +1549,23 @@ class LearningPipeline:
 
         prepared_patterns = []
         for pattern_data in patterns:
-            intent = pattern_data.get("intent", "unknown")
-            method = pattern_data.get("method", pattern_data.get("request_method", "POST"))
-            path = pattern_data.get("path", pattern_data.get("request_path", "/unknown"))
+            # `or` (not a .get default): a model often sends explicit nulls,
+            # and "path": null used to crash on path.encode().
+            intent = str(pattern_data.get("intent") or "unknown")
+            method = str(pattern_data.get("method") or pattern_data.get("request_method") or "POST")
+            path = str(pattern_data.get("path") or pattern_data.get("request_path") or "/unknown")
             path_digest = hashlib.md5(path.encode("utf-8")).hexdigest()[:8]
             pattern_id = f"{device_id}_{intent}_{path_digest}"
             pattern_ids.append(pattern_id)
 
             resp_data = pattern_data.get("response", pattern_data.get("response_template", {}))
+            if resp_data and not isinstance(resp_data, dict):
+                # e.g. "response": "OK" -- no status/headers/body structure to
+                # build a template from; learn the request shape only.
+                logger.warning(
+                    "Pattern %s: response is not an object, no template created", pattern_id
+                )
+                resp_data = {}
             template_id = f"tpl_{pattern_id}" if resp_data else None
             if template_id:
                 template_ids.append(template_id)
@@ -1396,6 +1579,8 @@ class LearningPipeline:
                         if isinstance(raw_resp_info, str)
                         else raw_resp_info
                     )
+                    if not isinstance(resp_info, dict):
+                        continue  # e.g. a number or list: nothing to map
                     mapping_id = f"map_{device_id}_{intent}_{req_field.replace('.', '_')}"
                     mapping_ids.append(mapping_id)
                     prepared_mappings.append((mapping_id, req_field, resp_info))
@@ -1463,7 +1648,7 @@ class LearningPipeline:
                         body_schema=pattern_data.get("body_schema", {}),
                         query_param_keys=_pattern_query_keys(pattern_data),
                         intent=intent,
-                        confidence=pattern_data.get("confidence", 0.5),
+                        confidence=_confidence(pattern_data.get("confidence")),
                     )
                     session.add(pattern)
                     existing_patterns[pattern_id] = pattern
@@ -1478,7 +1663,7 @@ class LearningPipeline:
                     pattern.body_schema = pattern_data.get("body_schema", {})
                     pattern.query_param_keys = _pattern_query_keys(pattern_data)
                     pattern.intent = intent
-                    pattern.confidence = pattern_data.get("confidence", 0.5)
+                    pattern.confidence = _confidence(pattern_data.get("confidence"))
 
                 if resp_data and template_id:
                     template = existing_templates.get(template_id)
@@ -1486,23 +1671,23 @@ class LearningPipeline:
                         template = ResponseTemplate(
                             template_id=template_id,
                             pattern_id=pattern_id,
-                            status_code=resp_data.get("status_code", 200),
+                            status_code=_status_code(resp_data.get("status_code")),
                             headers_template=resp_data.get("headers", {}),
                             body_template=resp_data.get("body", {}),
                             field_mappings=resp_data.get("field_mappings", {}),
                             expected_variables=resp_data.get("expected_variables", []),
-                            confidence=resp_data.get("confidence", 0.5),
+                            confidence=_confidence(resp_data.get("confidence")),
                         )
                         session.add(template)
                         existing_templates[template_id] = template
                         stats_obj.templates_created += 1
                     else:
-                        template.status_code = resp_data.get("status_code", 200)
+                        template.status_code = _status_code(resp_data.get("status_code"))
                         template.headers_template = resp_data.get("headers", {})
                         template.body_template = resp_data.get("body", {})
                         template.field_mappings = resp_data.get("field_mappings", {})
                         template.expected_variables = resp_data.get("expected_variables", [])
-                        template.confidence = resp_data.get("confidence", 0.5)
+                        template.confidence = _confidence(resp_data.get("confidence"))
 
                 for mapping_id, req_field, resp_info in item["prepared_mappings"]:
                     if mapping_id not in existing_mappings:
@@ -1515,7 +1700,7 @@ class LearningPipeline:
                             transform=resp_info.get("transform", "direct"),
                             enum_values=resp_info.get("enum_values"),
                             intent=intent,
-                            confidence=resp_info.get("confidence", 0.5),
+                            confidence=_confidence(resp_info.get("confidence")),
                         )
                         session.add(fmap)
                         existing_mappings.add(mapping_id)
@@ -1600,6 +1785,12 @@ class LearningOrchestrator:
         self.engine = None
         self.tracker = None
         self.pipeline = None
+        # Outlives pipeline rebuilds (buffer backend switch), see FlushCoordinator.
+        self.flushes = FlushCoordinator()
+
+    async def cancel_background_flushes(self) -> None:
+        """Cancel automatic flushes still running (called at shutdown)."""
+        await self.flushes.cancel_all()
 
     def initialize(self, llm_decipher: LLMDecipherService):
         """Initialize the orchestrator with required services.
@@ -1955,6 +2146,7 @@ class LearningOrchestrator:
                 buffer,
                 self.tracker,
                 self.engine,
+                flushes=self.flushes,
             )
         return self.pipeline
 
@@ -2000,6 +2192,7 @@ class LearningOrchestrator:
                 buffer,
                 self.tracker,
                 self.engine,
+                flushes=self.flushes,
             )
         return await self.pipeline.register_request(
             device.device_id,

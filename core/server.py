@@ -1111,6 +1111,12 @@ async def lifespan(_app: FastAPI):  # noqa: C901, PLR0912, PLR0915
     # Prune stale correlation rows so the training store never grows unbounded.
     # Runs regardless of TLS interception so pruning cannot be skipped.
     if orchestrator:
+        # A background flush can sit in an LLM call for minutes: stop it before
+        # the LLM client and the database it writes to are closed below.
+        try:
+            await orchestrator.cancel_background_flushes()
+        except Exception as e:
+            logger.error("Error cancelling background flushes: %s", e)  # noqa: TRY400
         try:
             await orchestrator.prune_stores()
         except Exception as e:

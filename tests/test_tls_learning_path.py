@@ -247,6 +247,8 @@ async def test_tls_path_persists_pair_and_calls_configured_llm(  # noqa: PLR0915
         assert response_result["action"] == "buffered_for_learning"
         assert response_result["pair_id"]
         assert response_result["buffer_flushed"] is True
+        # The flush runs in the background, off the device's response path.
+        await orch.pipeline.wait_for_flush("dev-1")
 
         # Confirm the OpenAI-compatible SDK made one request with the exact
         # correlated pair from SQLite, using the configured flush profile.
