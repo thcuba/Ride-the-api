@@ -25,6 +25,7 @@ from fastapi import FastAPI, File, Form, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy import delete, func, select
 
 from adapters import get_registered_registry
@@ -45,7 +46,14 @@ from core.buffer import (
     switch_backend,
 )
 from core.cert_manager import CertManager, get_cert_manager
-from core.config import Config, ConnectionType, get_config_manager
+from core.config import (
+    SECRET_MASK,
+    Config,
+    ConnectionType,
+    get_config_manager,
+    mask_secrets,
+    restore_masked_secrets,
+)
 from core.connection_watchdog import ConnectionWatchdog
 from core.database import (
     DatabaseManager,
@@ -2806,6 +2814,10 @@ async def test_llm_profile(request: Request):
             content={"error": "Both 'base_url' and 'model_id' are required for the test"},
         )
     api_key = str(body.get("api_key", ""))
+    if api_key == SECRET_MASK:
+        # The form shows stored keys masked; testing an unchanged field means
+        # "use the key this profile already has".
+        api_key = llm_decipher_service.stored_api_key(str(body.get("name") or ""))
     timeout = int(body.get("timeout", 30) or 30)
     max_retries = int(body.get("max_retries", 2) or 2)
     result = await llm_decipher_service.test_connection(
@@ -3038,8 +3050,12 @@ async def set_buffer_backend_setting(request: Request):
 
 @app.get("/api/config")
 async def get_config():
-    """Return the full current configuration (validated YAML model_dump)."""
-    return {"config": config_manager.config.model_dump(mode="json")}
+    """Return the full current configuration (validated YAML model_dump).
+
+    Secrets (control-plane password, API keys, bridge passwords) are masked;
+    sending the mask back unchanged on PUT keeps the stored value.
+    """
+    return {"config": mask_secrets(config_manager.config.model_dump(mode="json"))}
 
 
 @app.put("/api/config")
@@ -3054,26 +3070,49 @@ async def put_config(request: Request):
             status_code=400,
             content={"error": "Invalid JSON body: expected an object with a 'config' key"},
         )
-    payload = body["config"]
+    # A dashboard save round-trips the masked GET payload: wherever a secret
+    # still reads as the mask, keep the stored value instead of writing the mask.
+    payload = restore_masked_secrets(body["config"], config_manager.config.model_dump(mode="json"))
     # LLM profiles are owned by the LLM settings API (``/api/llm/settings``),
     # which validates them and persists to the runtime override file. A config
     # save always sends the whole tree, so stamp the *effective* (runtime) LLM
     # section back in — present or not: a generic save can neither change nor
     # drop the profiles, and ``config.yaml`` stays aligned with the runtime.
-    # The Configuration page edits them through the LLM settings API instead.
+    # The keys are stamped in their configured form: a ${ENV} reference stays a
+    # reference instead of being replaced by the resolved secret on disk.
     if isinstance(payload, dict) and llm_decipher_service:
-        payload = {**payload, "llm_decipher": llm_decipher_service.get_settings()}
+        payload = {**payload, "llm_decipher": llm_decipher_service.get_settings_for_persistence()}
     try:
         ok = config_manager.update_config(payload)
-    except ValidationError as ve:
-        return JSONResponse(status_code=400, content={"error": f"Config validation failed: {ve}"})
+    except (ValidationError, PydanticValidationError) as ve:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Config validation failed", "details": _validation_details(ve)},
+        )
     except Exception:  # noqa: BLE001 - persist failure should not 500 silently
         logger.exception("Failed to update config")
         return JSONResponse(status_code=500, content={"error": "Failed to update config"})
     if not ok:
         return JSONResponse(status_code=500, content={"error": "Failed to persist config"})
     logger.info("Configuration updated via /api/config API")
-    return {"config": config_manager.config.model_dump(mode="json"), "status": "saved"}
+    return {
+        "config": mask_secrets(config_manager.config.model_dump(mode="json")),
+        "status": "saved",
+    }
+
+
+def _validation_details(error: Exception) -> list:
+    """Field locations and messages of a validation error, without input values.
+
+    Pydantic's string form echoes submitted values (which may be secrets), so
+    only ``loc``/``msg`` pairs are returned to the client.
+    """
+    if isinstance(error, PydanticValidationError):
+        return [
+            {"loc": [str(part) for part in err.get("loc", ())], "msg": err.get("msg", "")}
+            for err in error.errors()
+        ]
+    return [{"loc": [], "msg": str(error)}]
 
 
 _MIN_PASSWORD_LENGTH = 8

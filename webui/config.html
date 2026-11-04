@@ -841,7 +841,9 @@ function renderField(path, label, value) {
         });
         ctrl.appendChild(ta);
       } else {
-        const isPassword = /(^|\.)api_key$/.test(path);
+        // Secret fields arrive masked from the API; render them as password
+        // inputs. Leaving the mask unchanged keeps the stored value on save.
+        const isPassword = /(^|\.)(api_key|password|mqtt_pass)$/.test(path);
         if (isPassword) {
           const wrap = document.createElement('div');
           wrap.style.cssText = 'position:relative;display:flex;align-items:center;';

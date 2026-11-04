@@ -20,7 +20,7 @@ from cachetools import TTLCache
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field, SecretStr, ValidationError, field_validator
 
-from core.config import get_config_manager
+from core.config import SECRET_MASK, get_config_manager, is_env_reference
 from core.fallback_policy import FallbackChain, ProviderCircuitBreaker
 from core.llm_settings import load_llm_settings, save_llm_settings
 from core.pattern_utils import safe_float as _safe_float
@@ -54,6 +54,13 @@ def _parse_llm_json(content: str) -> dict | None:
             return json_repair.loads(content)
         except Exception:  # noqa: BLE001 - best-effort repair
             return None
+
+
+def _raw_secret(value: object) -> str:
+    """A configured secret as a plain string (unwrapping ``SecretStr``)."""
+    if isinstance(value, SecretStr):
+        return value.get_secret_value()
+    return value if isinstance(value, str) else ""
 
 
 _TRUE_STRINGS = frozenset({"true", "yes"})
@@ -197,6 +204,10 @@ class LLMDecipherService:
         self._clients: dict[tuple, AsyncOpenAI] = {}
         # Connection fingerprint per configured profile; a change invalidates its client.
         self._client_fingerprints: dict[str, tuple] = {}
+        # Each profile's api_key exactly as configured -- a ``${ENV}`` reference
+        # stays a reference here, while LLMProfile holds the resolved value. This
+        # is what gets persisted, so an env-sourced key is never written to disk.
+        self._raw_api_keys: dict[str, str] = {}
         self._cache_ttl = _CACHE_TTL  # 1 hour
         self._cache: TTLCache = TTLCache(maxsize=_CACHE_MAX_SIZE, ttl=self._cache_ttl)
         # Circuit breaker between provider profiles: a repeatedly failing
@@ -231,11 +242,13 @@ class LLMDecipherService:
         # Load profiles (fully replace so removed profiles drop out on reload).
         profiles_config = getattr(self._config, "profiles", {})
         new_profiles: dict[str, LLMProfile] = {}
+        new_raw_keys: dict[str, str] = {}
         for name, profile_config in profiles_config.items():
+            new_raw_keys[name] = _raw_secret(getattr(profile_config, "api_key", ""))
             profile = LLMProfile(
                 name=name,
                 base_url=getattr(profile_config, "base_url", "https://api.openai.com/v1"),
-                api_key=getattr(profile_config, "api_key", ""),
+                api_key=new_raw_keys[name],
                 model_id=getattr(profile_config, "model_id", "gpt-4o-mini"),
                 prompt_template=getattr(profile_config, "prompt_template", ""),
                 enabled=getattr(profile_config, "enabled", True),
@@ -267,13 +280,15 @@ class LLMDecipherService:
                 runtime_profiles = overrides.get("profiles")
                 if isinstance(runtime_profiles, dict):
                     new_profiles = {}
+                    new_raw_keys = {}
                     for name, pcfg in runtime_profiles.items():
                         if not isinstance(pcfg, dict):
                             continue
+                        new_raw_keys[name] = _raw_secret(pcfg.get("api_key", ""))
                         new_profiles[name] = LLMProfile(
                             name=name,
                             base_url=pcfg.get("base_url", "https://api.openai.com/v1"),
-                            api_key=pcfg.get("api_key", ""),
+                            api_key=new_raw_keys[name],
                             model_id=pcfg.get("model_id", "gpt-4o-mini"),
                             prompt_template=pcfg.get("prompt_template", ""),
                             enabled=pcfg.get("enabled", True),
@@ -291,6 +306,7 @@ class LLMDecipherService:
         self._client_fingerprints = new_fingerprints
 
         self._profiles = new_profiles
+        self._raw_api_keys = new_raw_keys
 
         logger.info(f"Loaded {len(self._profiles)} LLM profiles: {list(self._profiles.keys())}")
 
@@ -447,18 +463,23 @@ class LLMDecipherService:
         """Whether LLM deciphering is globally enabled."""
         return self._enabled
 
-    def get_settings(self) -> dict:
+    def get_settings(self, *, include_secrets: bool = False) -> dict:
         """Return the effective LLM settings (enabled, default profile, profiles).
 
         This is the dashboard-facing view: the runtime overrides merged with the
-        ``config.yaml`` defaults. API keys are returned as-is so the operator can
-        see and edit them; the value is masked only at the point of display.
+        ``config.yaml`` defaults. API keys never leave in clear by default: a
+        stored key reads as ``SECRET_MASK`` (send it back unchanged to keep it)
+        and a ``${ENV}`` reference reads as the reference itself.
+        ``include_secrets=True`` is for in-process callers that need the real,
+        resolved keys.
         """
         profiles = {}
         for name, p in self._profiles.items():
             profiles[name] = {
                 "base_url": p.base_url,
-                "api_key": p.api_key.get_secret_value(),
+                "api_key": (
+                    p.api_key.get_secret_value() if include_secrets else self._public_api_key(name)
+                ),
                 "model_id": p.model_id,
                 "prompt_template": p.prompt_template,
                 "enabled": p.enabled,
@@ -498,9 +519,14 @@ class LLMDecipherService:
         for name, pcfg in profiles.items():
             if not isinstance(pcfg, dict):
                 raise ValueError(f"profile '{name}' must be an object")  # noqa: TRY004
+            api_key = str(pcfg.get("api_key", ""))
+            if api_key == SECRET_MASK:
+                # The masked value came back unchanged: keep the key as
+                # configured (a ${ENV} reference stays a reference).
+                api_key = self._raw_api_keys.get(name, "")
             validated[name] = {
                 "base_url": str(pcfg.get("base_url", "https://api.openai.com/v1")),
-                "api_key": str(pcfg.get("api_key", "")),
+                "api_key": api_key,
                 "model_id": str(pcfg.get("model_id", "gpt-4o-mini")),
                 "prompt_template": str(pcfg.get("prompt_template", "")),
                 "enabled": bool(pcfg.get("enabled", True)),
@@ -525,6 +551,40 @@ class LLMDecipherService:
         # Reload in-memory state so the change is live immediately.
         self._load_config()
         return self.get_settings()
+
+    def _public_api_key(self, name: str) -> str:
+        """A profile's API key as the dashboard may see it.
+
+        A ``${ENV}`` reference is shown as-is (it names the secret's location
+        without revealing it), any stored key as ``SECRET_MASK``, none as "".
+        """
+        raw = self._raw_api_keys.get(name)
+        if raw is None:
+            profile = self._profiles.get(name)
+            raw = profile.api_key.get_secret_value() if profile else ""
+        if is_env_reference(raw):
+            return raw
+        return SECRET_MASK if raw else ""
+
+    def get_settings_for_persistence(self) -> dict:
+        """Settings in the form they may be written to disk.
+
+        Every API key is in its configured form: a ``${ENV}`` reference stays a
+        reference and is never replaced by the resolved environment value.
+        """
+        settings = self.get_settings(include_secrets=True)
+        for name, pcfg in settings["profiles"].items():
+            pcfg["api_key"] = self._raw_api_keys.get(name, pcfg["api_key"])
+        return settings
+
+    def stored_api_key(self, name: str) -> str:
+        """The resolved key of profile ``name`` ("" when unknown).
+
+        Lets a form that submitted ``SECRET_MASK`` (e.g. the connection test)
+        use the stored key without the client ever having seen it.
+        """
+        profile = self._profiles.get(name)
+        return profile.api_key.get_secret_value() if profile else ""
 
     @staticmethod
     def _validate_task_profiles(raw_tasks: Any, validated: dict[str, dict]) -> dict[str, str]:  # noqa: ANN401

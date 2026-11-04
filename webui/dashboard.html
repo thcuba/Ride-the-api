@@ -2803,6 +2803,9 @@ async function testLLMProfile(name) {
   const origText = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = 'Testing…'; }
   const body = {
+    // The profile name lets the server use the stored key when the key field
+    // still shows the masked value (stored keys are never sent to the browser).
+    name: name,
     base_url: card.querySelector('.lpc-base-url').value,
     model_id: card.querySelector('.lpc-model-id').value,
     api_key: card.querySelector('.lpc-api-key').value,
