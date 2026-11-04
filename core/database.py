@@ -1294,7 +1294,15 @@ class DatabaseManager:
             return device
 
     async def update_device_mode(self, device_id: str, mode: str) -> bool:
-        """Switch device between learning and production mode."""
+        """Switch device between learning and production mode.
+
+        When the mode actually changes, the behavioural match counters
+        (hits/misses/rolling window) are reset so auto-switch and rollback
+        decisions in the new mode are based on that mode's traffic — learning
+        era misses must not trigger an immediate rollback of a device just
+        promoted to production. Cumulative learning progress (patterns,
+        templates, buffer flushes) is preserved.
+        """
         async with await self.get_core_session() as session:
             result = await session.execute(
                 select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
@@ -1302,11 +1310,34 @@ class DatabaseManager:
             device = result.scalar_one_or_none()
             if not device:
                 return False
+            changed = device.mode != mode
             device.mode = mode
             await session.commit()
             self.invalidate_device_cache(device_id)
             logger.info(f"Device {device_id} switched to {mode} mode")
-            return True
+        if changed:
+            await self.reset_match_counters(device_id)
+        return True
+
+    async def reset_match_counters(self, device_id: str) -> None:
+        """Zero the per-mode match counters for a device (keep learning totals)."""
+        try:
+            async with self.device_session(device_id) as session:
+                result = await session.execute(
+                    select(MatchStats).where(MatchStats.device_id == device_id)
+                )
+                stats = result.scalar_one_or_none()
+                if stats is None:
+                    return
+                stats.total_requests = 0
+                stats.local_hits = 0
+                stats.cloud_misses = 0
+                stats.errors = 0
+                stats.match_rate_pct = 0.0
+                stats.recent_results = []
+                await session.commit()
+        except Exception:  # noqa: BLE001 - a stats reset failure must not block the mode change
+            logger.warning("Could not reset match counters for %s", device_id, exc_info=True)
 
     async def delete_device(self, device_id: str) -> bool:
         """Remove a device and its on-disk data (per-device DB + pattern file).

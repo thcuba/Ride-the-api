@@ -6,7 +6,13 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import select
 
-from core.database import DatabaseManager, DeviceRegistry, RequestPattern, ResponseTemplate
+from core.database import (
+    DatabaseManager,
+    DeviceRegistry,
+    MatchStats,
+    RequestPattern,
+    ResponseTemplate,
+)
 from core.resilience import (
     AUTO_SWITCH_MATCH_RATE,
     CHECK_INTERVAL_SECONDS,
@@ -250,3 +256,63 @@ async def test_import_device_patterns(db_manager, registered_device):
     # Import empty data dict - should handle gracefully
     count3 = await verifier.import_device_patterns(device_id, {})
     assert count3 == 0
+
+
+class TestWindowMatchRate:
+    """Decisions use the rolling window, not the lifetime rate (C-2)."""
+
+    async def _set_stats(self, db_manager, device_id, results):
+        """Seed a MatchStats row with a rolling window of results."""
+
+        async with db_manager.device_session(device_id) as session:
+            recent = [{"result": r, "timestamp": "t"} for r in results]
+            hits = sum(1 for r in results if r == "local_hit")
+            total = len(results)
+            session.add(
+                MatchStats(
+                    device_id=device_id,
+                    total_requests=total,
+                    local_hits=hits,
+                    cloud_misses=total - hits,
+                    match_rate_pct=0.0,  # stale lifetime value: must be ignored
+                    recent_results=recent,
+                )
+            )
+            await session.commit()
+
+    @pytest.mark.asyncio
+    async def test_recent_window_drives_match_rate(self, db_manager, registered_device):
+        # Lifetime match_rate_pct is stored as 0.0, but the recent window is all hits.
+        await self._set_stats(db_manager, registered_device, ["local_hit"] * 60)
+        verifier = CloudIndependenceVerifier(db_manager)
+        status = await verifier.check_cloud_independence(registered_device)
+        assert status["match_rate"] == pytest.approx(100.0)
+
+    @pytest.mark.asyncio
+    async def test_rollback_skipped_when_auto_switch_disabled(self, db_manager):
+        """A manually promoted device (auto-switch off) is never rolled back."""
+        device_id = "manual-prod"
+        await db_manager.get_or_create_device(device_id, "generic", device_type="sensor")
+        await db_manager.update_device_mode(device_id, "production")
+        await db_manager.update_device_auto_switch(device_id, False)
+        # A window full of misses would trip the rollback threshold if it ran.
+        await self._set_stats(db_manager, device_id, ["cloud_miss"] * 60)
+        verifier = CloudIndependenceVerifier(db_manager)
+        assert await verifier.should_rollback_to_learning(device_id) is False
+        dev = await db_manager.get_device(device_id)
+        assert dev.mode == "production"
+
+    @pytest.mark.asyncio
+    async def test_mode_change_resets_match_counters(self, db_manager):
+        device_id = "reset-dev"
+        await db_manager.get_or_create_device(device_id, "generic", device_type="sensor")
+        await self._set_stats(db_manager, device_id, ["cloud_miss"] * 40)
+        await db_manager.update_device_mode(device_id, "production")
+
+        async with db_manager.device_session(device_id) as session:
+            stats = (
+                await session.execute(select(MatchStats).where(MatchStats.device_id == device_id))
+            ).scalar_one()
+        assert stats.total_requests == 0
+        assert stats.cloud_misses == 0
+        assert list(stats.recent_results) == []

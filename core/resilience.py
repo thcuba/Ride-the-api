@@ -23,12 +23,59 @@ from core.database import (
 
 logger = logging.getLogger(__name__)
 
-# Auto-switch thresholds
+# Auto-switch thresholds (defaults; operators tune these in config.learning).
 AUTO_SWITCH_MATCH_RATE = 99.0  # Switch to production at 99% match rate
 ROLLBACK_MATCH_RATE = 90.0  # Roll back to learning below 90% match rate
 MIN_PATTERNS_FOR_SWITCH = 10  # Minimum patterns before considering switch
-MIN_TOTAL_REQUESTS = 50  # Minimum total requests for reliable stats
+MIN_TOTAL_REQUESTS = 50  # Minimum recent requests for reliable stats
 CHECK_INTERVAL_SECONDS = 60  # How often to check auto-switch conditions
+
+# Results that count toward the match rate (an error is neither a hit nor a miss).
+_RATE_RESULTS = frozenset({"local_hit", "cloud_miss"})
+
+
+def _recent_match_rate(recent_results: list | None) -> tuple[float | None, int]:
+    """Match rate over the rolling window, as ``(rate_pct, sample_count)``.
+
+    The window is the per-device ``recent_results`` list. Decisions use this
+    rather than the lifetime rate so a device is judged on its *current*
+    behaviour: a device that has finished learning climbs to ~100% as its
+    recent requests become hits, instead of staying pinned by early misses,
+    and a freshly promoted device is measured on production traffic. Returns
+    ``(None, 0)`` when the window holds no hit/miss samples.
+    """
+    if not recent_results:
+        return None, 0
+    hits = 0
+    total = 0
+    for entry in recent_results:
+        result = entry.get("result") if isinstance(entry, dict) else None
+        if result in _RATE_RESULTS:
+            total += 1
+            if result == "local_hit":
+                hits += 1
+    if total == 0:
+        return None, 0
+    return round(hits / total * 100, 2), total
+
+
+def _auto_switch_settings() -> tuple[bool, float, int]:
+    """Read ``(enabled, min_match_rate, min_patterns)`` from config.learning.
+
+    Lazy import so the resilience module keeps no import-time dependency on the
+    config layer. Falls back to the module defaults if config is unavailable.
+    """
+    try:
+        from core.config import get_config_manager  # noqa: PLC0415
+
+        learning = get_config_manager().config.learning
+        return (
+            bool(getattr(learning, "auto_switch_to_production", False)),
+            float(getattr(learning, "min_match_rate_for_production", AUTO_SWITCH_MATCH_RATE)),
+            int(getattr(learning, "min_patterns_for_production", MIN_PATTERNS_FOR_SWITCH)),
+        )
+    except Exception:  # noqa: BLE001 - config optional; never break the scheduler
+        return False, AUTO_SWITCH_MATCH_RATE, MIN_PATTERNS_FOR_SWITCH
 
 
 class CloudIndependenceVerifier:
@@ -77,12 +124,20 @@ class CloudIndependenceVerifier:
             if not device:
                 return {"independent": False, "reason": "device_not_found"}
 
-        match_rate = stats.match_rate_pct if stats else 0.0
-        total_requests = stats.total_requests if stats else 0
+        lifetime_rate = stats.match_rate_pct if stats else 0.0
+        # Decisions use the rolling-window rate (current behaviour), falling
+        # back to the lifetime rate only when the window holds no samples.
+        window_rate, window_samples = _recent_match_rate(stats.recent_results if stats else None)
+        match_rate = window_rate if window_rate is not None else lifetime_rate
+        # The sample count that gates a decision is the window size when we have
+        # one, else the lifetime total — so a device is never promoted or rolled
+        # back on too little evidence.
+        total_requests = window_samples or (stats.total_requests if stats else 0)
+        _, min_match_rate, _ = _auto_switch_settings()
         has_patterns = patterns_count > 0
         has_templates = templates_count > 0
         has_high_confidence = max_template_confidence >= 0.85  # noqa: PLR2004
-        has_excellent_match_rate = match_rate >= AUTO_SWITCH_MATCH_RATE
+        has_excellent_match_rate = match_rate >= min_match_rate
         is_learning = device.mode == "learning"  # noqa: F841
         is_production = device.mode == "production"
 
@@ -222,6 +277,11 @@ class CloudIndependenceVerifier:
         total_reqs = status.get("total_requests", 0)
 
         if status.get("mode") != "production":
+            return False
+
+        # Respect manual control: a device whose auto-switch is turned off was
+        # promoted (or pinned) deliberately, so the scheduler must not revert it.
+        if not status.get("auto_switch_enabled", False):
             return False
 
         if match_rate < rollback_threshold and total_reqs >= MIN_TOTAL_REQUESTS:
@@ -454,11 +514,20 @@ class AutoSwitchScheduler:
 
     async def _check_all_devices(self):
         """Check all registered devices for auto-switch conditions."""
+        auto_promote, min_match_rate, min_patterns = _auto_switch_settings()
         devices = await self.db_manager.list_devices()
         for device in devices:
             device_id = device["device_id"]
             if device.get("mode") == "learning" and device.get("auto_switch_enabled", False):
-                switched = await self.verifier.auto_switch_to_production(device_id)
+                # Auto-promotion is opt-in at the deployment level: a device
+                # changing how it serves traffic on its own is a deliberate
+                # choice, enabled by the learning auto-switch setting. Rollback
+                # below is a safety net and is never gated this way.
+                if not auto_promote:
+                    continue
+                switched = await self.verifier.auto_switch_to_production(
+                    device_id, min_patterns=min_patterns, min_match_rate=min_match_rate
+                )
                 if switched:
                     logger.info(f"AutoSwitchScheduler: {device_id} switched to production")
             elif device.get("mode") == "production":

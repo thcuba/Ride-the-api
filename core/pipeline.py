@@ -1811,14 +1811,30 @@ class LearningOrchestrator:
         query_params: dict,
         enrichment: dict | None = None,
     ) -> dict:
-        """Learning mode: forward all to cloud, correlate, and build patterns."""
+        """Learning mode: forward all to cloud, correlate, and build patterns.
+
+        The request is always forwarded and captured. We also run a *shadow*
+        match against the patterns learned so far and record whether the local
+        engine would have served it. That is what makes the match rate
+        meaningful in learning mode: it climbs toward the auto-switch threshold
+        as coverage improves, instead of being pinned at 0% by a forced miss on
+        every request (which made auto-switch unreachable).
+        """
         corr_key = await self._register_for_learning(
             device, protocol, method, path, headers, body, query_params, enrichment
         )
-        # Every learning request goes to the cloud: without this the match counters and the
-        # rolling window stayed empty in the one mode that captures pairs, so a device whose
-        # buffer was filling still read "0 requests / never seen" on the dashboard.
-        await self.tracker.record_result(device.device_id, MatchResult.CLOUD_MISS)
+        try:
+            pattern, template, score = await self.engine.find_best_match(
+                device.device_id, method, path, headers, body, query_params, protocol=protocol
+            )
+            would_serve = bool(pattern and template and score >= device.match_threshold)
+        except Exception:  # noqa: BLE001 - a shadow-match failure must not break capture
+            logger.debug("Shadow match failed for %s", device.device_id, exc_info=True)
+            would_serve = False
+        await self.tracker.record_result(
+            device.device_id,
+            MatchResult.LOCAL_HIT if would_serve else MatchResult.CLOUD_MISS,
+        )
         return {
             "action": "forward",
             "correlation_key": corr_key,
