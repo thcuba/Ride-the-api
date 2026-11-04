@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from core import server
+from core.config import SECRET_MASK
 from core.llm_decipher import LLMDecipherService
 from core.server import app, config_manager
 
@@ -81,7 +82,11 @@ class TestLLMSettingsService:
         assert settings["default_profile"] == "default"
         assert "default" in settings["profiles"]
         assert settings["profiles"]["default"]["base_url"] == "http://a/v1"
-        assert settings["profiles"]["default"]["api_key"] == "k"
+        # Stored keys never leave in clear by default; in-process callers can
+        # still ask for the real value.
+        assert settings["profiles"]["default"]["api_key"] == SECRET_MASK
+        real = service.get_settings(include_secrets=True)
+        assert real["profiles"]["default"]["api_key"] == "k"
 
     def test_get_settings_always_exposes_every_task(self):
         """Both UIs render one field per purpose, so all keys are present."""
@@ -330,6 +335,8 @@ class TestLLMSettingsAPI:
                 }
             },
         }
+        # What PUT /api/config stamps into config.yaml (keys in configured form).
+        svc.get_settings_for_persistence.return_value = svc.get_settings.return_value
         svc.update_settings.return_value = {
             "enabled": True,
             "default_profile": "default",

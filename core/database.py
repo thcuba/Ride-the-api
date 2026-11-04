@@ -45,7 +45,7 @@ from sqlalchemy.pool import NullPool
 from core.atomic_io import sanitize_filename_component
 from core.config import get_config
 from core.migrations import SchemaMigrator
-from core.pattern_db.schemas import DeviceMeta
+from core.pattern_db.schemas import DeviceMeta, normalize_connection_mode
 
 logger = logging.getLogger(__name__)
 
@@ -302,6 +302,10 @@ class FieldMapping(Base):
 
     # Transformation (if any)
     transform: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    # Expression evaluated when ``transform == "formula"``. Without it a formula
+    # mapping came back from SQL with an empty expression and served 0.
+    formula: Mapped[str | None] = mapped_column(String(1024), nullable=True)
 
     # Enum values if type is enum
     enum_values: Mapped[dict | None] = mapped_column(JSON, nullable=True)
@@ -966,6 +970,10 @@ class DatabaseManager:
                 await session.commit()
                 # A new device may bring IPs; force the reverse index rebuild.
                 self.invalidate_ip_lookup_cache()
+                # get_device caches misses too: a lookup made before this
+                # registration would otherwise keep answering "not found" (and
+                # the pipeline "device_not_found") for the cache TTL.
+                self.invalidate_device_cache(device_id)
                 logger.info(f"Registered new device: {device_id} ({vendor})")
         await self.get_device_engine(device_id)
 
@@ -1107,9 +1115,11 @@ class DatabaseManager:
         # Level 2: stable header decided at first flush.
         meta = await self.read_device_meta(device_id)
         if meta:
-            mode = meta.get("connection_mode")
+            # Re-checked on read: a header stored before the whitelist existed
+            # must not steer ingress with an arbitrary value.
+            mode = normalize_connection_mode(meta.get("connection_mode"))
             if mode and mode != "auto":
-                return str(mode)
+                return mode
 
         # Level 3: what this ingress path actually speaks.
         return ingress_default

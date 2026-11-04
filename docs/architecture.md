@@ -148,12 +148,19 @@ device. Coordinates BufferManager → LLMRouter → DecipherIngest → PatternEn
   - `PRODUCTION`: matches incoming requests against learned patterns; if the match is
     sufficient, serves a local response; otherwise forwards to the cloud (with different strategies).
   - `HYBRID`: combines learning and production simultaneously.
-- **Auto-switch**: a background scheduler checks the match rate every 60 seconds. When
-  it reaches ≥ 99% (with at least 10 patterns and 50 total requests), it automatically switches
-  the device to production mode.
-- **Rollback**: if the match rate drops below 90% in production, it automatically reverts to
-  learning mode.
-- **Real-time match rate tracking**: `hits / (hits + misses) × 100%`.
+- **Auto-switch**: a background scheduler checks devices every 60 seconds. A device is promoted to
+  production when auto-promotion is enabled (`learning.auto_switch_to_production`), it holds at least
+  `learning.min_patterns_for_production` patterns and 50 hit/miss samples in its rolling window, and its
+  rolling match rate reaches `learning.min_match_rate_for_production` (default 80%).
+- **Learning measures what it would serve**: a learning request is still forwarded and captured, but the
+  engine also runs a *shadow match* against the patterns learned so far and records whether it would have
+  served it. Before this, every learning request recorded a miss, which pinned the rate at 0% and made
+  auto-switch unreachable.
+- **Rollback**: in production a rate below `ROLLBACK_MATCH_RATE` (90%) reverts the device to learning —
+  but only while its `auto_switch_enabled` flag is on, so a device promoted or pinned by hand is left
+  alone. A mode change resets the device's match counters, so the new mode is judged on its own traffic.
+- **Real-time match rate tracking**: `hits / (hits + misses) × 100%` over the rolling window
+  (`recent_results`, up to 1000 samples). Errors are counted separately and are neither hits nor misses.
 
 **Device lookup is cached (anti-N+1).** `handle_request()` resolves the device
 via `DatabaseManager.get_device()`, which serves `DeviceRegistry` rows from a
@@ -179,8 +186,22 @@ the configured capacity is reached, then signals a flush to the LLM.
 - **Configurable capacity**: each device has a configurable maximum buffer limit
   (default 512 KB) settable in `DeviceRegistry.context_buffer_size`.
 - **Flush**: when the buffer exceeds the maximum capacity, `add_pair()` returns `True` to
-  signal that it's time to send to the LLM. The `flush()` method marks all entries as
-  processed and resets the counter.
+  signal that it's time to send to the LLM.
+- **Background, single-flight**: the flush is scheduled as a background task and the response path
+  returns immediately, so the LLM round-trip never blocks a device request. A `FlushCoordinator` owned
+  by the orchestrator keeps it single-flight **per device** across pipeline rebuilds, and the public
+  `flush_and_learn` takes the same per-device lock, so a manual flush never re-sends pairs a running
+  flush is analysing. A failed or crashed automatic flush waits out a 60 s cooldown instead of
+  re-firing on every following response (the pairs stay buffered for the retry), and shutdown cancels
+  running flushes before the LLM client and the databases are closed.
+- **What a flush marks**: a flush sends a *snapshot* of the buffer and marks exactly the pairs it sent
+  (`flush_selected`, which also keeps the size accounting exact). Pairs captured while the LLM was
+  working stay buffered for the next cycle — marking every unflushed row would have discarded that
+  traffic without ever analysing it.
+- **Tolerant of replies that ignore the requested shape**: a bare list is accepted, a scalar fails the
+  analysis, null fields fall back to defaults, non-object patterns/responses/mappings are skipped,
+  confidence and status codes are coerced, and an explicit empty pattern list no longer invents a
+  `POST /unknown` pattern.
 - **Export/Import**: supports the portable `.ride-capture.json` format via
   `export_capture()` and `import_capture()`, validated against a JSON schema via `Validator`.
   This allows sharing traffic traces between users without exposing sensitive data.
@@ -258,17 +279,35 @@ device-specific database.
 with state variable resolution and safe formula evaluation.
 
 - **Pattern matching**: `find_best_match()` computes a similarity score (0.0–1.0) between the
-  incoming request and each known pattern, based on:
-  - **Method match** (30%): HTTP method equality.
-  - **Path similarity** (30%): path matching with `{id}` placeholder support.
-  - **Required headers** (15%): how many of the required headers are present.
-  - **Query params** (10%): how many of the expected parameters are present.
-  - **Body schema** (15%): key correspondence between the body and the expected schema.
+  incoming request and each known pattern. Method and path always count; the other dimensions join the
+  divisor **only when the pattern constrains them**, so a pattern is scored against what it asks for
+  instead of being penalised for what it does not:
+  - **Method match** (30): HTTP method equality.
+  - **Path similarity** (30): path matching with `{id}` placeholder support. A query string is stripped
+    from the incoming path first, so `/poll?ts=1` still matches a `/poll` pattern (the query is matched
+    through the query-parameter dimension instead).
+  - **Required headers** (15, only when the pattern lists some): how many are present.
+  - **Query params** (10, only when the pattern lists some): how many are present.
+  - **Body schema** (15, only when the pattern models a body or the request carries one): key
+    correspondence; a request body against a body-less pattern scores 0 on a counted dimension.
+  - An exact method+path replay therefore scores **1.0** against a divisor of 60. With the previous fixed
+    divisor of 100 it was capped at 0.75 — below the 0.85 default `match_threshold` — so such a pattern
+    could never be served locally.
+  - `http` and `https` count as one protocol family when filtering: a pattern learned over plain HTTP
+    still matches the same request once it arrives over TLS.
 - **Local response construction**: `build_local_response()` starts from a `ResponseTemplate` and:
   1. Applies `field_mappings` to transfer values from the request or device state to the response.
+     Body and headers are **deep-copied** first, so a mapping writes into this response only and never
+     into the cached template (one request's values used to leak into every later response).
   2. Resolves template variables `{state.variable_name}`, `{request.path.some_field}` and `{uuid}`.
+     A string that is exactly one placeholder keeps the value's type (a boolean stays a boolean, `0`
+     stays `0`, `False` does not become `""`); a placeholder inside a longer string is rendered the way
+     JSON writes it; a missing value is still an empty string.
   3. Supports transformations: `direct` (direct copy), `enum` (value mapping), `formula`
      (safe arithmetic expressions evaluated via AST walker).
+  4. Addresses lists by index in both path styles (`items[0].v` and `items.0.v`), and applies each
+     mapping **in isolation**: one that cannot be written is logged and skipped, keeping the template's
+     own value instead of failing the whole response.
 - **State Management**: each device has a `DeviceStateStore` that maintains persistent
   state variables (e.g. current temperature, operating mode) and virtual sensors.
 - **Virtual sensors**: simulated sensors that aggregate state data and apply formulas (e.g.
@@ -277,10 +316,25 @@ with state variable resolution and safe formula evaluation.
   `simpleeval` library (restricted to arithmetic operations, comparisons,
   and basic math functions — no `eval`/`exec`), replacing the hand-rolled
   AST interpreter — no attribute access, imports, or arbitrary calls, so code injection is prevented.
-- **Caching**: patterns can be loaded from `.ride-pattern.json` files into memory for
-  ultra-fast matching without touching the database. Matching is handled entirely
-  by `PatternEngine`; the legacy `PatternMatcher` class was dead code and has been
-  removed (the engine path is the single source of truth).
+  Formulas are also bounded by **result size**, since `simpleeval` only caps each operand: an integer
+  result above 4096 bits is refused (power, multiply, left shift), `%` formatting refuses a field wider
+  than 100 (and byte formatting), `random(lo, hi)` is an allow-listed function instead of a regex rewrite
+  applied over substituted device values, and a formula whose substituted form exceeds 16 KiB is refused
+  — which also bounds what the parse cache holds per entry.
+- **Caching and staying in step**: patterns can be loaded from `.ride-pattern.json` files into memory
+  for ultra-fast matching without touching the database, and the engine serves that in-memory set
+  **exclusively** once it has one — so the set has to follow the device database. `PUT`/`PATCH`/`DELETE`
+  and pattern import re-sync the engine (a sync that leaves nothing drops the in-memory set), the export
+  directory next to the device databases is scanned on load (its hash-named files load as *snapshots*,
+  never as seeds, so a deleted pattern is not resurrected), file-supplied sets are remembered as *seeds*
+  and merged into every re-sync, and state variables always come from the device header, their canonical
+  home. Matching is handled entirely by `PatternEngine`; the legacy `PatternMatcher` class was dead code
+  and has been removed (the engine path is the single source of truth).
+- **A response belongs to an endpoint, not to an intent**: two learned endpoints can share an intent
+  (the model reused one, or both are "unknown"), so responses are keyed by their endpoint/pattern id.
+  The matcher and the importer use the shared `response_for_endpoint()` helper, which prefers a response
+  naming the endpoint's id and falls back to intent-only triggers so hand-written pattern files keep
+  working. Exported responses list their endpoint's id as a trigger ahead of the intent.
 - **Web UI pages**: the static `webui/*.html` pages (`/`, `/config`, `/patterns`,
   `/patterns/{id}`, `/options`) are read from disk **once** and served from an in-memory cache
   (`_WEBUI_HTML_CACHE`), avoiding repeated blocking file I/O inside the async
@@ -412,11 +466,13 @@ cloud. Key features:
   `AUTO_SWITCH_MATCH_RATE`; recognising request shapes alone is not treated as proof that the
   device behaves correctly without its cloud.
 - **Auto-switch scheduler**: runs every 60 seconds and evaluates the match rate of each device.
-- **Configurable thresholds**:
-  - `AUTO_SWITCH_MATCH_RATE` = 99% (switch to production).
+- **Configurable thresholds**: the promotion thresholds are read from the `learning` section
+  (`min_match_rate_for_production`, default 80%, and `min_patterns_for_production`, default 10);
+  the module constants below are the fallbacks used when that config cannot be read:
+  - `AUTO_SWITCH_MATCH_RATE` = 99% (fallback promotion threshold).
   - `ROLLBACK_MATCH_RATE` = 90% (revert to learning).
   - `MIN_PATTERNS_FOR_SWITCH` = 10 (minimum patterns to consider switching).
-  - `MIN_TOTAL_REQUESTS` = 50 (minimum requests for reliable statistics).
+  - `MIN_TOTAL_REQUESTS` = 50 (minimum hit/miss samples in the rolling window for reliable statistics).
 - **Forwarding loop prevention**: the `UpstreamResolver` resolves cloud names directly via
   public DNS (8.8.8.8 / 1.1.1.1, dual-stack IPv4+IPv6), bypassing local DNS
   (a local DNS server/a DNS filter/an external DNS filter Home) to prevent the proxy from re-inserting itself. Resolution

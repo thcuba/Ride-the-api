@@ -13,6 +13,8 @@ from core import logging_config
 def _cleanup_root_handlers():
     yield
     root = logging.getLogger()
+    for handler in root.handlers:
+        handler.close()
     root.handlers.clear()
 
 
@@ -43,6 +45,34 @@ def test_stdlog_call_is_emitted_as_json_into_stream(monkeypatch):
     assert record["event"] == "hello structured world"
     assert record["level"] == "info"
     assert record["logger"] == "core.test"
+
+
+@pytest.mark.parametrize("level", ["info", "Info", "INFO", " warning "])
+def test_level_names_are_case_insensitive(level):
+    """A lower-case level in config.yaml used to raise at startup."""
+    logging_config.setup_logging(level=level, fmt="json", output="stderr")
+    expected = logging.getLevelNamesMapping()[level.strip().upper()]
+    assert logging.getLogger().level == expected
+    assert logging_config.get_log_level() == level.strip().upper()
+
+
+def test_unknown_level_falls_back_to_info_with_a_warning(monkeypatch):
+    stream = io.StringIO()
+    monkeypatch.setattr("sys.stderr", stream)
+    logging_config.setup_logging(level="verbose", fmt="json", output="stderr")
+    assert logging.getLogger().level == logging.INFO
+    assert logging_config.get_log_level() == "INFO"
+    assert "unknown log level" in stream.getvalue()
+
+
+def test_file_output_writes_to_the_file(tmp_path):
+    log_file = tmp_path / "logs" / "app.log"
+    logging_config.setup_logging(level="INFO", fmt="json", output=str(log_file))
+    logging.getLogger("core.filetest").info("to the file")
+    for handler in logging.getLogger().handlers:
+        handler.flush()
+    record = json.loads(log_file.read_text().strip().splitlines()[-1])
+    assert record["event"] == "to the file"
 
 
 def test_console_renderer_not_json(monkeypatch):

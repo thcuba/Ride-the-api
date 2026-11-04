@@ -11,9 +11,11 @@ from __future__ import annotations
 import ast
 import asyncio
 import contextlib
+import copy
 import functools
 import json
 import logging
+import math
 import random
 import re
 from dataclasses import dataclass, field
@@ -32,7 +34,7 @@ from core.database import (
     RequestPattern,
     ResponseTemplate,
 )
-from core.pattern_db.schemas import DeviceModel, PatternDB
+from core.pattern_db.schemas import DeviceModel, PatternDB, response_for_endpoint
 from core.pattern_db.state_manager import DeviceStateStore
 from core.pattern_utils import dot_to_dpath as _dot_to_dpath
 
@@ -99,6 +101,12 @@ class RequestInput:
 
 logger = logging.getLogger(__name__)
 
+
+def _formula_random(low: Any, high: Any) -> float:  # noqa: ANN401
+    """``random(low, high)`` inside a formula: a uniform float in the range."""
+    return random.uniform(float(low), float(high))  # noqa: S311 - simulated values, not crypto
+
+
 # Allowed names exposed inside formulas (safe math helpers only).
 # Passed to simpleeval as the ``functions`` whitelist.
 _FORMULA_SAFE_NAMES = {
@@ -109,12 +117,71 @@ _FORMULA_SAFE_NAMES = {
     "int": int,
     "float": float,
     "str": str,
+    "random": _formula_random,
 }
 
 # Maximum length of a formula string. Cap guards against pathological inputs
 # from untrusted pattern files / LLM output (CPU / memory exhaustion) before
 # the evaluator is reached.
 _MAX_FORMULA_LENGTH = 1024
+# Maximum length once request/state values are substituted in: those values
+# come from the device, and the parsed result is cached per resolved string.
+_MAX_RESOLVED_FORMULA_LENGTH = 16 * 1024
+
+# Largest integer (in bits) any formula operation may produce. simpleeval only
+# caps each operand (|a|, |b| <= 4,000,000), so ``4000000 ** 4000000`` passed
+# and ran for ~30 s on the event loop; 4096 bits (~1233 digits) is far beyond
+# any value a device reports.
+_MAX_FORMULA_INT_BITS = 4096
+# Widest ``%`` format field: ``"%0999999999d" % 1`` builds a 1 GB string.
+_MAX_FORMAT_WIDTH = 100
+_RE_FORMAT_FIELD = re.compile(r"%[-#0 +]*(\*|\d*)(?:\.(\*|\d*))?")
+
+
+def _int_too_big(bits: float) -> simpleeval.NumberTooHigh:
+    return simpleeval.NumberTooHigh(
+        f"result would exceed {_MAX_FORMULA_INT_BITS} bits ({int(bits)})"
+    )
+
+
+def _bounded_power(a: Any, b: Any) -> Any:  # noqa: ANN401
+    if isinstance(a, int) and isinstance(b, int) and b > 0 and abs(a) > 1:
+        bits = b * math.log2(abs(a))
+        if bits > _MAX_FORMULA_INT_BITS:
+            raise _int_too_big(bits)
+    return simpleeval.safe_power(a, b)
+
+
+def _bounded_mult(a: Any, b: Any) -> Any:  # noqa: ANN401
+    if isinstance(a, int) and isinstance(b, int):
+        bits = a.bit_length() + b.bit_length()
+        if bits > _MAX_FORMULA_INT_BITS:
+            raise _int_too_big(bits)
+    return simpleeval.safe_mult(a, b)
+
+
+def _bounded_lshift(a: Any, b: Any) -> Any:  # noqa: ANN401
+    if isinstance(a, int) and isinstance(b, int) and b > 0:
+        bits = a.bit_length() + b
+        if bits > _MAX_FORMULA_INT_BITS:
+            raise _int_too_big(bits)
+    return simpleeval.safe_lshift(a, b)
+
+
+def _bounded_mod(a: Any, b: Any) -> Any:  # noqa: ANN401
+    """``%`` with printf-style formatting limited to sane field widths."""
+    if isinstance(a, bytes):
+        raise simpleeval.FeatureNotAvailable("bytes formatting is not permitted in formulas")
+    if isinstance(a, str):
+        for spec in (s for field in _RE_FORMAT_FIELD.findall(a) for s in field if s):
+            if (
+                spec == "*"
+                or len(spec) > len(str(_MAX_FORMAT_WIDTH))
+                or int(spec) > _MAX_FORMAT_WIDTH
+            ):
+                raise simpleeval.IterableTooLong(f"format field too wide: {spec}")
+    return a % b
+
 
 # A hardened simpleeval evaluator for untrusted formula strings:
 #   * ``names`` is empty — variables are pre-substituted with typed literals.
@@ -122,7 +189,16 @@ _MAX_FORMULA_LENGTH = 1024
 #     known escape vectors like ``().__class__.__bases__`` or ``.get`` cannot
 #     reach host objects/methods.
 #   * functions are allow-listed to ``_FORMULA_SAFE_NAMES`` only.
+#   * arithmetic that can blow up (power, multiply, shift, % formatting) is
+#     bounded by result size, not just by operand size.
 _FORMULA_EVALUATOR = simpleeval.SimpleEval(
+    operators={
+        **simpleeval.DEFAULT_OPERATORS,
+        ast.Pow: _bounded_power,
+        ast.Mult: _bounded_mult,
+        ast.LShift: _bounded_lshift,
+        ast.Mod: _bounded_mod,
+    },
     names={},
     functions=_FORMULA_SAFE_NAMES,
     allowed_attrs={},
@@ -196,7 +272,6 @@ def _parse_formula_ast(expr: str):
 # Pre-compiled regex patterns for template resolution and formula processing (hot paths)
 _RE_TEMPLATE_VAR = re.compile(r"\{state\.(\w+)\}|\{request\.(\w+(?:\.\w+)*)\}|\{uuid\}")
 _RE_FORMULA_VAR = re.compile(r"\{state\.(\w+)\}|\{request\.(\w+(?:\.\w+)*)\}")
-_RE_FORMULA_RANDOM = re.compile(r"random\(([^,]+),\s*([^)]+)\)")
 
 
 def _as_formula_literal(value: Any) -> str:  # noqa: ANN401
@@ -228,51 +303,52 @@ def _split_clean_path(path: str) -> tuple[str, ...]:
     return tuple(clean.split(".")) if clean and clean != "$" else ()
 
 
-def _dpath_set(d: dict, path: str, value: Any) -> None:  # noqa: ANN401, C901, PLR0912
-    """Set a value at a dot/bracket path via dpath, creating intermediates.
+def _format_template_value(value: Any) -> str:  # noqa: ANN401
+    """Text for a placeholder embedded in a longer string, JSON-style."""
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (dict, list)):
+        return json.dumps(value)
+    return str(value)
 
-    dpath does not traverse ``None`` intermediates, so any segment whose value
-    is ``None`` is replaced with an empty dict before the write.
 
-    Fast-path direct dict navigation for simple dot-paths (~5.7x faster).
+def _dpath_set(d: dict, path: str, value: Any) -> None:  # noqa: ANN401, C901
+    """Set a value at a dot/bracket path, creating missing dict levels.
+
+    ``a.b.c``, ``items.0.v`` and ``items[0].v`` are all accepted. A missing or
+    ``None`` dict member becomes an empty dict; lists are walked by index. An
+    index past the end of a list, or a scalar in the way, makes the write a
+    no-op: a mapping aimed at a shape the template does not have must not fail
+    the whole response (``items[0].v`` used to raise ``AttributeError`` on the
+    list).
     """
-    if "[" not in path:
+    if "[" in path:
+        parts: tuple[str, ...] = tuple(p for p in _dot_to_dpath(path).split("/") if p)
+    else:
         parts = _split_clean_path(path)
-        if parts:
-            obj: Any = d
-            for p in parts[:-1]:
-                if isinstance(obj, dict):
-                    nxt = obj.get(p)
-                    if nxt is None:
-                        nxt = {}
-                        obj[p] = nxt
-                    elif not isinstance(nxt, (dict, list)):
-                        return
-                    obj = nxt
-                elif isinstance(obj, list) and p.isdigit():
-                    idx = int(p)
-                    if 0 <= idx < len(obj):
-                        obj = obj[idx]
-                    else:
-                        return
-                else:
-                    return
-            last = parts[-1]
-            if isinstance(obj, dict):
-                obj[last] = value
-                return
-            if isinstance(obj, list) and last.isdigit():
-                idx = int(last)
-                if 0 <= idx < len(obj):
-                    obj[idx] = value
-                return
-    parts = _dot_to_dpath(path).split("/")
+    if not parts:
+        return
     obj: Any = d
     for p in parts[:-1]:
-        if isinstance(obj, dict) and obj.get(p) is None:
-            obj[p] = {}
-        obj = obj.get(p)
-    dpath.new(d, _dot_to_dpath(path), value, separator="/")
+        if isinstance(obj, dict):
+            nxt = obj.get(p)
+            if nxt is None:
+                nxt = {}
+                obj[p] = nxt
+            elif not isinstance(nxt, (dict, list)):
+                return
+            obj = nxt
+        elif isinstance(obj, list) and p.isdigit() and int(p) < len(obj):
+            obj = obj[int(p)]
+        else:
+            return
+    last = parts[-1]
+    if isinstance(obj, dict):
+        obj[last] = value
+    elif isinstance(obj, list) and last.isdigit() and int(last) < len(obj):
+        obj[int(last)] = value
 
 
 def _path_similarity(pattern: str, actual: str) -> float:
@@ -440,6 +516,24 @@ class PatternEngine:
         self._response_trigger_maps: dict[str, dict[str, Any]] = {}
         # F-12: per-device locks serialize state load/persist.
         self._locks: dict[str, asyncio.Lock] = {}
+        # Pattern sets loaded from user-supplied files. They do not live in the
+        # device DB, so a re-sync from SQL merges them back in instead of
+        # dropping them (the first learning flush used to wipe them).
+        self._seed_patterns: dict[str, PatternDB] = {}
+
+    def cached_patterns(self, device_id: str) -> PatternDB | None:
+        """The pattern set currently served from memory for ``device_id``."""
+        return self._cached_patterns.get(device_id)
+
+    def seed_patterns(self, device_id: str) -> PatternDB | None:
+        """The file-supplied pattern set for ``device_id``, if one was loaded."""
+        return self._seed_patterns.get(device_id)
+
+    def forget_patterns(self, device_id: str) -> None:
+        """Stop serving the in-memory set; matching falls back to the device DB."""
+        self._cached_patterns.pop(device_id, None)
+        self._compiled_endpoints.pop(device_id, None)
+        self._response_trigger_maps.pop(device_id, None)
 
     # â”€â”€ State Management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€  # noqa: E501
 
@@ -598,7 +692,9 @@ class PatternEngine:
                 if score > best_score:
                     best_score = score
                     best_pattern = item.endpoint
-                    best_template = trigger_map.get(item.intent)
+                    best_template = response_for_endpoint(
+                        trigger_map, getattr(item.endpoint, "id", None), item.intent
+                    )
             return best_pattern, best_template, best_score
 
         # Fall back to database patterns (only when no cached pattern file exists
@@ -737,29 +833,24 @@ class PatternEngine:
         """
         store = self.get_state_store(device_id)
 
-        body = dict(template.body_template)
+        # Deep copies: field mappings write into nested objects, and a shallow
+        # copy shared them with the cached template, so one request's values
+        # leaked into every later response built from it.
+        body = copy.deepcopy(template.body_template)
         status_code = template.status_code
-        headers = dict(template.headers_template)
+        headers = copy.deepcopy(template.headers_template)
 
         for fm in _get_normalized_field_mappings(template):
-            source = fm["source"]
-            target = fm["target"]
-            transform = fm["transform"]
-            mapping = fm["mapping"]
-
-            val = self._resolve_source(source, original_request, store)
-            if val is not None:
-                if transform == "enum":
-                    enum_map = mapping or {}
-                    val = enum_map.get(str(val), val)
-                elif transform == "formula":
-                    val = self._eval_formula(fm["formula"], original_request, store)
-                # Field mappings targeting state.* mutate the persistent
-                # device state store (survives restart via persist_state).
-                if target.startswith("state."):
-                    store.set(target[6:], val)
-                else:
-                    self._set_nested(body, target, val)
+            try:
+                self._apply_field_mapping(fm, body, original_request, store)
+            except Exception:  # noqa: BLE001 - one bad mapping must not fail the response
+                logger.warning(
+                    "Field mapping %s -> %s failed for %s; keeping the template value",
+                    fm.get("source"),
+                    fm.get("target"),
+                    device_id,
+                    exc_info=True,
+                )
 
         # Resolve template vars ({state.*}, {request.*}, {uuid}) in body (bypass if no placeholders)
         if _template_has_vars(template):
@@ -770,6 +861,25 @@ class PatternEngine:
             "headers": headers,
             "body": body,
         }
+
+    def _apply_field_mapping(
+        self, fm: dict, body: dict, request: dict, store: DeviceStateStore
+    ) -> None:
+        """Apply one normalised field mapping to ``body`` (or to device state)."""
+        val = self._resolve_source(fm["source"], request, store)
+        if val is None:
+            return
+        if fm["transform"] == "enum":
+            val = (fm["mapping"] or {}).get(str(val), val)
+        elif fm["transform"] == "formula":
+            val = self._eval_formula(fm["formula"], request, store)
+        target = fm["target"]
+        # Field mappings targeting state.* mutate the persistent device state
+        # store (survives restart via persist_state).
+        if target.startswith("state."):
+            store.set(target[6:], val)
+        else:
+            self._set_nested(body, target, val)
 
     def _resolve_source(self, source: str, request: dict, store: DeviceStateStore) -> Any:  # noqa: ANN401
         """Resolve a source reference like 'request.body.x.y' or 'state.varname'."""
@@ -808,21 +918,34 @@ class PatternEngine:
     def _set_nested(self, d: dict, path: str, value: Any):  # noqa: ANN401
         _dpath_set(d, path, value)
 
+    def _template_var_value(self, m: re.Match, store: DeviceStateStore, request: dict) -> Any:  # noqa: ANN401
+        """The raw value a ``{state.x}``/``{request.x}``/``{uuid}`` placeholder names."""
+        if m.group(1):  # state.<name>
+            return store.get(m.group(1))
+        if m.group(2):  # request.<path>
+            return self._resolve_source(f"request.{m.group(2)}", request, store)
+        return str(uuid4())  # {uuid}
+
     def _resolve_template_vars(self, obj: Any, store: DeviceStateStore, request: dict) -> Any:  # noqa: ANN401
-        """Recursively resolve {state.x} and {request.x} placeholders in a template."""
+        """Recursively resolve {state.x} and {request.x} placeholders in a template.
+
+        A string that is exactly one placeholder takes the value with its type
+        (``"{state.temp}"`` -> ``21.5``, ``"{state.on}"`` -> ``False``), so a
+        device expecting a number or a boolean gets one. Placeholders embedded in
+        a longer string are formatted the way JSON writes them (``0`` stays
+        ``"0"``, booleans read ``true``/``false``); previously ``0`` and ``False``
+        from the request rendered as an empty string. A missing value is ``""``.
+        """
         if isinstance(obj, str):
             if "{state." in obj or "{request." in obj or "{uuid}" in obj:
-
-                def _replacer(m: re.Match) -> str:
-                    if m.group(1):  # state.<name>
-                        return str(store.get(m.group(1), ""))
-                    if m.group(2):  # request.<path>
-                        val = self._resolve_source(f"request.{m.group(2)}", request, store)
-                        return str(val or "")
-                    # {uuid}  # noqa: ERA001
-                    return str(uuid4())
-
-                obj = _RE_TEMPLATE_VAR.sub(_replacer, obj)
+                whole = _RE_TEMPLATE_VAR.fullmatch(obj)
+                if whole:
+                    value = self._template_var_value(whole, store, request)
+                    return "" if value is None else value
+                obj = _RE_TEMPLATE_VAR.sub(
+                    lambda m: _format_template_value(self._template_var_value(m, store, request)),
+                    obj,
+                )
             return obj
         if isinstance(obj, dict):
             return {k: self._resolve_template_vars(v, store, request) for k, v in obj.items()}
@@ -862,11 +985,15 @@ class PatternEngine:
                 return m.group(0)
 
             resolved = _RE_FORMULA_VAR.sub(_var_replacer, formula)
-            # Replace function calls
-            resolved = _RE_FORMULA_RANDOM.sub(
-                lambda m: str(random.uniform(float(m.group(1)), float(m.group(2)))),
-                resolved,
-            )
+            if len(resolved) > _MAX_RESOLVED_FORMULA_LENGTH:
+                logger.warning(
+                    "Formula too long once values are substituted (%d chars), refusing",
+                    len(resolved),
+                )
+                return 0
+            # ``random(lo, hi)`` is an allow-listed function now: the old regex
+            # rewrite ran over the substituted device data (quadratic on
+            # crafted values) and broke on expressions as arguments.
             # Performance optimization: parse and cache formula AST via lru_cache, then evaluate
             # AST directly with _eval to eliminate redundant string parsing (~3x speedup).
             ast_tree = _parse_formula_ast(resolved)
@@ -877,7 +1004,7 @@ class PatternEngine:
 
     # â”€â”€ Pattern DB File I/O â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€  # noqa: E501
 
-    def load_pattern_file(self, device_id: str, filepath: str) -> PatternDB:
+    def load_pattern_file(self, device_id: str, filepath: str, *, seed: bool = False) -> PatternDB:
         """Load a .ride-pattern.json file and cache it for a device.
 
         Handles both portable formats: v1 (``PatternDB``) and v2 (``DeviceModel``,
@@ -885,6 +1012,9 @@ class PatternEngine:
         PatternDB shape via :meth:`DeviceModel.to_pattern_db` before being
         applied, so a device cloned on a second install works without LLM/cloud
         within the knowledge carried by the model.
+
+        ``seed=True`` marks a user-supplied file (not a snapshot of the device
+        DB): it is kept and merged into every later re-sync from SQL.
         """
         path = Path(filepath)
         if not path.exists():
@@ -896,6 +1026,8 @@ class PatternEngine:
         else:
             pattern_db = PatternDB.model_validate(data)
         self.apply_pattern_db(device_id, pattern_db)
+        if seed:
+            self._seed_patterns[device_id] = pattern_db
         return pattern_db
 
     def save_pattern_file(self, pattern_db: PatternDB | DeviceModel, filepath: str):

@@ -11,7 +11,7 @@ from datetime import datetime  # noqa: TC003
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # BUFFER DB — .ride-capture.json  (da decifrare)
@@ -212,6 +212,25 @@ class ServerResponse(BaseModel):
     field_mappings: list[FieldMapping] = Field(default_factory=list)
 
 
+def response_for_endpoint(
+    responses_by_trigger: dict[str, ServerResponse],
+    endpoint_id: str | None,
+    intent: str | None,
+) -> ServerResponse | None:
+    """The response template that answers a client endpoint.
+
+    A response whose ``triggers`` name the endpoint's own id wins; the intent
+    is the fallback. Matching by intent alone gave two endpoints that share an
+    intent (the model reused one, or both are ``"unknown"``) the same response,
+    so one endpoint was answered with the other's body.
+    """
+    if endpoint_id and endpoint_id in responses_by_trigger:
+        return responses_by_trigger[endpoint_id]
+    if intent:
+        return responses_by_trigger.get(intent)
+    return None
+
+
 class VirtualSensor(BaseModel):
     """A simulated sensor that generates realistic data."""
 
@@ -248,9 +267,72 @@ class PatternDB(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+def merge_pattern_dbs(primary: PatternDB, extra: PatternDB) -> PatternDB:
+    """``primary`` plus whatever ``extra`` defines that ``primary`` does not.
+
+    Endpoints and responses are matched by id, state variables and virtual
+    sensors by name; on a clash ``primary`` wins. Neither input is modified.
+    """
+    merged = primary.model_copy(deep=True)
+    extra = extra.model_copy(deep=True)
+    endpoint_ids = {ep.id for ep in merged.client.endpoints}
+    response_ids = {resp.id for resp in merged.server.responses}
+    variable_names = {var.name for var in merged.server.state_variables}
+    sensor_names = {sensor.name for sensor in merged.server.virtual_sensors}
+    merged.client.endpoints += [ep for ep in extra.client.endpoints if ep.id not in endpoint_ids]
+    merged.server.responses += [r for r in extra.server.responses if r.id not in response_ids]
+    merged.server.state_variables += [
+        var for var in extra.server.state_variables if var.name not in variable_names
+    ]
+    merged.server.virtual_sensors += [
+        sensor for sensor in extra.server.virtual_sensors if sensor.name not in sensor_names
+    ]
+    return merged
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # DEVICE META — per-device header written at first LLM flush
 # ═══════════════════════════════════════════════════════════════════════════════
+
+
+# Protocol tokens a device can be attributed with, and the ingress modes the
+# server acts on. The header is mostly written from LLM output, and the LLM's
+# input is the device traffic itself (prompt-injectable): anything outside
+# these sets never reaches the stored header.
+SAFE_PROTOCOLS = frozenset(
+    {
+        "http",
+        "https",
+        "tls",
+        "tcp",
+        "tcpip",
+        "mqtt",
+        "mqtt_connect",
+        "modbus",
+        "coap",
+        "matter",
+        "websocket",
+        "ws",
+        "zigbee",
+        "zwave",
+        "raw",
+    }
+)
+SAFE_CONNECTION_MODES = frozenset({"auto", "tls", "http", "mqtt", "coap", "modbus"})
+# Free-text header fields (identity, transport, ...) are display-only.
+_MAX_META_TEXT = 200
+
+
+def normalize_protocol(value: Any) -> str | None:  # noqa: ANN401
+    """The whitelisted protocol token for ``value`` (lower-cased), else None."""
+    token = value.strip().lower() if isinstance(value, str) else ""
+    return token if token in SAFE_PROTOCOLS else None
+
+
+def normalize_connection_mode(value: Any) -> str | None:  # noqa: ANN401
+    """The whitelisted ingress connection mode for ``value``, else None."""
+    mode = value.strip().lower() if isinstance(value, str) else ""
+    return mode if mode in SAFE_CONNECTION_MODES else None
 
 
 class DeviceMeta(BaseModel):
@@ -291,6 +373,28 @@ class DeviceMeta(BaseModel):
     # (which is the only other place state_variables/virtual_sensors live).
     state_variables: list[StateVariable] = Field(default_factory=list)
     virtual_sensors: list[VirtualSensor] = Field(default_factory=list)
+
+    # Every header write goes through this model, so the whitelist is enforced
+    # here once, whichever path (first flush, model merge, import) wrote it.
+    @field_validator("protocols", mode="before")
+    @classmethod
+    def _whitelisted_protocols(cls, value: Any) -> list[str]:  # noqa: ANN401
+        if isinstance(value, str):
+            value = [value]
+        if not isinstance(value, (list, tuple)):
+            return [""]
+        kept = list(dict.fromkeys(p for p in map(normalize_protocol, value) if p))
+        return kept or [""]
+
+    @field_validator("connection_mode", mode="before")
+    @classmethod
+    def _whitelisted_connection_mode(cls, value: Any) -> str:  # noqa: ANN401
+        return normalize_connection_mode(value) or "auto"
+
+    @field_validator("model", "identity", "transport", "security", mode="before")
+    @classmethod
+    def _short_text(cls, value: Any) -> str:  # noqa: ANN401
+        return "" if value is None else str(value).strip()[:_MAX_META_TEXT]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

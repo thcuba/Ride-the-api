@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import tempfile
 import threading
 from enum import Enum, StrEnum
@@ -13,13 +14,92 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from watchfiles import Change, watch
 
 from core.backend_names import normalise_backend
 from core.modification import ModificationAction
 
 logger = logging.getLogger(__name__)
+
+
+# ── Secret masking for API responses ─────────────────────────────────────────
+# What the dashboard sees in place of a stored secret. Sending it back unchanged
+# means "keep the current value" (see restore_masked_secrets).
+SECRET_MASK = "********"
+
+_NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
+# Config keys holding a secret: exact names, plus anything ending in a secret
+# word. ``bypass`` must not match, so a bare ``pass`` suffix is not used.
+_SECRET_CONFIG_NAMES = frozenset({"password", "passwd", "pass", "mqttpass", "secret", "token"})
+_SECRET_CONFIG_SUFFIXES = (
+    "password",
+    "passwd",
+    "secret",
+    "token",
+    "apikey",
+    "privatekey",
+    "credential",
+    "credentials",
+)
+
+
+def is_env_reference(value: object) -> bool:
+    """True for a ``${ENV_VAR}`` reference: a pointer to a secret, not the secret."""
+    return isinstance(value, str) and value.startswith("${") and value.endswith("}")
+
+
+def _is_secret_config_key(name: object) -> bool:
+    norm = _NON_ALNUM_RE.sub("", str(name).lower())
+    return norm in _SECRET_CONFIG_NAMES or norm.endswith(_SECRET_CONFIG_SUFFIXES)
+
+
+def mask_secrets(data: Any) -> Any:  # noqa: ANN401
+    """Copy of a config dump with every stored secret replaced by ``SECRET_MASK``.
+
+    Used for anything the API returns: the control-plane password, LLM API
+    keys, bridge passwords and secret-looking adapter settings never leave the
+    process in clear. ``${ENV}`` references are kept, since they name where the
+    secret lives without revealing it; empty values stay empty.
+    """
+    if isinstance(data, dict):
+        masked: dict = {}
+        for key, value in data.items():
+            if (
+                _is_secret_config_key(key)
+                and isinstance(value, str)
+                and value
+                and not is_env_reference(value)
+            ):
+                masked[key] = SECRET_MASK
+            else:
+                masked[key] = mask_secrets(value)
+        return masked
+    if isinstance(data, list):
+        return [mask_secrets(item) for item in data]
+    return data
+
+
+def restore_masked_secrets(incoming: Any, current: Any) -> Any:  # noqa: ANN401
+    """Put the current value back wherever ``incoming`` still holds ``SECRET_MASK``.
+
+    A form that round-trips a masked config (load, edit something else, save)
+    must not overwrite real secrets with the mask.
+    """
+    if isinstance(incoming, str) and incoming == SECRET_MASK:
+        return current if current is not None else ""
+    if isinstance(incoming, dict):
+        base = current if isinstance(current, dict) else {}
+        return {
+            key: restore_masked_secrets(value, base.get(key)) for key, value in incoming.items()
+        }
+    if isinstance(incoming, list):
+        base = current if isinstance(current, list) else []
+        return [
+            restore_masked_secrets(item, base[i] if i < len(base) else None)
+            for i, item in enumerate(incoming)
+        ]
+    return incoming
 
 
 class ContextBufferSizes(int, Enum):
@@ -337,6 +417,13 @@ class LLMDecipherProfile(BaseModel):
     api_key: str = ""
     model_id: str = ""
     prompt_template: str = ""
+    # Declared so values written in config.yaml are kept: an undeclared field
+    # is dropped on load, and the service silently fell back to its defaults.
+    enabled: bool = True
+    timeout: int = Field(default=30, description="Per-request timeout in seconds")
+    max_retries: int = Field(
+        default=2, description="Retries after the first attempt (transient errors only)"
+    )
     max_tokens: int = Field(
         default=2048,
         description=(
@@ -630,6 +717,27 @@ class Config(BaseModel):
     tls_decrypt: TLSDecryptConfig = Field(default_factory=TLSDecryptConfig)
     protocol_servers: ProtocolServersConfig = Field(default_factory=ProtocolServersConfig)
     connection_watchdog: ConnectionWatchdogConfig = Field(default_factory=ConnectionWatchdogConfig)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _lift_nested_buffer(cls, data: Any) -> Any:  # noqa: ANN401
+        """Accept ``buffer`` written under ``core:`` (as older config.yaml files have it).
+
+        The shipped config.yaml used to indent the ``buffer:`` block under
+        ``core:``, where it was silently ignored: the backend chosen there never
+        applied and an invalid name never raised. The top-level ``buffer``
+        wins when both are present.
+        """
+        if not isinstance(data, dict):
+            return data
+        core = data.get("core")
+        if isinstance(core, dict) and "buffer" in core:
+            core = dict(core)
+            nested = core.pop("buffer")
+            data = {**data, "core": core}
+            if "buffer" not in data:
+                data["buffer"] = nested
+        return data
 
 
 class ConfigManager:

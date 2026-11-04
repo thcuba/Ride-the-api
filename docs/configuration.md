@@ -78,6 +78,8 @@ core:
   Notes:
 
   - In `memory` mode the buffered pairs are **volatile** — they are lost on process restart. Already-learned patterns and durable stats remain on disk.
+- The block lives at the **top level** of `config.yaml` (`buffer:`, not nested under `core:`). A file that still nests it under `core:` is accepted for compatibility, and the top-level block wins when both are present — a silently ignored nested block is exactly how a chosen backend used to have no effect.
+- In `memory` mode every session of the process shares one in-memory connection, so sessions are serialized: one holds the connection (and its transaction) for its whole lifetime. This is deliberate — two overlapping sessions on that connection would otherwise commit or roll back each other's half-done work.
   - Both `BufferManager` (export/import) and `ContextBuffer` (learning pipeline) share the same in-process RAM buffer, so exports still see buffered pairs while RAM mode is active.
   - RAM mode is process-local: the buffer is not shared between separate processes (e.g. multiple replicas).
 
@@ -328,9 +330,9 @@ System observability: structured logging, Prometheus metrics, distributed tracin
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `level` | `string` | `"INFO"` | Log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`) |
+| `level` | `string` | `"INFO"` | Log level, **case-insensitive** (`debug` == `DEBUG`); a numeric level is accepted as well. An unknown name falls back to `INFO` with a warning instead of stopping the service |
 | `format` | `string` | `"json"` | Log format (`json`, `text`) |
-| `output` | `string` | `"stdout"` | Log destination (`stdout`, `stderr`, file path) |
+| `output` | `string` | `"stdout"` | Log destination: `stdout`, `stderr`, or a file path (missing parent directories are created). An unusable path falls back to `stderr` with a warning |
 
 Logs are emitted through a [`structlog`](https://github.com/hynek/structlog) pipeline
 configured in `core/logging_config.py` (native `python` logger integration + JSON or text
@@ -553,6 +555,9 @@ Deciphering unknown protocols or encrypted payloads via Large Language Model.
 | `model_id` | `string` | `""` | LLM model identifier (e.g. `gpt-4o`, `claude-3`) |
 | `prompt_template` | `string` | `""` | Prompt template to guide deciphering |
 | `max_tokens` | `integer` | `2048` | Ceiling on the tokens one completion may generate; `0` sends no parameter |
+| `enabled` | `boolean` | `true` | Enable this profile |
+| `timeout` | `integer` | `30` | Per-request timeout in seconds |
+| `max_retries` | `integer` | `2` | Retries **after** the first attempt, for transient failures only (408/409/429 and any 5xx); other 4xx are answered the same way on every attempt, so they are not retried. The OpenAI SDK's own retries are disabled, so one call issues at most `max_retries + 1` POSTs |
 
 A completion without a ceiling is a trap with a local model: one that does not honour the
 requested JSON format keeps generating until the context or the client `timeout` stops it,
@@ -734,6 +739,24 @@ Learning modes and thresholds for automatic transition from learning to producti
 | `min_match_rate_for_production` | `float` | `80.0` | Minimum match rate percentage required to enter production (0.0 – 100.0) |
 | `production_no_fallback` | `boolean` | `false` | If `true`, in production mode requests with no local response return an error instead of falling back to the cloud |
 | `signal_forward_to_cloud` | `boolean` | `false` | If `true`, requests with no response in production/hybrid mode return an `X-Action: forward` header instead of calling `adapter.forward_to_cloud()` internally. Intended for deployments behind a reverse proxy |
+
+How the automatic transition decides:
+
+- **Rolling window, not lifetime**: the match rate used for promotion and rollback is computed over the
+  device's rolling window of recent results (`recent_results`, up to 1000 samples, errors excluded).
+  A device that has finished learning climbs toward 100% as its recent requests become hits, instead of
+  being held back by early misses; a device freshly promoted is judged on its production traffic.
+- **Sample floor**: at least 50 hit/miss samples must be in the window for a decision to be taken.
+- **Promotion is opt-in**: the scheduler promotes a device only when `auto_switch_to_production` is `true`.
+  With it off, the mode changes only by hand.
+- **Rollback respects manual control**: in production a rate below `ROLLBACK_MATCH_RATE` (90%) reverts the
+  device to learning, but only while the device's `auto_switch_enabled` flag is on — a device promoted or
+  pinned by hand is never pulled back automatically.
+- **Mode changes reset the counters**: switching a device's mode zeroes its match counters (patterns,
+  templates and buffered flushes are kept), so the new mode is measured on its own traffic.
+- **Learning measures what it would serve**: in learning the request is still forwarded and captured, but
+  the engine also evaluates it against the learned patterns (a *shadow match*), so the match rate reflects
+  the share of traffic the patterns already cover.
 
 Example:
 

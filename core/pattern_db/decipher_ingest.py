@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from sqlalchemy import select
@@ -34,6 +35,9 @@ from core.pattern_db.schemas import (
     ServerResponse,
     StateVariable,
     VirtualSensor,
+    normalize_connection_mode,
+    normalize_protocol,
+    response_for_endpoint,
 )
 from core.pattern_db.schemas import (
     FieldMapping as SchemaFieldMapping,
@@ -41,7 +45,78 @@ from core.pattern_db.schemas import (
 from core.pattern_db.validator import ValidationError, validate_pattern
 from core.pattern_utils import safe_float as _safe_float
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.orm import InstrumentedAttribute
+
 logger = logging.getLogger(__name__)
+
+# FieldMapping.formula column width (the engine refuses longer formulas anyway).
+_MAX_FORMULA_LENGTH = 1024
+
+
+def stored_formula(value: Any) -> str | None:  # noqa: ANN401
+    """A formula expression to store, or None when there is none."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return value[:_MAX_FORMULA_LENGTH]
+
+
+def _schema_mapping(row: FieldMapping) -> SchemaFieldMapping:
+    """The portable form of a stored field mapping (formula included)."""
+    return SchemaFieldMapping(
+        source=row.request_field,
+        target=row.response_field,
+        transform=row.transform or "direct",
+        formula=row.formula or "",
+        mapping=row.enum_values,
+    )
+
+
+def _state_config(
+    meta: dict | None, applied: PatternDB | None
+) -> tuple[list[StateVariable], list[VirtualSensor]]:
+    """A device's state variables and virtual sensors (no SQL table).
+
+    The persisted header is their canonical home (learning merges them
+    there); the engine's in-memory applied config is the fallback for
+    devices that predate it.
+    """
+    if meta and (meta.get("state_variables") or meta.get("virtual_sensors")):
+        return (
+            [StateVariable(**sv) for sv in meta.get("state_variables", [])],
+            [VirtualSensor(**vs) for vs in meta.get("virtual_sensors", [])],
+        )
+    if applied and applied.server:
+        return list(applied.server.state_variables), list(applied.server.virtual_sensors)
+    return [], []
+
+
+def _mapping_id(device_id: str, intent: str, request_field: str) -> str:
+    """Deterministic FieldMapping id: re-learning or re-importing converges."""
+    return f"map_{device_id}_{intent}_{request_field.replace('.', '_')}"
+
+
+async def _rows_by(session: AsyncSession, column: InstrumentedAttribute, keys: set[str]) -> dict:
+    """Existing rows whose ``column`` is in ``keys``, keyed by that value."""
+    if not keys:
+        return {}
+    result = await session.execute(select(column.class_).where(column.in_(keys)))
+    return {getattr(row, column.key): row for row in result.scalars().all()}
+
+
+def _upsert(session: AsyncSession, existing: dict, key: str, make: Callable[[], Any], values: dict):
+    """Update the row ``existing[key]`` with ``values``, or add ``make()`` as it."""
+    row = existing.get(key)
+    if row is None:
+        row = make()
+        session.add(row)
+        existing[key] = row
+    for name, value in values.items():
+        setattr(row, name, value)
+    return row
 
 
 class DecipherIngest:
@@ -139,6 +214,7 @@ class DecipherIngest:
                         response_field=m.get("target", ""),
                         response_type=m.get("target_type", "string"),
                         transform=m.get("transform", "direct"),
+                        formula=stored_formula(m.get("formula")),
                         enum_values=m.get("mapping"),
                         intent=pat.get("intent", "unknown"),
                         confidence=_safe_float(m.get("confidence", 0.5), 0.5),
@@ -185,15 +261,16 @@ class DecipherIngest:
     ) -> PatternDB:
         """Export deciphered patterns from the device DB to portable format.
 
-        ``applied`` is the engine's in-memory applied PatternDB for this device
-        (optional). Its ``state_variables`` and ``virtual_sensors`` are not
-        persisted in SQL - they only live in the applied in-memory config - so
-        this carries them into the export instead of dropping them.
+        ``state_variables`` and ``virtual_sensors`` have no SQL table: they
+        come from the device header (their canonical home, where learning
+        writes them) or else from ``applied``, the engine's in-memory
+        PatternDB for this device, instead of being dropped.
         """
         client_endpoints = []
         server_responses = []
-        state_vars = list(applied.server.state_variables) if applied and applied.server else []
-        sensors = list(applied.server.virtual_sensors) if applied and applied.server else []
+        state_vars, sensors = _state_config(
+            await self.db_manager.read_device_meta(device_id), applied
+        )
 
         async with self.db_manager.device_session(device_id) as session:
             result = await session.execute(select(RequestPattern))
@@ -229,19 +306,13 @@ class DecipherIngest:
                     mappings = mappings_by_intent.get(pat.intent, [])
                     srv_resp = ServerResponse(
                         id=tmpl.template_id,
-                        triggers=[pat.intent],
+                        # The pattern id first: endpoints that share an intent
+                        # must each get their own response back on load.
+                        triggers=[pat.pattern_id, pat.intent],
                         status_code=tmpl.status_code,
                         headers_template=tmpl.headers_template or {},
                         body_template=tmpl.body_template or {},
-                        field_mappings=[
-                            SchemaFieldMapping(
-                                source=m.request_field,
-                                target=m.response_field,
-                                transform=m.transform or "direct",
-                                mapping=m.enum_values,
-                            )
-                            for m in mappings
-                        ],
+                        field_mappings=[_schema_mapping(m) for m in mappings],
                     )
                     server_responses.append(srv_resp)
 
@@ -284,56 +355,93 @@ class DecipherIngest:
                 if trigger not in responses_by_trigger:
                     responses_by_trigger[trigger] = resp
 
+        default_protocol = pattern_db.client.protocols[0] if pattern_db.client.protocols else "http"
+        # Match server responses via fast O(1) trigger lookup: a response naming
+        # an endpoint's id wins over one matched by intent only.
+        plan = [
+            (ep, response_for_endpoint(responses_by_trigger, ep.id, ep.intent))
+            for ep in pattern_db.client.endpoints
+        ]
+
         count = 0
         async with self.db_manager.device_session(device_id) as session:
-            for ep in pattern_db.client.endpoints:
-                pattern_id = ep.id
-                request_pattern = RequestPattern(
-                    pattern_id=pattern_id,
-                    method=ep.method,
-                    path_pattern=ep.path_pattern or ep.path,
-                    protocol=pattern_db.client.protocols[0]
-                    if pattern_db.client.protocols
-                    else "http",
-                    required_headers=ep.headers.get("required", []),
-                    body_schema=ep.body_schema or {},
-                    query_param_keys=ep.query_params,
-                    intent=ep.intent,
-                    confidence=0.9,
+            # Upsert by deterministic ids: importing a file again (an updated
+            # pattern set, or the device's own export) used to fail on UNIQUE
+            # pattern_id, and its random mapping ids duplicated every mapping.
+            patterns = await _rows_by(session, RequestPattern.pattern_id, {ep.id for ep, _ in plan})
+            templates = await _rows_by(
+                session, ResponseTemplate.template_id, {f"tpl_{ep.id}" for ep, r in plan if r}
+            )
+            mappings = await _rows_by(
+                session,
+                FieldMapping.mapping_id,
+                {
+                    _mapping_id(device_id, ep.intent, fm.source)
+                    for ep, resp in plan
+                    if resp
+                    for fm in resp.field_mappings
+                },
+            )
+
+            for ep, resp in plan:
+                _upsert(
+                    session,
+                    patterns,
+                    ep.id,
+                    lambda ep=ep: RequestPattern(pattern_id=ep.id),
+                    {
+                        "method": ep.method,
+                        "path_pattern": ep.path_pattern or ep.path,
+                        # An endpoint's own protocol (M10) wins over the file's.
+                        "protocol": ep.protocol or default_protocol,
+                        "required_headers": ep.headers.get("required", []),
+                        "body_schema": ep.body_schema or {},
+                        "query_param_keys": ep.query_params,
+                        "intent": ep.intent,
+                        "confidence": 0.9,
+                    },
                 )
-                session.add(request_pattern)
-
-                # Match server responses via fast O(1) trigger lookup
-                resp = responses_by_trigger.get(ep.intent)
                 if resp:
-                    template_id = f"tpl_{pattern_id}"
-                    response_template = ResponseTemplate(
-                        template_id=template_id,
-                        pattern_id=pattern_id,
-                        status_code=resp.status_code,
-                        headers_template=resp.headers_template,
-                        body_template=resp.body_template,
-                        field_mappings={m.source: m.target for m in resp.field_mappings},
-                        expected_variables=[
-                            m.target for m in resp.field_mappings if m.target.startswith("result.")
-                        ],
-                        confidence=0.9,
+                    template_id = f"tpl_{ep.id}"
+                    _upsert(
+                        session,
+                        templates,
+                        template_id,
+                        lambda tid=template_id, ep=ep: ResponseTemplate(
+                            template_id=tid, pattern_id=ep.id
+                        ),
+                        {
+                            "status_code": resp.status_code,
+                            "headers_template": resp.headers_template,
+                            "body_template": resp.body_template,
+                            "field_mappings": {m.source: m.target for m in resp.field_mappings},
+                            "expected_variables": [
+                                m.target
+                                for m in resp.field_mappings
+                                if m.target.startswith("result.")
+                            ],
+                            "confidence": 0.9,
+                        },
                     )
-                    session.add(response_template)
-
                     for fm in resp.field_mappings:
-                        field_mapping = FieldMapping(
-                            mapping_id=f"map_{uuid4().hex[:8]}",
-                            request_field=fm.source,
-                            request_type="string",
-                            response_field=fm.target,
-                            response_type="string",
-                            transform=fm.transform,
-                            enum_values=fm.mapping,
-                            intent=ep.intent,
-                            confidence=0.9,
+                        mapping_id = _mapping_id(device_id, ep.intent, fm.source)
+                        _upsert(
+                            session,
+                            mappings,
+                            mapping_id,
+                            lambda mid=mapping_id: FieldMapping(mapping_id=mid),
+                            {
+                                "request_field": fm.source,
+                                "request_type": "string",
+                                "response_field": fm.target,
+                                "response_type": "string",
+                                "transform": fm.transform,
+                                "formula": stored_formula(fm.formula),
+                                "enum_values": fm.mapping,
+                                "intent": ep.intent,
+                                "confidence": 0.9,
+                            },
                         )
-                        session.add(field_mapping)
 
                 count += 1
 
@@ -404,19 +512,15 @@ class DecipherIngest:
                 tmpl = templates_by_pattern_id.get(pat.pattern_id)
                 if tmpl:
                     mappings = mappings_by_intent.get(pat.intent, [])
-                    fms = [
-                        SchemaFieldMapping(
-                            source=m.request_field,
-                            target=m.response_field,
-                            transform=m.transform or "direct",
-                            mapping=m.enum_values,
-                        )
-                        for m in mappings
-                    ]
+                    fms = [_schema_mapping(m) for m in mappings]
                     responses.append(
                         ServerResponse(
                             id=tmpl.template_id,
-                            triggers=[pat.intent] if pat.intent else [],
+                            # The pattern id first (as in the v1 export):
+                            # endpoints sharing an intent keep their own response.
+                            triggers=[pat.pattern_id, pat.intent]
+                            if pat.intent
+                            else [pat.pattern_id],
                             status_code=tmpl.status_code,
                             headers_template=tmpl.headers_template or {},
                             body_template=tmpl.body_template or {},
@@ -439,17 +543,7 @@ class DecipherIngest:
             protocol.ports = list(meta.get("ports") or [])
             protocol.confidence = _safe_float(meta.get("confidence"), 0.0)
 
-        # state_variables / virtual_sensors have no SQL table: their canonical
-        # home is the persisted header (DeviceMeta). Fall back to the engine's
-        # in-memory applied config when the header has none (legacy pre-v2).
-        state_variables: list = []
-        virtual_sensors: list = []
-        if meta and (meta.get("state_variables") or meta.get("virtual_sensors")):
-            state_variables = [StateVariable(**sv) for sv in meta.get("state_variables", [])]
-            virtual_sensors = [VirtualSensor(**vs) for vs in meta.get("virtual_sensors", [])]
-        elif applied and applied.server:
-            state_variables = list(applied.server.state_variables)
-            virtual_sensors = list(applied.server.virtual_sensors)
+        state_variables, virtual_sensors = _state_config(meta, applied)
 
         return DeviceModel(
             meta=PatternMeta(
@@ -492,13 +586,14 @@ class DecipherIngest:
             "state_variables": [sv.model_dump(exclude_none=True) for sv in model.state_variables],
             "virtual_sensors": [vs.model_dump(exclude_none=True) for vs in model.virtual_sensors],
         }
+        # Import (which validates) before writing the header: a rejected model
+        # used to leave its protocol header behind on the device.
+        count = await self.import_patterns(device_id, model.to_pattern_db())
         try:
             await self.db_manager.write_device_meta(device_id, header)
         except Exception as e:  # noqa: BLE001
             logger.warning("Failed to persist device header for %s: %s", device_id, e)
-
-        pattern_db = model.to_pattern_db()
-        return await self.import_patterns(device_id, pattern_db)
+        return count
 
     async def merge_device_model(self, device_id: str, model: DeviceModel) -> int:  # noqa: C901, PLR0912, PLR0915
         """Idempotently merge a v2 model delta into an existing device DB.
@@ -527,10 +622,17 @@ class DecipherIngest:
         if model.protocol and model.protocol.protocol:
             merged["vendor"] = model.meta.vendor or current.get("vendor", "unknown")
             merged["device_type"] = model.meta.device_type or current.get("device_type", "unknown")
-            merged["protocols"] = [model.protocol.protocol]
-            merged["connection_mode"] = model.protocol.handler or current.get(
-                "connection_mode", "auto"
-            )
+            # The ingress decision (protocols / connection_mode) is settled at
+            # the first flush and then stays stable. A later delta comes from
+            # an LLM reading device traffic (prompt-injectable): it may fill
+            # the decision in while it is undecided, never overwrite it, and a
+            # value outside the whitelist is ignored instead of blanking it.
+            protocol = normalize_protocol(model.protocol.protocol)
+            if protocol and not any(current.get("protocols") or []):
+                merged["protocols"] = [protocol]
+            mode = normalize_connection_mode(model.protocol.handler)
+            if mode and (current.get("connection_mode") or "auto") == "auto":
+                merged["connection_mode"] = mode
             merged["model"] = model.protocol.identity or current.get("model", "")
             merged["transport"] = model.protocol.transport or current.get("transport", "")
             merged["security"] = model.protocol.security or current.get("security", "")
@@ -576,10 +678,9 @@ class DecipherIngest:
                 None,
             )
             for fm in (resp.field_mappings if resp else []) or (model.interactions or []):
-                request_field = fm.source or fm.mapping or ""
-                if not request_field:
-                    continue
-                mapping_ids.add(f"map_{device_id}_{cmd.kind}_{request_field.replace('.', '_')}")
+                # ``fm.mapping`` holds enum values (a dict), never a field name.
+                if fm.source:
+                    mapping_ids.add(_mapping_id(device_id, cmd.kind, fm.source))
 
         updated = 0
         async with self.db_manager.device_session(device_id) as session:
@@ -674,10 +775,10 @@ class DecipherIngest:
 
                 # interactions: deterministic mapping ids so re-flush converges.
                 for fm in (resp.field_mappings if resp else []) or (model.interactions or []):
-                    request_field = fm.source or fm.mapping or ""
+                    request_field = fm.source
                     if not request_field:
                         continue
-                    mapping_id = f"map_{device_id}_{cmd.kind}_{request_field.replace('.', '_')}"
+                    mapping_id = _mapping_id(device_id, cmd.kind, request_field)
                     mp = existing_mappings.get(mapping_id)
                     if mp is None:
                         mp = FieldMapping(
@@ -687,6 +788,7 @@ class DecipherIngest:
                             response_field=fm.target,
                             response_type="string",
                             transform=fm.transform or "direct",
+                            formula=stored_formula(fm.formula),
                             enum_values=fm.mapping,
                             intent=cmd.kind,
                             confidence=0.5,
@@ -696,6 +798,7 @@ class DecipherIngest:
                     else:
                         mp.response_field = fm.target or mp.response_field
                         mp.transform = fm.transform or "direct"
+                        mp.formula = stored_formula(fm.formula)
                         mp.enum_values = fm.mapping
                 updated += 1
 

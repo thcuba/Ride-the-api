@@ -12,6 +12,7 @@
 
 - [Health Check](#health-check-get-health)
 - [Metrics](#metrics-get-metrics)
+- [Configuration](#configuration-getput-apiconfig)
 - [Devices](#devices)
   - [List Devices](#list-devices-get-apidevices)
   - [Device Detail](#device-detail-get-apidevicesdevice_id)
@@ -202,6 +203,34 @@ served).
 
 ---
 
+## Configuration
+
+### `GET /api/config` · `PUT /api/config`
+
+Reads and writes the whole validated configuration tree (`config.yaml` merged with the
+runtime overrides).
+
+**Secrets are masked on the way out.** `GET` replaces every stored secret (control-plane
+password, LLM API keys, bridge and MQTT passwords, secret-looking adapter settings) with
+`********`, while a `${ENV}` reference is returned as the reference itself — it names where
+the secret lives without revealing it.
+
+**The mask means "keep what is stored".** The dashboard round-trips the tree it read, so on
+`PUT` every field still holding `********` is restored from the current value before the
+config is validated and persisted. A save therefore never overwrites a real secret with the
+mask, and a `${ENV}` reference stays a reference on disk instead of being replaced by the
+resolved value.
+
+`llm_decipher` is stamped back in from the effective runtime settings on every save, so a
+generic config save can neither change nor drop the LLM profiles (see
+[LLM Profiles](#llm-profiles)); the keys are stamped in their configured form.
+
+**Validation errors** return `400 {"error": "Config validation failed", "details": [...]}`,
+where `details` holds `loc`/`msg` pairs only — the submitted values are never echoed back,
+because they may be secrets.
+
+---
+
 ## Devices
 
 ### List Devices: `GET /api/devices`
@@ -383,10 +412,14 @@ Enables or disables automatic switching from learning to production.
 
 **Response `200 OK`** `{"device_id": "...", "auto_switch_enabled": true}`
 
-**Notes**: When enabled, the `AutoSwitchScheduler` automatically switches the
-device to `production` when the match rate reaches 99% with at least
-10 learned patterns and 50 total requests. If the rate drops below 90%, it reverts
-to `learning`.
+**Notes**: When enabled, the `AutoSwitchScheduler` promotes the device to
+`production` when its rolling **match rate** reaches
+`learning.min_match_rate_for_production` (default 80%) with at least
+`learning.min_patterns_for_production` patterns (default 10) and 50 hit/miss samples
+in the rolling window. In production, a rate below 90% reverts the device to
+`learning` — but only while its `auto_switch_enabled` flag is on, so a device
+promoted by hand is never pulled back automatically. A mode change resets the
+device's match counters, so the new mode is judged on its own traffic.
 
 ---
 
@@ -784,6 +817,12 @@ Exports all patterns of a device in the portable `.ride-pattern.json` format.
 > at the root as `commands`/`responses` plus `protocol` (`ProtocolInfo`) and
 > `observation_history`. It is sufficient to clone the device on a second
 > installation without re-learning.
+>
+> In v2 each response is keyed by its **pattern id** (not by intent) and lists its endpoint's id as a
+> trigger ahead of the intent, so two endpoints sharing an intent keep their own response through an
+> export/import round-trip. State variables are taken from the device header, their canonical home. The
+> v1 pattern schema accepts the protocol tokens the system itself emits (`tls`, `tcp`, `ws`, …), so a
+> device identified as `tls` can re-import its own export.
 
 **Response `200 OK`**: JSON document conforming to the `PatternDB` schema containing:
 
@@ -836,6 +875,14 @@ are both accepted (`$schema`-aware validation, see `core/pattern_db/validator.py
 A v2 `DeviceModel` body is routed to `import_device_model` (persists
 `commands`/`responses`/`protocol`/`state_variables`/`virtual_sensors`), so
 importing a full clone does **not** silently drop v2-only fields.
+
+**Import is idempotent.** Patterns, templates and field mappings are upserted by deterministic ids
+(the same id scheme the learning merge uses), so re-importing an updated set — or the device's own
+export — updates in place instead of failing on a `UNIQUE pattern_id` conflict, and each endpoint keeps
+its own protocol. Formula expressions live in `field_mappings.formula` (added by migration 2, applied
+where `create_all` did not add it) and both export formats carry them, so a formula survives a
+database round-trip. A v2 model is validated **before** the device header is written: a rejected model
+leaves nothing behind.
 
 **JSON Body**: `PatternDB` document (same format as export).
 
@@ -1162,6 +1209,11 @@ The **single source of truth** for the system LLM profiles used by the decipher
 (`enabled`, `default_profile`, `profiles`, `task_profiles`). `PUT` validates the
 payload and persists it to the runtime override file, so a change takes effect
 immediately.
+
+`GET` never returns a stored API key in clear: a configured key reads as `********` (send it
+back unchanged and the stored one is kept), a `${ENV}` reference reads as the reference itself,
+and an unset key reads as empty. `POST /api/llm/profiles/test` accepts the mask as well — an
+unchanged field is tested with the key the profile already has.
 
 `task_profiles` binds a **purpose** to a profile: `correlation` (validate a weak match against
 the learned patterns), `flush` (analyse the buffer and learn) and `learning_context` (the flush

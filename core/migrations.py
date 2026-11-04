@@ -66,7 +66,33 @@ async def _m0001_record_baseline(conn) -> None:
     await conn.execute(sa.text("SELECT 1"))
 
 
-MIGRATIONS: Sequence[Migration] = (Migration(1, "baseline", _m0001_record_baseline),)
+def _column_names(table: str):
+    """A ``run_sync`` callable returning ``table``'s column names (empty if absent)."""
+
+    def inspect_columns(sync_conn) -> set[str]:
+        inspector = sa.inspect(sync_conn)
+        if not inspector.has_table(table):
+            return set()
+        return {column["name"] for column in inspector.get_columns(table)}
+
+    return inspect_columns
+
+
+async def _m0002_field_mapping_formula(conn) -> None:
+    """Add ``field_mappings.formula`` (formula expressions were not stored).
+
+    Databases created after the model gained the column already have it from
+    ``create_all``, so the ALTER only runs where the column is missing.
+    """
+    columns = await conn.run_sync(_column_names("field_mappings"))
+    if columns and "formula" not in columns:
+        await conn.execute(sa.text("ALTER TABLE field_mappings ADD COLUMN formula VARCHAR(1024)"))
+
+
+MIGRATIONS: Sequence[Migration] = (
+    Migration(1, "baseline", _m0001_record_baseline),
+    Migration(2, "field_mapping_formula", _m0002_field_mapping_formula),
+)
 
 
 class SchemaMigrator:

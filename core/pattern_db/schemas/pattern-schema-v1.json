@@ -63,7 +63,8 @@
   "$defs": {
     "protocol": {
       "type": "string",
-      "enum": ["http", "https", "mqtt", "coap", "modbus", "websocket", "raw_tcp", "http2", "zigbee", "zwave", "matter"]
+      "enum": ["http", "https", "mqtt", "coap", "modbus", "websocket", "raw_tcp", "http2", "zigbee", "zwave", "matter",
+               "tls", "tcp", "tcpip", "raw", "ws", "mqtt_connect"]
     },
     "authentication": {
       "type": "object",

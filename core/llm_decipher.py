@@ -17,13 +17,14 @@ from typing import Any
 
 import json_repair
 from cachetools import TTLCache
-from openai import AsyncOpenAI
+from openai import APIStatusError, AsyncOpenAI
 from pydantic import BaseModel, Field, SecretStr, ValidationError, field_validator
 
-from core.config import get_config_manager
+from core.config import SECRET_MASK, get_config_manager, is_env_reference
 from core.fallback_policy import FallbackChain, ProviderCircuitBreaker
 from core.llm_settings import load_llm_settings, save_llm_settings
 from core.pattern_utils import safe_float as _safe_float
+from core.redaction import redact_body, redact_headers
 from core.retry import make_retryer
 
 logger = logging.getLogger(__name__)
@@ -53,6 +54,45 @@ def _parse_llm_json(content: str) -> dict | None:
             return json_repair.loads(content)
         except Exception:  # noqa: BLE001 - best-effort repair
             return None
+
+
+def _raw_secret(value: object) -> str:
+    """A configured secret as a plain string (unwrapping ``SecretStr``)."""
+    if isinstance(value, SecretStr):
+        return value.get_secret_value()
+    return value if isinstance(value, str) else ""
+
+
+# HTTP statuses worth retrying: request timeout, conflict, rate limit. Every
+# 5xx is retried too. Other 4xx (bad request, auth, not found, ...) fail the
+# same way on every attempt, so retrying only burns time and provider quota.
+_RETRYABLE_STATUS = frozenset({408, 409, 429})
+_SERVER_ERROR_MIN = 500
+
+
+def _is_retryable_llm_error(exc: BaseException) -> bool:
+    """Whether an LLM call failure is worth another attempt."""
+    if isinstance(exc, APIStatusError):
+        return exc.status_code in _RETRYABLE_STATUS or exc.status_code >= _SERVER_ERROR_MIN
+    # Timeouts, connection errors, empty completions: transient by nature.
+    return True
+
+
+_TRUE_STRINGS = frozenset({"true", "yes"})
+
+
+def _strict_true(value: Any) -> bool:  # noqa: ANN401
+    """Read an LLM-supplied yes/no verdict without trusting Python truthiness.
+
+    ``bool("false")`` is True, so a model that quotes its boolean would have
+    every weak match served locally. Only a real ``True`` or the strings
+    ``"true"``/``"yes"`` (any case) count as yes; everything else is no.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in _TRUE_STRINGS
+    return False
 
 
 class LLMProfile(BaseModel):
@@ -172,9 +212,17 @@ class LLMDecipherService:
         self._task_profiles: dict[str, str] = {}
         self._default_profile = "default"
         self._enabled = True
-        self._clients: dict[str, AsyncOpenAI] = {}
-        # Connection fingerprint per profile; a change invalidates its client.
+        # Clients keyed by (profile name, connection fingerprint): an effective
+        # profile that reuses a name with different connection parameters (a
+        # per-device base_url/model override) gets its own client instead of
+        # being served -- or overwriting -- the shared one.
+        self._clients: dict[tuple, AsyncOpenAI] = {}
+        # Connection fingerprint per configured profile; a change invalidates its client.
         self._client_fingerprints: dict[str, tuple] = {}
+        # Each profile's api_key exactly as configured -- a ``${ENV}`` reference
+        # stays a reference here, while LLMProfile holds the resolved value. This
+        # is what gets persisted, so an env-sourced key is never written to disk.
+        self._raw_api_keys: dict[str, str] = {}
         self._cache_ttl = _CACHE_TTL  # 1 hour
         self._cache: TTLCache = TTLCache(maxsize=_CACHE_MAX_SIZE, ttl=self._cache_ttl)
         # Circuit breaker between provider profiles: a repeatedly failing
@@ -209,11 +257,13 @@ class LLMDecipherService:
         # Load profiles (fully replace so removed profiles drop out on reload).
         profiles_config = getattr(self._config, "profiles", {})
         new_profiles: dict[str, LLMProfile] = {}
+        new_raw_keys: dict[str, str] = {}
         for name, profile_config in profiles_config.items():
+            new_raw_keys[name] = _raw_secret(getattr(profile_config, "api_key", ""))
             profile = LLMProfile(
                 name=name,
                 base_url=getattr(profile_config, "base_url", "https://api.openai.com/v1"),
-                api_key=getattr(profile_config, "api_key", ""),
+                api_key=new_raw_keys[name],
                 model_id=getattr(profile_config, "model_id", "gpt-4o-mini"),
                 prompt_template=getattr(profile_config, "prompt_template", ""),
                 enabled=getattr(profile_config, "enabled", True),
@@ -245,13 +295,15 @@ class LLMDecipherService:
                 runtime_profiles = overrides.get("profiles")
                 if isinstance(runtime_profiles, dict):
                     new_profiles = {}
+                    new_raw_keys = {}
                     for name, pcfg in runtime_profiles.items():
                         if not isinstance(pcfg, dict):
                             continue
+                        new_raw_keys[name] = _raw_secret(pcfg.get("api_key", ""))
                         new_profiles[name] = LLMProfile(
                             name=name,
                             base_url=pcfg.get("base_url", "https://api.openai.com/v1"),
-                            api_key=pcfg.get("api_key", ""),
+                            api_key=new_raw_keys[name],
                             model_id=pcfg.get("model_id", "gpt-4o-mini"),
                             prompt_template=pcfg.get("prompt_template", ""),
                             enabled=pcfg.get("enabled", True),
@@ -260,20 +312,27 @@ class LLMDecipherService:
                             max_tokens=int(pcfg.get("max_tokens", 2048)),
                         )
 
-        # Drop cached clients whose connection parameters changed so the next
-        # call recreates them (real hot reload of endpoint/credentials).
-        for name, profile in new_profiles.items():
-            fingerprint = self._client_fingerprint(profile)
-            if name in self._clients and self._client_fingerprints.get(name) != fingerprint:
-                logger.info("LLM profile %r connection changed, recreating client", name)
-                self._clients.pop(name)
-        self._client_fingerprints = {
-            name: self._client_fingerprint(p) for name, p in new_profiles.items()
-        }
+        # Drop cached clients whose connection parameters no longer match the
+        # configured profile (or whose profile is gone) so the next call
+        # recreates them -- real hot reload of endpoint/credentials. Override
+        # clients are dropped too and rebuilt on demand.
+        new_fingerprints = {name: self._client_fingerprint(p) for name, p in new_profiles.items()}
+        self._prune_stale_clients(new_fingerprints)
+        self._client_fingerprints = new_fingerprints
 
         self._profiles = new_profiles
+        self._raw_api_keys = new_raw_keys
 
         logger.info(f"Loaded {len(self._profiles)} LLM profiles: {list(self._profiles.keys())}")
+
+    def _prune_stale_clients(self, fingerprints: dict[str, tuple]) -> None:
+        """Drop cached clients that no longer match a configured profile."""
+        for key in list(self._clients):
+            name, fingerprint = key
+            if fingerprints.get(name) != fingerprint:
+                if name in fingerprints:
+                    logger.info("LLM profile %r connection changed, recreating client", name)
+                self._clients.pop(key)
 
     def _client_fingerprint(self, profile: LLMProfile) -> tuple:
         """Connection-relevant params; changing these needs a fresh client."""
@@ -303,16 +362,24 @@ class LLMDecipherService:
             api_key=api_key,
             base_url=profile.base_url.rstrip("/"),
             timeout=profile.timeout,
-            max_retries=profile.max_retries,
+            # Retries are owned by call_llm's retryer. Letting the SDK retry as
+            # well multiplied them: (max_retries + 1)^2 POSTs per call, and a
+            # hung provider cost the timeout that many times.
+            max_retries=0,
         )
 
     def _get_client(self, profile: LLMProfile) -> AsyncOpenAI:
-        """Get or create an OpenAI-compatible async client for a profile."""
-        cached = self._clients.get(profile.name)
+        """Get or create an OpenAI-compatible async client for a profile.
+
+        Cached per (name, connection fingerprint), so a client is only ever
+        reused for the exact endpoint/credentials it was built with.
+        """
+        key = (profile.name, self._client_fingerprint(profile))
+        cached = self._clients.get(key)
         if cached:
             return cached
         client = self._build_client(profile)
-        self._clients[profile.name] = client
+        self._clients[key] = client
         return client
 
     def get_profile(self, name: str | None = None) -> LLMProfile | None:
@@ -361,8 +428,8 @@ class LLMDecipherService:
         if not isinstance(data, dict):
             return {"applicable": False, "reason": "unexpected output"}
         return {
-            "applicable": bool(data.get("applicable", False)),
-            "confidence": float(data.get("confidence") or 0.0),
+            "applicable": _strict_true(data.get("applicable", False)),
+            "confidence": _safe_float(data.get("confidence"), 0.0),
             "reason": str(data.get("reason") or ""),
         }
 
@@ -378,15 +445,19 @@ class LLMDecipherService:
         learned = {
             "intent": _get(pattern, "intent"),
             "method": _get(pattern, "method"),
-            "path": _get(pattern, "path"),
+            # DB-backed patterns store the path as ``path_pattern``.
+            "path": _get(pattern, "path") or _get(pattern, "path_pattern"),
             "protocol": _get(pattern, "protocol"),
             "response_template": _get(pattern, "response_template"),
         }
+        # The live request can carry credentials (Authorization, cookies,
+        # passwords in the body). Redact before anything leaves for the LLM,
+        # exactly as the capture path does.
         incoming = {
             "method": request.get("method"),
             "path": request.get("path"),
-            "headers": request.get("headers"),
-            "body": request.get("body"),
+            "headers": redact_headers(request.get("headers")),
+            "body": redact_body(request.get("body")),
         }
         return (
             "You validate a weak pattern match in a cloud-replacement proxy.\n"
@@ -410,18 +481,23 @@ class LLMDecipherService:
         """Whether LLM deciphering is globally enabled."""
         return self._enabled
 
-    def get_settings(self) -> dict:
+    def get_settings(self, *, include_secrets: bool = False) -> dict:
         """Return the effective LLM settings (enabled, default profile, profiles).
 
         This is the dashboard-facing view: the runtime overrides merged with the
-        ``config.yaml`` defaults. API keys are returned as-is so the operator can
-        see and edit them; the value is masked only at the point of display.
+        ``config.yaml`` defaults. API keys never leave in clear by default: a
+        stored key reads as ``SECRET_MASK`` (send it back unchanged to keep it)
+        and a ``${ENV}`` reference reads as the reference itself.
+        ``include_secrets=True`` is for in-process callers that need the real,
+        resolved keys.
         """
         profiles = {}
         for name, p in self._profiles.items():
             profiles[name] = {
                 "base_url": p.base_url,
-                "api_key": p.api_key.get_secret_value(),
+                "api_key": (
+                    p.api_key.get_secret_value() if include_secrets else self._public_api_key(name)
+                ),
                 "model_id": p.model_id,
                 "prompt_template": p.prompt_template,
                 "enabled": p.enabled,
@@ -461,9 +537,14 @@ class LLMDecipherService:
         for name, pcfg in profiles.items():
             if not isinstance(pcfg, dict):
                 raise ValueError(f"profile '{name}' must be an object")  # noqa: TRY004
+            api_key = str(pcfg.get("api_key", ""))
+            if api_key == SECRET_MASK:
+                # The masked value came back unchanged: keep the key as
+                # configured (a ${ENV} reference stays a reference).
+                api_key = self._raw_api_keys.get(name, "")
             validated[name] = {
                 "base_url": str(pcfg.get("base_url", "https://api.openai.com/v1")),
-                "api_key": str(pcfg.get("api_key", "")),
+                "api_key": api_key,
                 "model_id": str(pcfg.get("model_id", "gpt-4o-mini")),
                 "prompt_template": str(pcfg.get("prompt_template", "")),
                 "enabled": bool(pcfg.get("enabled", True)),
@@ -488,6 +569,40 @@ class LLMDecipherService:
         # Reload in-memory state so the change is live immediately.
         self._load_config()
         return self.get_settings()
+
+    def _public_api_key(self, name: str) -> str:
+        """A profile's API key as the dashboard may see it.
+
+        A ``${ENV}`` reference is shown as-is (it names the secret's location
+        without revealing it), any stored key as ``SECRET_MASK``, none as "".
+        """
+        raw = self._raw_api_keys.get(name)
+        if raw is None:
+            profile = self._profiles.get(name)
+            raw = profile.api_key.get_secret_value() if profile else ""
+        if is_env_reference(raw):
+            return raw
+        return SECRET_MASK if raw else ""
+
+    def get_settings_for_persistence(self) -> dict:
+        """Settings in the form they may be written to disk.
+
+        Every API key is in its configured form: a ``${ENV}`` reference stays a
+        reference and is never replaced by the resolved environment value.
+        """
+        settings = self.get_settings(include_secrets=True)
+        for name, pcfg in settings["profiles"].items():
+            pcfg["api_key"] = self._raw_api_keys.get(name, pcfg["api_key"])
+        return settings
+
+    def stored_api_key(self, name: str) -> str:
+        """The resolved key of profile ``name`` ("" when unknown).
+
+        Lets a form that submitted ``SECRET_MASK`` (e.g. the connection test)
+        use the stored key without the client ever having seen it.
+        """
+        profile = self._profiles.get(name)
+        return profile.api_key.get_secret_value() if profile else ""
 
     @staticmethod
     def _validate_task_profiles(raw_tasks: Any, validated: dict[str, dict]) -> dict[str, str]:  # noqa: ANN401
@@ -832,7 +947,9 @@ Response:
         if profile.max_tokens > 0:
             kwargs["max_tokens"] = profile.max_tokens
 
-        retryer = make_retryer(max_attempts=profile.max_retries + 1)
+        retryer = make_retryer(
+            max_attempts=profile.max_retries + 1, retry_if=_is_retryable_llm_error
+        )
         error: str | None = None
         try:
             async for attempt in retryer:

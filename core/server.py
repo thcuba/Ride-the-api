@@ -25,6 +25,7 @@ from fastapi import FastAPI, File, Form, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy import delete, func, select
 
 from adapters import get_registered_registry
@@ -45,7 +46,14 @@ from core.buffer import (
     switch_backend,
 )
 from core.cert_manager import CertManager, get_cert_manager
-from core.config import Config, ConnectionType, get_config_manager
+from core.config import (
+    SECRET_MASK,
+    Config,
+    ConnectionType,
+    get_config_manager,
+    mask_secrets,
+    restore_masked_secrets,
+)
 from core.connection_watchdog import ConnectionWatchdog
 from core.database import (
     DatabaseManager,
@@ -59,7 +67,7 @@ from core.database import (
 from core.dns_discovery import DNSDiscoveryRecorder, get_dns_recorder, set_dns_recorder
 from core.dns_server import get_dns_interceptor
 from core.llm_decipher import LLMDecipherService, get_llm_decipher
-from core.logging_config import setup_logging
+from core.logging_config import get_log_level, setup_logging
 from core.modification import get_modification_engine
 from core.observability import (
     MetricsServer,
@@ -1103,6 +1111,12 @@ async def lifespan(_app: FastAPI):  # noqa: C901, PLR0912, PLR0915
     # Prune stale correlation rows so the training store never grows unbounded.
     # Runs regardless of TLS interception so pruning cannot be skipped.
     if orchestrator:
+        # A background flush can sit in an LLM call for minutes: stop it before
+        # the LLM client and the database it writes to are closed below.
+        try:
+            await orchestrator.cancel_background_flushes()
+        except Exception as e:
+            logger.error("Error cancelling background flushes: %s", e)  # noqa: TRY400
         try:
             await orchestrator.prune_stores()
         except Exception as e:
@@ -2520,6 +2534,21 @@ async def get_pattern_detail(device_id: str, pattern_id: str):
 # ── Pattern CRUD: Update, Patch, Delete ───────────────────────────────────────
 
 
+async def _resync_device_patterns(device_id: str) -> None:
+    """Make the engine serve the device's patterns as now stored.
+
+    The engine serves its in-memory set exclusively when it has one, so an
+    API change to the device DB alone left deleted or edited patterns being
+    served as before. Best-effort: the DB change already succeeded.
+    """
+    if orchestrator is None:
+        return
+    try:
+        await orchestrator.sync_engine(device_id)
+    except Exception:
+        logger.exception("Could not refresh the served patterns for %s", device_id)
+
+
 @app.put("/api/devices/{device_id}/patterns/{pattern_id}")
 async def put_pattern(device_id: str, pattern_id: str, request: Request):
     """Full update of a request pattern, its response template, and field mappings."""
@@ -2604,6 +2633,7 @@ async def put_pattern(device_id: str, pattern_id: str, request: Request):
                         response_field=m.get("response_field", ""),
                         response_type=m.get("response_type", ""),
                         transform=m.get("transform"),
+                        formula=decipher_ingest.stored_formula(m.get("formula")),
                         enum_values=m.get("enum_values"),
                         intent=pattern.intent,
                         confidence=m.get("confidence", 0.5),
@@ -2611,7 +2641,8 @@ async def put_pattern(device_id: str, pattern_id: str, request: Request):
                     session.add(fm)
 
             await session.commit()
-            return {"status": "ok", "pattern_id": pattern_id}
+        await _resync_device_patterns(device_id)
+        return {"status": "ok", "pattern_id": pattern_id}  # noqa: TRY300
     except Exception as e:
         return _client_error(e, "Invalid pattern update payload")
 
@@ -2691,6 +2722,7 @@ async def patch_pattern(device_id: str, pattern_id: str, request: Request):  # n
                         response_field=m.get("response_field", ""),
                         response_type=m.get("response_type", ""),
                         transform=m.get("transform"),
+                        formula=decipher_ingest.stored_formula(m.get("formula")),
                         enum_values=m.get("enum_values"),
                         intent=pattern.intent,
                         confidence=m.get("confidence", 0.5),
@@ -2698,7 +2730,8 @@ async def patch_pattern(device_id: str, pattern_id: str, request: Request):  # n
                     session.add(fm)
 
             await session.commit()
-            return {"status": "ok", "pattern_id": pattern_id}
+        await _resync_device_patterns(device_id)
+        return {"status": "ok", "pattern_id": pattern_id}  # noqa: TRY300
     except Exception as e:
         return _client_error(e, "Invalid pattern update payload")
 
@@ -2726,10 +2759,22 @@ async def delete_pattern(device_id: str, pattern_id: str):
             await session.execute(
                 delete(RequestPattern).where(RequestPattern.pattern_id == pattern_id)
             )
-            # Delete field mappings for this intent
-            await session.execute(delete(FieldMapping).where(FieldMapping.intent == pattern.intent))
+            # Field mappings are stored per intent: drop them only when no other
+            # pattern still uses that intent (they used to go for all of them).
+            intent_still_used = (
+                await session.execute(
+                    select(RequestPattern.id)
+                    .where(RequestPattern.intent == pattern.intent)
+                    .limit(1)
+                )
+            ).first()
+            if intent_still_used is None:
+                await session.execute(
+                    delete(FieldMapping).where(FieldMapping.intent == pattern.intent)
+                )
             await session.commit()
-            return {"status": "deleted", "pattern_id": pattern_id}
+        await _resync_device_patterns(device_id)
+        return {"status": "deleted", "pattern_id": pattern_id}  # noqa: TRY300
     except Exception as e:
         return _client_error(e, "Could not delete the pattern")
 
@@ -2806,6 +2851,10 @@ async def test_llm_profile(request: Request):
             content={"error": "Both 'base_url' and 'model_id' are required for the test"},
         )
     api_key = str(body.get("api_key", ""))
+    if api_key == SECRET_MASK:
+        # The form shows stored keys masked; testing an unchanged field means
+        # "use the key this profile already has".
+        api_key = llm_decipher_service.stored_api_key(str(body.get("name") or ""))
     timeout = int(body.get("timeout", 30) or 30)
     max_retries = int(body.get("max_retries", 2) or 2)
     result = await llm_decipher_service.test_connection(
@@ -3038,8 +3087,12 @@ async def set_buffer_backend_setting(request: Request):
 
 @app.get("/api/config")
 async def get_config():
-    """Return the full current configuration (validated YAML model_dump)."""
-    return {"config": config_manager.config.model_dump(mode="json")}
+    """Return the full current configuration (validated YAML model_dump).
+
+    Secrets (control-plane password, API keys, bridge passwords) are masked;
+    sending the mask back unchanged on PUT keeps the stored value.
+    """
+    return {"config": mask_secrets(config_manager.config.model_dump(mode="json"))}
 
 
 @app.put("/api/config")
@@ -3054,26 +3107,49 @@ async def put_config(request: Request):
             status_code=400,
             content={"error": "Invalid JSON body: expected an object with a 'config' key"},
         )
-    payload = body["config"]
+    # A dashboard save round-trips the masked GET payload: wherever a secret
+    # still reads as the mask, keep the stored value instead of writing the mask.
+    payload = restore_masked_secrets(body["config"], config_manager.config.model_dump(mode="json"))
     # LLM profiles are owned by the LLM settings API (``/api/llm/settings``),
     # which validates them and persists to the runtime override file. A config
     # save always sends the whole tree, so stamp the *effective* (runtime) LLM
     # section back in — present or not: a generic save can neither change nor
     # drop the profiles, and ``config.yaml`` stays aligned with the runtime.
-    # The Configuration page edits them through the LLM settings API instead.
+    # The keys are stamped in their configured form: a ${ENV} reference stays a
+    # reference instead of being replaced by the resolved secret on disk.
     if isinstance(payload, dict) and llm_decipher_service:
-        payload = {**payload, "llm_decipher": llm_decipher_service.get_settings()}
+        payload = {**payload, "llm_decipher": llm_decipher_service.get_settings_for_persistence()}
     try:
         ok = config_manager.update_config(payload)
-    except ValidationError as ve:
-        return JSONResponse(status_code=400, content={"error": f"Config validation failed: {ve}"})
+    except (ValidationError, PydanticValidationError) as ve:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Config validation failed", "details": _validation_details(ve)},
+        )
     except Exception:  # noqa: BLE001 - persist failure should not 500 silently
         logger.exception("Failed to update config")
         return JSONResponse(status_code=500, content={"error": "Failed to update config"})
     if not ok:
         return JSONResponse(status_code=500, content={"error": "Failed to persist config"})
     logger.info("Configuration updated via /api/config API")
-    return {"config": config_manager.config.model_dump(mode="json"), "status": "saved"}
+    return {
+        "config": mask_secrets(config_manager.config.model_dump(mode="json")),
+        "status": "saved",
+    }
+
+
+def _validation_details(error: Exception) -> list:
+    """Field locations and messages of a validation error, without input values.
+
+    Pydantic's string form echoes submitted values (which may be secrets), so
+    only ``loc``/``msg`` pairs are returned to the client.
+    """
+    if isinstance(error, PydanticValidationError):
+        return [
+            {"loc": [str(part) for part in err.get("loc", ())], "msg": err.get("msg", "")}
+            for err in error.errors()
+        ]
+    return [{"loc": [], "msg": str(error)}]
 
 
 _MIN_PASSWORD_LENGTH = 8
@@ -3288,6 +3364,7 @@ async def import_patterns(device_id: str, request: Request):
         else:
             pattern_db = PatternDB.model_validate(body)
             count = await ingester.import_patterns(device_id, pattern_db)
+        await _resync_device_patterns(device_id)
         return {"imported": count, "device_id": device_id, "warnings": result.warnings}  # noqa: TRY300
     except ValidationError as e:
         return JSONResponse(
@@ -3843,11 +3920,19 @@ def _extract_device_id(headers: dict, path: str) -> str:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+_UVICORN_LOG_LEVELS = frozenset({"critical", "error", "warning", "info", "debug", "trace"})
+
+
 def main():
     """Run the server."""
     config = config_manager.config
     lg = config.observability.logging
     setup_logging(level=lg.level, fmt=lg.format, output=lg.output)
+    # uvicorn needs one of its own level names; use the level setup_logging
+    # actually applied (case-normalised, INFO for an unknown value).
+    uvicorn_level = get_log_level().lower()
+    if uvicorn_level not in _UVICORN_LOG_LEVELS:
+        uvicorn_level = "info"
     # Pass the app object (not the "core.server:app" string): the string
     # import path breaks in PyInstaller bundles where the module is packed and
     # no longer importable by name. Works in both venv and frozen builds.
@@ -3855,7 +3940,7 @@ def main():
         app,
         host=config.proxy.host,
         port=config.proxy.port,
-        log_level=lg.level.lower(),
+        log_level=uvicorn_level,
         reload=False,
     )
 
