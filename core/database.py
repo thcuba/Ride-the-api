@@ -701,6 +701,68 @@ class DatabaseManager:
                 self._ip_lookup_cache = index
         return self._ip_lookup_cache.get(ip_address)
 
+    #: Drivers a device database may use through the API (the engine is async).
+    DEVICE_DB_SCHEMES = frozenset({"sqlite+aiosqlite", "postgresql+asyncpg"})
+    _SQLITE_PREFIX = "sqlite+aiosqlite:///"
+
+    def _inside_device_dir(self, path: Path) -> bool:
+        return path.resolve().is_relative_to(self.device_db_dir.resolve())
+
+    def checked_device_db_url(self, database_url: str) -> str:
+        """``database_url`` when the API may assign it to a device, else ``ValueError``.
+
+        A device database is a SQLite file inside ``device_db_dir`` or a server
+        database behind an async driver. The URL used to be stored as given, so
+        an API call could point a device -- and the schema creation and file
+        rename that follow -- at any file on the machine.
+        """
+        scheme, sep, _rest = database_url.partition("://")
+        if not sep or scheme.lower() not in self.DEVICE_DB_SCHEMES:
+            allowed = ", ".join(sorted(self.DEVICE_DB_SCHEMES))
+            raise ValueError(f"database_url must use one of: {allowed}")
+        if scheme.lower() == "sqlite+aiosqlite":
+            raw_path = database_url[len(self._SQLITE_PREFIX) :].split("?", 1)[0]
+            if (
+                not raw_path
+                or raw_path == ":memory:"
+                or not self._inside_device_dir(Path(raw_path))
+            ):
+                raise ValueError(
+                    "a SQLite device database must be a file inside the device database directory"
+                )
+        return database_url
+
+    async def bind_ip(self, device_id: str, ip_address: str) -> list[str] | None:
+        """Give ``ip_address`` to ``device_id``, taking it from any other device.
+
+        An address identifies one device. Binding used to leave it on its
+        previous holder too, and the reverse lookup kept answering with the
+        first holder (usually the auto-registered ``ip-*`` device), so the bind
+        had no effect. Returns the device's addresses, or ``None`` if the
+        device does not exist.
+        """
+        changed: list[str] = []
+        async with self.core_session() as session:
+            devices = (await session.execute(select(DeviceRegistry))).scalars().all()
+            target = next((d for d in devices if d.device_id == device_id), None)
+            if target is None:
+                return None
+            for device in devices:
+                ips = list(device.ip_addresses or [])
+                if device is target and ip_address not in ips:
+                    device.ip_addresses = [*ips, ip_address]
+                    changed.append(device.device_id)
+                elif device is not target and ip_address in ips:
+                    device.ip_addresses = [ip for ip in ips if ip != ip_address]
+                    changed.append(device.device_id)
+            await session.commit()
+            addresses = list(target.ip_addresses or [])
+        if changed:
+            self.invalidate_ip_lookup_cache()
+            for changed_id in changed:
+                self.invalidate_device_cache(changed_id)
+        return addresses
+
     async def assign_device_database(
         self,
         device_id: str,
@@ -749,6 +811,25 @@ class DatabaseManager:
         if not db_url.startswith(prefix):
             return None
         return Path(db_url[len(prefix) :])
+
+    def _move_db_file(self, old_path: Path, new_path: Path) -> None:
+        """Move a device DB file with its SQLite sidecars -- only one this manager owns.
+
+        A URL assigned before it was validated may name any file on the
+        machine; renaming must not move that.
+        """
+        if not old_path.exists():
+            return
+        if not self._inside_device_dir(old_path):
+            raise ValueError("the database file is outside the device database directory")
+        new_path.parent.mkdir(parents=True, exist_ok=True)
+        old_path.rename(new_path)
+        # SQLite write-ahead log and shared-memory sidecars travel with the
+        # database; leaving them behind loses recent writes.
+        for suffix in ("-wal", "-shm"):
+            sidecar = Path(f"{old_path}{suffix}")
+            if sidecar.exists():
+                sidecar.rename(Path(f"{new_path}{suffix}"))
 
     async def rename_device_database(
         self,
@@ -814,15 +895,8 @@ class DatabaseManager:
                 await engine.dispose()
             self._device_sessions.pop(device_id, None)
 
-            if move_file and old_path.exists():
-                new_path.parent.mkdir(parents=True, exist_ok=True)
-                old_path.rename(new_path)
-                # SQLite write-ahead log and shared-memory sidecars travel with
-                # the database; leaving them behind loses recent writes.
-                for suffix in ("-wal", "-shm"):
-                    sidecar = Path(f"{old_path}{suffix}")
-                    if sidecar.exists():
-                        sidecar.rename(Path(f"{new_path}{suffix}"))
+            if move_file:
+                self._move_db_file(old_path, new_path)
 
             new_url = f"sqlite+aiosqlite:///{new_path}"
             device.database_url = new_url

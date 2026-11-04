@@ -2176,6 +2176,25 @@ async def configure_device_llm(device_id: str, request: Request):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+def _requested_database_url(body: dict) -> tuple[str | None, str | None]:
+    """The device database URL a request asks for, or why it cannot have it."""
+    database_url = body.get("database_url")
+    database_name = body.get("database_name")
+    if database_url:
+        try:
+            return db_manager.checked_device_db_url(str(database_url)), None
+        except ValueError as e:
+            return None, str(e)
+    if database_name:
+        # Only a name: create a new SQLite database for it.
+        try:
+            safe_name = sanitize_filename_component(str(database_name))
+        except ValueError as e:
+            return None, f"Invalid database_name: {e}"
+        return f"sqlite+aiosqlite:///{db_manager.device_db_dir / f'{safe_name}.db'}", None
+    return None, "Provide 'database_url' or 'database_name'"
+
+
 @app.post("/api/devices/{device_id}/database")
 async def assign_device_database(device_id: str, request: Request):
     """Assign a database (URL or name) to a device. Creates a new DB if only name given."""
@@ -2186,26 +2205,10 @@ async def assign_device_database(device_id: str, request: Request):
         return JSONResponse(
             status_code=400, content={"error": "Invalid JSON body: expected an object"}
         )
-    database_url = body.get("database_url")
+    database_url, error = _requested_database_url(body)
+    if error:
+        return JSONResponse(status_code=400, content={"error": error})
     database_name = body.get("database_name")
-
-    # If only a name is given, create a new SQLite database for it
-    if not database_url and database_name:
-        try:
-            safe_name = sanitize_filename_component(database_name)
-        except ValueError as e:
-            return JSONResponse(
-                status_code=400,
-                content={"error": f"Invalid database_name: {e}"},
-            )
-        db_path = db_manager.device_db_dir / f"{safe_name}.db"
-        database_url = f"sqlite+aiosqlite:///{db_path}"
-    elif not database_url and not database_name:
-        return JSONResponse(
-            status_code=400,
-            content={"error": "Provide 'database_url' or 'database_name'"},
-        )
-
     success = await db_manager.assign_device_database(
         device_id,
         database_url=database_url,
@@ -2390,21 +2393,11 @@ async def register_device_ip(device_id: str, request: Request):  # noqa: PLR0911
                 "the proxy never intercepts its own traffic"
             },
         )
-    async with db_manager.core_session() as session:
-        result = await session.execute(
-            select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
-        )
-        device = result.scalar_one_or_none()
-        if not device:
-            return JSONResponse(status_code=404, content={"error": "Device not found"})
-        current_ips = list(device.ip_addresses or [])
-        if ip_address not in current_ips:
-            current_ips.append(ip_address)
-            device.ip_addresses = current_ips
-            await session.commit()
-            # Reflect the new IP in the reverse lookup immediately.
-            db_manager.invalidate_ip_lookup_cache()
-        return {"device_id": device_id, "ip_addresses": current_ips}
+    # The address moves to this device (it is taken from any previous holder).
+    current_ips = await db_manager.bind_ip(device_id, ip_address)
+    if current_ips is None:
+        return JSONResponse(status_code=404, content={"error": "Device not found"})
+    return {"device_id": device_id, "ip_addresses": current_ips}
 
 
 @app.get("/api/devices/{device_id}/patterns")
