@@ -260,7 +260,7 @@ class TestModificationApply:
         )
         msg = make_msg(body=body)
         result = rule.apply(msg)
-        assert result.body["secret"] is None
+        assert result.body == {"temp": 25}  # removed, not set to null
 
     def test_block_action(self):
         rule = ModificationRule(name="block-all", action=ModificationAction.BLOCK)

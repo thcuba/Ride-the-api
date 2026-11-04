@@ -34,6 +34,7 @@ from core.database import (
     RequestPattern,
     ResponseTemplate,
 )
+from core.http_framing import servable_status, without_framing_headers
 from core.pattern_db.schemas import DeviceModel, PatternDB, response_for_endpoint
 from core.pattern_db.state_manager import DeviceStateStore
 from core.pattern_utils import dot_to_dpath as _dot_to_dpath
@@ -837,8 +838,10 @@ class PatternEngine:
         # copy shared them with the cached template, so one request's values
         # leaked into every later response built from it.
         body = copy.deepcopy(template.body_template)
-        status_code = template.status_code
-        headers = copy.deepcopy(template.headers_template)
+        # The learned headers come from the vendor's whole header dict: drop
+        # the ones that only described that transfer (Content-Length, ...).
+        status_code = servable_status(template.status_code)
+        headers = without_framing_headers(template.headers_template)
 
         for fm in _get_normalized_field_mappings(template):
             try:

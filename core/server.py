@@ -66,9 +66,10 @@ from core.database import (
 )
 from core.dns_discovery import DNSDiscoveryRecorder, get_dns_recorder, set_dns_recorder
 from core.dns_server import get_dns_interceptor
+from core.http_framing import servable_status, without_framing_headers
 from core.llm_decipher import LLMDecipherService, get_llm_decipher
 from core.logging_config import get_log_level, setup_logging
-from core.modification import get_modification_engine
+from core.modification import BLOCKED_STATUS, get_modification_engine
 from core.observability import (
     MetricsServer,
     build_tracer,
@@ -3523,6 +3524,22 @@ except Exception as e:
 # upstream connection, not the message (the response object sets its own).
 _RESPONSE_HOP_BY_HOP = ("content-length", "transfer-encoding", "connection")
 
+# Statuses that must not carry a body.
+_BODYLESS_STATUSES = frozenset({204, 304})
+
+
+def _local_http_response(response: dict) -> Response:
+    """Serve a locally built ``{status_code, headers, body}`` response.
+
+    Learned template headers used to be passed through as-is: the vendor's
+    stale Content-Length won over the re-rendered body.
+    """
+    status = servable_status(response.get("status_code"))
+    headers = without_framing_headers(response.get("headers"))
+    if status in _BODYLESS_STATUSES:
+        return Response(status_code=status, headers=headers)
+    return JSONResponse(status_code=status, content=response.get("body", {}), headers=headers)
+
 
 def _client_error(exc: BaseException, message: str, status_code: int = 400) -> JSONResponse:
     """Return a control-plane error response that never leaks internals.
@@ -3561,6 +3578,22 @@ def _upstream_response(cloud_response, decoded: dict | None = None) -> Response:
     )
 
 
+def _raw_target(request: Request) -> str | None:
+    """``/{path}?{query}`` exactly as the client sent it, minus the vendor prefix.
+
+    The route's ``path`` is decoded ("%3F" becomes "?", "%20" a space) and
+    ``request.query_params`` folds repeated keys, so neither can rebuild what
+    the device asked for.
+    """
+    raw_path = request.scope.get("raw_path")
+    if not raw_path:
+        return None
+    parts = raw_path.decode("latin-1").split("/", 2)
+    target = "/" + (parts[2] if len(parts) > 2 else "")  # noqa: PLR2004 - "", vendor, rest
+    query = request.scope.get("query_string") or b""
+    return f"{target}?{query.decode('latin-1')}" if query else target
+
+
 async def _forward_bypassed_request(  # noqa: PLR0913
     adapter, request: Request, path: str, body, client_ip: str, *, raw_body: bytes | None = None
 ) -> Response:
@@ -3591,6 +3624,7 @@ async def _forward_bypassed_request(  # noqa: PLR0913
             body=body,
             body_bytes=raw_body,
             client_ip=client_ip,
+            raw_target=_raw_target(request),
         )
     )
     if cloud_response and cloud_response.success:
@@ -3613,7 +3647,7 @@ async def _forward_bypassed_request(  # noqa: PLR0913
     methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
     include_in_schema=False,
 )
-async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noqa: C901, PLR0911, PLR0915
+async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noqa: C901, PLR0911, PLR0912, PLR0915
     """Main proxy endpoint for device API requests.
 
     Routes:
@@ -3665,11 +3699,13 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
             path=f"/{path}",
         )
         decision = traffic_selector.evaluate(request_info)
-        if decision.value == "passthrough" and is_local:
-            # The device addressed *this* gateway, so a passthrough decision
+        if decision.value == "passthrough":
+            # The client addressed *this* gateway, so a passthrough decision
             # must actually forward the request upstream. Replying 200 with a
             # note instead fabricated a success the device never received.
-            logger.info(f"Passthrough for local traffic from {client_ip} to {vendor}: forwarding")
+            # (Honoured for every client: an intercepted request is forwarded
+            # the same way, only after the pipeline has seen it.)
+            logger.info(f"Passthrough for traffic from {client_ip} to {vendor}: forwarding")
             return await _forward_bypassed_request(
                 adapter, request, path, body, client_ip, raw_body=raw_body
             )
@@ -3695,6 +3731,7 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
         query_params=dict(request.query_params),
         body=body,
         body_bytes=raw_body,
+        raw_target=_raw_target(request),
     )
 
     # Bound before the try so the error path can drop a capture registered by
@@ -3717,6 +3754,20 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
         # mutating the intercepted request in place so the pipeline sees the
         # transformed request while the local-match is served.
         get_modification_engine().process_request(intercepted)
+        if intercepted.path != f"/{path}":
+            # The adapter or a REDIRECT rule chose another path: forward that.
+            intercepted.raw_target = None
+        if getattr(intercepted, "blocked", False):
+            # A block rule: the request goes neither upstream nor to the
+            # pipeline (BLOCK used to be recorded and then ignored).
+            logger.info("Request from %s blocked: %s", device_id, intercepted.block_reason)
+            return JSONResponse(
+                status_code=BLOCKED_STATUS,
+                content={"error": "blocked", "reason": intercepted.block_reason},
+            )
+        await _modification_delay(
+            (getattr(intercepted, "metadata", None) or {}).get("artificial_delay_ms")
+        )
 
         # Pass to pipeline for processing
         with get_tracer().start_as_current_span("proxy.handle_request") as span:
@@ -3745,11 +3796,8 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
             # response modification rules.
             metrics_registry.local_hits_total.inc()
             out_response = _apply_response_modifications(intercepted, result["response"])
-            return JSONResponse(
-                status_code=out_response.get("status_code", 200),
-                content=out_response.get("body", {}),
-                headers=out_response.get("headers", {}),
-            )
+            await _modification_delay(out_response.pop("delay_ms", None))
+            return _local_http_response(out_response)
         if result["action"] == "forward":
             # Prometheus: count cloud forwards (requests not served locally).
             metrics_registry.cloud_misses_total.inc()
@@ -3844,6 +3892,20 @@ async def _discard_pending_capture(
         await orchestrator.discard_request(device_id, key, count_as_error=count_as_error)
     except Exception:  # noqa: BLE001 - cleanup must not mask the real reply
         logger.warning("Could not discard pending capture %s", key, exc_info=True)
+
+
+# A DELAY rule may not hold a device connection longer than this.
+_MAX_MODIFICATION_DELAY_S = 30.0
+
+
+async def _modification_delay(delay_ms: object) -> None:
+    """Honour a DELAY modification rule (it used to be recorded and ignored)."""
+    try:
+        seconds = float(delay_ms) / 1000
+    except (TypeError, ValueError):
+        return
+    if seconds > 0:
+        await asyncio.sleep(min(seconds, _MAX_MODIFICATION_DELAY_S))
 
 
 def _apply_response_modifications(intercepted: InterceptedRequest, response: dict) -> dict:

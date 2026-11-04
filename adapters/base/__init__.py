@@ -180,6 +180,11 @@ class InterceptedRequest:
     path: str | None = None
     headers: dict[str, str] = field(default_factory=dict)
     query_params: dict[str, str] = field(default_factory=dict)
+    # The request target exactly as received (``/path?query``, still
+    # percent-encoded). ``path``/``query_params`` are decoded views for
+    # matching and learning; a forward replays this instead, so "%3F" stays
+    # "%3F" and repeated query keys stay repeated.
+    raw_target: str | None = None
     # Parsed body: dict (JSON), str (text) or None. Raw wire bytes live in
     # ``body_bytes`` below, never here.
     body: dict[str, Any] | str | None = None
