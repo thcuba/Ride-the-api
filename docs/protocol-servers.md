@@ -1,6 +1,8 @@
 # Multi-Protocol Server
 
-Ride-the-API supports direct interception of multiple IoT and industrial protocols via native plugin servers. Each server is opt-in (disabled by default).
+Ride-the-API supports direct interception of multiple IoT and industrial protocols via native plugin servers. The MQTT, CoAP, Modbus TCP, WebSocket and Raw TCP listeners start by default, so a device redirected to one of their ports is recognized automatically; HTTP/2 and the Zigbee, Z-Wave and Matter bridges are opt-in. Set `enabled: false` for any listener you do not use.
+
+> **Exposure.** The listeners accept any client that reaches them. The MQTT broker in particular accepts anonymous clients and every topic (devices log in with vendor credentials the proxy cannot check), so any host that can reach its port can read and publish every device's topics. Bind `host` to the device-facing address, firewall the ports, or disable the listeners you do not need. The broker logs a warning at start while it listens on all interfaces.
 
 ## Architecture
 
@@ -37,7 +39,8 @@ protocol_servers:
 - Built-in MQTT broker, supports QoS 0/1/2
 - Topic filter to intercept only specific subscriptions
 - Request/response correlation via topic_sequence
-- Optional TLS on port 8883
+- TLS (`tls_enabled` / `port_tls`) is not implemented yet: the broker only listens in clear text on `port`, and logs a warning when `tls_enabled` is set
+- Topics starting with `$` (for example AWS IoT `$aws/...`) are refused by the broker library, which disconnects the publishing client
 
 ### CoAP
 - CoAP server (RFC 7252)

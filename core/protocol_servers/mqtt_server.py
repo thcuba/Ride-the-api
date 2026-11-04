@@ -45,6 +45,30 @@ except ImportError:  # pragma: no cover - exercised at import time only
 
 logger = logging.getLogger(__name__)
 
+_ALL_INTERFACES = frozenset({"", "0.0.0.0", "::", "[::]"})  # noqa: S104 - we detect it
+
+
+def exposure_warnings(cfg: MQTTServerConfig) -> list[str]:
+    """What an operator should know about how this broker is exposed.
+
+    Devices log in with their vendor credentials, which the proxy cannot
+    check, so the broker accepts anonymous clients and any topic: every
+    host that reaches it can read and publish every device's topics.
+    """
+    warnings = []
+    if str(cfg.host).strip() in _ALL_INTERFACES:
+        warnings.append(
+            f"MQTT broker accepts anonymous clients on all interfaces (port {cfg.port}): "
+            "any host that can reach it can read and publish every device topic. Bind "
+            "protocol_servers.mqtt.host to the device-facing address or firewall the port."
+        )
+    if getattr(cfg, "tls_enabled", False):
+        warnings.append(
+            "protocol_servers.mqtt.tls_enabled is not supported yet: the broker listens "
+            f"without TLS on port {cfg.port} only (port_tls {cfg.port_tls} is not opened)."
+        )
+    return warnings
+
 
 class MQTTServerPlugin(ProtocolServerPlugin):
     """Local MQTT broker for device protocol interception."""
@@ -69,6 +93,8 @@ class MQTTServerPlugin(ProtocolServerPlugin):
             return
 
         cfg = self.config
+        for warning in exposure_warnings(cfg):
+            logger.warning(warning)
         self._loop = asyncio.get_running_loop()
         broker_config = {
             "listeners": {
