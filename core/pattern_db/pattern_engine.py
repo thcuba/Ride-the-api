@@ -15,6 +15,7 @@ import copy
 import functools
 import json
 import logging
+import math
 import random
 import re
 from dataclasses import dataclass, field
@@ -100,6 +101,12 @@ class RequestInput:
 
 logger = logging.getLogger(__name__)
 
+
+def _formula_random(low: Any, high: Any) -> float:  # noqa: ANN401
+    """``random(low, high)`` inside a formula: a uniform float in the range."""
+    return random.uniform(float(low), float(high))  # noqa: S311 - simulated values, not crypto
+
+
 # Allowed names exposed inside formulas (safe math helpers only).
 # Passed to simpleeval as the ``functions`` whitelist.
 _FORMULA_SAFE_NAMES = {
@@ -110,12 +117,71 @@ _FORMULA_SAFE_NAMES = {
     "int": int,
     "float": float,
     "str": str,
+    "random": _formula_random,
 }
 
 # Maximum length of a formula string. Cap guards against pathological inputs
 # from untrusted pattern files / LLM output (CPU / memory exhaustion) before
 # the evaluator is reached.
 _MAX_FORMULA_LENGTH = 1024
+# Maximum length once request/state values are substituted in: those values
+# come from the device, and the parsed result is cached per resolved string.
+_MAX_RESOLVED_FORMULA_LENGTH = 16 * 1024
+
+# Largest integer (in bits) any formula operation may produce. simpleeval only
+# caps each operand (|a|, |b| <= 4,000,000), so ``4000000 ** 4000000`` passed
+# and ran for ~30 s on the event loop; 4096 bits (~1233 digits) is far beyond
+# any value a device reports.
+_MAX_FORMULA_INT_BITS = 4096
+# Widest ``%`` format field: ``"%0999999999d" % 1`` builds a 1 GB string.
+_MAX_FORMAT_WIDTH = 100
+_RE_FORMAT_FIELD = re.compile(r"%[-#0 +]*(\*|\d*)(?:\.(\*|\d*))?")
+
+
+def _int_too_big(bits: float) -> simpleeval.NumberTooHigh:
+    return simpleeval.NumberTooHigh(
+        f"result would exceed {_MAX_FORMULA_INT_BITS} bits ({int(bits)})"
+    )
+
+
+def _bounded_power(a: Any, b: Any) -> Any:  # noqa: ANN401
+    if isinstance(a, int) and isinstance(b, int) and b > 0 and abs(a) > 1:
+        bits = b * math.log2(abs(a))
+        if bits > _MAX_FORMULA_INT_BITS:
+            raise _int_too_big(bits)
+    return simpleeval.safe_power(a, b)
+
+
+def _bounded_mult(a: Any, b: Any) -> Any:  # noqa: ANN401
+    if isinstance(a, int) and isinstance(b, int):
+        bits = a.bit_length() + b.bit_length()
+        if bits > _MAX_FORMULA_INT_BITS:
+            raise _int_too_big(bits)
+    return simpleeval.safe_mult(a, b)
+
+
+def _bounded_lshift(a: Any, b: Any) -> Any:  # noqa: ANN401
+    if isinstance(a, int) and isinstance(b, int) and b > 0:
+        bits = a.bit_length() + b
+        if bits > _MAX_FORMULA_INT_BITS:
+            raise _int_too_big(bits)
+    return simpleeval.safe_lshift(a, b)
+
+
+def _bounded_mod(a: Any, b: Any) -> Any:  # noqa: ANN401
+    """``%`` with printf-style formatting limited to sane field widths."""
+    if isinstance(a, bytes):
+        raise simpleeval.FeatureNotAvailable("bytes formatting is not permitted in formulas")
+    if isinstance(a, str):
+        for spec in (s for field in _RE_FORMAT_FIELD.findall(a) for s in field if s):
+            if (
+                spec == "*"
+                or len(spec) > len(str(_MAX_FORMAT_WIDTH))
+                or int(spec) > _MAX_FORMAT_WIDTH
+            ):
+                raise simpleeval.IterableTooLong(f"format field too wide: {spec}")
+    return a % b
+
 
 # A hardened simpleeval evaluator for untrusted formula strings:
 #   * ``names`` is empty — variables are pre-substituted with typed literals.
@@ -123,7 +189,16 @@ _MAX_FORMULA_LENGTH = 1024
 #     known escape vectors like ``().__class__.__bases__`` or ``.get`` cannot
 #     reach host objects/methods.
 #   * functions are allow-listed to ``_FORMULA_SAFE_NAMES`` only.
+#   * arithmetic that can blow up (power, multiply, shift, % formatting) is
+#     bounded by result size, not just by operand size.
 _FORMULA_EVALUATOR = simpleeval.SimpleEval(
+    operators={
+        **simpleeval.DEFAULT_OPERATORS,
+        ast.Pow: _bounded_power,
+        ast.Mult: _bounded_mult,
+        ast.LShift: _bounded_lshift,
+        ast.Mod: _bounded_mod,
+    },
     names={},
     functions=_FORMULA_SAFE_NAMES,
     allowed_attrs={},
@@ -197,7 +272,6 @@ def _parse_formula_ast(expr: str):
 # Pre-compiled regex patterns for template resolution and formula processing (hot paths)
 _RE_TEMPLATE_VAR = re.compile(r"\{state\.(\w+)\}|\{request\.(\w+(?:\.\w+)*)\}|\{uuid\}")
 _RE_FORMULA_VAR = re.compile(r"\{state\.(\w+)\}|\{request\.(\w+(?:\.\w+)*)\}")
-_RE_FORMULA_RANDOM = re.compile(r"random\(([^,]+),\s*([^)]+)\)")
 
 
 def _as_formula_literal(value: Any) -> str:  # noqa: ANN401
@@ -893,11 +967,15 @@ class PatternEngine:
                 return m.group(0)
 
             resolved = _RE_FORMULA_VAR.sub(_var_replacer, formula)
-            # Replace function calls
-            resolved = _RE_FORMULA_RANDOM.sub(
-                lambda m: str(random.uniform(float(m.group(1)), float(m.group(2)))),
-                resolved,
-            )
+            if len(resolved) > _MAX_RESOLVED_FORMULA_LENGTH:
+                logger.warning(
+                    "Formula too long once values are substituted (%d chars), refusing",
+                    len(resolved),
+                )
+                return 0
+            # ``random(lo, hi)`` is an allow-listed function now: the old regex
+            # rewrite ran over the substituted device data (quadratic on
+            # crafted values) and broke on expressions as arguments.
             # Performance optimization: parse and cache formula AST via lru_cache, then evaluate
             # AST directly with _eval to eliminate redundant string parsing (~3x speedup).
             ast_tree = _parse_formula_ast(resolved)
