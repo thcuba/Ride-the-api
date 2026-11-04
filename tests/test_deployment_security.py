@@ -4,6 +4,9 @@ from pathlib import Path
 
 import yaml
 
+# Upstream TLS connections in the nginx configs: two HTTP forwards, one MQTT stream.
+_UPSTREAM_TLS_BLOCKS = 3
+
 
 def test_compose_publishes_http_control_plane_on_loopback_only():
     """The HTTP dashboard/API must not be exposed to the LAN by default."""
@@ -44,12 +47,10 @@ def test_nginx_verifies_the_real_cloud_it_forwards_to() -> None:
     nginx does not verify upstream certificates by default, so anyone on the
     upstream path could answer as the vendor.
     """
-    from pathlib import Path  # noqa: PLC0415
-
     for name in ("nginx.conf", "nginx.conf.template"):
         text = (Path(__file__).resolve().parents[1] / "deploy" / name).read_text()
         upstream_tls_blocks = text.count("proxy_ssl_server_name on;")
-        assert upstream_tls_blocks == 3, name  # two HTTP forwards, one MQTT stream
+        assert upstream_tls_blocks == _UPSTREAM_TLS_BLOCKS, name
         assert text.count("proxy_ssl_verify on;") == upstream_tls_blocks, name
         assert text.count("proxy_ssl_trusted_certificate") == upstream_tls_blocks, name
         assert "proxy_ssl_name mqtt.example.com;" in text, name
