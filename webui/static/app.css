@@ -95,6 +95,12 @@ a { text-underline-offset: .18em; }
 .brand-row img { box-shadow: 0 4px 14px rgba(0, 0, 0, .22); }
 .header-right, .header-actions { gap: 9px; }
 
+.primary-nav { display: flex; align-items: center; gap: 4px; margin-top: 10px; flex-wrap: wrap; }
+.primary-nav a { color: var(--text2); font-size: 13px; font-weight: 650; text-decoration: none; padding: 6px 9px; border-radius: 7px; transition: color .15s ease, background-color .15s ease; }
+.primary-nav a:hover { color: var(--text); background: var(--surface2); }
+.primary-nav a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.primary-nav a[aria-current="page"] { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
 .btn {
   min-height: 40px;
   padding: 9px 15px;

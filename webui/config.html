@@ -185,11 +185,15 @@
       <h1>Configuration</h1>
     </div>
     <span class="subtitle">Full config.yaml editor — read, modify and persist every section</span>
+    <nav class="primary-nav" aria-label="Primary navigation">
+      <a href="/">Dashboard</a>
+      <a href="/patterns">Patterns</a>
+      <a href="/config" aria-current="page">Configuration</a>
+      <a href="/options">Options</a>
+    </nav>
   </div>
   <div class="header-actions">
     <span class="path-chip" id="configPath">…</span>
-    <a class="btn btn-ghost" href="/" aria-label="Return to dashboard" title="Return to dashboard">← Dashboard</a>
-    <a class="btn btn-ghost" href="/options" aria-label="Open options page" title="Open options page">⚙ Options</a>
     <button class="btn btn-primary" id="saveBtn" onclick="saveConfig()" aria-label="Save all configuration changes" title="No unsaved changes (Ctrl+S)" disabled>&#x2714; Save All</button>
   </div>
 </div>
