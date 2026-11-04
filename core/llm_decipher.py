@@ -24,6 +24,7 @@ from core.config import get_config_manager
 from core.fallback_policy import FallbackChain, ProviderCircuitBreaker
 from core.llm_settings import load_llm_settings, save_llm_settings
 from core.pattern_utils import safe_float as _safe_float
+from core.redaction import redact_body, redact_headers
 from core.retry import make_retryer
 
 logger = logging.getLogger(__name__)
@@ -53,6 +54,23 @@ def _parse_llm_json(content: str) -> dict | None:
             return json_repair.loads(content)
         except Exception:  # noqa: BLE001 - best-effort repair
             return None
+
+
+_TRUE_STRINGS = frozenset({"true", "yes"})
+
+
+def _strict_true(value: Any) -> bool:  # noqa: ANN401
+    """Read an LLM-supplied yes/no verdict without trusting Python truthiness.
+
+    ``bool("false")`` is True, so a model that quotes its boolean would have
+    every weak match served locally. Only a real ``True`` or the strings
+    ``"true"``/``"yes"`` (any case) count as yes; everything else is no.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in _TRUE_STRINGS
+    return False
 
 
 class LLMProfile(BaseModel):
@@ -172,8 +190,12 @@ class LLMDecipherService:
         self._task_profiles: dict[str, str] = {}
         self._default_profile = "default"
         self._enabled = True
-        self._clients: dict[str, AsyncOpenAI] = {}
-        # Connection fingerprint per profile; a change invalidates its client.
+        # Clients keyed by (profile name, connection fingerprint): an effective
+        # profile that reuses a name with different connection parameters (a
+        # per-device base_url/model override) gets its own client instead of
+        # being served -- or overwriting -- the shared one.
+        self._clients: dict[tuple, AsyncOpenAI] = {}
+        # Connection fingerprint per configured profile; a change invalidates its client.
         self._client_fingerprints: dict[str, tuple] = {}
         self._cache_ttl = _CACHE_TTL  # 1 hour
         self._cache: TTLCache = TTLCache(maxsize=_CACHE_MAX_SIZE, ttl=self._cache_ttl)
@@ -260,20 +282,26 @@ class LLMDecipherService:
                             max_tokens=int(pcfg.get("max_tokens", 2048)),
                         )
 
-        # Drop cached clients whose connection parameters changed so the next
-        # call recreates them (real hot reload of endpoint/credentials).
-        for name, profile in new_profiles.items():
-            fingerprint = self._client_fingerprint(profile)
-            if name in self._clients and self._client_fingerprints.get(name) != fingerprint:
-                logger.info("LLM profile %r connection changed, recreating client", name)
-                self._clients.pop(name)
-        self._client_fingerprints = {
-            name: self._client_fingerprint(p) for name, p in new_profiles.items()
-        }
+        # Drop cached clients whose connection parameters no longer match the
+        # configured profile (or whose profile is gone) so the next call
+        # recreates them -- real hot reload of endpoint/credentials. Override
+        # clients are dropped too and rebuilt on demand.
+        new_fingerprints = {name: self._client_fingerprint(p) for name, p in new_profiles.items()}
+        self._prune_stale_clients(new_fingerprints)
+        self._client_fingerprints = new_fingerprints
 
         self._profiles = new_profiles
 
         logger.info(f"Loaded {len(self._profiles)} LLM profiles: {list(self._profiles.keys())}")
+
+    def _prune_stale_clients(self, fingerprints: dict[str, tuple]) -> None:
+        """Drop cached clients that no longer match a configured profile."""
+        for key in list(self._clients):
+            name, fingerprint = key
+            if fingerprints.get(name) != fingerprint:
+                if name in fingerprints:
+                    logger.info("LLM profile %r connection changed, recreating client", name)
+                self._clients.pop(key)
 
     def _client_fingerprint(self, profile: LLMProfile) -> tuple:
         """Connection-relevant params; changing these needs a fresh client."""
@@ -307,12 +335,17 @@ class LLMDecipherService:
         )
 
     def _get_client(self, profile: LLMProfile) -> AsyncOpenAI:
-        """Get or create an OpenAI-compatible async client for a profile."""
-        cached = self._clients.get(profile.name)
+        """Get or create an OpenAI-compatible async client for a profile.
+
+        Cached per (name, connection fingerprint), so a client is only ever
+        reused for the exact endpoint/credentials it was built with.
+        """
+        key = (profile.name, self._client_fingerprint(profile))
+        cached = self._clients.get(key)
         if cached:
             return cached
         client = self._build_client(profile)
-        self._clients[profile.name] = client
+        self._clients[key] = client
         return client
 
     def get_profile(self, name: str | None = None) -> LLMProfile | None:
@@ -361,8 +394,8 @@ class LLMDecipherService:
         if not isinstance(data, dict):
             return {"applicable": False, "reason": "unexpected output"}
         return {
-            "applicable": bool(data.get("applicable", False)),
-            "confidence": float(data.get("confidence") or 0.0),
+            "applicable": _strict_true(data.get("applicable", False)),
+            "confidence": _safe_float(data.get("confidence"), 0.0),
             "reason": str(data.get("reason") or ""),
         }
 
@@ -378,15 +411,19 @@ class LLMDecipherService:
         learned = {
             "intent": _get(pattern, "intent"),
             "method": _get(pattern, "method"),
-            "path": _get(pattern, "path"),
+            # DB-backed patterns store the path as ``path_pattern``.
+            "path": _get(pattern, "path") or _get(pattern, "path_pattern"),
             "protocol": _get(pattern, "protocol"),
             "response_template": _get(pattern, "response_template"),
         }
+        # The live request can carry credentials (Authorization, cookies,
+        # passwords in the body). Redact before anything leaves for the LLM,
+        # exactly as the capture path does.
         incoming = {
             "method": request.get("method"),
             "path": request.get("path"),
-            "headers": request.get("headers"),
-            "body": request.get("body"),
+            "headers": redact_headers(request.get("headers")),
+            "body": redact_body(request.get("body")),
         }
         return (
             "You validate a weak pattern match in a cloud-replacement proxy.\n"

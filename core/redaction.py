@@ -13,7 +13,9 @@ sensitive values replaced by ``[REDACTED]``.
 
 from __future__ import annotations
 
+import functools
 import json
+import re
 from typing import Any
 
 # Header names whose values are always secrets (matched case-insensitively).
@@ -109,27 +111,86 @@ SENSITIVE_QUERY_PARAMS = frozenset(
 
 REDACTED = "[REDACTED]"
 
-# Lower-cased sensitive JSON key names tuple, used by the fast path to cheaply test
-# whether a payload can possibly contain a secret before committing to the full
-# ``json.loads`` -> walk -> ``json.dumps`` round-trip. The check is only a
-# conservative *presence* test: over-matching falls through to the slow path,
-# so it can never skip redacting an actual secret.
-_SENSITIVE_KEY_NAMES = tuple(key.lower() for key in SENSITIVE_KEYS)
+# Names are compared in a normalised form: lower-cased with every non
+# alphanumeric character removed, so ``accessToken``, ``access_token``,
+# ``Access-Token`` and ``ACCESS TOKEN`` all read as ``accesstoken``. Exact sets
+# alone missed camelCase payloads, OAuth form fields and vendor token headers.
+_NON_ALNUM = re.compile(r"[^a-z0-9]+")
+_SEPARATORS = re.compile(r"[\s_\-]+")
+
+# A normalised name ending in one of these is a secret whatever its prefix:
+# ``refreshToken``, ``X-Amz-Security-Token``, ``client_secret``, ``X-Goog-Api-Key``,
+# ``wifiPassword``, ``localKey`` (a device's local encryption key) ...
+_SENSITIVE_SUFFIXES = (
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "passphrase",
+    "apikey",
+    "credential",
+    "credentials",
+    "privatekey",
+    "cookie",
+    "authorization",
+    "sessionid",
+    "sessionkey",
+    "localkey",
+    "signature",
+)
+
+
+@functools.lru_cache(maxsize=4096)
+def _norm(name: str) -> str:
+    """Normalised form of a header/key/parameter name (see module notes)."""
+    return _NON_ALNUM.sub("", name.lower())
+
+
+def _normalised_set(names: frozenset[str]) -> frozenset[str]:
+    return frozenset(_norm(n) for n in names)
+
+
+_SENSITIVE_HEADERS_NORM = _normalised_set(SENSITIVE_HEADERS)
+_SENSITIVE_KEYS_NORM = _normalised_set(SENSITIVE_KEYS)
+_SENSITIVE_QUERY_NORM = _normalised_set(SENSITIVE_QUERY_PARAMS)
+
+
+def _matches(name: object, exact: frozenset[str], normalised: frozenset[str]) -> bool:
+    """Whether ``name`` is sensitive: exact hit, normalised hit, or secret suffix."""
+    if isinstance(name, str) and name in exact:
+        return True
+    norm = _norm(name if isinstance(name, str) else str(name))
+    if not norm:
+        return False
+    return norm in normalised or norm.endswith(_SENSITIVE_SUFFIXES)
+
+
+def _is_sensitive_header(name: object) -> bool:
+    return _matches(name, SENSITIVE_HEADERS, _SENSITIVE_HEADERS_NORM)
+
+
+def _is_sensitive_query_param(name: object) -> bool:
+    return _matches(name, SENSITIVE_QUERY_PARAMS, _SENSITIVE_QUERY_NORM)
+
+
+# Stems used by the JSON fast path to cheaply test whether a payload can
+# possibly hold a secret before the json.loads -> walk -> json.dumps round
+# trip. It is a conservative *presence* test against the payload with
+# separators squashed, so over-matching only costs speed and can never skip an
+# actual secret.
+_FAST_PATH_STEMS = tuple(sorted(_SENSITIVE_KEYS_NORM | set(_SENSITIVE_SUFFIXES)))
 
 
 def _contains_sensitive_key(text: str) -> bool:
-    """Return True if any sensitive key name appears in ``text``.
+    """Return True if any sensitive name could appear in ``text``.
 
-    Case-insensitive substring test. The JSON fast path only skips redaction
-    when this returns False; a false positive is harmless because it just
-    disables the fast path for that payload.
-
-    Optimized using explicit tuple loop over generator expression to eliminate
-    generator allocation overhead in payload redaction (~1.70x speedup).
+    Case-insensitive and separator-insensitive substring test. The JSON fast
+    path only skips redaction when this returns False; a false positive is
+    harmless because it just disables the fast path for that payload.
     """
-    lower = text.lower()
-    for key in _SENSITIVE_KEY_NAMES:  # noqa: SIM110
-        if key in lower:
+    squashed = _SEPARATORS.sub("", text.lower())
+    for stem in _FAST_PATH_STEMS:  # noqa: SIM110
+        if stem in squashed:
             return True
     return False
 
@@ -142,18 +203,8 @@ def redact_headers(headers: dict[str, Any] | None) -> dict[str, Any] | None:
     for name, value in headers.items():
         if value in (None, ""):
             continue
-        # Fast path exact match for lowercased keys avoids lowercasing overhead (~1.12x speedup)
-        if name in SENSITIVE_HEADERS:
+        if _is_sensitive_header(name):
             result[name] = REDACTED
-            continue
-        if isinstance(name, str):
-            key = name.lower()
-            if key != name and key in SENSITIVE_HEADERS:
-                result[name] = REDACTED
-        else:
-            key = str(name).lower()
-            if key in SENSITIVE_HEADERS:
-                result[name] = REDACTED
     return result
 
 
@@ -165,18 +216,8 @@ def redact_query(query_params: dict[str, Any] | None) -> dict[str, Any] | None:
     for name, value in query_params.items():
         if value in (None, ""):
             continue
-        # Fast path exact match for lowercased keys avoids lowercasing overhead (~1.12x speedup)
-        if name in SENSITIVE_QUERY_PARAMS:
+        if _is_sensitive_query_param(name):
             result[name] = REDACTED
-            continue
-        if isinstance(name, str):
-            key = name.lower()
-            if key != name and key in SENSITIVE_QUERY_PARAMS:
-                result[name] = REDACTED
-        else:
-            key = str(name).lower()
-            if key in SENSITIVE_QUERY_PARAMS:
-                result[name] = REDACTED
     return result
 
 
@@ -203,24 +244,26 @@ def redact_body(body: Any, *, in_headers: bool = True) -> Any:  # noqa: ANN401
 
 
 def redact_value(key: Any, value: Any) -> Any:  # noqa: ANN401
-    """Redact ``value`` if ``key`` names a sensitive field; else recurse."""
+    """Redact ``value`` if ``key`` names a sensitive field; else recurse.
+
+    String values are inspected too: an embedded JSON document (even with
+    leading whitespace) is redacted recursively, and a form-encoded string
+    such as ``"ssid=home&password=..."`` has its sensitive pairs redacted.
+    """
     if _is_sensitive_key(key):
         return REDACTED
     if isinstance(value, (dict, list)):
         return redact_body(value)
-    if isinstance(value, str) and value.startswith(("{", "[")):
-        return _redact_json_string(value)
+    if isinstance(value, str):
+        if value.lstrip().startswith(("{", "[")):
+            return _redact_json_string(value)
+        if "=" in value:
+            return _redact_key_value_pairs(value)
     return value
 
 
 def _is_sensitive_key(key: object) -> bool:
-    # Fast path: exact set check avoids string allocations for clean keys (~1.2x speedup)
-    if isinstance(key, str):
-        if key in SENSITIVE_KEYS:
-            return True
-        k = key.lower().strip()
-        return k in SENSITIVE_KEYS
-    return str(key).lower().strip() in SENSITIVE_KEYS
+    return _matches(key, SENSITIVE_KEYS, _SENSITIVE_KEYS_NORM)
 
 
 def _redact_json_string(text: str) -> str:
@@ -237,7 +280,10 @@ def _redact_json_string(text: str) -> str:
         # allocation on the request/response hot path. When no sensitive key
         # name is present anywhere, return the payload untouched (which also
         # preserves the original formatting instead of re-serializing it).
-        if not _contains_sensitive_key(stripped):
+        # A ``\u`` escape can spell a key the substring test cannot see
+        # (``"password"`` decodes to ``password``), so it always takes
+        # the slow path.
+        if "\\u" not in stripped and not _contains_sensitive_key(stripped):
             return text
         try:
             parsed = json.loads(stripped)
@@ -248,24 +294,34 @@ def _redact_json_string(text: str) -> str:
     return _redact_key_value_pairs(text)
 
 
+# Pair separators in form-style bodies: ``&`` (application/x-www-form-urlencoded)
+# and line breaks (``key=value`` per line, common in device config payloads).
+_KV_SEPARATORS = re.compile(r"(&|\r?\n)")
+
+
 def _redact_key_value_pairs(text: str) -> str:
     """Best-effort redaction of ``key=value`` pairs in scalar string bodies.
+
+    Pairs may be separated by ``&`` or by line breaks; separators are kept
+    exactly as they were. A key is sensitive when it is a sensitive query
+    parameter or body key name (normalised, including secret suffixes such as
+    ``refresh_token`` or ``client_secret``).
 
     Fast path: short-circuit when '=' is not present to avoid unnecessary string
     splitting, list allocations, and string joins on non-key-value string bodies (~4.3x speedup).
     """
     if "=" not in text:
         return text
-    parts = text.split("&")
     out = []
-    for part in parts:
+    for part in _KV_SEPARATORS.split(text):
         if "=" in part and not part.lstrip().startswith(("{", "[")):
             key_name, _ = part.split("=", 1)
-            if key_name.strip().lower() in SENSITIVE_QUERY_PARAMS:
-                out.append(f"{key_name}=[REDACTED]")
+            name = key_name.strip()
+            if _is_sensitive_query_param(name) or _is_sensitive_key(name):
+                out.append(f"{key_name}={REDACTED}")
                 continue
         out.append(part)
-    return "&".join(out)
+    return "".join(out)
 
 
 def redact_pair_headers(headers: dict[str, Any] | None) -> dict[str, Any] | None:
