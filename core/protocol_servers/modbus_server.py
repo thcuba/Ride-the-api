@@ -38,104 +38,48 @@ except ImportError:  # pragma: no cover - exercised at import time only
 
 from adapters.base import InterceptedRequest, ProtocolType
 from core.pattern_db.schemas import ObservationKind, TransportMeta
-from core.protocol_servers import ProtocolServerPlugin
+from core.protocol_servers import ProtocolServerPlugin, call_handler
 
 logger = logging.getLogger(__name__)
 
+# Longest wait for the server to shut down.
+_STOP_TIMEOUT_S = 5
 
-if HAS_PYMODBUS:
 
-    class _ForwardingModbusContext(ModbusServerContext):
-        """Modbus device store that mirrors every access to the pipeline.
+class _MirroringContext:
+    """The server's datastore, with every read and write mirrored to the pipeline.
 
-        Wraps the legacy pymodbus ``ModbusServerContext`` so that read/write
-        operations on the register store are forwarded to the orchestrator
-        handler in addition to being served from the local datastore. This
-        connects intercepted Modbus traffic to the learning pipeline instead of
-        silently serving a static register file.
-        """
+    pymodbus (3.x) builds its own datastore core from the ModbusServerContext
+    and request PDUs reach it through ``server.context``. The former
+    ModbusServerContext subclass skipped the base initialiser (so building
+    the server raised AttributeError inside a background task, unseen, while
+    the listener reported "running"), and pymodbus would have bypassed its
+    overrides anyway. Wrapping the object the server really uses works
+    whatever it is.
+    """
 
-        def __init__(
-            self,
-            store: ModbusServerContext,
-            handler: Callable | None,
-            loop: asyncio.AbstractEventLoop,
-            tls_enabled: bool = False,
-            port: int = 502,
-        ) -> None:
-            self._store = store
-            self._handler = handler
-            self._loop = loop
-            self._tls_enabled = tls_enabled
-            self._port = port
+    def __init__(self, inner: Any, notify: Callable) -> None:  # noqa: ANN401
+        self._inner = inner
+        self._notify = notify
 
-        def _notify(
-            self, device_id: int, func_code: int, address: int, values=None, count: int = 1
-        ) -> None:
-            """Fire a best-effort InterceptedRequest at the pipeline."""
-            handler = self._handler
-            if handler is None or self._loop is None or self._loop.is_closed():
-                return
-            operation = "write" if values is not None else "read"
-            body = {
-                "device_id": device_id,
-                "func_code": func_code,
-                "address": address,
-                "operation": operation,
-            }
-            if values is not None:
-                body["values"] = list(values) if isinstance(values, (list, tuple)) else values
-            else:
-                body["count"] = count
+    def __getattr__(self, name: str) -> Any:  # noqa: ANN401
+        return getattr(self._inner, name)
 
-            # Fast timestamp generation using time.time() instead of
-            # datetime.now(UTC).timestamp() (~4.8x speedup)
-            request = InterceptedRequest(
-                device_id=f"modbus-{device_id}",
-                timestamp=time.time(),
-                protocol=ProtocolType.MODBUS,
-                method="publish" if operation == "write" else "GET",
-                path=f"/modbus/{func_code}/{address}",
-                query_params={
-                    "device_id": str(device_id),
-                    "func_code": str(func_code),
-                    "address": str(address),
-                },
-                body=body,
-                transport=TransportMeta(
-                    port=self._port,
-                    tls=self._tls_enabled,
-                    func_code=func_code,
-                    reg_address=address,
-                ),
-                security="tls" if self._tls_enabled else "none",
-                identity=f"modbus-{device_id}",
-                kind=ObservationKind.FRAME,
-            )
-            try:
-                if asyncio.iscoroutinefunction(handler):
-                    asyncio.run_coroutine_threadsafe(self._mirror(handler, request), self._loop)
-                else:
-                    self._loop.call_soon_threadsafe(handler, request)
-            except Exception:  # pragma: no cover - defensive
-                logger.debug("Modbus forward to pipeline failed", exc_info=True)
+    async def async_getValues(  # noqa: N802 - pymodbus API
+        self, device_id: int, func_code: int, address: int, count: int = 1
+    ) -> Any:  # noqa: ANN401
+        self._notify(device_id, func_code, address, count=count)
+        return await self._inner.async_getValues(device_id, func_code, address, count)
 
-        @staticmethod
-        async def _mirror(handler, request: InterceptedRequest) -> None:
-            try:
-                await handler(request)
-            except Exception:  # pragma: no cover - defensive
-                logger.debug("Modbus pipeline handler error", exc_info=True)
-
-        async def async_getValues(
-            self, device_id: int, func_code: int, address: int, count: int = 1
-        ):
-            self._notify(device_id, func_code, address, count=count)
-            return await self._store.async_getValues(device_id, func_code, address, count)
-
-        async def async_setValues(self, device_id: int, func_code: int, address: int, values):
-            self._notify(device_id, func_code, address, values=values)
-            return await self._store.async_setValues(device_id, func_code, address, values)
+    async def async_setValues(  # noqa: N802 - pymodbus API
+        self,
+        device_id: int,
+        func_code: int,
+        address: int,
+        values: Any,  # noqa: ANN401
+    ) -> Any:  # noqa: ANN401
+        self._notify(device_id, func_code, address, values=values)
+        return await self._inner.async_setValues(device_id, func_code, address, values)
 
 
 class ModbusServerPlugin(ProtocolServerPlugin):
@@ -146,54 +90,97 @@ class ModbusServerPlugin(ProtocolServerPlugin):
     def __init__(self, config: Any, handler: Callable | None = None) -> None:  # noqa: ANN401
         super().__init__(config)
         self.handler = handler
-        self._context: ModbusServerContext | None = None
-        self._server_task: asyncio.Task | None = None
         self._server: Any = None
+        self._pending: set[asyncio.Task] = set()
 
     async def start(self) -> None:
         if not HAS_PYMODBUS:
             logger.warning("Modbus: pymodbus not installed")
             self._running = False
             return
-        if self._server_task is not None:
+        if self._server is not None:
             return
         cfg = self.config
         # Default register store (pymodbus 3.x device context).
-        zero = [0] * 32
         store = ModbusDeviceContext(
             di=None,
             co=None,
             ir=ModbusSequentialDataBlock(1, [0] * 8),
-            hr=ModbusSequentialDataBlock(1, zero),
+            hr=ModbusSequentialDataBlock(1, [0] * 32),
         )
-        self._context = _ForwardingModbusContext(
-            ModbusServerContext(devices=store, single=True),
-            handler=self.handler,
-            loop=asyncio.get_event_loop(),
-            tls_enabled=cfg.tls_enabled,
-            port=cfg.port,
+        server = ModbusTcpServer(
+            ModbusServerContext(devices=store, single=True), address=(cfg.host, cfg.port)
         )
-        self._server_task = asyncio.create_task(self._run_server(cfg.host, cfg.port))
+        server.context = _MirroringContext(server.context, self._notify)
+        # Listen here so a failure (port in use) raises to the caller instead
+        # of ending a background task nobody watches.
+        await server.serve_forever(background=True)
+        self._server = server
         self._running = True
         logger.info(
             "Modbus server listening on %s:%d (unit_id=%d)", cfg.host, cfg.port, cfg.unit_id
         )
 
-    async def _run_server(self, host: str, port: int) -> None:
-        """Run the pymodbus TCP server until it is stopped."""
-        with contextlib.suppress(asyncio.CancelledError, OSError):
-            server = ModbusTcpServer(self._context, address=(host, port))
-            self._server = server
-            await server.serve_forever()
+    def _notify(
+        self,
+        device_id: int,
+        func_code: int,
+        address: int,
+        values: Any = None,  # noqa: ANN401
+        count: int = 1,
+    ) -> None:
+        """Fire a best-effort InterceptedRequest at the pipeline for one access."""
+        if self.handler is None:
+            return
+        operation = "write" if values is not None else "read"
+        body: dict[str, Any] = {
+            "device_id": device_id,
+            "func_code": func_code,
+            "address": address,
+            "operation": operation,
+        }
+        if values is not None:
+            body["values"] = list(values) if isinstance(values, (list, tuple)) else values
+        else:
+            body["count"] = count
+        tls = bool(getattr(self.config, "tls_enabled", False))
+        request = InterceptedRequest(
+            device_id=f"modbus-{device_id}",
+            timestamp=time.time(),
+            protocol=ProtocolType.MODBUS,
+            method="publish" if operation == "write" else "GET",
+            path=f"/modbus/{func_code}/{address}",
+            query_params={
+                "device_id": str(device_id),
+                "func_code": str(func_code),
+                "address": str(address),
+            },
+            body=body,
+            transport=TransportMeta(
+                port=getattr(self.config, "port", 502),
+                tls=tls,
+                func_code=func_code,
+                reg_address=address,
+            ),
+            security="tls" if tls else "none",
+            identity=f"modbus-{device_id}",
+            kind=ObservationKind.FRAME,
+        )
+        task = asyncio.get_running_loop().create_task(self._mirror(request))
+        self._pending.add(task)
+        task.add_done_callback(self._pending.discard)
+
+    async def _mirror(self, request: InterceptedRequest) -> None:
+        try:
+            await call_handler(self.handler, request)
+        except Exception:
+            logger.debug("Modbus pipeline handler error", exc_info=True)
 
     async def stop(self) -> None:
-        if self._server_task is not None:
-            self._server_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._server_task
-            self._server_task = None
-        self._server = None
-        self._context = None
+        server, self._server = self._server, None
+        if server is not None:
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(server.shutdown(), _STOP_TIMEOUT_S)
         await super().stop()
         logger.info("Modbus server stopped")
 
