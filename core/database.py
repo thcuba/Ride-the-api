@@ -966,6 +966,10 @@ class DatabaseManager:
                 await session.commit()
                 # A new device may bring IPs; force the reverse index rebuild.
                 self.invalidate_ip_lookup_cache()
+                # get_device caches misses too: a lookup made before this
+                # registration would otherwise keep answering "not found" (and
+                # the pipeline "device_not_found") for the cache TTL.
+                self.invalidate_device_cache(device_id)
                 logger.info(f"Registered new device: {device_id} ({vendor})")
         await self.get_device_engine(device_id)
 
