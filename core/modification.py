@@ -49,6 +49,26 @@ def _rule_field(data: Any, key: str, default: Any = None) -> Any:  # noqa: ANN40
     return getattr(data, key, default)
 
 
+# A rule that sets any of these is native: its legacy match_type is ignored.
+_NATIVE_MATCH_FIELDS = (
+    "match_vendor",
+    "match_device_type",
+    "match_intent",
+    "match_field_path",
+    "match_headers",
+    "match_method",
+    "match_path_pattern",
+)
+
+# A blocked message, as served to the device.
+BLOCKED_STATUS = 403
+
+
+def _is_response_wrapper(response: Any) -> bool:  # noqa: ANN401
+    """Whether ``response`` is a ``{status_code, headers, body}`` wrapper."""
+    return isinstance(response, dict) and "body" in response and "status_code" in response
+
+
 class ModificationAction(StrEnum):
     """Types of modifications that can be applied."""
 
@@ -236,6 +256,28 @@ class ModificationRule:
             return False
         return True
 
+    def _delete_json_path(self, obj: Any, path: str) -> bool:  # noqa: ANN401
+        """Remove the field at ``path`` (a list element by index); False if absent."""
+        parts = [p for p in _dot_to_dpath(path).split("/") if p] if path else []
+        if not obj or not parts:
+            return False
+        parent = obj
+        for part in parts[:-1]:
+            if isinstance(parent, dict):
+                parent = parent.get(part)
+            elif isinstance(parent, list) and part.isdigit() and int(part) < len(parent):
+                parent = parent[int(part)]
+            else:
+                return False
+        last = parts[-1]
+        if isinstance(parent, dict) and last in parent:
+            del parent[last]
+            return True
+        if isinstance(parent, list) and last.isdigit() and int(last) < len(parent):
+            del parent[int(last)]
+            return True
+        return False
+
     def apply(self, intercepted: InterceptedMessage) -> InterceptedMessage:  # noqa: C901, PLR0912, PLR0915
         """Apply this modification rule to the intercepted message."""
         # Create a copy to avoid mutating original (uses fast custom copy (~2.9x faster))
@@ -248,27 +290,30 @@ class ModificationRule:
             return modified
 
         if self.action == ModificationAction.MODIFY:
-            if self.match_field_path:
+            # The field to change: an explicit ``field_path`` (legacy
+            # ``target_field`` rules) or else the field the rule matched on.
+            field_path = self.action_params.get("field_path") or self.match_field_path
+            if field_path:
                 op = self.action_params.get("operation", "set")
 
                 if op == ModificationOperation.SET:
                     new_value = self.action_params.get("value")
-                    self._set_json_path(modified.body, self.match_field_path, new_value)
+                    self._set_json_path(modified.body, field_path, new_value)
 
                 elif op == ModificationOperation.ADD:
-                    current = self._get_json_path(modified.body, self.match_field_path)
+                    current = self._get_json_path(modified.body, field_path)
                     if isinstance(current, (int, float)):
                         amount = self.action_params.get("amount", 0)
-                        self._set_json_path(modified.body, self.match_field_path, current + amount)
+                        self._set_json_path(modified.body, field_path, current + amount)
 
                 elif op == ModificationOperation.MULTIPLY:
-                    current = self._get_json_path(modified.body, self.match_field_path)
+                    current = self._get_json_path(modified.body, field_path)
                     if isinstance(current, (int, float)):
                         factor = self.action_params.get("factor", 1)
-                        self._set_json_path(modified.body, self.match_field_path, current * factor)
+                        self._set_json_path(modified.body, field_path, current * factor)
 
                 elif op == ModificationOperation.CLAMP:
-                    current = self._get_json_path(modified.body, self.match_field_path)
+                    current = self._get_json_path(modified.body, field_path)
                     if isinstance(current, (int, float)):
                         min_val = self.action_params.get("min")
                         max_val = self.action_params.get("max")
@@ -276,20 +321,18 @@ class ModificationRule:
                             current = max(current, min_val)
                         if max_val is not None:
                             current = min(current, max_val)
-                        self._set_json_path(modified.body, self.match_field_path, current)
+                        self._set_json_path(modified.body, field_path, current)
 
                 elif op == ModificationOperation.REPLACE:
-                    current = self._get_json_path(modified.body, self.match_field_path)
+                    current = self._get_json_path(modified.body, field_path)
                     if isinstance(current, str):
                         old = self.action_params.get("old", "")
                         new = self.action_params.get("new", "")
-                        self._set_json_path(
-                            modified.body, self.match_field_path, current.replace(old, new)
-                        )
+                        self._set_json_path(modified.body, field_path, current.replace(old, new))
 
                 elif op == ModificationOperation.REMOVE:
-                    # Set to None to indicate removal
-                    self._set_json_path(modified.body, self.match_field_path, None)
+                    # Delete the field (it used to be set to null instead).
+                    self._delete_json_path(modified.body, field_path)
 
         elif self.action == ModificationAction.INJECT:
             field_path = self.action_params.get("field_path")
@@ -448,6 +491,16 @@ class ModificationEngine:
 
         for rule_data in rules_config:
             try:
+                name = _rule_field(rule_data, "name", "unnamed")
+                legacy_match = self._legacy_match(rule_data)
+                if legacy_match is None:
+                    logger.warning(
+                        "Modification rule %r disabled: legacy match_type %r cannot be "
+                        "translated (use the match_* fields instead)",
+                        name,
+                        _rule_field(rule_data, "match_type"),
+                    )
+                    continue
                 action_name = _rule_field(rule_data, "action", "modify")
                 action = (
                     ModificationAction(action_name) if isinstance(action_name, str) else action_name
@@ -455,22 +508,28 @@ class ModificationEngine:
                 action_params = _rule_field(rule_data, "action_params", {})
                 if not action_params:
                     action_params = self._translate_legacy_action_params(action, rule_data)
+                match = {
+                    "match_headers": _rule_field(rule_data, "match_headers"),
+                    "match_path_pattern": _rule_field(rule_data, "match_path_pattern"),
+                    "match_value": _rule_field(rule_data, "match_value"),
+                }
+                if legacy_match:
+                    # The legacy match_value was consumed by the translation;
+                    # natively it would compare against a body field.
+                    match.update(legacy_match, match_value=None)
                 rule = ModificationRule(
-                    name=_rule_field(rule_data, "name", "unnamed"),
+                    name=name,
                     match_vendor=_rule_field(rule_data, "match_vendor"),
                     match_device_type=_rule_field(rule_data, "match_device_type"),
                     match_intent=_rule_field(rule_data, "match_intent"),
                     match_field_path=_rule_field(rule_data, "match_field_path"),
-                    match_value=_rule_field(rule_data, "match_value"),
-                    match_headers=_rule_field(rule_data, "match_headers")
-                    or self._translate_legacy_match_headers(rule_data),
                     match_method=_rule_field(rule_data, "match_method"),
-                    match_path_pattern=_rule_field(rule_data, "match_path_pattern"),
                     action=action,
                     action_params=action_params,
                     priority=_rule_field(rule_data, "priority", 10),
                     enabled=_rule_field(rule_data, "enabled", True),
                     direction=_rule_field(rule_data, "direction", "request"),
+                    **match,
                 )
                 self._rules.append(rule)
             except Exception as e:
@@ -483,19 +542,27 @@ class ModificationEngine:
 
         logger.info(f"Loaded {len(self._rules)} modification rules")
 
-    def _translate_legacy_match_headers(self, rule_data) -> dict[str, str] | None:
-        """Translate legacy ``match_type``/``match_value`` to a header match.
+    def _legacy_match(self, rule_data) -> dict | None:
+        """Native match fields for a legacy ``match_type``/``match_value`` rule.
 
-        Legacy rules matched on ``match_type`` (hostname/path/header/field)
-        plus a ``match_value``. Only header-flavoured legacy matches map
-        cleanly onto the engine's native ``match_headers`` — everything else
-        is left to be handled by its native field or remains unmatched rather
-        than silently matching everything.
+        Returns ``{}`` when there is nothing to translate (a native rule, or no
+        legacy value), the translated fields for ``hostname``/``header`` (host
+        header) and ``path`` (path prefix) matches, and ``None`` when the
+        legacy match cannot be expressed. Such a rule used to keep no match
+        criteria at all and so applied to every message -- the documented
+        "block /cmd/reboot" example blocked everything.
         """
-        match_type = _rule_field(rule_data, "match_type", "hostname")
+        if any(_rule_field(rule_data, f) for f in _NATIVE_MATCH_FIELDS):
+            return {}
         match_value = _rule_field(rule_data, "match_value")
-        if match_type in ("hostname", "header") and match_value:
-            return {"host": str(match_value)}
+        if match_value is None or match_value == "":
+            return {}
+        match_type = str(_rule_field(rule_data, "match_type") or "hostname").lower()
+        if match_type in ("hostname", "header"):
+            return {"match_headers": {"host": str(match_value)}}
+        if match_type == "path":
+            # The path itself or anything below it, with or without a query.
+            return {"match_path_pattern": rf"^{re.escape(str(match_value))}(?:[/?#]|$)"}
         return None
 
     def _translate_legacy_action_params(self, action: ModificationAction, rule_data) -> dict:
@@ -504,7 +571,8 @@ class ModificationEngine:
         target_value = _rule_field(rule_data, "target_value")
         params: dict = {}
         if action == ModificationAction.MODIFY and target_field:
-            params = {"operation": "set", "value": target_value}
+            # The field to set used to be dropped, so the rule changed nothing.
+            params = {"operation": "set", "value": target_value, "field_path": target_field}
         elif action == ModificationAction.INJECT and target_field:
             params = {"field_path": target_field, "value": target_value}
         elif action == ModificationAction.REPLACE and target_value is not None:
@@ -572,22 +640,30 @@ class ModificationEngine:
     def process_response(
         self, intercepted: InterceptedRequest, response: dict[str, Any]
     ) -> tuple[dict[str, Any], bool]:
-        """
-        Process an adapter response through modification rules.
-        Returns (modified_response, was_modified).
+        """Process a locally served response through the response rules.
+
+        ``response`` is the ``{status_code, headers, body}`` wrapper the
+        pipeline serves (a bare body is accepted too). Rules read and change
+        the *body*: the wrapper used to be handed to them as the body and was
+        then merged back into it, so every local response gained
+        ``status_code``/``headers``/``body`` keys as soon as any rule was
+        loaded. Returns ``(response, was_modified)``: an untouched response is
+        returned as is, a modified one as a wrapper. A blocked response
+        becomes a 403; a delay rule adds ``delay_ms`` for the caller to honour.
         """
         # Fast path: skip message wrapping and rule evaluation if no rules are active (~54x faster)
         if not self._rules:
             return response, False
 
+        wrapped = _is_response_wrapper(response)
         _metadata = getattr(intercepted, "metadata", None) or {}
         _parsed = getattr(intercepted, "parsed_intent", None)
         # Create message from response
         response_record = ResponseRecord(
             source="edge",
-            status_code=200,
-            headers={},
-            body=response,
+            status_code=(response.get("status_code") or 200) if wrapped else 200,
+            headers=dict(response.get("headers") or {}) if wrapped else {},
+            body=response.get("body") if wrapped else response,
             latency_ms=0,
             timestamp=datetime.now(UTC),
             metadata={
@@ -614,11 +690,9 @@ class ModificationEngine:
                     logger.warning(f"Response blocked by rule {rule.name}: {msg.block_reason}")
                     break
 
-        # Apply modifications back to response
-        modified_response = self._apply_to_response(response, msg)
-        was_modified = len(msg.modifications) > 0
-
-        return modified_response, was_modified
+        if not msg.modifications and not msg.blocked:
+            return response, False
+        return self._apply_to_response(response, msg, wrapped=wrapped), True
 
     def _apply_to_request(
         self, original: InterceptedRequest, msg: InterceptedMessage
@@ -647,31 +721,31 @@ class ModificationEngine:
         return original
 
     def _apply_to_response(
-        self, original: dict[str, Any], msg: InterceptedMessage
+        self,
+        original: dict[str, Any] | list | str | None,
+        msg: InterceptedMessage,
+        *,
+        wrapped: bool,
     ) -> dict[str, Any]:
-        """Apply message modifications back to response dict."""
-        if msg.body is not None:
-            # Merge the modified body into the original response shape instead
-            # of replacing the dict wholesale, so status/headers set by the
-            # adapter survive the round-trip.
-            if isinstance(msg.body, dict) and isinstance(original, dict):
-                orig_body = original.get("body")
-                if isinstance(orig_body, dict):
-                    merged = dict(orig_body)
-                    merged.update(msg.body)
-                    original = dict(original)
-                    original["body"] = merged
-                else:
-                    original = dict(original)
-                    original["body"] = msg.body
-            else:
-                original = msg.body
-        if msg.modifications:
-            original = dict(original)
-            original["modifications"] = msg.modifications
+        """The ``{status_code, headers, body}`` wrapper to serve after the rules ran."""
         if msg.blocked:
-            original = {"success": False, "error": msg.block_reason}
-        return original
+            out: dict[str, Any] = {
+                "status_code": BLOCKED_STATUS,
+                "headers": {},
+                "body": {"error": "blocked", "reason": msg.block_reason},
+            }
+        else:
+            out = dict(original) if wrapped else {"status_code": 200, "headers": {}}
+            # The rules' body as is: REPLACE swaps it and REMOVE deletes keys,
+            # which a merge into the original body would undo.
+            out["body"] = msg.body
+            original_headers = (original.get("headers") or {}) if wrapped else {}
+            if msg.headers != {k.lower(): v for k, v in original_headers.items()}:
+                out["headers"] = dict(msg.headers)
+        delay_ms = msg.metadata.get("artificial_delay_ms")
+        if delay_ms:
+            out["delay_ms"] = delay_ms
+        return out
 
     def _log_modification(
         self,
