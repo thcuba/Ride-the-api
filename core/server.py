@@ -66,6 +66,7 @@ from core.database import (
 )
 from core.dns_discovery import DNSDiscoveryRecorder, get_dns_recorder, set_dns_recorder
 from core.dns_server import get_dns_interceptor
+from core.http_framing import servable_status, without_framing_headers
 from core.llm_decipher import LLMDecipherService, get_llm_decipher
 from core.logging_config import get_log_level, setup_logging
 from core.modification import BLOCKED_STATUS, get_modification_engine
@@ -3523,6 +3524,22 @@ except Exception as e:
 # upstream connection, not the message (the response object sets its own).
 _RESPONSE_HOP_BY_HOP = ("content-length", "transfer-encoding", "connection")
 
+# Statuses that must not carry a body.
+_BODYLESS_STATUSES = frozenset({204, 304})
+
+
+def _local_http_response(response: dict) -> Response:
+    """Serve a locally built ``{status_code, headers, body}`` response.
+
+    Learned template headers used to be passed through as-is: the vendor's
+    stale Content-Length won over the re-rendered body.
+    """
+    status = servable_status(response.get("status_code"))
+    headers = without_framing_headers(response.get("headers"))
+    if status in _BODYLESS_STATUSES:
+        return Response(status_code=status, headers=headers)
+    return JSONResponse(status_code=status, content=response.get("body", {}), headers=headers)
+
 
 def _client_error(exc: BaseException, message: str, status_code: int = 400) -> JSONResponse:
     """Return a control-plane error response that never leaks internals.
@@ -3759,11 +3776,7 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
             metrics_registry.local_hits_total.inc()
             out_response = _apply_response_modifications(intercepted, result["response"])
             await _modification_delay(out_response.pop("delay_ms", None))
-            return JSONResponse(
-                status_code=out_response.get("status_code", 200),
-                content=out_response.get("body", {}),
-                headers=out_response.get("headers", {}),
-            )
+            return _local_http_response(out_response)
         if result["action"] == "forward":
             # Prometheus: count cloud forwards (requests not served locally).
             metrics_registry.cloud_misses_total.inc()
