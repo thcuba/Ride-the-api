@@ -28,8 +28,14 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 from adapters.base import InterceptedRequest, ProtocolType, device_id_from_ip
+from core.http_framing import servable_status, without_framing_headers
 from core.pattern_db.schemas import ObservationKind, TransportMeta
-from core.protocol_servers import ProtocolServerPlugin
+from core.protocol_servers import (
+    ProtocolServerPlugin,
+    call_handler,
+    device_reply,
+    encode_reply,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -82,15 +88,21 @@ class HTTP2ServerPlugin(ProtocolServerPlugin):
         device_id = device_id_from_ip("h2", remote_ip)
 
         try:
-            conn = h2.connection.H2Connection(config=h2.config.H2Configuration(client_side=False))
+            # str header names/values: with h2's default (bytes) every
+            # headers.get(":method") / (":path") missed, so all requests were
+            # read as "GET /".
+            conn = h2.connection.H2Connection(
+                config=h2.config.H2Configuration(client_side=False, header_encoding="utf-8")
+            )
             conn.initiate_connection()
-            writer.write(conn.data_to_send())
-            await writer.drain()
+            await _flush(conn, writer)
 
             # Per-stream pending requests: headers arrive in the HEADERS frame
             # (RequestReceived) and the body arrives later in DATA frames, so
             # we must assemble both before dispatching to the handler.
             pending: dict[int, dict[str, Any]] = {}
+            # Response bodies still waiting for flow-control window.
+            outbox: dict[int, bytes] = {}
 
             while True:
                 try:
@@ -100,25 +112,24 @@ class HTTP2ServerPlugin(ProtocolServerPlugin):
                     break
                 if not data:
                     break
-                events = conn.receive_data(data)
-                for event in events:
+                for event in conn.receive_data(data):
                     if isinstance(event, h2.events.RequestReceived):
                         if len(pending) >= _MAX_PENDING_STREAMS:
                             conn.reset_stream(
                                 event.stream_id,
                                 error_code=h2.errors.ErrorCodes.REFUSED_STREAM,
                             )
-                        else:
-                            pending[event.stream_id] = {
-                                "headers": dict(event.headers),
-                                "body": bytearray(),
-                                "stream_id": event.stream_id,
-                            }
-                            # A request whose headers carry END_STREAM has no body
-                            # and is fully dispatched while here.
-                            if event.stream_ended:
-                                stream = pending.pop(event.stream_id)
-                                await self._drain(conn, writer, stream, device_id, remote_ip)
+                            continue
+                        pending[event.stream_id] = {
+                            "headers": dict(event.headers),
+                            "body": bytearray(),
+                            "stream_id": event.stream_id,
+                        }
+                        # A request whose headers carry END_STREAM has no body
+                        # and is fully dispatched while here.
+                        if event.stream_ended:
+                            stream = pending.pop(event.stream_id)
+                            await self._respond(conn, outbox, stream, device_id, remote_ip)
                     elif isinstance(event, h2.events.DataReceived):
                         stream = pending.get(event.stream_id)
                         if stream is not None:
@@ -133,14 +144,20 @@ class HTTP2ServerPlugin(ProtocolServerPlugin):
                             else:
                                 stream["body"].extend(event.data)
                         # Always acknowledge so flow control keeps the stream alive.
-                        conn.acknowledge_received_data(len(event.data), event.stream_id)
+                        conn.acknowledge_received_data(
+                            event.flow_controlled_length, event.stream_id
+                        )
                     elif isinstance(event, h2.events.StreamEnded):
                         stream = pending.pop(event.stream_id, None)
                         if stream is not None:
-                            await self._drain(conn, writer, stream, device_id, remote_ip)
-                if conn.data_to_send():
-                    writer.write(conn.data_to_send())
-                    await writer.drain()
+                            await self._respond(conn, outbox, stream, device_id, remote_ip)
+                    elif isinstance(event, h2.events.StreamReset):
+                        pending.pop(event.stream_id, None)
+                        outbox.pop(event.stream_id, None)
+                # Window updates (or the response just queued) may let more
+                # body frames out.
+                _send_queued(conn, outbox)
+                await _flush(conn, writer)
         except (asyncio.CancelledError, ConnectionError, OSError):
             pass
         except Exception:
@@ -150,15 +167,15 @@ class HTTP2ServerPlugin(ProtocolServerPlugin):
                 writer.close()
                 await writer.wait_closed()
 
-    async def _drain(
+    async def _respond(
         self,
         conn: h2.connection.H2Connection,
-        writer: asyncio.Writer,
+        outbox: dict[int, bytes],
         stream: dict,
         device_id: str,
         remote_ip: str,
     ) -> None:
-        """Build the request from headers + accumulated body and dispatch."""
+        """Dispatch a complete request and queue its response."""
         headers = stream["headers"]
         body_raw = bytes(stream["body"])
         method = headers.get(":method", "GET")
@@ -173,23 +190,21 @@ class HTTP2ServerPlugin(ProtocolServerPlugin):
             except (ValueError, UnicodeDecodeError):
                 body = {"raw": body_raw.hex()}
 
-        # Fast timestamp generation using time.time() instead of
-        # datetime.now(UTC).timestamp() (~4.8x speedup)
+        # There is no ProtocolType.HTTP2: building the request raised for
+        # every stream. HTTP/2 carries HTTP semantics; the scheme says which.
         request = InterceptedRequest(
             device_id=device_id,
             timestamp=time.time(),
-            protocol=ProtocolType.HTTP2,
+            protocol=ProtocolType.HTTPS if scheme == "https" else ProtocolType.HTTP,
             client_ip=remote_ip,
             method=method,
             path=path if path.startswith("/") else f"/{path}",
             scheme=scheme,
-            headers=headers,
+            headers={k: v for k, v in headers.items() if not k.startswith(":")},
             body=body,
-            transport=TransportMeta(
-                port=getattr(self.config, "port", 443),
-                tls=getattr(self.config, "tls_enabled", False),
-            ),
-            security="tls" if getattr(self.config, "tls_enabled", False) else "none",
+            # This listener is the cleartext (h2c) port.
+            transport=TransportMeta(port=getattr(self.config, "cleartext_port", 0), tls=False),
+            security="none",
             identity=device_id,
             kind=ObservationKind.REQUEST,
         )
@@ -197,28 +212,33 @@ class HTTP2ServerPlugin(ProtocolServerPlugin):
         result = None
         if self.handler:
             try:
-                if asyncio.iscoroutinefunction(self.handler):
-                    result = await self.handler(request)
-                else:
-                    result = self.handler(request)
+                result = await call_handler(self.handler, request)
             except Exception:
                 logger.exception("HTTP/2 pipeline handler error:")
 
-        if result and isinstance(result, dict):
-            rsp_body = json.dumps(result.get("response", result)).encode("utf-8")
-        else:
-            rsp_body = b"{}"
-        conn.send_headers(
-            stream_id=stream_id,
-            headers=[
-                (":status", "200"),
-                ("content-type", "application/json"),
-                ("content-length", str(len(rsp_body))),
-            ],
-        )
-        conn.send_data(stream_id=stream_id, data=rsp_body, end_stream=True)
-        writer.write(conn.data_to_send())
-        await writer.drain()
+        # Only a locally served response answers with content; anything else
+        # used to come back as a 200 carrying the internal pipeline dict.
+        reply = device_reply(result)
+        if reply is None:
+            conn.send_headers(stream_id, [(":status", "502")], end_stream=True)
+            return
+        response = result["response"]
+        payload, is_json = encode_reply(reply)
+        response_headers = [(":status", str(servable_status(response.get("status_code"))))]
+        response_headers += [
+            (name.lower(), value)
+            for name, value in without_framing_headers(response.get("headers")).items()
+            if name.lower() != "content-type"
+        ]
+        content_type = "application/json" if is_json else "application/octet-stream"
+        response_headers += [
+            ("content-type", (response.get("headers") or {}).get("content-type", content_type)),
+            ("content-length", str(len(payload))),
+        ]
+        conn.send_headers(stream_id, response_headers, end_stream=not payload)
+        if payload:
+            outbox[stream_id] = payload
+            _send_queued(conn, outbox)
 
     async def get_status(self) -> dict:
         return {
@@ -229,3 +249,32 @@ class HTTP2ServerPlugin(ProtocolServerPlugin):
             "cleartext_port": self.config.cleartext_port,
             "tls_enabled": self.config.tls_enabled,
         }
+
+
+def _send_queued(conn: h2.connection.H2Connection, outbox: dict[int, bytes]) -> None:
+    """Send queued response bodies as far as frame size and flow control allow.
+
+    One send_data call with the whole body raised FrameTooLargeError above
+    16 KiB and ignored the peer's window.
+    """
+    for stream_id in list(outbox):
+        data = outbox[stream_id]
+        while data:
+            room = min(conn.local_flow_control_window(stream_id), conn.max_outbound_frame_size)
+            if room <= 0:
+                break
+            chunk, data = data[:room], data[room:]
+            conn.send_data(stream_id, chunk, end_stream=not data)
+        if data:
+            outbox[stream_id] = data
+        else:
+            del outbox[stream_id]
+
+
+async def _flush(conn: h2.connection.H2Connection, writer: asyncio.Writer) -> None:
+    # data_to_send() drains the buffer: calling it once to test and again to
+    # write sent nothing, so SETTINGS ACKs and WINDOW_UPDATEs were lost.
+    data = conn.data_to_send()
+    if data:
+        writer.write(data)
+        await writer.drain()
