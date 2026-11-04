@@ -1042,10 +1042,11 @@ class LearningPipeline:
             await self._persist_device_meta(device_id, device, llm_analysis)
         await self._export_and_sync_patterns(device_id)
 
-        if pair_ids is not None:
-            await self.buffer.flush_selected(device_id, pair_ids)
-        else:
-            await self.buffer.flush(device_id)
+        # Mark exactly the pairs this cycle analysed. Pairs that arrived while
+        # the LLM was working were not in the snapshot: marking "everything
+        # unflushed" (buffer.flush) dropped them without ever analysing them.
+        analysed_ids = pair_ids if pair_ids is not None else [p["id"] for p in pairs]
+        await self.buffer.flush_selected(device_id, analysed_ids)
         await self.buffer.clear_cache(device_id)
 
         patterns_count = len(llm_analysis.get("patterns", llm_analysis.get("decoded_patterns", [])))
