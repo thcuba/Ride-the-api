@@ -3665,11 +3665,13 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
             path=f"/{path}",
         )
         decision = traffic_selector.evaluate(request_info)
-        if decision.value == "passthrough" and is_local:
-            # The device addressed *this* gateway, so a passthrough decision
+        if decision.value == "passthrough":
+            # The client addressed *this* gateway, so a passthrough decision
             # must actually forward the request upstream. Replying 200 with a
             # note instead fabricated a success the device never received.
-            logger.info(f"Passthrough for local traffic from {client_ip} to {vendor}: forwarding")
+            # (Honoured for every client: an intercepted request is forwarded
+            # the same way, only after the pipeline has seen it.)
+            logger.info(f"Passthrough for traffic from {client_ip} to {vendor}: forwarding")
             return await _forward_bypassed_request(
                 adapter, request, path, body, client_ip, raw_body=raw_body
             )

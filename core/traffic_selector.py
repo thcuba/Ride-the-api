@@ -43,6 +43,26 @@ class MatchType(str, Enum):  # noqa: UP042
     DEVICE_ID = "device_id"  # Specific device ID
 
 
+@functools.lru_cache(maxsize=2048)
+def normalize_hostname(host: str | None) -> str | None:
+    """A Host header value as a bare hostname: no port, no trailing dot, lower case.
+
+    ``api.example.com:443`` or ``api.example.com.`` never matched a hostname
+    rule for ``api.example.com``; ``[2001:db8::1]:8443`` becomes ``2001:db8::1``.
+    """
+    if not host:
+        return host
+    host = host.strip()
+    if host.startswith("["):
+        end = host.find("]")
+        host = host[1:end] if end != -1 else host[1:]
+    elif host.count(":") == 1:
+        name, _, port = host.partition(":")
+        if not port or port.isdigit():
+            host = name
+    return host.rstrip(".").lower()
+
+
 @dataclass
 class TrafficRule:
     """A single traffic selection rule."""
@@ -88,19 +108,20 @@ class TrafficRule:
         if not self.enabled:
             return False
 
-        # Scope must match. Using identity checks (`is`) on Enum instances and local boolean
-        # evaluation yields ~1.2x - 1.5x speedup over equality comparisons (`==`).
-        is_local = request_info.is_local
-        if self.scope is TrafficScope.LOCAL and not is_local:
-            return False
-        if self.scope is TrafficScope.EXTERNAL and is_local:
+        # Scope says which side of the exchange the rule looks at: ``local``
+        # rules match the device (it must be a LAN client), ``external`` rules
+        # match the cloud destination, whoever the client is. External rules
+        # used to require a non-local client -- and devices are LAN clients,
+        # so every external rule (e.g. the shipped firmware passthrough) was
+        # dead. Identity checks (`is`) on Enum instances are the fast path.
+        if self.scope is TrafficScope.LOCAL and not request_info.is_local:
             return False
 
         # Match based on type. Store `mtype` locally to avoid repeated attribute access.
         mtype = self.match_type
 
         if mtype is MatchType.HOSTNAME:
-            req_h = request_info.hostname
+            req_h = normalize_hostname(request_info.hostname)
             if req_h and self._compiled_pattern:
                 return bool(self._compiled_pattern.match(req_h))
             return False
