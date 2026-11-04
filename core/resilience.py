@@ -10,6 +10,8 @@ import logging
 from contextlib import suppress
 from datetime import UTC, datetime
 
+from fastapi import Request  # noqa: TC002 - FastAPI resolves route annotations at runtime
+from fastapi.responses import JSONResponse
 from sqlalchemy import func, select
 
 from core.database import (
@@ -22,6 +24,26 @@ from core.database import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Columns the database fills itself; an import never sets them.
+_SERVER_COLUMNS = frozenset({"id", "created_at", "updated_at"})
+
+
+def _import_rows(model: type, rows: object) -> list[dict]:
+    """The importable rows of an uploaded list: objects only, known columns only.
+
+    Rows used to go straight into ``Model(**row)``, so one unknown key (or a
+    timestamp string) turned the whole import into a 500.
+    """
+    if not isinstance(rows, list):
+        return []
+    columns = set(model.__table__.columns.keys()) - _SERVER_COLUMNS
+    return [
+        {key: value for key, value in row.items() if key in columns}
+        for row in rows
+        if isinstance(row, dict)
+    ]
+
 
 # Auto-switch thresholds (defaults; operators tune these in config.learning).
 AUTO_SWITCH_MATCH_RATE = 99.0  # Switch to production at 99% match rate
@@ -340,6 +362,10 @@ class CloudIndependenceVerifier:
                     "response_field": m.response_field,
                     "response_type": m.response_type,
                     "transform": m.transform,
+                    # Without these a re-import lost enum mappings and served 0
+                    # for every formula mapping.
+                    "formula": m.formula,
+                    "enum_values": m.enum_values,
                     "intent": m.intent,
                     "confidence": m.confidence,
                 }
@@ -351,7 +377,7 @@ class CloudIndependenceVerifier:
         """Import previously exported patterns (for sharing between devices)."""
         count = 0
         async with self.db_manager.device_session(device_id) as session:
-            patterns = data.get("patterns", [])
+            patterns = _import_rows(RequestPattern, data.get("patterns"))
             if patterns:
                 p_ids = [p["pattern_id"] for p in patterns if "pattern_id" in p]
                 existing_p = set()
@@ -371,7 +397,7 @@ class CloudIndependenceVerifier:
                         if "pattern_id" in p_data:
                             existing_p.add(p_data["pattern_id"])
 
-            templates = data.get("templates", [])
+            templates = _import_rows(ResponseTemplate, data.get("templates"))
             if templates:
                 t_ids = [t["template_id"] for t in templates if "template_id" in t]
                 existing_t = set()
@@ -390,7 +416,7 @@ class CloudIndependenceVerifier:
                         if "template_id" in t_data:
                             existing_t.add(t_data["template_id"])
 
-            mappings = data.get("field_mappings", [])
+            mappings = _import_rows(FieldMapping, data.get("field_mappings"))
             if mappings:
                 m_ids = [m["mapping_id"] for m in mappings if "mapping_id" in m]
                 existing_m = set()
@@ -414,7 +440,12 @@ class CloudIndependenceVerifier:
 # API endpoint handlers for resilience endpoints
 
 
-def register_resilience_routes(app, get_db, _get_orch):  # noqa: C901
+def _service_not_ready() -> JSONResponse:
+    # A bare ``return {...}, 503`` is serialised by FastAPI as a 200 JSON array.
+    return JSONResponse(status_code=503, content={"error": "Service not ready"})
+
+
+def register_resilience_routes(app, get_db, get_orch):  # noqa: C901
     """Register resilience-related API routes."""
 
     @app.get("/api/independence/{device_id}")
@@ -422,17 +453,19 @@ def register_resilience_routes(app, get_db, _get_orch):  # noqa: C901
         """Check if a device can operate without vendor cloud."""
         db = get_db()
         if not db:
-            return {"error": "Service not ready"}, 503
+            return _service_not_ready()
         verifier = CloudIndependenceVerifier(db)
         status = await verifier.check_cloud_independence(device_id)
         return {"device_id": device_id, "independence": status}
 
+    # The trailing-slash form used to fall through to the vendor proxy route.
+    @app.get("/api/independence/", include_in_schema=False)
     @app.get("/api/independence")
     async def check_all_independence():
         """Check independence for all devices."""
         db = get_db()
         if not db:
-            return {"error": "Service not ready"}, 503
+            return _service_not_ready()
         verifier = CloudIndependenceVerifier(db)
         results = await verifier.verify_all_devices()
         return {"devices": results}
@@ -442,7 +475,7 @@ def register_resilience_routes(app, get_db, _get_orch):  # noqa: C901
         """Auto-switch device to production if conditions are met."""
         db = get_db()
         if not db:
-            return {"error": "Service not ready"}, 503
+            return _service_not_ready()
         verifier = CloudIndependenceVerifier(db)
         switched = await verifier.auto_switch_to_production(device_id)
         return {"device_id": device_id, "switched": switched}
@@ -452,19 +485,39 @@ def register_resilience_routes(app, get_db, _get_orch):  # noqa: C901
         """Export learned patterns for backup/sharing."""
         db = get_db()
         if not db:
-            return {"error": "Service not ready"}, 503
+            return _service_not_ready()
         verifier = CloudIndependenceVerifier(db)
         return await verifier.export_device_patterns(device_id)
 
     @app.post("/api/independence/{device_id}/import")
-    async def import_device_patterns(device_id: str, request):
-        """Import previously exported patterns."""
+    async def import_device_patterns(device_id: str, request: Request):
+        """Import previously exported patterns.
+
+        ``request`` used to be un-annotated, so FastAPI read it as a required
+        query parameter and every import was rejected with a 422.
+        """
         db = get_db()
         if not db:
-            return {"error": "Service not ready"}, 503
-        body = await request.json()
+            return _service_not_ready()
+        try:
+            body = await request.json()
+        except ValueError:
+            return JSONResponse(status_code=400, content={"error": "Body is not JSON"})
+        if not isinstance(body, dict):
+            return JSONResponse(status_code=400, content={"error": "Expected a JSON object"})
         verifier = CloudIndependenceVerifier(db)
-        count = await verifier.import_device_patterns(device_id, body)
+        try:
+            count = await verifier.import_device_patterns(device_id, body)
+        except Exception:
+            logger.exception("Pattern import for %s failed", device_id)
+            return JSONResponse(status_code=400, content={"error": "Invalid pattern import"})
+        # The engine serves its in-memory set when it has one: refresh it.
+        orchestrator = get_orch()
+        if orchestrator is not None:
+            try:
+                await orchestrator.sync_engine(device_id)
+            except Exception:
+                logger.exception("Could not refresh the served patterns for %s", device_id)
         return {"device_id": device_id, "patterns_imported": count}
 
 
