@@ -45,7 +45,7 @@ from sqlalchemy.pool import NullPool
 from core.atomic_io import sanitize_filename_component
 from core.config import get_config
 from core.migrations import SchemaMigrator
-from core.pattern_db.schemas import DeviceMeta
+from core.pattern_db.schemas import DeviceMeta, normalize_connection_mode
 
 logger = logging.getLogger(__name__)
 
@@ -1111,9 +1111,11 @@ class DatabaseManager:
         # Level 2: stable header decided at first flush.
         meta = await self.read_device_meta(device_id)
         if meta:
-            mode = meta.get("connection_mode")
+            # Re-checked on read: a header stored before the whitelist existed
+            # must not steer ingress with an arbitrary value.
+            mode = normalize_connection_mode(meta.get("connection_mode"))
             if mode and mode != "auto":
-                return str(mode)
+                return mode
 
         # Level 3: what this ingress path actually speaks.
         return ingress_default

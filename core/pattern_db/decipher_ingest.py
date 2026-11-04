@@ -34,6 +34,8 @@ from core.pattern_db.schemas import (
     ServerResponse,
     StateVariable,
     VirtualSensor,
+    normalize_connection_mode,
+    normalize_protocol,
     response_for_endpoint,
 )
 from core.pattern_db.schemas import (
@@ -496,13 +498,14 @@ class DecipherIngest:
             "state_variables": [sv.model_dump(exclude_none=True) for sv in model.state_variables],
             "virtual_sensors": [vs.model_dump(exclude_none=True) for vs in model.virtual_sensors],
         }
+        # Import (which validates) before writing the header: a rejected model
+        # used to leave its protocol header behind on the device.
+        count = await self.import_patterns(device_id, model.to_pattern_db())
         try:
             await self.db_manager.write_device_meta(device_id, header)
         except Exception as e:  # noqa: BLE001
             logger.warning("Failed to persist device header for %s: %s", device_id, e)
-
-        pattern_db = model.to_pattern_db()
-        return await self.import_patterns(device_id, pattern_db)
+        return count
 
     async def merge_device_model(self, device_id: str, model: DeviceModel) -> int:  # noqa: C901, PLR0912, PLR0915
         """Idempotently merge a v2 model delta into an existing device DB.
@@ -531,10 +534,17 @@ class DecipherIngest:
         if model.protocol and model.protocol.protocol:
             merged["vendor"] = model.meta.vendor or current.get("vendor", "unknown")
             merged["device_type"] = model.meta.device_type or current.get("device_type", "unknown")
-            merged["protocols"] = [model.protocol.protocol]
-            merged["connection_mode"] = model.protocol.handler or current.get(
-                "connection_mode", "auto"
-            )
+            # The ingress decision (protocols / connection_mode) is settled at
+            # the first flush and then stays stable. A later delta comes from
+            # an LLM reading device traffic (prompt-injectable): it may fill
+            # the decision in while it is undecided, never overwrite it, and a
+            # value outside the whitelist is ignored instead of blanking it.
+            protocol = normalize_protocol(model.protocol.protocol)
+            if protocol and not any(current.get("protocols") or []):
+                merged["protocols"] = [protocol]
+            mode = normalize_connection_mode(model.protocol.handler)
+            if mode and (current.get("connection_mode") or "auto") == "auto":
+                merged["connection_mode"] = mode
             merged["model"] = model.protocol.identity or current.get("model", "")
             merged["transport"] = model.protocol.transport or current.get("transport", "")
             merged["security"] = model.protocol.security or current.get("security", "")

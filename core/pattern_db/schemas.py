@@ -11,7 +11,7 @@ from datetime import datetime  # noqa: TC003
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # BUFFER DB — .ride-capture.json  (da decifrare)
@@ -272,6 +272,46 @@ class PatternDB(BaseModel):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+# Protocol tokens a device can be attributed with, and the ingress modes the
+# server acts on. The header is mostly written from LLM output, and the LLM's
+# input is the device traffic itself (prompt-injectable): anything outside
+# these sets never reaches the stored header.
+SAFE_PROTOCOLS = frozenset(
+    {
+        "http",
+        "https",
+        "tls",
+        "tcp",
+        "tcpip",
+        "mqtt",
+        "mqtt_connect",
+        "modbus",
+        "coap",
+        "matter",
+        "websocket",
+        "ws",
+        "zigbee",
+        "zwave",
+        "raw",
+    }
+)
+SAFE_CONNECTION_MODES = frozenset({"auto", "tls", "http", "mqtt", "coap", "modbus"})
+# Free-text header fields (identity, transport, ...) are display-only.
+_MAX_META_TEXT = 200
+
+
+def normalize_protocol(value: Any) -> str | None:  # noqa: ANN401
+    """The whitelisted protocol token for ``value`` (lower-cased), else None."""
+    token = value.strip().lower() if isinstance(value, str) else ""
+    return token if token in SAFE_PROTOCOLS else None
+
+
+def normalize_connection_mode(value: Any) -> str | None:  # noqa: ANN401
+    """The whitelisted ingress connection mode for ``value``, else None."""
+    mode = value.strip().lower() if isinstance(value, str) else ""
+    return mode if mode in SAFE_CONNECTION_MODES else None
+
+
 class DeviceMeta(BaseModel):
     """Per-device header persisted in the device DB.
 
@@ -310,6 +350,28 @@ class DeviceMeta(BaseModel):
     # (which is the only other place state_variables/virtual_sensors live).
     state_variables: list[StateVariable] = Field(default_factory=list)
     virtual_sensors: list[VirtualSensor] = Field(default_factory=list)
+
+    # Every header write goes through this model, so the whitelist is enforced
+    # here once, whichever path (first flush, model merge, import) wrote it.
+    @field_validator("protocols", mode="before")
+    @classmethod
+    def _whitelisted_protocols(cls, value: Any) -> list[str]:  # noqa: ANN401
+        if isinstance(value, str):
+            value = [value]
+        if not isinstance(value, (list, tuple)):
+            return [""]
+        kept = list(dict.fromkeys(p for p in map(normalize_protocol, value) if p))
+        return kept or [""]
+
+    @field_validator("connection_mode", mode="before")
+    @classmethod
+    def _whitelisted_connection_mode(cls, value: Any) -> str:  # noqa: ANN401
+        return normalize_connection_mode(value) or "auto"
+
+    @field_validator("model", "identity", "transport", "security", mode="before")
+    @classmethod
+    def _short_text(cls, value: Any) -> str:  # noqa: ANN401
+        return "" if value is None else str(value).strip()[:_MAX_META_TEXT]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

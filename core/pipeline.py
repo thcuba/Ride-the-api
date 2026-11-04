@@ -42,7 +42,13 @@ from core.pattern_db import decipher_ingest
 from core.pattern_db.pattern_engine import (
     PatternEngine,
 )
-from core.pattern_db.schemas import DeviceModel, PatternDB, ProtocolInfo
+from core.pattern_db.schemas import (
+    DeviceModel,
+    PatternDB,
+    ProtocolInfo,
+    normalize_connection_mode,
+    normalize_protocol,
+)
 from core.redaction import redact_body, redact_headers, redact_query
 
 if TYPE_CHECKING:
@@ -237,31 +243,6 @@ def _redact_pairs_for_prompt(pairs: list) -> list:
                 clone[field] = redact(clone[field])
         result.append(clone)
     return result
-
-
-# Whitelisted protocol tokens that a device can be attributed with. Anything the
-# LLM reports outside this set is dropped so arbitrary/untrusted strings cannot
-# be persisted into the stable device header.
-_SAFE_PROTOCOLS = {
-    "http",
-    "https",
-    "tls",
-    "tcp",
-    "tcpip",
-    "mqtt",
-    "mqtt_connect",
-    "modbus",
-    "coap",
-    "matter",
-    "websocket",
-    "ws",
-    "zigbee",
-    "zwave",
-    "raw",
-}
-
-# Whitelisted ingress connection modes for the device header.
-_SAFE_CONNECTION_MODES = {"auto", "tls", "http", "mqtt", "coap", "modbus"}
 
 
 class PipelineMode(StrEnum):
@@ -1738,16 +1719,17 @@ class LearningPipeline:
             protocols = client.get("protocols") or []
         if isinstance(protocols, str):
             protocols = [protocols]
-        # Whitelist the LLM-derived protocols so arbitrary strings are dropped.
-        protocols = [p for p in (str(p).lower().strip() for p in protocols) if p in _SAFE_PROTOCOLS]
+        # Whitelist the LLM-derived protocols so arbitrary strings are dropped
+        # (DeviceMeta enforces the same sets on every header write).
+        if not isinstance(protocols, (list, tuple)):
+            protocols = []
+        protocols = [p for p in map(normalize_protocol, protocols) if p]
 
         connection_mode = analysis.get("connection_mode") or protocol_dict.get("handler")
         if not connection_mode:
             # Derive the ingress mode from the first reported protocol.
             connection_mode = protocols[0] if protocols else "auto"
-        connection_mode = str(connection_mode).lower().strip()
-        if connection_mode not in _SAFE_CONNECTION_MODES:
-            connection_mode = "auto"
+        connection_mode = normalize_connection_mode(connection_mode) or "auto"
 
         meta = {
             "vendor": device.vendor or "unknown",
