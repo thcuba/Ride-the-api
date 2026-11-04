@@ -1679,6 +1679,7 @@ class LearningPipeline:
                             response_field=resp_info.get("response_field", req_field),
                             response_type=resp_info.get("type", "string"),
                             transform=resp_info.get("transform", "direct"),
+                            formula=decipher_ingest.stored_formula(resp_info.get("formula")),
                             enum_values=resp_info.get("enum_values"),
                             intent=intent,
                             confidence=_confidence(resp_info.get("confidence")),

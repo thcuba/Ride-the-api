@@ -303,6 +303,10 @@ class FieldMapping(Base):
     # Transformation (if any)
     transform: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
+    # Expression evaluated when ``transform == "formula"``. Without it a formula
+    # mapping came back from SQL with an empty expression and served 0.
+    formula: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+
     # Enum values if type is enum
     enum_values: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
