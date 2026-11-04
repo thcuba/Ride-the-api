@@ -101,9 +101,7 @@ async def test_websocket_server_binds():
     plugin = WebSocketServerPlugin(cfg)
     await plugin.start()
     assert plugin.running
-    assert plugin._serving_task is not None  # noqa: SLF001
-    await asyncio.sleep(0.2)
-    assert not plugin._serving_task.done()  # noqa: SLF001
+    assert plugin._server is not None  # noqa: SLF001
     await plugin.stop()
     assert not plugin.running
 

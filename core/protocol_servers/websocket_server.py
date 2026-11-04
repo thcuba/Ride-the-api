@@ -33,6 +33,9 @@ from core.protocol_servers import ProtocolServerPlugin
 
 logger = logging.getLogger(__name__)
 
+# Longest wait for open connections to close when the server stops.
+_STOP_TIMEOUT_S = 5
+
 
 class WebSocketServerPlugin(ProtocolServerPlugin):
     """Native WebSocket server for device interception."""
@@ -42,35 +45,24 @@ class WebSocketServerPlugin(ProtocolServerPlugin):
     def __init__(self, config: Any, handler: Callable | None = None) -> None:  # noqa: ANN401
         super().__init__(config)
         self.handler = handler
-        self._serving_task: asyncio.Task | None = None
-        self._stop_future: asyncio.Future | None = None
+        self._server: Any = None
 
     async def start(self) -> None:
         if not HAS_WEBSOCKETS:
             logger.warning("WebSocket: websockets not installed - pip install websockets")
             self._running = False
             return
-        if self._serving_task is not None:
+        if self._server is not None:
             return
-
-        loop = asyncio.get_running_loop()
-        self._stop_future = loop.create_future()
-        self._serving_task = asyncio.create_task(self._run())
-        self._running = True
-        logger.info(
-            "WebSocket server listening on %s:%d%s",
-            self.config.host,
-            self.config.port,
-            self.config.path,
-        )
-
-    async def _run(self) -> None:
-        """Run ``websockets.serve`` as an async context manager until stopped."""
         cfg = self.config
-        async with websockets.serve(
+        # Bind here, so a failure (port in use) raises to the caller. Binding
+        # inside a background task left the plugin "running" on a dead task
+        # that made every later start a no-op and every stop raise.
+        self._server = await websockets.serve(
             self._handle_ws, cfg.host, cfg.port, max_size=cfg.max_message_size
-        ):
-            await self._stop_future
+        )
+        self._running = True
+        logger.info("WebSocket server listening on %s:%d%s", cfg.host, cfg.port, cfg.path)
 
     async def _handle_ws(self, connection) -> None:  # noqa: ANN001, C901, PLR0912
         """Handle an individual WebSocket connection (websockets >= 14 API)."""
@@ -138,12 +130,12 @@ class WebSocketServerPlugin(ProtocolServerPlugin):
             logger.exception("WebSocket connection error:")
 
     async def stop(self) -> None:
-        if self._serving_task is not None:
-            if self._stop_future is not None and not self._stop_future.done():
-                self._stop_future.set_result(None)
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._serving_task
-            self._serving_task = None
+        server, self._server = self._server, None
+        if server is not None:
+            server.close()
+            # Open connections are closed by close(); do not wait for ever.
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(server.wait_closed(), _STOP_TIMEOUT_S)
         await super().stop()
         logger.info("WebSocket server stopped")
 

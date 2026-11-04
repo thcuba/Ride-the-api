@@ -108,8 +108,16 @@ class MQTTServerPlugin(ProtocolServerPlugin):
             "auth": {"allow-anonymous": True},
             "topic-check": {"enabled": False},
         }
-        self._broker = AMQTTBroker(broker_config)
-        await self._broker.start()
+        broker = AMQTTBroker(broker_config)
+        try:
+            await broker.start()
+        except BaseException:
+            # Keep nothing from a failed start (port in use): a leftover broker
+            # made every later start -- e.g. on a free port -- a no-op.
+            with contextlib.suppress(Exception):
+                await broker.shutdown()
+            raise
+        self._broker = broker
         self._running = True
         logger.info("MQTT broker listening on %s:%d", cfg.host, cfg.port)
 
