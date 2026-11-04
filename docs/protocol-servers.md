@@ -55,7 +55,8 @@ protocol_servers:
 
 ### WebSocket
 - WebSocket server on port 9000 (configurable)
-- Customizable path
+- Accepts connections on any path; each message is learned with the path (and query) the device used. `path` is only the fallback when a request carries none
+- A device gets a reply only when the request is served locally (the learned response body)
 - Max message size: 1MB
 
 ### Raw TCP

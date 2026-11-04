@@ -15,6 +15,7 @@ import json
 import logging
 import time
 from typing import TYPE_CHECKING, Any
+from urllib.parse import parse_qsl, urlsplit
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -29,7 +30,12 @@ except ImportError:  # pragma: no cover - exercised at import time only
 
 from adapters.base import InterceptedRequest, ProtocolType, device_id_from_ip
 from core.pattern_db.schemas import ObservationKind, TransportMeta
-from core.protocol_servers import ProtocolServerPlugin
+from core.protocol_servers import (
+    ProtocolServerPlugin,
+    call_handler,
+    device_reply,
+    encode_reply,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -69,10 +75,13 @@ class WebSocketServerPlugin(ProtocolServerPlugin):
         remote_info = connection.remote_address
         remote_ip = remote_info[0] if remote_info else "unknown"
         device_id = device_id_from_ip("ws", remote_ip)
+        # Learn the path the device actually used (every message used to be
+        # recorded under the configured path, whatever the device asked for).
+        target = urlsplit(getattr(getattr(connection, "request", None), "path", "") or "")
+        path = target.path or self.config.path
+        query_params = dict(parse_qsl(target.query))
 
-        # Performance optimization: pre-bind handler coroutine check outside loop
         handler = self.handler
-        is_coro = asyncio.iscoroutinefunction(handler) if handler else False
 
         try:
             async for message in connection:
@@ -108,7 +117,8 @@ class WebSocketServerPlugin(ProtocolServerPlugin):
                     protocol=ProtocolType.WEBSOCKET,
                     client_ip=remote_ip,
                     method="WS",
-                    path=self.config.path,
+                    path=path,
+                    query_params=query_params,
                     body=body,
                     transport=TransportMeta(port=getattr(self.config, "port", 9000)),
                     security="none",
@@ -117,9 +127,14 @@ class WebSocketServerPlugin(ProtocolServerPlugin):
                 )
                 if handler:
                     try:
-                        result = await handler(request) if is_coro else handler(request)
-                        if result and isinstance(result, dict):
-                            await connection.send(json.dumps(result))
+                        result = await call_handler(handler, request)
+                        # Only a locally served response answers the device; the
+                        # pipeline result itself (with its correlation key) was
+                        # being sent as the reply.
+                        reply = device_reply(result)
+                        if reply is not None:
+                            payload, is_json = encode_reply(reply)
+                            await connection.send(payload.decode("utf-8") if is_json else payload)
                     except ConnectionClosed:
                         break
                     except Exception:
