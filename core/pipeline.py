@@ -16,6 +16,7 @@ from enum import StrEnum
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
+from urllib.parse import parse_qsl
 from uuid import uuid4
 
 from sqlalchemy import and_, delete, select, update
@@ -46,6 +47,50 @@ if TYPE_CHECKING:
     from core.buffer.store import BufferStore
 
 logger = logging.getLogger(__name__)
+
+
+def _older_than(timestamp: Any, cutoff: datetime) -> bool:  # noqa: ANN401
+    """True when ``timestamp`` is a datetime earlier than ``cutoff``.
+
+    Naive values (SQLite can return them) are read as UTC. A missing or
+    non-datetime value is never considered stale.
+    """
+    if not isinstance(timestamp, datetime):
+        return False
+    aware = timestamp if timestamp.tzinfo else timestamp.replace(tzinfo=UTC)
+    return aware < cutoff
+
+
+def _as_key_list(value: Any) -> list:  # noqa: ANN401
+    """Normalise an LLM-supplied header/query spec into a list of key names.
+
+    Accepts a list of names, a ``{name: ...}`` mapping (keys are taken) or
+    anything else (treated as empty).
+    """
+    if isinstance(value, dict):
+        return list(value.keys())
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    return []
+
+
+def _pattern_headers(pattern_data: dict) -> list:
+    """Required-header keys from an LLM pattern, tolerating key-name drift.
+
+    The shipped prompt asks the model for ``request_headers``; earlier code
+    only read ``required_headers``, so learned patterns always had an empty
+    header list. Accept either name.
+    """
+    return _as_key_list(pattern_data.get("required_headers") or pattern_data.get("request_headers"))
+
+
+def _pattern_query_keys(pattern_data: dict) -> list:
+    """Query-parameter keys from an LLM pattern, tolerating key-name drift."""
+    return _as_key_list(
+        pattern_data.get("query_param_keys")
+        or pattern_data.get("query_params")
+        or pattern_data.get("query_keys")
+    )
 
 
 # Pre-computed tuple mapping field names to redaction handlers for LLM prompt pair preparation
@@ -583,12 +628,16 @@ class LearningPipeline:
 
         return corr_key
 
-    async def discard_request(self, device_id: str, correlation_key: str) -> bool:
-        """Remove a request whose upstream exchange failed before a response.
+    async def discard_request(
+        self, device_id: str, correlation_key: str, *, count_as_error: bool = True
+    ) -> bool:
+        """Remove a captured request that will never receive a correlated response.
 
-        Failed TLS forwards must not remain eligible for a later response: the
+        Failed forwards must not remain eligible for a later response: the
         correlation fallback matches by device and protocol, so an orphan can
-        otherwise contaminate a future learning pair.
+        otherwise contaminate a future learning pair. ``count_as_error=False``
+        is for a request that was handed off successfully but whose response
+        never comes back here (e.g. nginx forwards it), which is not a failure.
         """
         pending = self._correlation_cache.get(device_id)
         removed_from_memory = False
@@ -598,7 +647,7 @@ class LearningPipeline:
                     pending.remove(entry)
                     removed_from_memory = True
                     break
-        if removed_from_memory:
+        if removed_from_memory and count_as_error:
             # A forward that never came back is an error, and it has to be visible in the
             # counters: otherwise a device whose upstream is failing looks idle.
             await self.tracker.record_result(device_id, MatchResult.ERROR)
@@ -616,6 +665,87 @@ class LearningPipeline:
 
         return removed_from_memory or bool(result.rowcount)
 
+    def _pop_pending(
+        self,
+        device_id: str,
+        protocol: str,
+        correlation_key: str | None,
+        cutoff: datetime,
+    ) -> dict | None:
+        """Remove and return the in-memory pending request a response answers.
+
+        With a key, only that exact request qualifies. Without one, the oldest
+        request of the same protocol that is still inside the correlation window
+        is used — never one older than ``cutoff`` (a lost orphan).
+        """
+        pending = self._correlation_cache.get(device_id)
+        if not pending:
+            return None
+        for entry in pending:
+            if correlation_key is not None:
+                if entry.get("correlation_key") != correlation_key:
+                    continue
+            elif entry["protocol"] != protocol or _older_than(entry.get("timestamp"), cutoff):
+                continue
+            pending.remove(entry)
+            return entry
+        return None
+
+    async def _claim_keyed_row(  # noqa: PLR0913, PLR0917
+        self,
+        device_id: str,
+        vendor: str,
+        protocol: str,
+        correlation_key: str,
+        status_code: int,
+        headers: dict,
+        body: Any,  # noqa: ANN401
+    ) -> dict | None:
+        """Claim exactly the persisted request with ``correlation_key`` (atomic).
+
+        A key whose row is gone (already consumed, or never persisted) yields
+        ``None`` rather than falling back to an unrelated request.
+        """
+        async with self.db_manager.device_session(device_id) as session:
+            claim = await session.execute(
+                update(SessionCache)
+                .where(
+                    and_(
+                        SessionCache.correlation_key == correlation_key,
+                        SessionCache.correlated == False,  # noqa: E712
+                    )
+                )
+                .values(
+                    correlated=True,
+                    correlated_at=datetime.now(UTC),
+                    response_status=status_code,
+                    response_headers=headers,
+                    response_body=body,
+                    response_latency_ms=0.0,
+                )
+            )
+            if not claim.rowcount:
+                return None
+            row = (
+                await session.execute(
+                    select(SessionCache).where(SessionCache.correlation_key == correlation_key)
+                )
+            ).scalar_one_or_none()
+        if row is None:
+            return None
+        return {
+            "correlation_key": row.correlation_key,
+            "device_id": device_id,
+            "vendor": vendor,
+            "protocol": protocol,
+            "method": row.method,
+            "path": row.path,
+            "headers": row.headers,
+            "body": row.body,
+            "query_params": row.query_params,
+            "timestamp": row.created_at,
+        }
+
     async def match_response(  # noqa: PLR0913, C901, PLR0917
         self,
         device_id: str,
@@ -624,23 +754,25 @@ class LearningPipeline:
         status_code: int,
         headers: dict,
         body: Any,  # noqa: ANN401
+        correlation_key: str | None = None,
     ) -> CorrelatedPair | None:
-        """Match an incoming response to a pending request. Returns correlated pair."""
+        """Match an incoming response to a pending request. Returns correlated pair.
+
+        When ``correlation_key`` is given (the caller owns both sides of the
+        exchange, e.g. the TLS listener), the response is matched to *exactly*
+        that request and to nothing else: if it is no longer pending, no pair is
+        produced. Without a key, the oldest pending request of the same protocol
+        that is still within the correlation window is used — concurrent requests
+        from one device, or a stale orphan, can otherwise be mis-paired.
+        """
         # Credential redaction (F-02): never persist raw response secrets.
         headers = redact_headers(headers)
         body = redact_body(body)
+        cutoff = datetime.now(UTC) - self._correlation_max_age()
 
         # Try memory cache first
-        pending = self._correlation_cache.get(device_id, deque())
-        matched = None
-
-        matched_key = None
-        for entry in pending:
-            if entry["protocol"] == protocol:
-                matched = entry
-                matched_key = entry.get("correlation_key")
-                pending.remove(entry)
-                break
+        matched = self._pop_pending(device_id, protocol, correlation_key, cutoff)
+        matched_key = matched.get("correlation_key") if matched else None
 
         # When a request is matched from the in-memory cache, mark its
         # persisted SessionCache row as correlated too. Otherwise the original
@@ -662,11 +794,15 @@ class LearningPipeline:
                     )
                 )
 
-        if not matched:
+        if not matched and correlation_key is not None:
+            matched = await self._claim_keyed_row(
+                device_id, vendor, protocol, correlation_key, status_code, headers, body
+            )
+
+        if not matched and correlation_key is None:
             # Try DB cache, guarding against stale rows: a pending request left
             # from a previous process (or an old, un-correlated row) must not be
             # wrongly paired with an unrelated later response (phantom match).
-            cutoff = datetime.now(UTC) - self._correlation_max_age()
             async with self.db_manager.device_session(device_id) as session:
                 result = await session.execute(
                     select(SessionCache)
@@ -1322,9 +1458,9 @@ class LearningPipeline:
                         method=method,
                         path_pattern=path,
                         protocol=pattern_data.get("protocol", "http"),
-                        required_headers=pattern_data.get("required_headers", []),
+                        required_headers=_pattern_headers(pattern_data),
                         body_schema=pattern_data.get("body_schema", {}),
-                        query_param_keys=pattern_data.get("query_param_keys", []),
+                        query_param_keys=_pattern_query_keys(pattern_data),
                         intent=intent,
                         confidence=pattern_data.get("confidence", 0.5),
                     )
@@ -1337,9 +1473,9 @@ class LearningPipeline:
                     pattern.method = method
                     pattern.path_pattern = path
                     pattern.protocol = pattern_data.get("protocol", "http")
-                    pattern.required_headers = pattern_data.get("required_headers", [])
+                    pattern.required_headers = _pattern_headers(pattern_data)
                     pattern.body_schema = pattern_data.get("body_schema", {})
-                    pattern.query_param_keys = pattern_data.get("query_param_keys", [])
+                    pattern.query_param_keys = _pattern_query_keys(pattern_data)
                     pattern.intent = intent
                     pattern.confidence = pattern_data.get("confidence", 0.5)
 
@@ -1610,6 +1746,18 @@ class LearningOrchestrator:
         enrichment: dict | None = None,
     ) -> dict:
         """Main entry point: handle an incoming request. Returns response info."""
+        # A transport may hand us the raw request target with the query string
+        # still attached to the path (the TLS listener forwards the h11 target
+        # verbatim). Split it here so (a) pattern matching compares on the path,
+        # (b) the query is matched/learned through query_params, and (c) raw
+        # query values — which can carry tokens — never land in the persisted
+        # path or correlation key (they go through redact_query instead).
+        if "?" in path:
+            base_path, _, query_string = path.partition("?")
+            path = base_path
+            if not query_params:
+                query_params = dict(parse_qsl(query_string, keep_blank_values=True))
+
         # Get device mode (cached lookup to avoid a registry query per request)
         device = await self.db_manager.get_device(device_id)
         if not device:
@@ -1766,14 +1914,30 @@ class LearningOrchestrator:
         query_params: dict,
         enrichment: dict | None = None,
     ) -> dict:
-        """Learning mode: forward all to cloud, correlate, and build patterns."""
+        """Learning mode: forward all to cloud, correlate, and build patterns.
+
+        The request is always forwarded and captured. We also run a *shadow*
+        match against the patterns learned so far and record whether the local
+        engine would have served it. That is what makes the match rate
+        meaningful in learning mode: it climbs toward the auto-switch threshold
+        as coverage improves, instead of being pinned at 0% by a forced miss on
+        every request (which made auto-switch unreachable).
+        """
         corr_key = await self._register_for_learning(
             device, protocol, method, path, headers, body, query_params, enrichment
         )
-        # Every learning request goes to the cloud: without this the match counters and the
-        # rolling window stayed empty in the one mode that captures pairs, so a device whose
-        # buffer was filling still read "0 requests / never seen" on the dashboard.
-        await self.tracker.record_result(device.device_id, MatchResult.CLOUD_MISS)
+        try:
+            pattern, template, score = await self.engine.find_best_match(
+                device.device_id, method, path, headers, body, query_params, protocol=protocol
+            )
+            would_serve = bool(pattern and template and score >= device.match_threshold)
+        except Exception:  # noqa: BLE001 - a shadow-match failure must not break capture
+            logger.debug("Shadow match failed for %s", device.device_id, exc_info=True)
+            would_serve = False
+        await self.tracker.record_result(
+            device.device_id,
+            MatchResult.LOCAL_HIT if would_serve else MatchResult.CLOUD_MISS,
+        )
         return {
             "action": "forward",
             "correlation_key": corr_key,
@@ -1848,11 +2012,15 @@ class LearningOrchestrator:
             enrichment,
         )
 
-    async def discard_request(self, device_id: str, correlation_key: str) -> bool:
-        """Discard a pending capture after its upstream exchange fails."""
+    async def discard_request(
+        self, device_id: str, correlation_key: str, *, count_as_error: bool = True
+    ) -> bool:
+        """Discard a pending capture whose response will never be correlated."""
         if not self.pipeline:
             return False
-        return await self.pipeline.discard_request(device_id, correlation_key)
+        return await self.pipeline.discard_request(
+            device_id, correlation_key, count_as_error=count_as_error
+        )
 
     async def handle_response(  # noqa: PLR0913, PLR0917
         self,
@@ -1862,13 +2030,14 @@ class LearningOrchestrator:
         status_code: int,
         headers: dict,
         body: Any,  # noqa: ANN401
+        correlation_key: str | None = None,
     ) -> dict:
         """Process a response from the cloud (for learning mode)."""
         if not self.pipeline:
             return {"action": "ignored", "reason": "no_pipeline"}
 
         pair = await self.pipeline.match_response(
-            device_id, vendor, protocol, status_code, headers, body
+            device_id, vendor, protocol, status_code, headers, body, correlation_key=correlation_key
         )
 
         if not pair:

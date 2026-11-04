@@ -622,6 +622,7 @@ async def handle_tls_upstream_response(handler_result: dict, response: dict) -> 
         status_code=response.get("status_code", 200),
         headers=response.get("headers") or {},
         body=normalize_request_body(response.get("body")),
+        correlation_key=handler_result.get("correlation_key"),
     )
 
 
@@ -3535,7 +3536,7 @@ async def _forward_bypassed_request(  # noqa: PLR0913
     methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
     include_in_schema=False,
 )
-async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noqa: C901, PLR0911
+async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noqa: C901, PLR0911, PLR0915
     """Main proxy endpoint for device API requests.
 
     Routes:
@@ -3619,6 +3620,10 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
         body_bytes=raw_body,
     )
 
+    # Bound before the try so the error path can drop a capture registered by
+    # handle_request: an orphan would otherwise be paired with a later response.
+    device_id = ""
+    result: dict | None = None
     try:
         # Parse request to extract device info
         intercepted = await adapter.parse_request(intercepted)
@@ -3679,6 +3684,10 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
             # via 8.8.8.8 / 1.1.1.1, bypassing the local DNS.
             config = config_manager.config
             if config.learning.signal_forward_to_cloud:
+                # nginx performs this forward and the response never comes back
+                # here, so the captured request can never be paired: drop it now
+                # (not an error — the handoff itself succeeded).
+                await _discard_pending_capture(device_id, result, count_as_error=False)
                 # Signal nginx to forward the request to the real cloud upstream
                 return JSONResponse(
                     status_code=502,
@@ -3701,8 +3710,10 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
                     status_code=cloud_response.status_code or 200,
                     headers=cloud_response.response_headers or {"content-type": "application/json"},
                     body=resp_body,
+                    correlation_key=result.get("correlation_key"),
                 )
                 return _upstream_response(cloud_response, resp_body)
+            await _discard_pending_capture(device_id, result)
             return JSONResponse(
                 status_code=502,
                 content={
@@ -3730,6 +3741,7 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
 
     except Exception as e:
         logger.error(f"Error processing request: {e}", exc_info=True)
+        await _discard_pending_capture(device_id, result)
         return JSONResponse(
             status_code=500,
             content={"error": "An internal error occurred"},
@@ -3739,6 +3751,22 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
 # ═══════════════════════════════════════════════════════════════════════════════
 # HELPERS
 # ═══════════════════════════════════════════════════════════════════════════════
+
+
+async def _discard_pending_capture(
+    device_id: str, result: dict | None, *, count_as_error: bool = True
+) -> None:
+    """Drop the request captured for ``result`` if its response will never be paired.
+
+    Best effort: a cleanup failure is logged and never changes the reply.
+    """
+    key = (result or {}).get("correlation_key")
+    if not key or not device_id or not orchestrator:
+        return
+    try:
+        await orchestrator.discard_request(device_id, key, count_as_error=count_as_error)
+    except Exception:  # noqa: BLE001 - cleanup must not mask the real reply
+        logger.warning("Could not discard pending capture %s", key, exc_info=True)
 
 
 def _apply_response_modifications(intercepted: InterceptedRequest, response: dict) -> dict:
