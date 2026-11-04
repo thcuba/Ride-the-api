@@ -68,7 +68,7 @@ from core.dns_discovery import DNSDiscoveryRecorder, get_dns_recorder, set_dns_r
 from core.dns_server import get_dns_interceptor
 from core.llm_decipher import LLMDecipherService, get_llm_decipher
 from core.logging_config import get_log_level, setup_logging
-from core.modification import get_modification_engine
+from core.modification import BLOCKED_STATUS, get_modification_engine
 from core.observability import (
     MetricsServer,
     build_tracer,
@@ -3613,7 +3613,7 @@ async def _forward_bypassed_request(  # noqa: PLR0913
     methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
     include_in_schema=False,
 )
-async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noqa: C901, PLR0911, PLR0915
+async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noqa: C901, PLR0911, PLR0912, PLR0915
     """Main proxy endpoint for device API requests.
 
     Routes:
@@ -3717,6 +3717,17 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
         # mutating the intercepted request in place so the pipeline sees the
         # transformed request while the local-match is served.
         get_modification_engine().process_request(intercepted)
+        if getattr(intercepted, "blocked", False):
+            # A block rule: the request goes neither upstream nor to the
+            # pipeline (BLOCK used to be recorded and then ignored).
+            logger.info("Request from %s blocked: %s", device_id, intercepted.block_reason)
+            return JSONResponse(
+                status_code=BLOCKED_STATUS,
+                content={"error": "blocked", "reason": intercepted.block_reason},
+            )
+        await _modification_delay(
+            (getattr(intercepted, "metadata", None) or {}).get("artificial_delay_ms")
+        )
 
         # Pass to pipeline for processing
         with get_tracer().start_as_current_span("proxy.handle_request") as span:
@@ -3745,6 +3756,7 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
             # response modification rules.
             metrics_registry.local_hits_total.inc()
             out_response = _apply_response_modifications(intercepted, result["response"])
+            await _modification_delay(out_response.pop("delay_ms", None))
             return JSONResponse(
                 status_code=out_response.get("status_code", 200),
                 content=out_response.get("body", {}),
@@ -3844,6 +3856,20 @@ async def _discard_pending_capture(
         await orchestrator.discard_request(device_id, key, count_as_error=count_as_error)
     except Exception:  # noqa: BLE001 - cleanup must not mask the real reply
         logger.warning("Could not discard pending capture %s", key, exc_info=True)
+
+
+# A DELAY rule may not hold a device connection longer than this.
+_MAX_MODIFICATION_DELAY_S = 30.0
+
+
+async def _modification_delay(delay_ms: object) -> None:
+    """Honour a DELAY modification rule (it used to be recorded and ignored)."""
+    try:
+        seconds = float(delay_ms) / 1000
+    except (TypeError, ValueError):
+        return
+    if seconds > 0:
+        await asyncio.sleep(min(seconds, _MAX_MODIFICATION_DELAY_S))
 
 
 def _apply_response_modifications(intercepted: InterceptedRequest, response: dict) -> dict:
