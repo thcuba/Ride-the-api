@@ -67,7 +67,7 @@ from core.database import (
 from core.dns_discovery import DNSDiscoveryRecorder, get_dns_recorder, set_dns_recorder
 from core.dns_server import get_dns_interceptor
 from core.llm_decipher import LLMDecipherService, get_llm_decipher
-from core.logging_config import setup_logging
+from core.logging_config import get_log_level, setup_logging
 from core.modification import get_modification_engine
 from core.observability import (
     MetricsServer,
@@ -3882,11 +3882,19 @@ def _extract_device_id(headers: dict, path: str) -> str:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+_UVICORN_LOG_LEVELS = frozenset({"critical", "error", "warning", "info", "debug", "trace"})
+
+
 def main():
     """Run the server."""
     config = config_manager.config
     lg = config.observability.logging
     setup_logging(level=lg.level, fmt=lg.format, output=lg.output)
+    # uvicorn needs one of its own level names; use the level setup_logging
+    # actually applied (case-normalised, INFO for an unknown value).
+    uvicorn_level = get_log_level().lower()
+    if uvicorn_level not in _UVICORN_LOG_LEVELS:
+        uvicorn_level = "info"
     # Pass the app object (not the "core.server:app" string): the string
     # import path breaks in PyInstaller bundles where the module is packed and
     # no longer importable by name. Works in both venv and frozen builds.
@@ -3894,7 +3902,7 @@ def main():
         app,
         host=config.proxy.host,
         port=config.proxy.port,
-        log_level=lg.level.lower(),
+        log_level=uvicorn_level,
         reload=False,
     )
 

@@ -499,9 +499,9 @@ correlation:
 
 observability:
   logging:
-    level: "INFO"
+    level: "INFO"   # DEBUG, INFO, WARNING, ERROR, CRITICAL (any case)
     format: "json"  # json, console
-    output: "stdout"
+    output: "stdout"  # stdout, stderr, or a file path (e.g. ./logs/ride-the-api.log)
   
   metrics:
     enabled: true
