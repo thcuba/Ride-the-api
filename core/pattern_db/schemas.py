@@ -267,6 +267,29 @@ class PatternDB(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+def merge_pattern_dbs(primary: PatternDB, extra: PatternDB) -> PatternDB:
+    """``primary`` plus whatever ``extra`` defines that ``primary`` does not.
+
+    Endpoints and responses are matched by id, state variables and virtual
+    sensors by name; on a clash ``primary`` wins. Neither input is modified.
+    """
+    merged = primary.model_copy(deep=True)
+    extra = extra.model_copy(deep=True)
+    endpoint_ids = {ep.id for ep in merged.client.endpoints}
+    response_ids = {resp.id for resp in merged.server.responses}
+    variable_names = {var.name for var in merged.server.state_variables}
+    sensor_names = {sensor.name for sensor in merged.server.virtual_sensors}
+    merged.client.endpoints += [ep for ep in extra.client.endpoints if ep.id not in endpoint_ids]
+    merged.server.responses += [r for r in extra.server.responses if r.id not in response_ids]
+    merged.server.state_variables += [
+        var for var in extra.server.state_variables if var.name not in variable_names
+    ]
+    merged.server.virtual_sensors += [
+        sensor for sensor in extra.server.virtual_sensors if sensor.name not in sensor_names
+    ]
+    return merged
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # DEVICE META — per-device header written at first LLM flush
 # ═══════════════════════════════════════════════════════════════════════════════

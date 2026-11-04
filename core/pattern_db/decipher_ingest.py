@@ -75,6 +75,25 @@ def _schema_mapping(row: FieldMapping) -> SchemaFieldMapping:
     )
 
 
+def _state_config(
+    meta: dict | None, applied: PatternDB | None
+) -> tuple[list[StateVariable], list[VirtualSensor]]:
+    """A device's state variables and virtual sensors (no SQL table).
+
+    The persisted header is their canonical home (learning merges them
+    there); the engine's in-memory applied config is the fallback for
+    devices that predate it.
+    """
+    if meta and (meta.get("state_variables") or meta.get("virtual_sensors")):
+        return (
+            [StateVariable(**sv) for sv in meta.get("state_variables", [])],
+            [VirtualSensor(**vs) for vs in meta.get("virtual_sensors", [])],
+        )
+    if applied and applied.server:
+        return list(applied.server.state_variables), list(applied.server.virtual_sensors)
+    return [], []
+
+
 def _mapping_id(device_id: str, intent: str, request_field: str) -> str:
     """Deterministic FieldMapping id: re-learning or re-importing converges."""
     return f"map_{device_id}_{intent}_{request_field.replace('.', '_')}"
@@ -242,15 +261,16 @@ class DecipherIngest:
     ) -> PatternDB:
         """Export deciphered patterns from the device DB to portable format.
 
-        ``applied`` is the engine's in-memory applied PatternDB for this device
-        (optional). Its ``state_variables`` and ``virtual_sensors`` are not
-        persisted in SQL - they only live in the applied in-memory config - so
-        this carries them into the export instead of dropping them.
+        ``state_variables`` and ``virtual_sensors`` have no SQL table: they
+        come from the device header (their canonical home, where learning
+        writes them) or else from ``applied``, the engine's in-memory
+        PatternDB for this device, instead of being dropped.
         """
         client_endpoints = []
         server_responses = []
-        state_vars = list(applied.server.state_variables) if applied and applied.server else []
-        sensors = list(applied.server.virtual_sensors) if applied and applied.server else []
+        state_vars, sensors = _state_config(
+            await self.db_manager.read_device_meta(device_id), applied
+        )
 
         async with self.db_manager.device_session(device_id) as session:
             result = await session.execute(select(RequestPattern))
@@ -496,7 +516,11 @@ class DecipherIngest:
                     responses.append(
                         ServerResponse(
                             id=tmpl.template_id,
-                            triggers=[pat.intent] if pat.intent else [],
+                            # The pattern id first (as in the v1 export):
+                            # endpoints sharing an intent keep their own response.
+                            triggers=[pat.pattern_id, pat.intent]
+                            if pat.intent
+                            else [pat.pattern_id],
                             status_code=tmpl.status_code,
                             headers_template=tmpl.headers_template or {},
                             body_template=tmpl.body_template or {},
@@ -519,17 +543,7 @@ class DecipherIngest:
             protocol.ports = list(meta.get("ports") or [])
             protocol.confidence = _safe_float(meta.get("confidence"), 0.0)
 
-        # state_variables / virtual_sensors have no SQL table: their canonical
-        # home is the persisted header (DeviceMeta). Fall back to the engine's
-        # in-memory applied config when the header has none (legacy pre-v2).
-        state_variables: list = []
-        virtual_sensors: list = []
-        if meta and (meta.get("state_variables") or meta.get("virtual_sensors")):
-            state_variables = [StateVariable(**sv) for sv in meta.get("state_variables", [])]
-            virtual_sensors = [VirtualSensor(**vs) for vs in meta.get("virtual_sensors", [])]
-        elif applied and applied.server:
-            state_variables = list(applied.server.state_variables)
-            virtual_sensors = list(applied.server.virtual_sensors)
+        state_variables, virtual_sensors = _state_config(meta, applied)
 
         return DeviceModel(
             meta=PatternMeta(

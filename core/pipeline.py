@@ -6,6 +6,7 @@ Handles: correlation, buffer management, LLM deciphering, pattern matching, and 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import logging
@@ -46,6 +47,7 @@ from core.pattern_db.schemas import (
     DeviceModel,
     PatternDB,
     ProtocolInfo,
+    merge_pattern_dbs,
     normalize_connection_mode,
     normalize_protocol,
 )
@@ -1193,7 +1195,7 @@ class LearningPipeline:
         await self._save_patterns(device_id, llm_analysis)
         if is_first_flush:
             await self._persist_device_meta(device_id, device, llm_analysis)
-        await self._export_and_sync_patterns(device_id)
+        await self.export_and_sync_patterns(device_id)
 
         # Mark exactly the pairs this cycle analysed. Pairs that arrived while
         # the LLM was working were not in the snapshot: marking "everything
@@ -1258,11 +1260,13 @@ class LearningPipeline:
             "context": context,
         }
 
-    async def _export_and_sync_patterns(self, device_id: str) -> None:
-        """Export learned patterns to .ride-pattern.json and sync with PatternEngine.
+    async def export_and_sync_patterns(self, device_id: str) -> None:  # noqa: C901
+        """Rebuild what the engine serves for a device from its DB, and export it.
 
-        Called after each learning cycle so the PatternEngine's in-memory cache
-        has the latest patterns for subsequent production/hybrid requests.
+        Called after each learning cycle and after any API change to the
+        device's patterns, so the engine's in-memory set (used exclusively
+        when present) never serves a deleted or outdated pattern. Patterns a
+        user supplied as a file are not in the DB: they are merged back in.
         """
         if not self.engine:
             return
@@ -1272,10 +1276,22 @@ class LearningPipeline:
             device_info = await self._load_device(device_id)
             vendor = device_info.vendor if device_info else "unknown"
             device_type = device_info.device_type if device_info else "unknown"
-            pattern_db = await ingester.export_patterns(device_id, vendor, device_type)
+            applied = self.engine.cached_patterns(device_id)
+            pattern_db = await ingester.export_patterns(
+                device_id, vendor, device_type, applied=applied
+            )
+            seed = self.engine.seed_patterns(device_id)
+            served = merge_pattern_dbs(pattern_db, seed) if seed else pattern_db
 
+            if not served.client.endpoints:
+                # Nothing left (e.g. the last pattern was deleted): stop serving
+                # the stale in-memory set; matching falls back to the empty DB.
+                self.engine.forget_patterns(device_id)
+                return
             if not pattern_db.client.endpoints:
-                logger.debug("No patterns to export for %s", device_id)
+                # Only file-supplied patterns: serve them, nothing to export.
+                self.engine.apply_pattern_db(device_id, served)
+                await self.engine.load_state(device_id)
                 return
 
             # Anchor the patterns base dir next to the device databases instead
@@ -1299,7 +1315,6 @@ class LearningPipeline:
             # protocol header, so the on-disk .ride-pattern.json is a complete
             # clone (goal #11). Fall back to the v1 PatternDB for legacy
             # devices that never completed a first-flush AUTO identification.
-            applied = self.engine._cached_patterns.get(device_id)  # noqa: SLF001
             header = await self.db_manager.read_device_meta(device_id)
             if header and (header.get("protocols") or header.get("transport")):
                 device_model = await ingester.export_device_model(
@@ -1308,7 +1323,7 @@ class LearningPipeline:
                 self.engine.save_pattern_file(device_model, str(filepath))
             else:
                 self.engine.save_pattern_file(pattern_db, str(filepath))
-            self.engine.apply_pattern_db(device_id, pattern_db)
+            self.engine.apply_pattern_db(device_id, served)
             # Restore any previously persisted device state so the refreshed
             # pattern set starts from where the device left off.
             await self.engine.load_state(device_id)
@@ -1788,27 +1803,69 @@ class LearningOrchestrator:
         self._auto_load_patterns()
         self.tracker = MatchRateTracker(self.db_manager)
 
+    async def sync_engine(self, device_id: str) -> None:
+        """Make the engine serve what the device DB (plus seed files) holds.
+
+        Call after changing a device's patterns outside a learning cycle (API
+        edit, delete, import): the engine serves its in-memory set exclusively
+        when it has one, so a DB change alone kept serving the old patterns.
+        """
+        if self.engine is None:
+            return
+        pipeline = await self._ensure_pipeline(device_id)
+        await pipeline.export_and_sync_patterns(device_id)
+
+    def _pattern_search_dirs(self) -> list[Path]:
+        """Directories scanned at startup, each once; the export dir included."""
+        candidates = [Path("patterns"), Path("data"), Path("data/patterns")]
+        with contextlib.suppress(TypeError, AttributeError):
+            # Where export_and_sync_patterns writes; it used to be skipped, so
+            # a restart lost the learned set's state variables/sensors.
+            candidates.insert(0, Path(self.db_manager.device_db_dir).parent / "patterns")
+        unique: dict[Path, Path] = {}
+        for directory in candidates:
+            unique.setdefault(directory.resolve(), directory)
+        return list(unique.values())
+
+    @staticmethod
+    def _is_own_export(pattern_file: Path, device_id: str) -> bool:
+        """Whether the sync wrote this file (it names files by device-id hash)."""
+        name = pattern_file.name.removesuffix(".ride-pattern.json")
+        return name == hashlib.sha256(device_id.encode("utf-8")).hexdigest()
+
     def _auto_load_patterns(self):
-        """Scan for .ride-pattern.json files and load them into the engine."""
-        search_dirs = [
-            Path("patterns"),
-            Path("data"),
-            Path("data/patterns"),
-            Path.cwd() / "patterns",
-            Path.cwd() / "data",
+        """Load .ride-pattern.json files into the engine at startup.
+
+        A file the sync wrote is a snapshot of the device DB: loading it warms
+        the in-memory set. Any other file is a user-supplied seed: it is kept
+        and merged into every later re-sync from the DB (the first learning
+        flush used to replace it). Snapshots load first so a seed for the same
+        device is merged on top of its snapshot.
+        """
+        files = [
+            (pattern_file, self._device_id_from_pattern_file(pattern_file))
+            for search_dir in self._pattern_search_dirs()
+            if search_dir.exists()
+            for pattern_file in sorted(search_dir.glob("*.ride-pattern.json"))
         ]
+        files.sort(key=lambda item: not self._is_own_export(*item))
+        snapshots: dict[str, PatternDB] = {}
         loaded = 0
-        for search_dir in search_dirs:
-            if not search_dir.exists():
+        for pattern_file, device_id in files:
+            seed = not self._is_own_export(pattern_file, device_id)
+            try:
+                pattern_db = self.engine.load_pattern_file(device_id, str(pattern_file), seed=seed)
+            except Exception as e:  # noqa: BLE001 - one bad file must not stop startup
+                logger.warning("Failed to load %s: %s", pattern_file.name, e)
                 continue
-            for pattern_file in search_dir.glob("*.ride-pattern.json"):
-                device_id = self._device_id_from_pattern_file(pattern_file)
-                try:
-                    self.engine.load_pattern_file(device_id, str(pattern_file))
-                    loaded += 1
-                    logger.info("Auto-loaded patterns for %s from %s", device_id, pattern_file.name)
-                except Exception as e:
-                    logger.warning("Failed to load %s: %s", pattern_file.name, e)
+            if not seed:
+                snapshots[device_id] = pattern_db
+            elif device_id in snapshots:
+                self.engine.apply_pattern_db(
+                    device_id, merge_pattern_dbs(snapshots[device_id], pattern_db)
+                )
+            loaded += 1
+            logger.info("Auto-loaded patterns for %s from %s", device_id, pattern_file.name)
         if loaded:
             logger.info("Pattern DB: auto-loaded %d pattern files", loaded)
         else:
@@ -1818,7 +1875,7 @@ class LearningOrchestrator:
     def _device_id_from_pattern_file(pattern_file: Path) -> str:
         """Recover the real device_id a .ride-pattern.json was exported for.
 
-        Files written by :meth:`_export_and_sync_patterns` are named after the
+        Files written by :meth:`LearningPipeline.export_and_sync_patterns` are named after the
         SHA256 hash of the device_id (for filesystem-path safety), so the hash
         alone cannot be used as the runtime cache key. The export embeds the
         actual device_id in ``meta.pattern_id`` using the

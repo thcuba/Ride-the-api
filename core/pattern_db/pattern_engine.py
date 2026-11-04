@@ -516,6 +516,24 @@ class PatternEngine:
         self._response_trigger_maps: dict[str, dict[str, Any]] = {}
         # F-12: per-device locks serialize state load/persist.
         self._locks: dict[str, asyncio.Lock] = {}
+        # Pattern sets loaded from user-supplied files. They do not live in the
+        # device DB, so a re-sync from SQL merges them back in instead of
+        # dropping them (the first learning flush used to wipe them).
+        self._seed_patterns: dict[str, PatternDB] = {}
+
+    def cached_patterns(self, device_id: str) -> PatternDB | None:
+        """The pattern set currently served from memory for ``device_id``."""
+        return self._cached_patterns.get(device_id)
+
+    def seed_patterns(self, device_id: str) -> PatternDB | None:
+        """The file-supplied pattern set for ``device_id``, if one was loaded."""
+        return self._seed_patterns.get(device_id)
+
+    def forget_patterns(self, device_id: str) -> None:
+        """Stop serving the in-memory set; matching falls back to the device DB."""
+        self._cached_patterns.pop(device_id, None)
+        self._compiled_endpoints.pop(device_id, None)
+        self._response_trigger_maps.pop(device_id, None)
 
     # â”€â”€ State Management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€  # noqa: E501
 
@@ -986,7 +1004,7 @@ class PatternEngine:
 
     # â”€â”€ Pattern DB File I/O â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€  # noqa: E501
 
-    def load_pattern_file(self, device_id: str, filepath: str) -> PatternDB:
+    def load_pattern_file(self, device_id: str, filepath: str, *, seed: bool = False) -> PatternDB:
         """Load a .ride-pattern.json file and cache it for a device.
 
         Handles both portable formats: v1 (``PatternDB``) and v2 (``DeviceModel``,
@@ -994,6 +1012,9 @@ class PatternEngine:
         PatternDB shape via :meth:`DeviceModel.to_pattern_db` before being
         applied, so a device cloned on a second install works without LLM/cloud
         within the knowledge carried by the model.
+
+        ``seed=True`` marks a user-supplied file (not a snapshot of the device
+        DB): it is kept and merged into every later re-sync from SQL.
         """
         path = Path(filepath)
         if not path.exists():
@@ -1005,6 +1026,8 @@ class PatternEngine:
         else:
             pattern_db = PatternDB.model_validate(data)
         self.apply_pattern_db(device_id, pattern_db)
+        if seed:
+            self._seed_patterns[device_id] = pattern_db
         return pattern_db
 
     def save_pattern_file(self, pattern_db: PatternDB | DeviceModel, filepath: str):

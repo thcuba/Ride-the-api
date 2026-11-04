@@ -86,3 +86,17 @@ async def test_import_gives_each_endpoint_its_own_template(db_manager):
         rows = (await session.execute(select(ResponseTemplate))).scalars().all()
     bodies = {row.pattern_id: row.body_template for row in rows}
     assert bodies == {"ep-fw": {"version": "1.4.2"}, "ep-kwh": {"kwh": 12.5}}
+
+
+@pytest.mark.asyncio
+async def test_v2_export_keeps_each_endpoint_its_own_response(db_manager):
+    ingest = DecipherIngest(db_manager)
+    await ingest.import_patterns("meter", _two_endpoints_one_intent())
+    model = await ingest.export_device_model("meter", "acme", "meter")
+
+    engine = PatternEngine(MagicMock())
+    engine.apply_pattern_db("meter", model.to_pattern_db())
+    _p, fw, _s = await engine.find_best_match("meter", "GET", "/api/v1/firmware", {}, None, {})
+    _p, kwh, _s = await engine.find_best_match("meter", "GET", "/api/v1/energy", {}, None, {})
+    assert fw.body_template == {"version": "1.4.2"}
+    assert kwh.body_template == {"kwh": 12.5}

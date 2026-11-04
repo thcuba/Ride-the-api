@@ -2534,6 +2534,21 @@ async def get_pattern_detail(device_id: str, pattern_id: str):
 # ── Pattern CRUD: Update, Patch, Delete ───────────────────────────────────────
 
 
+async def _resync_device_patterns(device_id: str) -> None:
+    """Make the engine serve the device's patterns as now stored.
+
+    The engine serves its in-memory set exclusively when it has one, so an
+    API change to the device DB alone left deleted or edited patterns being
+    served as before. Best-effort: the DB change already succeeded.
+    """
+    if orchestrator is None:
+        return
+    try:
+        await orchestrator.sync_engine(device_id)
+    except Exception:
+        logger.exception("Could not refresh the served patterns for %s", device_id)
+
+
 @app.put("/api/devices/{device_id}/patterns/{pattern_id}")
 async def put_pattern(device_id: str, pattern_id: str, request: Request):
     """Full update of a request pattern, its response template, and field mappings."""
@@ -2618,6 +2633,7 @@ async def put_pattern(device_id: str, pattern_id: str, request: Request):
                         response_field=m.get("response_field", ""),
                         response_type=m.get("response_type", ""),
                         transform=m.get("transform"),
+                        formula=decipher_ingest.stored_formula(m.get("formula")),
                         enum_values=m.get("enum_values"),
                         intent=pattern.intent,
                         confidence=m.get("confidence", 0.5),
@@ -2625,7 +2641,8 @@ async def put_pattern(device_id: str, pattern_id: str, request: Request):
                     session.add(fm)
 
             await session.commit()
-            return {"status": "ok", "pattern_id": pattern_id}
+        await _resync_device_patterns(device_id)
+        return {"status": "ok", "pattern_id": pattern_id}  # noqa: TRY300
     except Exception as e:
         return _client_error(e, "Invalid pattern update payload")
 
@@ -2705,6 +2722,7 @@ async def patch_pattern(device_id: str, pattern_id: str, request: Request):  # n
                         response_field=m.get("response_field", ""),
                         response_type=m.get("response_type", ""),
                         transform=m.get("transform"),
+                        formula=decipher_ingest.stored_formula(m.get("formula")),
                         enum_values=m.get("enum_values"),
                         intent=pattern.intent,
                         confidence=m.get("confidence", 0.5),
@@ -2712,7 +2730,8 @@ async def patch_pattern(device_id: str, pattern_id: str, request: Request):  # n
                     session.add(fm)
 
             await session.commit()
-            return {"status": "ok", "pattern_id": pattern_id}
+        await _resync_device_patterns(device_id)
+        return {"status": "ok", "pattern_id": pattern_id}  # noqa: TRY300
     except Exception as e:
         return _client_error(e, "Invalid pattern update payload")
 
@@ -2740,10 +2759,22 @@ async def delete_pattern(device_id: str, pattern_id: str):
             await session.execute(
                 delete(RequestPattern).where(RequestPattern.pattern_id == pattern_id)
             )
-            # Delete field mappings for this intent
-            await session.execute(delete(FieldMapping).where(FieldMapping.intent == pattern.intent))
+            # Field mappings are stored per intent: drop them only when no other
+            # pattern still uses that intent (they used to go for all of them).
+            intent_still_used = (
+                await session.execute(
+                    select(RequestPattern.id)
+                    .where(RequestPattern.intent == pattern.intent)
+                    .limit(1)
+                )
+            ).first()
+            if intent_still_used is None:
+                await session.execute(
+                    delete(FieldMapping).where(FieldMapping.intent == pattern.intent)
+                )
             await session.commit()
-            return {"status": "deleted", "pattern_id": pattern_id}
+        await _resync_device_patterns(device_id)
+        return {"status": "deleted", "pattern_id": pattern_id}  # noqa: TRY300
     except Exception as e:
         return _client_error(e, "Could not delete the pattern")
 
@@ -3333,6 +3364,7 @@ async def import_patterns(device_id: str, request: Request):
         else:
             pattern_db = PatternDB.model_validate(body)
             count = await ingester.import_patterns(device_id, pattern_db)
+        await _resync_device_patterns(device_id)
         return {"imported": count, "device_id": device_id, "warnings": result.warnings}  # noqa: TRY300
     except ValidationError as e:
         return JSONResponse(
