@@ -34,6 +34,7 @@ from core.pattern_db.schemas import (
     ServerResponse,
     StateVariable,
     VirtualSensor,
+    response_for_endpoint,
 )
 from core.pattern_db.schemas import (
     FieldMapping as SchemaFieldMapping,
@@ -229,7 +230,9 @@ class DecipherIngest:
                     mappings = mappings_by_intent.get(pat.intent, [])
                     srv_resp = ServerResponse(
                         id=tmpl.template_id,
-                        triggers=[pat.intent],
+                        # The pattern id first: endpoints that share an intent
+                        # must each get their own response back on load.
+                        triggers=[pat.pattern_id, pat.intent],
                         status_code=tmpl.status_code,
                         headers_template=tmpl.headers_template or {},
                         body_template=tmpl.body_template or {},
@@ -303,8 +306,9 @@ class DecipherIngest:
                 )
                 session.add(request_pattern)
 
-                # Match server responses via fast O(1) trigger lookup
-                resp = responses_by_trigger.get(ep.intent)
+                # Match server responses via fast O(1) trigger lookup: a response
+                # naming this endpoint's id wins over one matched by intent only.
+                resp = response_for_endpoint(responses_by_trigger, ep.id, ep.intent)
                 if resp:
                     template_id = f"tpl_{pattern_id}"
                     response_template = ResponseTemplate(

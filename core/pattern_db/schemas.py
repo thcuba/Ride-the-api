@@ -212,6 +212,25 @@ class ServerResponse(BaseModel):
     field_mappings: list[FieldMapping] = Field(default_factory=list)
 
 
+def response_for_endpoint(
+    responses_by_trigger: dict[str, ServerResponse],
+    endpoint_id: str | None,
+    intent: str | None,
+) -> ServerResponse | None:
+    """The response template that answers a client endpoint.
+
+    A response whose ``triggers`` name the endpoint's own id wins; the intent
+    is the fallback. Matching by intent alone gave two endpoints that share an
+    intent (the model reused one, or both are ``"unknown"``) the same response,
+    so one endpoint was answered with the other's body.
+    """
+    if endpoint_id and endpoint_id in responses_by_trigger:
+        return responses_by_trigger[endpoint_id]
+    if intent:
+        return responses_by_trigger.get(intent)
+    return None
+
+
 class VirtualSensor(BaseModel):
     """A simulated sensor that generates realistic data."""
 

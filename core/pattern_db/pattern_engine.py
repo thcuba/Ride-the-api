@@ -33,7 +33,7 @@ from core.database import (
     RequestPattern,
     ResponseTemplate,
 )
-from core.pattern_db.schemas import DeviceModel, PatternDB
+from core.pattern_db.schemas import DeviceModel, PatternDB, response_for_endpoint
 from core.pattern_db.state_manager import DeviceStateStore
 from core.pattern_utils import dot_to_dpath as _dot_to_dpath
 
@@ -600,7 +600,9 @@ class PatternEngine:
                 if score > best_score:
                     best_score = score
                     best_pattern = item.endpoint
-                    best_template = trigger_map.get(item.intent)
+                    best_template = response_for_endpoint(
+                        trigger_map, getattr(item.endpoint, "id", None), item.intent
+                    )
             return best_pattern, best_template, best_score
 
         # Fall back to database patterns (only when no cached pattern file exists
