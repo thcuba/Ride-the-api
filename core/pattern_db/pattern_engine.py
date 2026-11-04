@@ -45,6 +45,25 @@ _METHOD_MISMATCH_SCORE_CAP = 0.7
 _EMPTY_DICT: dict[str, Any] = {}
 _EMPTY_TUPLE: tuple = ()
 
+# HTTP and HTTPS are the same application protocol over different transports:
+# a request intercepted over TLS (``https``) must still match a pattern learned
+# as ``http`` (and vice versa). The protocol filter only separates genuinely
+# different wire protocols (mqtt/coap/modbus/...).
+_HTTP_PROTOCOLS = frozenset({"http", "https"})
+
+
+def _protocol_matches(req_proto: str, pat_proto: str) -> bool:
+    """Whether a request protocol is compatible with a pattern's protocol.
+
+    An empty value on either side never filters (legacy/unknown). Concrete
+    values must be equal, except that ``http`` and ``https`` are treated as one
+    family so a device learned over plain HTTP still serves once intercepted
+    over TLS.
+    """
+    if not req_proto or not pat_proto or req_proto == pat_proto:
+        return True
+    return req_proto in _HTTP_PROTOCOLS and pat_proto in _HTTP_PROTOCOLS
+
 
 @dataclass(slots=True)
 class PatternTarget:
@@ -542,6 +561,11 @@ class PatternEngine:
         # for the device, so when it is present it is used exclusively and the
         # per-request DB scan below is skipped (avoids a redundant device DB
         # round-trip on every production/hybrid request).
+        # A stray query string on the path (e.g. the TLS path forwards the raw
+        # h11 target ``/poll?ts=1``) must not defeat path matching: compare on
+        # the path only and keep the parsed query for the query-key dimension.
+        if "?" in path:
+            path = path.split("?", 1)[0]
         req_input = RequestInput(
             method=method,
             path=path,
@@ -561,8 +585,9 @@ class PatternEngine:
                     break
                 if best_score >= _METHOD_MISMATCH_SCORE_CAP and item.target.method != method:
                     continue
-                # Inlined fast protocol check: skip when concrete protocols differ (~2x speedup)
-                if protocol and item.protocol and item.protocol != protocol:
+                # Skip only when the wire protocols are genuinely different
+                # (http/https are one family — see _protocol_matches).
+                if not _protocol_matches(protocol, item.protocol):
                     continue
 
                 score = self._calculate_similarity(
@@ -589,7 +614,7 @@ class PatternEngine:
                 if best_score >= _METHOD_MISMATCH_SCORE_CAP and pat.method != method:
                     continue
                 pat_proto = getattr(pat, "protocol", "")
-                if protocol and pat_proto and pat_proto != protocol:
+                if not _protocol_matches(protocol, pat_proto):
                     continue
 
                 target = PatternTarget(
@@ -623,7 +648,26 @@ class PatternEngine:
         req_input: RequestInput,
         best_score: float = 0.0,
     ) -> float:
-        """Calculate similarity score (0.0 to 1.0)."""
+        """Calculate similarity score (0.0 to 1.0).
+
+        The denominator only counts the dimensions the pattern actually
+        constrains. A pattern that lists no required headers or query keys is
+        not penalised for them, so an exact replay of a method+path pattern
+        scores 1.0 and clears the match threshold — previously it was capped at
+        0.75 (``30+30+15`` over a fixed ``100``) and could never be served.
+        """
+        # Method (30) and path (30) always apply. The remaining dimensions only
+        # join the weight when the pattern constrains them, so their absence is
+        # neutral rather than a penalty.
+        has_headers = bool(target.required_headers)
+        has_query = bool(target.query_param_keys)
+        # A body dimension exists when the pattern models one OR the request
+        # carries one the pattern does not (a mismatch that should count).
+        has_body = bool(target.body_schema) or bool(req_input.body)
+        weight = 60.0 + (15.0 if has_headers else 0.0) + (10.0 if has_query else 0.0)
+        if has_body:
+            weight += 15.0
+
         score = 0.0
 
         # Method match
@@ -635,17 +679,16 @@ class PatternEngine:
         if path_score:
             score += 30.0 * path_score
 
-        total_weight = 100.0 if bool(req_input.body) == bool(target.body_schema) else 85.0
-
-        # Fast path exit: headers (15) + query (10) + body (15) can add at most 40.0 points.
-        # If upper bound max_possible score cannot beat best_score, short-circuit (~1.64x speedup).
-        if (score + 40.0) / total_weight <= best_score:
-            return score / total_weight
+        # Fast path exit: if even full credit on every remaining dimension
+        # cannot beat best_score, short-circuit the expensive comparisons.
+        remaining = weight - 60.0
+        if (score + remaining) / weight <= best_score:
+            return score / weight
 
         # Headers
         # Performance optimization: direct loop counting avoids generator allocation overhead
         # from sum(1 for h in ...) (~2.5x faster collection counting per call in request hot path).
-        if target.required_headers:
+        if has_headers:
             matches = 0
             for h in target.required_headers:
                 if h in req_input.headers:
@@ -653,20 +696,20 @@ class PatternEngine:
             score += 15.0 * (matches / len(target.required_headers))
 
         # Query params
-        if target.query_param_keys:
+        if has_query:
             matches = 0
             for q in target.query_param_keys:
                 if q in req_input.query_params:
                     matches += 1
             score += 10.0 * (matches / len(target.query_param_keys))
 
-        # Body match
-        if req_input.body and target.body_schema:
+        # Body match. When the pattern models a body, score its structural
+        # similarity (0 when the request carries none). When only the request
+        # has a body, it scores 0 against the counted weight (a real mismatch).
+        if target.body_schema and req_input.body:
             score += 15.0 * self._body_similarity(target.body_schema, req_input.body)
-        elif not req_input.body and not target.body_schema:
-            score += 15.0
 
-        return score / total_weight
+        return score / weight
 
     def _path_similarity(self, pattern: str, actual: str) -> float:
         """Compare path pattern (may contain {placeholders}) vs actual path."""

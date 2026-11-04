@@ -30,6 +30,9 @@ from core.pattern_db.schemas import (
 )
 from core.pattern_db.state_manager import DeviceStateStore
 
+# Default per-device match threshold (DeviceRegistry.match_threshold).
+DEFAULT_MATCH_THRESHOLD = 0.85
+
 
 class MockDBManager:
     """Simulates DatabaseManager for testing pattern engine."""
@@ -123,7 +126,9 @@ def test_calculate_similarity_path_with_params(engine):
         query_params={},
     )
     score = engine._calculate_similarity(target, req_input)
-    assert score == pytest.approx(0.75)
+    # method (30/30) + path (placeholder match, 30/30); the pattern constrains
+    # no headers/query/body, so those dimensions are not in the denominator.
+    assert score == pytest.approx(1.0)
 
 
 def test_calculate_similarity_method_mismatch(engine):
@@ -142,7 +147,8 @@ def test_calculate_similarity_method_mismatch(engine):
         query_params={},
     )
     score = engine._calculate_similarity(target, req_input)
-    assert score == pytest.approx(0.45)
+    # path matches (30) but method does not; weight is 60 (no headers/query/body).
+    assert score == pytest.approx(0.5)
 
 
 def test_calculate_similarity_path_length_mismatch(engine):
@@ -161,7 +167,9 @@ def test_calculate_similarity_path_length_mismatch(engine):
         query_params={},
     )
     score = engine._calculate_similarity(target, req_input)
-    assert score == pytest.approx(0.45)
+    # method matches (30) but the path length differs by two segments (0 path
+    # score); weight is 60 (no headers/query/body).
+    assert score == pytest.approx(0.5)
 
 
 def test_calculate_similarity_path_close_mismatch(engine):
@@ -180,8 +188,8 @@ def test_calculate_similarity_path_close_mismatch(engine):
         query_params={},
     )
     score = engine._calculate_similarity(target, req_input)
-    # total=100, score=30(method)+9(path)+15(body)=54
-    assert score == pytest.approx(0.54)
+    # weight=60 (no headers/query/body); score=30(method)+9(path, 0.3*30)=39.
+    assert score == pytest.approx(0.65)
 
 
 def test_calculate_similarity_no_body_both_empty(engine):
@@ -200,8 +208,63 @@ def test_calculate_similarity_no_body_both_empty(engine):
         query_params={},
     )
     score = engine._calculate_similarity(target, req_input)
-    # total=100, score=30+30+15=75
-    assert score == pytest.approx(0.75)
+    # method + path match exactly; neither side has a body, so the body
+    # dimension does not exist and weight=60. An exact match scores 1.0.
+    assert score == pytest.approx(1.0)
+
+
+def test_exact_replay_clears_default_threshold(engine):
+    """An exact replay of a method+path pattern must beat the 0.85 default.
+
+    Regression for the production-serving bug: the fixed denominator capped a
+    header-less, query-less, body-less pattern at 0.75, so it was never served
+    locally. It must now score 1.0.
+    """
+    target = PatternTarget(
+        method="GET",
+        path_pattern="/api/poll",
+        required_headers=[],
+        body_schema={},
+        query_param_keys=[],
+    )
+    req_input = RequestInput(
+        method="GET",
+        path="/api/poll",
+        headers={"user-agent": "device/1.0"},
+        body=None,
+        query_params={},
+    )
+    score = engine._calculate_similarity(target, req_input)
+    assert score == pytest.approx(1.0)
+    assert score >= DEFAULT_MATCH_THRESHOLD
+
+
+@pytest.mark.asyncio
+async def test_find_best_match_strips_query_string_on_path(engine):
+    """find_best_match must match ``/api/poll?ts=1`` against pattern ``/api/poll``."""
+    pattern_db = PatternDB(
+        meta=PatternMeta(pattern_id="p", vendor="acme", device_type="ac"),
+        client=ClientConfig(
+            endpoints=[
+                ClientEndpoint(
+                    id="ep1",
+                    intent="poll",
+                    method="GET",
+                    path="/api/poll",
+                    protocol="https",
+                )
+            ]
+        ),
+        server=ServerConfig(
+            responses=[ServerResponse(id="r1", triggers=["poll"], body_template={"ok": True})]
+        ),
+    )
+    engine.apply_pattern_db("dev-q", pattern_db)
+    pattern, _template, score = await engine.find_best_match(
+        "dev-q", "GET", "/api/poll?ts=1", {}, None, {"ts": "1"}, protocol="https"
+    )
+    assert pattern is not None
+    assert score == pytest.approx(1.0)
 
 
 def test_calculate_similarity_body_partial_match(engine):
@@ -220,8 +283,8 @@ def test_calculate_similarity_body_partial_match(engine):
         query_params={},
     )
     score = engine._calculate_similarity(target, req_input)
-    # total=100, score=30+30+15*(2/3)=70
-    assert score == pytest.approx(0.7)
+    # weight=75 (method+path+body, no headers/query); score=30+30+15*(2/3)=70.
+    assert score == pytest.approx(70.0 / 75.0)
 
 
 def test_body_similarity_schema_keys(engine):
@@ -295,8 +358,9 @@ async def test_find_best_match_cached(engine):
     assert pattern.intent == "get_status"
     assert template is not None
     assert template.id == "resp1"
-    # total=100, score=30+30+15+15=90
-    assert score == pytest.approx(0.9)
+    # Exact match: method+path+required header all present; neither side has a
+    # body, so that dimension is absent. weight=75, score=75 -> 1.0.
+    assert score == pytest.approx(1.0)
 
 
 @pytest.mark.asyncio

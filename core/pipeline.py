@@ -16,6 +16,7 @@ from enum import StrEnum
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
+from urllib.parse import parse_qsl
 from uuid import uuid4
 
 from sqlalchemy import and_, delete, select, update
@@ -46,6 +47,38 @@ if TYPE_CHECKING:
     from core.buffer.store import BufferStore
 
 logger = logging.getLogger(__name__)
+
+
+def _as_key_list(value: Any) -> list:  # noqa: ANN401
+    """Normalise an LLM-supplied header/query spec into a list of key names.
+
+    Accepts a list of names, a ``{name: ...}`` mapping (keys are taken) or
+    anything else (treated as empty).
+    """
+    if isinstance(value, dict):
+        return list(value.keys())
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    return []
+
+
+def _pattern_headers(pattern_data: dict) -> list:
+    """Required-header keys from an LLM pattern, tolerating key-name drift.
+
+    The shipped prompt asks the model for ``request_headers``; earlier code
+    only read ``required_headers``, so learned patterns always had an empty
+    header list. Accept either name.
+    """
+    return _as_key_list(pattern_data.get("required_headers") or pattern_data.get("request_headers"))
+
+
+def _pattern_query_keys(pattern_data: dict) -> list:
+    """Query-parameter keys from an LLM pattern, tolerating key-name drift."""
+    return _as_key_list(
+        pattern_data.get("query_param_keys")
+        or pattern_data.get("query_params")
+        or pattern_data.get("query_keys")
+    )
 
 
 # Pre-computed tuple mapping field names to redaction handlers for LLM prompt pair preparation
@@ -1322,9 +1355,9 @@ class LearningPipeline:
                         method=method,
                         path_pattern=path,
                         protocol=pattern_data.get("protocol", "http"),
-                        required_headers=pattern_data.get("required_headers", []),
+                        required_headers=_pattern_headers(pattern_data),
                         body_schema=pattern_data.get("body_schema", {}),
-                        query_param_keys=pattern_data.get("query_param_keys", []),
+                        query_param_keys=_pattern_query_keys(pattern_data),
                         intent=intent,
                         confidence=pattern_data.get("confidence", 0.5),
                     )
@@ -1337,9 +1370,9 @@ class LearningPipeline:
                     pattern.method = method
                     pattern.path_pattern = path
                     pattern.protocol = pattern_data.get("protocol", "http")
-                    pattern.required_headers = pattern_data.get("required_headers", [])
+                    pattern.required_headers = _pattern_headers(pattern_data)
                     pattern.body_schema = pattern_data.get("body_schema", {})
-                    pattern.query_param_keys = pattern_data.get("query_param_keys", [])
+                    pattern.query_param_keys = _pattern_query_keys(pattern_data)
                     pattern.intent = intent
                     pattern.confidence = pattern_data.get("confidence", 0.5)
 
@@ -1610,6 +1643,18 @@ class LearningOrchestrator:
         enrichment: dict | None = None,
     ) -> dict:
         """Main entry point: handle an incoming request. Returns response info."""
+        # A transport may hand us the raw request target with the query string
+        # still attached to the path (the TLS listener forwards the h11 target
+        # verbatim). Split it here so (a) pattern matching compares on the path,
+        # (b) the query is matched/learned through query_params, and (c) raw
+        # query values — which can carry tokens — never land in the persisted
+        # path or correlation key (they go through redact_query instead).
+        if "?" in path:
+            base_path, _, query_string = path.partition("?")
+            path = base_path
+            if not query_params:
+                query_params = dict(parse_qsl(query_string, keep_blank_values=True))
+
         # Get device mode (cached lookup to avoid a registry query per request)
         device = await self.db_manager.get_device(device_id)
         if not device:
