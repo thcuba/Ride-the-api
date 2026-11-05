@@ -594,10 +594,13 @@
       <svg class="icon-svg-sm" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v4"/><path d="M12 18v4"/><path d="M2 12h4"/><path d="M18 12h4"/></svg>
       DNS Discovery
     </span>
-    <label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;" title="Answer every name with this proxy's address, so every device that uses it as its resolver is captured. Names in the exclusion list are still forwarded untouched.">
-      <input type="checkbox" id="dnsInterceptAllToggle" role="switch" aria-label="Intercept every name" onchange="dnsSetInterceptAll(this.checked)">
-      Intercept all
-    </label>
+    <div style="display:inline-flex;align-items:center;gap:8px;" title="Answer every name with this proxy's address, so every device that uses it as its resolver is captured. Names in the exclusion list are still forwarded untouched.">
+      <label for="dnsInterceptAllToggle" style="font-size:12px;cursor:pointer;">Intercept all</label>
+      <label class="tc-toggle" aria-label="Toggle intercept every name" title="Toggle intercept every name">
+        <input type="checkbox" id="dnsInterceptAllToggle" role="switch" aria-checked="false" aria-label="Intercept every name" onchange="dnsSetInterceptAll(this.checked)">
+        <span class="tc-slider"></span>
+      </label>
+    </div>
     <input type="text" id="dnsExcludeInput" placeholder="exclusions, comma separated (ntp.*, *.local)" aria-label="Names excluded from interception" style="padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:12px;width:260px;">
     <button class="btn btn-ghost" onclick="dnsSaveExclusions(this)" style="padding:4px 10px;font-size:12px;" aria-label="Save the excluded names">Save exclusions</button>
     <button class="btn btn-ghost" onclick="dnsClearDiscovery(this)" style="padding:4px 10px;font-size:12px;" aria-label="Clear the discovery log">Clear log</button>
@@ -1956,7 +1959,10 @@ async function loadDnsDiscovery() {
     if (!res.ok) { list.innerHTML = '<span class="tb-badge tb-inactive">error</span>'; return; }
     const data = await res.json();
     const toggle = document.getElementById('dnsInterceptAllToggle');
-    if (toggle) toggle.checked = !!data.intercept_all;
+    if (toggle) {
+      toggle.checked = !!data.intercept_all;
+      toggle.setAttribute('aria-checked', data.intercept_all ? 'true' : 'false');
+    }
     const excludeInput = document.getElementById('dnsExcludeInput');
     // Never overwrite what the operator is typing.
     if (excludeInput && document.activeElement !== excludeInput) {
@@ -2049,6 +2055,7 @@ async function dnsUnintercept(hostname, btn) {
 
 async function dnsSetInterceptAll(enabled) {
   const toggle = document.getElementById('dnsInterceptAllToggle');
+  if (toggle) toggle.setAttribute('aria-checked', enabled ? 'true' : 'false');
   try {
     const res = await fetch('/api/dns/settings', {
       method: 'PUT',
@@ -2056,14 +2063,20 @@ async function dnsSetInterceptAll(enabled) {
       body: JSON.stringify({ intercept_all: !!enabled }),
     });
     if (!res.ok) {
-      if (toggle) toggle.checked = !enabled;
+      if (toggle) {
+        toggle.checked = !enabled;
+        toggle.setAttribute('aria-checked', (!enabled) ? 'true' : 'false');
+      }
       showToast(await errorFrom(res, 'Failed to change the interception mode'), 'error');
       return;
     }
     showToast(enabled ? 'Intercepting every name (exclusions still forwarded)' : 'Only the listed names are intercepted', 'success');
     await loadDnsDiscovery();
   } catch (e) {
-    if (toggle) toggle.checked = !enabled;
+    if (toggle) {
+      toggle.checked = !enabled;
+      toggle.setAttribute('aria-checked', (!enabled) ? 'true' : 'false');
+    }
     showToast(await errorFrom(e, 'Failed to change the interception mode'), 'error');
   }
 }
