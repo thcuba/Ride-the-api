@@ -46,6 +46,8 @@ except ImportError:  # pragma: no cover - exercised at import time only
 logger = logging.getLogger(__name__)
 
 _ALL_INTERFACES = frozenset({"", "0.0.0.0", "::", "[::]"})  # noqa: S104 - we detect it
+#: Budget for the broker's shutdown, as Modbus and WebSocket do (see stop()).
+_STOP_TIMEOUT_S = 5
 
 
 def exposure_warnings(cfg: MQTTServerConfig) -> list[str]:
@@ -190,9 +192,22 @@ class MQTTServerPlugin(ProtocolServerPlugin):
             self._forward_thread.join(timeout=2)
             self._forward_thread = None
         if self._broker is not None:
-            with contextlib.suppress(Exception):
-                await self._broker.shutdown()
+            broker = self._broker
             self._broker = None
+            try:
+                # CPython 3.12.1 made Server.wait_closed() wait for every open
+                # connection, so a client that connected and went away -- or one
+                # still connected -- can hold the broker's shutdown open for
+                # ever. A stop that never returns wedges the config reconcile and
+                # the service shutdown, so bound it like the other listeners.
+                await asyncio.wait_for(broker.shutdown(), _STOP_TIMEOUT_S)
+            except TimeoutError:
+                logger.warning(
+                    "MQTT broker shutdown did not finish within %ss; continuing",
+                    _STOP_TIMEOUT_S,
+                )
+            except Exception:  # noqa: BLE001 - shutdown is best effort
+                logger.debug("MQTT broker shutdown failed", exc_info=True)
         await super().stop()
         logger.info("MQTT server stopped")
 
