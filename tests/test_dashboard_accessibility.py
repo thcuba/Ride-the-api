@@ -46,6 +46,7 @@ def test_primary_navigation_accessibility_across_pages():
             f"Missing or incorrect aria-current on active link in {rel_path}"
         )
 
+
 def test_configuration_sidebar_accessibility():
     config_path = Path("webui/config.html")
     assert config_path.exists(), "webui/config.html must exist"
@@ -68,8 +69,9 @@ def test_configuration_sidebar_accessibility():
 
     # Verify section icons are hidden from screen readers
     assert 'aria-hidden="true"' in html
-    assert 'SECTION_ICONS' in html
-    assert 'sec-icon' in html
+    assert "SECTION_ICONS" in html
+    assert "sec-icon" in html
+
 
 def test_configuration_form_controls_and_mobile_accessibility():
     config_path = Path("webui/config.html")
@@ -82,10 +84,10 @@ def test_configuration_form_controls_and_mobile_accessibility():
     assert "row.classList.add('field-switch')" in html
 
     # Verify SVG chevrons for collapsible field groups
-    assert 'chev-svg' in html
+    assert "chev-svg" in html
     assert 'polyline points="6 9 12 15 18 9"' in html
 
     # Verify mobile-specific ergonomics (iOS auto-zoom prevention and sticky save bar)
-    assert 'font-size: 16px !important;' in html
-    assert 'position: sticky; bottom: 10px;' in html
-    assert '.field.field-switch' in html
+    assert "font-size: 16px !important;" in html
+    assert "position: sticky; bottom: 10px;" in html
+    assert ".field.field-switch" in html
