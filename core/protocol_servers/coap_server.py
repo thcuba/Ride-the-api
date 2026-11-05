@@ -15,8 +15,8 @@ learned local response.
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
+import ipaddress
 import json
 import logging
 import time
@@ -37,9 +37,56 @@ except ImportError:  # pragma: no cover - exercised at import time only
 
 from adapters.base import InterceptedRequest, ProtocolType
 from core.pattern_db.schemas import ObservationKind, TransportMeta
-from core.protocol_servers import ProtocolServerPlugin
+from core.protocol_servers import (
+    ProtocolServerPlugin,
+    call_handler,
+    device_reply,
+    encode_reply,
+)
 
 logger = logging.getLogger(__name__)
+
+_WELL_KNOWN_CORE = (".well-known", "core")
+
+
+def _remote_ip(request: Any) -> str:  # noqa: ANN401
+    """The client's IP address (aiocoap addresses have no ``host`` attribute).
+
+    The former ``remote.host`` lookup always failed, so every CoAP device was
+    the same "coap-unknown". IPv4 clients arrive v4-mapped on the v6 socket.
+    """
+    remote = getattr(request, "remote", None)
+    sockaddr = getattr(remote, "sockaddr", None)
+    if not sockaddr:
+        return "unknown"
+    host = str(sockaddr[0])
+    try:
+        address = ipaddress.ip_address(host.split("%", 1)[0])
+    except ValueError:
+        return host
+    return str(getattr(address, "ipv4_mapped", None) or address)
+
+
+if HAS_AIOCOAP:
+
+    class _CoAPRoot(aiocoap.resource.Resource):
+        """Root resource: discovery at /.well-known/core, everything else to the pipeline."""
+
+        def __init__(self, plugin: CoAPServerPlugin) -> None:
+            super().__init__()
+            self.plugin = plugin
+
+        async def render(self, request: Message) -> Message:
+            path = tuple(request.opt.uri_path or ())
+            if path == _WELL_KNOWN_CORE:
+                return Message(
+                    code=aiocoap.CONTENT,
+                    payload=b"</>;ct=0,</.well-known/core>;ct=40",
+                    content_format=ContentFormat.LINKFORMAT,
+                )
+            reply = await self.plugin.handle_coap_request(request, "/".join(path))
+            return reply or Message(code=aiocoap.NOT_FOUND)
+
 
 # Pre-computed CoAP method map for fast O(1) lookup without per-request dict creation
 # (~3.2x speedup)
@@ -67,28 +114,10 @@ class CoAPServerPlugin(ProtocolServerPlugin):
 
         cfg = self.config
 
-        class _Wildcard(aiocoap.resource.Resource):
-            plugin = self
-
-            async def render(self, request: Message) -> Message:
-                segs = request.opt.uri_path
-                joined = "/".join(segs) if segs else ""
-                return await type(self).plugin.handle_coap_request(request, joined) or Message(
-                    code=aiocoap.NOT_FOUND
-                )
-
-        class _WellKnown(aiocoap.resource.Resource):
-            plugin = self
-
-            async def render(self, request: Message) -> Message:  # noqa: N805, ARG002
-                payload = b"</>;ct=0,</.well-known/core>;ct=40"
-                return Message(
-                    code=aiocoap.CONTENT, payload=payload, content_format=ContentFormat.LINKFORMAT
-                )
-
-        site = aiocoap.resource.Site()
-        site.add_resource([".well-known", "core"], _WellKnown())
-        site.add_resource(["*"], _Wildcard())
+        # One root for every path: aiocoap's Site has no wildcard, so the
+        # former ["*"] resource only matched a literal "*" and every real
+        # path got 4.04.
+        site = _CoAPRoot(self)
 
         bind = (cfg.host, cfg.port)
         self._context = await Context.create_server_context(site=site, bind=bind)
@@ -117,8 +146,7 @@ class CoAPServerPlugin(ProtocolServerPlugin):
                 query_params[k] = v
             else:
                 query_params[item] = ""
-        remote = getattr(request, "remote", None)
-        remote_ip = getattr(remote, "host", "unknown")
+        remote_ip = _remote_ip(request)
 
         body: dict | None = None
         if request.payload:
@@ -163,15 +191,15 @@ class CoAPServerPlugin(ProtocolServerPlugin):
         )
 
         try:
-            if asyncio.iscoroutinefunction(self.handler):
-                result = await self.handler(intercepted)
-            else:
-                result = self.handler(intercepted)
+            result = await call_handler(self.handler, intercepted)
 
-            if result and isinstance(result, dict):
-                response = Message(code=aiocoap.CONTENT)
-                response.payload = json.dumps(result.get("response", result)).encode("utf-8")
-                response.content_format = ContentFormat.JSON
+            # Only a locally served response answers the device: other results
+            # are pipeline bookkeeping (correlation keys...) and were sent as is.
+            body = device_reply(result)
+            if body is not None:
+                payload, is_json = encode_reply(body)
+                response = Message(code=aiocoap.CONTENT, payload=payload)
+                response.content_format = ContentFormat.JSON if is_json else ContentFormat.TEXT
                 return response
         except Exception:
             logger.exception("CoAP handler error:")

@@ -78,20 +78,35 @@ if [[ -d "$INSTALL_DIR/.git" ]]; then
     log "config/config.yaml locale messo da parte per il pull."
   fi
 
+  record_version() {
+    # Record the resolved version for /health (long describe if no tag).
+    git -C "$INSTALL_DIR" describe --tags --always 2>/dev/null > "$INSTALL_DIR/VERSION" \
+      || git -C "$INSTALL_DIR" rev-parse --short HEAD > "$INSTALL_DIR/VERSION"
+  }
+  pip_install() {
+    if [[ -x "$INSTALL_DIR/.venv/bin/python" ]]; then
+      "$INSTALL_DIR/.venv/bin/python" -m pip install --quiet -e "$INSTALL_DIR"
+    else
+      python3 -m pip install --quiet -e "$INSTALL_DIR"
+    fi
+  }
+
+  PREV_HEAD="$(git -C "$INSTALL_DIR" rev-parse HEAD)"
   (
     cd "$INSTALL_DIR"
     git fetch --quiet origin || { log "git fetch fallito"; exit 1; }
     git pull --ff-only origin main || { log "git pull fallito"; exit 1; }
-    # Record the resolved version for /health (long describe if no tag).
-    git describe --tags --always 2>/dev/null > "$INSTALL_DIR/VERSION" \
-      || git rev-parse --short HEAD > "$INSTALL_DIR/VERSION"
   )
-  if [[ -x "$INSTALL_DIR/.venv/bin/python" ]]; then
-    "$INSTALL_DIR/.venv/bin/python" -m pip install --quiet -e "$INSTALL_DIR" \
-      || { log "pip install fallito"; exit 1; }
-  else
-    python3 -m pip install --quiet -e "$INSTALL_DIR" \
-      || { log "pip install fallito"; exit 1; }
+  record_version
+  if ! pip_install; then
+    # New code with the old dependencies would be what the next restart
+    # (a reboot, a crash) loads: go back to the version that was running.
+    log "pip install fallito: ripristino la versione precedente (${PREV_HEAD})."
+    git -C "$INSTALL_DIR" reset --quiet --keep "$PREV_HEAD" \
+      || log "Ripristino git fallito: controlla ${INSTALL_DIR} a mano."
+    record_version
+    pip_install || log "Reinstallazione delle dipendenze precedenti fallita."
+    exit 1
   fi
   restore_local_config
   log "Codice aggiornato (git pull + pip)."

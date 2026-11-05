@@ -211,7 +211,9 @@ def test_system_update_starts_detached_updater(client, monkeypatch):
     kwargs = launched["kwargs"]
     assert kwargs["start_new_session"] is True
     assert launched["args"][0][1].endswith("update.sh")
-    assert kwargs["cwd"].endswith(("ride-the-api", "Ride-the-api", "app", "APP"))
+    # The install root is the process working directory, whatever the checkout
+    # happens to be called (the old suffix check failed in any other folder).
+    assert kwargs["cwd"] == str(Path.cwd())
 
 
 def test_system_update_finds_script_in_frozen_bundle(client, monkeypatch, tmp_path):

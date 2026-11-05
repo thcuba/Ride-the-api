@@ -95,7 +95,8 @@ Main HTTP proxy configuration, listening TLS and fallback behavior.
 | `port` | `integer` | `8911` | Main proxy port |
 | `tls` | `TLSConfig` | — | Proxy TLS configuration |
 | `request_timeout` | `integer` | `30` | Request handling timeout in seconds |
-| `max_request_size` | `integer` | `1048576` | Maximum request size in bytes (1 MB) |
+| `max_request_size` | `integer` | `1048576` | Maximum control-plane (`/api/*`) request size in bytes (1 MB) |
+| `max_device_request_size` | `integer` | `16777216` | Maximum device request size through the proxy in bytes (16 MB; `0` = no cap) |
 | `fallback` | `FallbackConfig` | — | Vendor cloud fallback configuration |
 
 ### proxy.tls
@@ -127,6 +128,7 @@ proxy:
     key_file: "./certs/ride-api.key"
   request_timeout: 30
   max_request_size: 1048576
+  max_device_request_size: 16777216
   fallback:
     enabled: true
     timeout: 10

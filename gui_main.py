@@ -167,13 +167,24 @@ class LogWriter:
             self._fh.close()
 
 
+def _failed_exit(exc: SystemExit) -> bool:
+    """Whether a ``SystemExit`` reports a failure (uvicorn exits 1 or 3 on a failed start)."""
+    return exc.code not in (None, 0)
+
+
 def _run_server(on_error) -> None:
     try:
         from core.server import main as server_main  # noqa: PLC0415
 
         server_main()
-    except SystemExit:
-        raise
+    except SystemExit as exc:
+        # uvicorn reports a failed start (port in use, startup error) with
+        # sys.exit(). Raised in a thread, SystemExit is silently dropped, so
+        # the launcher exited 0 and Restart=on-failure never restarted it.
+        if _failed_exit(exc):
+            logger.error("Server exited with status %s", exc.code)  # noqa: TRY400
+            if on_error is not None:
+                on_error()
     except Exception:
         logger.exception("Server thread failed unexpectedly")
         if on_error is not None:
@@ -220,8 +231,17 @@ class ServerController:
             )
             self._server = uvicorn.Server(uv_config)
             self._server.run()
-        except SystemExit:
-            raise
+            if not self._server.started and not self._server.should_exit:
+                # Startup failed without raising (e.g. the app's lifespan).
+                logger.error("Uvicorn server did not start")
+                if self.error is not None:
+                    self.error.set()
+        except SystemExit as exc:
+            # A failed bind ends in sys.exit(1), which a thread silently drops.
+            if _failed_exit(exc):
+                logger.error("Uvicorn server exited with status %s", exc.code)  # noqa: TRY400
+                if self.error is not None:
+                    self.error.set()
         except Exception:
             logger.exception("Uvicorn server failed to start")
             if self.error is not None:

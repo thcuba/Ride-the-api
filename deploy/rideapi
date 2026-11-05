@@ -137,10 +137,18 @@ tar -xzf "${TMP}/${ASSET}" -C "${TMP}" --no-same-owner
 BUNDLE="${TMP}/ride-the-api"
 
 # Replace only the binary bundle; keep runtime dirs if they already exist.
+# Stage it next to the old one first: from a temp dir on another filesystem
+# `mv` is a copy, and deleting the old bundle before it meant a failed copy
+# (disk full...) left no bundle at all. The swap below is two renames.
+STAGED="${INSTALL_DIR}/ride-the-api.new"
+rm -rf "${STAGED}"
+mv "${BUNDLE}" "${STAGED}"
 if [[ -d "${INSTALL_DIR}/ride-the-api" ]]; then
-  rm -rf "${INSTALL_DIR}/ride-the-api"
+  rm -rf "${INSTALL_DIR}/ride-the-api.old"
+  mv "${INSTALL_DIR}/ride-the-api" "${INSTALL_DIR}/ride-the-api.old"
 fi
-mv "${BUNDLE}" "${INSTALL_DIR}/ride-the-api"
+mv "${STAGED}" "${INSTALL_DIR}/ride-the-api"
+rm -rf "${INSTALL_DIR}/ride-the-api.old"
 
 # On a FRESH install, seed the runtime dirs from the bundle defaults only if
 # they are absent (upgrades never overwrite user data).

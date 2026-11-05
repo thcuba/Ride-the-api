@@ -4,9 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import os
+import shutil
+import threading
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import patch
+
+import pytest
 
 from core.config import ConnectionWatchdogConfig
 from core.connection_watchdog import ConnectionWatchdog
@@ -136,8 +142,12 @@ def test_persistent_failures_trigger_restart_once() -> None:
     async def fake_restart() -> None:
         restarts["n"] += 1
 
+    async def fresh_process_gets_through() -> bool:
+        return True  # the wedge: only this process is cut off
+
     async def scenario() -> None:
         wd._probe = failing_probe  # type: ignore[method-assign]
+        wd._reachable_from_fresh_process = fresh_process_gets_through  # type: ignore[method-assign]
         wd._trigger_restart = fake_restart  # type: ignore[method-assign]
         await asyncio.wait_for(wd._run(), timeout=5)
 
@@ -160,7 +170,7 @@ def test_cooldown_suppresses_restart() -> None:
     async def scenario() -> None:
         wd._probe = failing_probe  # type: ignore[method-assign]
         wd._trigger_restart = fake_restart  # type: ignore[method-assign]
-        wd._last_restart = time.monotonic()  # a restart just happened
+        wd._last_restart = time.time()  # a restart just happened
         task = asyncio.create_task(wd._run())
         await asyncio.sleep(0.05)
         task.cancel()
@@ -181,6 +191,7 @@ def test_empty_restart_command_launches_nothing() -> None:
 
     async def scenario() -> None:
         wd._probe = failing_probe  # type: ignore[method-assign]
+        wd._reachable_from_fresh_process = _always  # type: ignore[method-assign]
         await asyncio.wait_for(wd._run(), timeout=5)
 
     with patch("core.connection_watchdog.subprocess.Popen") as mock_popen:
@@ -210,3 +221,87 @@ def test_restart_command_strips_loader_paths_and_sets_runtime_dir() -> None:
     assert "LD_LIBRARY_PATH" not in env
     assert env.get("XDG_RUNTIME_DIR") == f"/run/user/{os.geteuid()}"
     assert env.get("HOME") == "/home/pi4ride"
+
+
+# --- offline installs and restarts that replace the process (R-4) -----------
+
+
+async def _never() -> bool:
+    return False
+
+
+async def _always() -> bool:
+    return True
+
+
+def _run_briefly(wd: ConnectionWatchdog, *, fresh, seconds: float = 0.1) -> int:  # noqa: ANN001
+    """Run the loop with a failing in-process probe; return how many restarts fired."""
+    restarts = {"n": 0}
+
+    async def fake_restart() -> None:
+        restarts["n"] += 1
+
+    async def scenario() -> None:
+        wd._probe = _never  # type: ignore[method-assign]
+        wd._reachable_from_fresh_process = fresh  # type: ignore[method-assign]
+        wd._trigger_restart = fake_restart  # type: ignore[method-assign]
+        task = asyncio.create_task(wd._run())
+        await asyncio.sleep(seconds)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    asyncio.run(scenario())
+    return restarts["n"]
+
+
+def test_offline_network_does_not_restart() -> None:
+    """A fresh process cannot get through either: a restart would not help."""
+    assert _run_briefly(_make_watchdog(max_failures=2), fresh=_never) == 0
+
+
+def test_cooldown_outlives_the_restart(tmp_path) -> None:  # noqa: ANN001
+    state = tmp_path / "watchdog-state.json"
+    first = ConnectionWatchdog(_config(max_failures=1), state_path=state)  # type: ignore[arg-type]
+    assert _run_briefly(first, fresh=_always) == 1
+    assert state.exists()
+
+    # The restart replaced the process: the new watchdog must still cool down.
+    second = ConnectionWatchdog(_config(max_failures=1), state_path=state)  # type: ignore[arg-type]
+    assert _run_briefly(second, fresh=_always) == 0
+
+
+def test_a_restart_stamp_from_the_future_is_ignored(tmp_path) -> None:  # noqa: ANN001
+    state = tmp_path / "watchdog-state.json"
+    state.write_text(json.dumps({"last_restart": time.time() + 86_400}))  # clock moved back
+    wd = ConnectionWatchdog(_config(max_failures=1), state_path=state)  # type: ignore[arg-type]
+    assert _run_briefly(wd, fresh=_always) == 1
+
+
+class _NotFound(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        self.send_response(404)
+        self.send_header("content-length", "0")
+        self.end_headers()
+
+    def log_message(self, *_args: object) -> None:
+        pass
+
+
+@pytest.mark.parametrize("use_curl", [True, False])
+def test_fresh_process_probe_tells_a_response_from_no_route(use_curl, monkeypatch) -> None:  # noqa: ANN001
+    if use_curl and not shutil.which("curl"):
+        pytest.skip("curl not installed")
+    if not use_curl:
+        monkeypatch.setattr("core.connection_watchdog.shutil.which", lambda _name: None)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _NotFound)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        up = _make_watchdog(probe_url=f"http://127.0.0.1:{server.server_port}/probe")
+        down = _make_watchdog(probe_url="http://127.0.0.1:1/probe")
+        assert asyncio.run(up._reachable_from_fresh_process()) is True  # a 404 is a response
+        assert asyncio.run(down._reachable_from_fresh_process()) is False
+    finally:
+        server.shutdown()
+        server.server_close()

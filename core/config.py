@@ -199,6 +199,9 @@ class ProxyConfig(BaseModel):
     tls: TLSConfig = Field(default_factory=TLSConfig)
     request_timeout: int = 30
     max_request_size: int = 1048576
+    # Body cap for device (data-plane) requests, which the proxy reads whole
+    # into memory; 0 disables it. max_request_size covers /api/* only.
+    max_device_request_size: int = 16 * 1024 * 1024
     fallback: FallbackConfig = Field(default_factory=FallbackConfig)
 
 

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
+import json
 import logging
 from typing import TYPE_CHECKING
 
@@ -18,6 +20,37 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
+
+
+def device_reply(result: object) -> object | None:
+    """The body to send back to a device for a pipeline result, if any.
+
+    Only a locally served response has something for the device. Any other
+    result (a forward decision, an ignore, an error) is pipeline bookkeeping --
+    correlation keys, reasons -- which some listeners sent to devices verbatim.
+    """
+    if isinstance(result, dict) and result.get("action") == "local_response":
+        response = result.get("response")
+        if isinstance(response, dict):
+            return response.get("body")
+    return None
+
+
+async def call_handler(handler: Callable, request: object) -> object:
+    """Run a pipeline handler, sync or async (an awaitable result is awaited)."""
+    result = handler(request)
+    if inspect.isawaitable(result):
+        result = await result
+    return result
+
+
+def encode_reply(body: object) -> tuple[bytes, bool]:
+    """``body`` as bytes for the wire, and whether it is JSON."""
+    if isinstance(body, bytes):
+        return body, False
+    if isinstance(body, str):
+        return body.encode("utf-8"), False
+    return json.dumps(body).encode("utf-8"), True
 
 
 class ProtocolServerPlugin:

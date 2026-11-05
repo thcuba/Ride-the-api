@@ -106,8 +106,10 @@ from core.resilience import (
 )
 from core.security import (
     ControlPlaneAuthMiddleware,
+    CrossSiteRequestGuard,
     MaxBodySizeMiddleware,
     SecurityHeadersMiddleware,
+    password_problem,
     setup_token,
 )
 from core.tls_mitm import (
@@ -967,7 +969,11 @@ async def lifespan(_app: FastAPI):  # noqa: C901, PLR0912, PLR0915
     watchdog_cfg = config.connection_watchdog
     if watchdog_cfg.enabled:
         try:
-            connection_watchdog = ConnectionWatchdog(watchdog_cfg)
+            # The cooldown must outlive the restart it triggers.
+            connection_watchdog = ConnectionWatchdog(
+                watchdog_cfg,
+                state_path=Path(config.core.device_db_dir).parent / "watchdog-state.json",
+            )
             await connection_watchdog.start()
             logger.info(
                 "Connection watchdog enabled: probe %s every %ds, restart after %d failures",
@@ -1138,25 +1144,31 @@ app = FastAPI(
     lifespan=lifespan,
 )
 # Restrict CORS to trusted local web UI origins to prevent cross-site request attacks.
+_TRUSTED_ORIGINS = ["http://localhost:8911", "http://127.0.0.1:8911"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8911", "http://127.0.0.1:8911"],
+    allow_origins=_TRUSTED_ORIGINS,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# CORS only governs what a page may read back; a cross-site "simple" POST is
+# still delivered. Refuse state-changing API calls a browser makes for another
+# site (S-17) -- with auth disabled they were the only barrier.
+app.add_middleware(CrossSiteRequestGuard, allowed_origins=_TRUSTED_ORIGINS)
 # Control-plane authentication: every /api/* route requires the single
 # control-plane password (full access, no read-only distinction). See core/security.py.
 app.add_middleware(
     ControlPlaneAuthMiddleware,
     get_security_config=lambda: config_manager.config.security,
 )
-# Control-plane body limits (F-09): reject /api/* request bodies larger than
-# proxy.max_request_size. The catch-all data-plane route stays exempt because
-# it legitimately proxies oversized device payloads to the cloud.
+# Body limits (F-09): /api/* bodies are held to proxy.max_request_size, device
+# (data-plane) bodies to the larger proxy.max_device_request_size -- the proxy
+# route reads them whole into memory, so they cannot be unbounded either.
 app.add_middleware(
     MaxBodySizeMiddleware,
     max_size=config_manager.config.proxy.max_request_size,
+    data_plane_max_size=config_manager.config.proxy.max_device_request_size,
 )
 # Security response headers (defense-in-depth against clickjacking, MIME sniffing, XSS)
 app.add_middleware(SecurityHeadersMiddleware)
@@ -2168,6 +2180,25 @@ async def configure_device_llm(device_id: str, request: Request):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+def _requested_database_url(body: dict) -> tuple[str | None, str | None]:
+    """The device database URL a request asks for, or why it cannot have it."""
+    database_url = body.get("database_url")
+    database_name = body.get("database_name")
+    if database_url:
+        try:
+            return db_manager.checked_device_db_url(str(database_url)), None
+        except ValueError as e:
+            return None, str(e)
+    if database_name:
+        # Only a name: create a new SQLite database for it.
+        try:
+            safe_name = sanitize_filename_component(str(database_name))
+        except ValueError as e:
+            return None, f"Invalid database_name: {e}"
+        return f"sqlite+aiosqlite:///{db_manager.device_db_dir / f'{safe_name}.db'}", None
+    return None, "Provide 'database_url' or 'database_name'"
+
+
 @app.post("/api/devices/{device_id}/database")
 async def assign_device_database(device_id: str, request: Request):
     """Assign a database (URL or name) to a device. Creates a new DB if only name given."""
@@ -2178,26 +2209,14 @@ async def assign_device_database(device_id: str, request: Request):
         return JSONResponse(
             status_code=400, content={"error": "Invalid JSON body: expected an object"}
         )
-    database_url = body.get("database_url")
+    database_url, error = _requested_database_url(body)
+    if error:
+        # A validation message for the operator who sent the request, with no
+        # traceback and no input values -- the same class dismissed on main
+        # (decision M7 in the skill's audit notes).
+        # codeql[py/stack-trace-exposure] # noqa: ERA001
+        return JSONResponse(status_code=400, content={"error": error})
     database_name = body.get("database_name")
-
-    # If only a name is given, create a new SQLite database for it
-    if not database_url and database_name:
-        try:
-            safe_name = sanitize_filename_component(database_name)
-        except ValueError as e:
-            return JSONResponse(
-                status_code=400,
-                content={"error": f"Invalid database_name: {e}"},
-            )
-        db_path = db_manager.device_db_dir / f"{safe_name}.db"
-        database_url = f"sqlite+aiosqlite:///{db_path}"
-    elif not database_url and not database_name:
-        return JSONResponse(
-            status_code=400,
-            content={"error": "Provide 'database_url' or 'database_name'"},
-        )
-
     success = await db_manager.assign_device_database(
         device_id,
         database_url=database_url,
@@ -2382,21 +2401,11 @@ async def register_device_ip(device_id: str, request: Request):  # noqa: PLR0911
                 "the proxy never intercepts its own traffic"
             },
         )
-    async with db_manager.core_session() as session:
-        result = await session.execute(
-            select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
-        )
-        device = result.scalar_one_or_none()
-        if not device:
-            return JSONResponse(status_code=404, content={"error": "Device not found"})
-        current_ips = list(device.ip_addresses or [])
-        if ip_address not in current_ips:
-            current_ips.append(ip_address)
-            device.ip_addresses = current_ips
-            await session.commit()
-            # Reflect the new IP in the reverse lookup immediately.
-            db_manager.invalidate_ip_lookup_cache()
-        return {"device_id": device_id, "ip_addresses": current_ips}
+    # The address moves to this device (it is taken from any previous holder).
+    current_ips = await db_manager.bind_ip(device_id, ip_address)
+    if current_ips is None:
+        return JSONResponse(status_code=404, content={"error": "Device not found"})
+    return {"device_id": device_id, "ip_addresses": current_ips}
 
 
 @app.get("/api/devices/{device_id}/patterns")
@@ -3156,6 +3165,16 @@ def _validation_details(error: Exception) -> list:
 _MIN_PASSWORD_LENGTH = 8
 
 
+def _new_password_problem(password: object) -> str | None:
+    """Why ``password`` cannot become the control-plane password, if it cannot."""
+    if not password or not isinstance(password, str):
+        return "password must be non-empty"
+    if len(password) < _MIN_PASSWORD_LENGTH:
+        return f"password must be at least {_MIN_PASSWORD_LENGTH} characters long"
+    # Header-safe: a password a browser cannot send locks the dashboard out.
+    return password_problem(password)
+
+
 @app.post("/api/auth/password")
 async def set_control_plane_password(request: Request):
     """Set the control-plane ``security.password`` on first run.
@@ -3165,20 +3184,17 @@ async def set_control_plane_password(request: Request):
     password is configured, this endpoint is protected like any other
     ``/api/*`` route.
     """
-    if config_manager.config.security.auth_enabled and config_manager.config.security.password:
+    # First run only. With auth disabled the guard used to let anyone replace
+    # an existing password; change it through the authenticated config API.
+    if config_manager.config.security.password:
         return JSONResponse(status_code=403, content={"error": "A password is already set"})
     try:
         body = await request.json()
     except (json.JSONDecodeError, UnicodeDecodeError):
         return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
     password = (body.get("password") or "") if isinstance(body, dict) else ""
-    if not password:
-        return JSONResponse(status_code=400, content={"error": "password must be non-empty"})
-    if len(password) < _MIN_PASSWORD_LENGTH:
-        return JSONResponse(
-            status_code=400,
-            content={"error": f"password must be at least {_MIN_PASSWORD_LENGTH} characters long"},
-        )
+    if problem := _new_password_problem(password):
+        return JSONResponse(status_code=400, content={"error": problem})
     ok = config_manager.set_security_password(password)
     if not ok:
         return JSONResponse(status_code=500, content={"error": "Failed to persist password"})
@@ -3741,11 +3757,15 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
     try:
         # Parse request to extract device info
         intercepted = await adapter.parse_request(intercepted)
-        device_id = intercepted.device_id or _extract_device_id(request.headers, path)
-
-        if not device_id:
-            logger.warning(f"Could not extract device ID from request to {vendor}")
-            device_id = f"unknown_{vendor}_{hash(str(request.url)) % 10000}"
+        # A source IP bound to a known device decides who is talking, as on the
+        # TLS and protocol paths: the claimed id (a header or a path segment)
+        # is the client's word, and any client could speak for any device.
+        device_id = (
+            await _resolve_device_for_ip(db_manager, client_ip)
+            or intercepted.device_id
+            or _extract_device_id(request.headers, path)
+        )
+        intercepted.device_id = device_id
 
         # Ensure device is registered
         await db_manager.get_or_create_device(device_id, vendor)
@@ -3959,12 +3979,18 @@ def _is_local_ip(ip: str) -> bool:
     return is_local_ip(ip)
 
 
+# Longest device id taken from a request: a claimed id becomes a registry row
+# and a database file name.
+_MAX_CLAIMED_DEVICE_ID = 128
+
+
 def _extract_device_id(headers: dict, path: str) -> str:
-    """Try to extract device ID from headers or path."""
+    """Try to extract device ID from headers or path (never empty)."""
     # Check common headers in priority order
     for header in _DEVICE_ID_HEADERS:
-        if header in headers:
-            return headers[header]
+        value = (headers.get(header) or "").strip()
+        if 0 < len(value) <= _MAX_CLAIMED_DEVICE_ID:
+            return value
     # Check path for common patterns
     parts = path.strip("/").split("/")
     for part in parts:

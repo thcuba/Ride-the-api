@@ -45,6 +45,32 @@ except ImportError:  # pragma: no cover - exercised at import time only
 
 logger = logging.getLogger(__name__)
 
+_ALL_INTERFACES = frozenset({"", "0.0.0.0", "::", "[::]"})  # noqa: S104 - we detect it
+#: Budget for the broker's shutdown, as Modbus and WebSocket do (see stop()).
+_STOP_TIMEOUT_S = 5
+
+
+def exposure_warnings(cfg: MQTTServerConfig) -> list[str]:
+    """What an operator should know about how this broker is exposed.
+
+    Devices log in with their vendor credentials, which the proxy cannot
+    check, so the broker accepts anonymous clients and any topic: every
+    host that reaches it can read and publish every device's topics.
+    """
+    warnings = []
+    if str(cfg.host).strip() in _ALL_INTERFACES:
+        warnings.append(
+            f"MQTT broker accepts anonymous clients on all interfaces (port {cfg.port}): "
+            "any host that can reach it can read and publish every device topic. Bind "
+            "protocol_servers.mqtt.host to the device-facing address or firewall the port."
+        )
+    if getattr(cfg, "tls_enabled", False):
+        warnings.append(
+            "protocol_servers.mqtt.tls_enabled is not supported yet: the broker listens "
+            f"without TLS on port {cfg.port} only (port_tls {cfg.port_tls} is not opened)."
+        )
+    return warnings
+
 
 class MQTTServerPlugin(ProtocolServerPlugin):
     """Local MQTT broker for device protocol interception."""
@@ -69,6 +95,8 @@ class MQTTServerPlugin(ProtocolServerPlugin):
             return
 
         cfg = self.config
+        for warning in exposure_warnings(cfg):
+            logger.warning(warning)
         self._loop = asyncio.get_running_loop()
         broker_config = {
             "listeners": {
@@ -82,8 +110,16 @@ class MQTTServerPlugin(ProtocolServerPlugin):
             "auth": {"allow-anonymous": True},
             "topic-check": {"enabled": False},
         }
-        self._broker = AMQTTBroker(broker_config)
-        await self._broker.start()
+        broker = AMQTTBroker(broker_config)
+        try:
+            await broker.start()
+        except BaseException:
+            # Keep nothing from a failed start (port in use): a leftover broker
+            # made every later start -- e.g. on a free port -- a no-op.
+            with contextlib.suppress(Exception):
+                await broker.shutdown()
+            raise
+        self._broker = broker
         self._running = True
         logger.info("MQTT broker listening on %s:%d", cfg.host, cfg.port)
 
@@ -156,9 +192,22 @@ class MQTTServerPlugin(ProtocolServerPlugin):
             self._forward_thread.join(timeout=2)
             self._forward_thread = None
         if self._broker is not None:
-            with contextlib.suppress(Exception):
-                await self._broker.shutdown()
+            broker = self._broker
             self._broker = None
+            try:
+                # CPython 3.12.1 made Server.wait_closed() wait for every open
+                # connection, so a client that connected and went away -- or one
+                # still connected -- can hold the broker's shutdown open for
+                # ever. A stop that never returns wedges the config reconcile and
+                # the service shutdown, so bound it like the other listeners.
+                await asyncio.wait_for(broker.shutdown(), _STOP_TIMEOUT_S)
+            except TimeoutError:
+                logger.warning(
+                    "MQTT broker shutdown did not finish within %ss; continuing",
+                    _STOP_TIMEOUT_S,
+                )
+            except Exception:  # noqa: BLE001 - shutdown is best effort
+                logger.debug("MQTT broker shutdown failed", exc_info=True)
         await super().stop()
         logger.info("MQTT server stopped")
 

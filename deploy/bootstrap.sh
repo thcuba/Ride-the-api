@@ -146,8 +146,22 @@ echo; printf '\033[1m▸ 3/6  Scarico il codice sorgente\033[0m\n'
 mkdir -p "$BASE_DIR"
 if [[ -d "${SRC_DIR}/.git" ]]; then
   echo "  Repo già presente, aggiorno..."
-  ( cd "$SRC_DIR" && git fetch --quiet --tags origin && git pull --ff-only origin main ) \
-    || fail "Aggiornamento del repo fallito. Guarda l'output qui sopra."
+  # The running service rewrites config/config.yaml, and git refuses to pull
+  # over local changes: set it aside for the pull and put it back (as
+  # deploy/update.sh does), so a re-run can upgrade an existing install.
+  CONFIG_SAVED=""
+  if ! git -C "$SRC_DIR" diff --quiet -- config/config.yaml 2>/dev/null; then
+    CONFIG_SAVED="$(mktemp)"
+    cp "${SRC_DIR}/config/config.yaml" "$CONFIG_SAVED"
+    git -C "$SRC_DIR" checkout -- config/config.yaml
+  fi
+  PULL_OK=1
+  ( cd "$SRC_DIR" && git fetch --quiet --tags origin && git pull --ff-only origin main ) || PULL_OK=0
+  if [[ -n "$CONFIG_SAVED" ]]; then
+    cp "$CONFIG_SAVED" "${SRC_DIR}/config/config.yaml"
+    rm -f "$CONFIG_SAVED"
+  fi
+  [[ "$PULL_OK" == 1 ]] || fail "Aggiornamento del repo fallito. Guarda l'output qui sopra."
 else
   # Se la cartella esiste ma NON è un repo git (es. residuo di un tentativo
   # precedente, download incompleto), la spostiamo in backup invece di

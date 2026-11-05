@@ -34,7 +34,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable
 
     from starlette.requests import Request
 
@@ -102,6 +102,34 @@ def setup_token(path: str | Path | None = None) -> str:
 def _safe_eq(a: str, b: str) -> bool:
     """Constant-time string comparison to avoid timing side channels."""
     return hmac.compare_digest(a.encode("utf-8"), b.encode("utf-8"))
+
+
+def _password_matches(provided: str, password: str) -> bool:
+    """Whether a header value carries ``password`` (constant time).
+
+    Starlette decodes header bytes as Latin-1, so a non-ASCII password sent
+    as UTF-8 (curl, scripts) arrived as mojibake and never matched. Compare
+    the raw bytes against both encodings a client may use: UTF-8, and the
+    Latin-1 a browser sends for characters up to U+00FF.
+    """
+    raw = provided.encode("latin-1", errors="replace")
+    utf8_ok = hmac.compare_digest(raw, password.encode("utf-8"))
+    latin1_ok = hmac.compare_digest(raw, password.encode("latin-1", errors="replace"))
+    return utf8_ok or latin1_ok
+
+
+def password_problem(password: str) -> str | None:
+    """Why ``password`` cannot be used as the control-plane password, if it cannot.
+
+    It travels in a header: control characters are not allowed there, and a
+    browser cannot put characters above U+00FF in one at all, so such a
+    password would lock the dashboard out.
+    """
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in password):  # noqa: PLR2004
+        return "password must not contain control characters"
+    if any(ord(ch) > 0xFF for ch in password):  # noqa: PLR2004
+        return "password may only use Latin-1 characters (a browser cannot send others)"
+    return None
 
 
 def _extract_key(request: Request) -> str:
@@ -202,7 +230,7 @@ class ControlPlaneAuthMiddleware(BaseHTTPMiddleware):
 
         self._log_once(password_ok=True)
         provided = _extract_key(request)
-        if _safe_eq(provided, password):
+        if _password_matches(provided, password):
             return await call_next(request)
 
         return JSONResponse(
@@ -210,6 +238,80 @@ class ControlPlaneAuthMiddleware(BaseHTTPMiddleware):
             content={"error": "Unauthorized"},
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+
+_UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+def _hostname(value: str) -> str:
+    """The host part of ``host[:port]`` / ``[v6]:port`` / ``scheme://host[:port]``."""
+    value = value.split("://", 1)[-1].split("/", 1)[0].strip().lower()
+    if value.startswith("["):
+        return value[1 : value.find("]")] if "]" in value else value[1:]
+    return value.rsplit(":", 1)[0] if value.count(":") == 1 else value
+
+
+class CrossSiteRequestGuard:
+    """Refuse state-changing ``/api/*`` requests a browser sent for another site.
+
+    With auth disabled -- and for the first-run password endpoint -- nothing
+    stopped a web page from driving the API: ``request.json()`` ignores the
+    Content-Type, so a cross-site ``text/plain`` POST could set the password
+    or start an update. Browsers label such requests: ``Origin`` names the
+    page's origin and ``Sec-Fetch-Site`` says ``cross-site``. Clients that send
+    neither (curl, scripts) are not browser-driven and pass, as do the
+    configured trusted origins and same-host pages. Hostnames are compared
+    without ports so a reverse proxy that rewrites the port cannot lock the
+    dashboard out.
+    """
+
+    def __init__(self, app, allowed_origins: Iterable[str] = ()) -> None:
+        self.app = app
+        self.allowed_origins = frozenset(o.rstrip("/").lower() for o in allowed_origins)
+
+    async def __call__(self, scope, receive, send) -> None:  # noqa: ANN001
+        if (
+            scope["type"] == "http"
+            and scope.get("method") in _UNSAFE_METHODS
+            and _is_control_plane(scope.get("path") or "")
+            and self._cross_site(scope.get("headers") or ())
+        ):
+            body = json.dumps({"error": "Cross-site request refused"}).encode("utf-8")
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 403,
+                    "headers": [
+                        (b"content-type", b"application/json"),
+                        (b"content-length", str(len(body)).encode("latin-1")),
+                    ],
+                }
+            )
+            await send({"type": "http.response.body", "body": body})
+            return
+        await self.app(scope, receive, send)
+
+    def _cross_site(self, raw_headers) -> bool:  # noqa: ANN001
+        headers = {name.lower(): value.decode("latin-1") for name, value in raw_headers}
+        origin = headers.get(b"origin")
+        if origin is None:
+            return headers.get(b"sec-fetch-site", "").lower() == "cross-site"
+        origin = origin.rstrip("/").lower()
+        if origin in self.allowed_origins:
+            return False
+        if origin == "null":  # opaque origin: sandboxed frame, file:// page
+            return True
+        own_hosts = {
+            _hostname(headers[name].split(",", 1)[0])
+            for name in (b"host", b"x-forwarded-host")
+            if headers.get(name)
+        }
+        return _hostname(origin) not in own_hosts
+
+
+def _is_control_plane(path: str) -> bool:
+    path = posixpath.normpath(path or "/")
+    return path == "/api" or path.startswith("/api/")
 
 
 class RequestBodyTooLarge(StarletteHTTPException):
@@ -223,28 +325,33 @@ class RequestBodyTooLarge(StarletteHTTPException):
 
 
 class MaxBodySizeMiddleware:
-    """Reject control-plane request bodies larger than ``max_size`` bytes.
+    """Reject request bodies larger than the configured caps.
 
-    Only enforced for ``/api/*`` routes: the catch-all data-plane route
-    legitimately proxies oversized device payloads to the cloud, so it stays
-    exempt. ``Content-Length`` is checked up front; chunked/streamed bodies are
-    guarded by wrapping the ASGI receive channel and raising a 413 as soon as
-    the running total crosses the cap (F-09).
+    ``/api/*`` (control plane) is held to ``max_size``; every other path --
+    the data-plane proxy route -- to ``data_plane_max_size``. Device payloads
+    may legitimately exceed a control-plane request, but the proxy route reads
+    the whole body into memory, so it needs a bound too (it had none). ``0``
+    disables a cap. ``Content-Length`` is checked up front; chunked/streamed
+    bodies are guarded by wrapping the ASGI receive channel and answering 413
+    as soon as the running total crosses the cap (F-09).
     """
 
-    def __init__(self, app, max_size: int) -> None:
+    def __init__(self, app, max_size: int, data_plane_max_size: int = 0) -> None:
         self.app = app
         self.max_size = max_size
+        self.data_plane_max_size = data_plane_max_size
+
+    def _limit_for(self, path: str) -> int:
+        # Same canonical path decision as the auth middleware: a dotted path
+        # resolving into /api must not escape the control-plane cap.
+        return self.max_size if _is_control_plane(path) else self.data_plane_max_size
 
     async def __call__(self, scope, receive, send) -> None:  # noqa: ANN001, C901
-        if scope["type"] != "http" or self.max_size <= 0:
+        if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        path = scope.get("path") or ""
-        # Apply the same canonical path decision as the auth middleware. A
-        # dotted path resolving into /api must not bypass its request-size cap.
-        path = posixpath.normpath(path)
-        if path != "/api" and not path.startswith("/api/"):
+        limit = self._limit_for(scope.get("path") or "")
+        if limit <= 0:
             await self.app(scope, receive, send)
             return
 
@@ -258,13 +365,14 @@ class MaxBodySizeMiddleware:
                 break
         if declared is not None:
             try:
-                if int(declared) > self.max_size:
-                    await self._reply_413(send)
+                if int(declared) > limit:
+                    await self._reply_413(send, limit)
                     return
             except (TypeError, ValueError):
                 pass
 
         received = 0
+        too_large = False
         response_started = False
 
         async def send_wrapper(message):  # noqa: ANN001
@@ -274,25 +382,30 @@ class MaxBodySizeMiddleware:
             await send(message)
 
         async def guarded_receive():  # noqa: ANN202
-            nonlocal received
+            nonlocal received, too_large
             message = await receive()
             if message["type"] == "http.request":
                 received += len(message.get("body") or b"")
-                if received > self.max_size:
-                    raise RequestBodyTooLarge(self.max_size)
+                if received > limit:
+                    too_large = True
+                    raise RequestBodyTooLarge(limit)
             return message
 
         try:
             await self.app(scope, guarded_receive, send_wrapper)
-        except RequestBodyTooLarge:
-            if not response_started:
-                await self._reply_413(send)
-            else:
-                raise
+        except Exception:
+            # BaseHTTPMiddleware layers re-raise the error wrapped in an
+            # ExceptionGroup, which ``except RequestBodyTooLarge`` missed: an
+            # over-limit chunked body came back as a 500.
+            if too_large and not response_started:
+                await self._reply_413(send, limit)
+                return
+            raise
 
-    async def _reply_413(self, send) -> None:  # noqa: ANN001
+    @staticmethod
+    async def _reply_413(send, limit: int) -> None:  # noqa: ANN001
         body = json.dumps(
-            {"error": (f"Request body exceeds the maximum allowed size ({self.max_size} bytes)")}
+            {"error": f"Request body exceeds the maximum allowed size ({limit} bytes)"}
         ).encode("utf-8")
         await send(
             {

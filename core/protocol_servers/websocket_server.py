@@ -15,6 +15,7 @@ import json
 import logging
 import time
 from typing import TYPE_CHECKING, Any
+from urllib.parse import parse_qsl, urlsplit
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -29,9 +30,17 @@ except ImportError:  # pragma: no cover - exercised at import time only
 
 from adapters.base import InterceptedRequest, ProtocolType, device_id_from_ip
 from core.pattern_db.schemas import ObservationKind, TransportMeta
-from core.protocol_servers import ProtocolServerPlugin
+from core.protocol_servers import (
+    ProtocolServerPlugin,
+    call_handler,
+    device_reply,
+    encode_reply,
+)
 
 logger = logging.getLogger(__name__)
+
+# Longest wait for open connections to close when the server stops.
+_STOP_TIMEOUT_S = 5
 
 
 class WebSocketServerPlugin(ProtocolServerPlugin):
@@ -42,45 +51,37 @@ class WebSocketServerPlugin(ProtocolServerPlugin):
     def __init__(self, config: Any, handler: Callable | None = None) -> None:  # noqa: ANN401
         super().__init__(config)
         self.handler = handler
-        self._serving_task: asyncio.Task | None = None
-        self._stop_future: asyncio.Future | None = None
+        self._server: Any = None
 
     async def start(self) -> None:
         if not HAS_WEBSOCKETS:
             logger.warning("WebSocket: websockets not installed - pip install websockets")
             self._running = False
             return
-        if self._serving_task is not None:
+        if self._server is not None:
             return
-
-        loop = asyncio.get_running_loop()
-        self._stop_future = loop.create_future()
-        self._serving_task = asyncio.create_task(self._run())
-        self._running = True
-        logger.info(
-            "WebSocket server listening on %s:%d%s",
-            self.config.host,
-            self.config.port,
-            self.config.path,
-        )
-
-    async def _run(self) -> None:
-        """Run ``websockets.serve`` as an async context manager until stopped."""
         cfg = self.config
-        async with websockets.serve(
+        # Bind here, so a failure (port in use) raises to the caller. Binding
+        # inside a background task left the plugin "running" on a dead task
+        # that made every later start a no-op and every stop raise.
+        self._server = await websockets.serve(
             self._handle_ws, cfg.host, cfg.port, max_size=cfg.max_message_size
-        ):
-            await self._stop_future
+        )
+        self._running = True
+        logger.info("WebSocket server listening on %s:%d%s", cfg.host, cfg.port, cfg.path)
 
     async def _handle_ws(self, connection) -> None:  # noqa: ANN001, C901, PLR0912
         """Handle an individual WebSocket connection (websockets >= 14 API)."""
         remote_info = connection.remote_address
         remote_ip = remote_info[0] if remote_info else "unknown"
         device_id = device_id_from_ip("ws", remote_ip)
+        # Learn the path the device actually used (every message used to be
+        # recorded under the configured path, whatever the device asked for).
+        target = urlsplit(getattr(getattr(connection, "request", None), "path", "") or "")
+        path = target.path or self.config.path
+        query_params = dict(parse_qsl(target.query))
 
-        # Performance optimization: pre-bind handler coroutine check outside loop
         handler = self.handler
-        is_coro = asyncio.iscoroutinefunction(handler) if handler else False
 
         try:
             async for message in connection:
@@ -116,7 +117,8 @@ class WebSocketServerPlugin(ProtocolServerPlugin):
                     protocol=ProtocolType.WEBSOCKET,
                     client_ip=remote_ip,
                     method="WS",
-                    path=self.config.path,
+                    path=path,
+                    query_params=query_params,
                     body=body,
                     transport=TransportMeta(port=getattr(self.config, "port", 9000)),
                     security="none",
@@ -125,9 +127,14 @@ class WebSocketServerPlugin(ProtocolServerPlugin):
                 )
                 if handler:
                     try:
-                        result = await handler(request) if is_coro else handler(request)
-                        if result and isinstance(result, dict):
-                            await connection.send(json.dumps(result))
+                        result = await call_handler(handler, request)
+                        # Only a locally served response answers the device; the
+                        # pipeline result itself (with its correlation key) was
+                        # being sent as the reply.
+                        reply = device_reply(result)
+                        if reply is not None:
+                            payload, is_json = encode_reply(reply)
+                            await connection.send(payload.decode("utf-8") if is_json else payload)
                     except ConnectionClosed:
                         break
                     except Exception:
@@ -138,12 +145,12 @@ class WebSocketServerPlugin(ProtocolServerPlugin):
             logger.exception("WebSocket connection error:")
 
     async def stop(self) -> None:
-        if self._serving_task is not None:
-            if self._stop_future is not None and not self._stop_future.done():
-                self._stop_future.set_result(None)
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._serving_task
-            self._serving_task = None
+        server, self._server = self._server, None
+        if server is not None:
+            server.close()
+            # Open connections are closed by close(); do not wait for ever.
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(server.wait_closed(), _STOP_TIMEOUT_S)
         await super().stop()
         logger.info("WebSocket server stopped")
 
