@@ -2214,7 +2214,7 @@ async def assign_device_database(device_id: str, request: Request):
         # A validation message for the operator who sent the request, with no
         # traceback and no input values -- the same class dismissed on main
         # (decision M7 in the skill's audit notes).
-        # codeql[py/stack-trace-exposure]
+        # codeql[py/stack-trace-exposure] # noqa: ERA001
         return JSONResponse(status_code=400, content={"error": error})
     database_name = body.get("database_name")
     success = await db_manager.assign_device_database(

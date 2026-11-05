@@ -709,7 +709,7 @@ class DatabaseManager:
         # The path is derived from API input by design: this check IS the
         # containment, its boolean result is all that is used here, and the URL
         # that reaches the engine was rebuilt from the device DB directory.
-        # codeql[py/path-injection]
+        # codeql[py/path-injection] # noqa: ERA001
         return path.resolve().is_relative_to(self.device_db_dir.resolve())
 
     def checked_device_db_url(self, database_url: str) -> str:
