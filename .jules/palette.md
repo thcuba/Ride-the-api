@@ -1,3 +1,11 @@
+## 2026-11-05 - [Touch-Friendly Configuration Form Controls & Mobile Ergonomics]
+**Learning:** Dense form editors designed primarily for desktop present severe usability flaws on smartphones: sub-16px input font sizes trigger disruptive iOS auto-zoom viewport jumps, boolean toggles stack awkwardly under descriptions instead of anchoring to the right, and tiny touch targets (<40px) or hidden save buttons require excessive vertical scrolling.
+**Action:** Enforce a minimum 16px font-size for mobile inputs, preserve side-by-side row alignment for boolean toggles (`.field.field-switch`) across all viewports with 48x26px touch-wrapped toggles, implement smooth SVG chevrons for nested card groups, and make the mobile save bar sticky above the bottom edge for effortless one-tap persistence.
+
+## 2026-11-05 - [Configuration Lateral Navigation Aesthetics, Icons & Accessible Filtering]
+**Learning:** Complex configuration panels with dozens of sections easily overwhelm users when presented as flat, un-iconified text lists without quick-search capability. Furthermore, sidebar navigation items acting as tabs must synchronize vertical tablist semantics (`role="tablist"`, `aria-orientation="vertical"`, `role="tab"`), `aria-selected` and `aria-current` states to ensure screen reader orientation.
+**Action:** Redesign configuration sidebars with semantic SVG iconography per domain, accessible quick-search filtering (`aria-label="Filter configuration sections"`), unified active/hover gradients aligned with `app.css`, and non-disruptive unsaved change indicator pills.
+
 ## 2026-10-08 - [Clipboard Copy Fallbacks for Non-HTTPS Local Deployments]
 **Learning:** In local network HTTP deployments (e.g., `http://192.168.1.x:8911`), modern browsers disable `navigator.clipboard.writeText` due to Secure Context restrictions. Relying solely on `navigator.clipboard` causes one-click copy buttons (for device IDs or JSON templates) to fail with "Clipboard API not available" toast warnings.
 **Action:** Provide a transparent fallback function using a temporary off-screen `<textarea>` and `document.execCommand('copy')` whenever `navigator.clipboard` is missing or fails, ensuring copy actions succeed across all HTTP/HTTPS local network contexts.
