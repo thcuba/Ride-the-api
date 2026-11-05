@@ -706,6 +706,10 @@ class DatabaseManager:
     _SQLITE_PREFIX = "sqlite+aiosqlite:///"
 
     def _inside_device_dir(self, path: Path) -> bool:
+        # The path is derived from API input by design: this check IS the
+        # containment, its boolean result is all that is used here, and the URL
+        # that reaches the engine was rebuilt from the device DB directory.
+        # codeql[py/path-injection]
         return path.resolve().is_relative_to(self.device_db_dir.resolve())
 
     def checked_device_db_url(self, database_url: str) -> str:
