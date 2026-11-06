@@ -116,6 +116,16 @@ dev = [
     "pytest>=8.2.0",
     "pytest-asyncio>=0.23.0",
     "pytest-cov>=4.1.0",
+    # The test suite imports the optional protocol adapters directly
+    # (test_modbus_listener, test_protocol_replies, test_zigbee_bridge_connection),
+    # so a dev install must pull them even though a runtime install does not need
+    # them. They are repeated here rather than referenced as `.[protocols]` so the
+    # extra works with every build backend.
+    "paho-mqtt>=2.0.0",
+    "amqtt>=0.11.0",
+    "aiocoap>=0.4.7",
+    "pymodbus>=3.5.0",
+    "pyserial>=3.5",
 ]
 gpu = [
     "onnxruntime-gpu>=1.18.0",
