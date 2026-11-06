@@ -91,3 +91,42 @@ def test_configuration_form_controls_and_mobile_accessibility():
     assert "font-size: 16px !important;" in html
     assert "position: sticky; bottom: 10px;" in html
     assert ".field.field-switch" in html
+
+
+def test_llm_settings_modal_accessibility_and_mobile_ergonomics():
+    dash_path = Path("webui/dashboard.html")
+    assert dash_path.exists(), "webui/dashboard.html must exist"
+    html = dash_path.read_text(encoding="utf-8")
+
+    # Verify modal dialog semantics
+    assert 'id="llm-settings-modal"' in html
+    assert 'role="dialog"' in html
+    assert 'aria-modal="true"' in html
+    assert 'aria-labelledby="llm-settings-title"' in html
+
+    # Verify master switch toggle has switch role, aria-checked and touch wrap
+    assert 'id="llm-enabled-toggle"' in html
+    assert 'class="switch"' in html
+    assert 'class="switch-wrap"' in html
+    assert 'role="switch"' in html
+
+    # Verify profile purpose selectors have explicit aria-labels and associated labels
+    assert 'id="llm-task-correlation"' in html
+    assert 'aria-label="LLM profile for correlation and validation"' in html
+    assert 'id="llm-task-flush"' in html
+    assert 'aria-label="LLM profile for the buffer flush"' in html
+    assert 'id="llm-task-learning_context"' in html
+    assert 'aria-label="LLM profile for the grounded update flush"' in html
+
+    # Verify profile card controls and micro-interactions
+    assert "lpc-status-pill" in html
+    assert "lpc-unsaved-badge" in html
+    assert "btn-glow-pill" in html
+    assert "pw-toggle-btn" in html
+    assert "updateProfileStatusPill" in html
+
+    # Verify mobile-specific ergonomics (iOS auto-zoom guard >=16px and sticky save bar)
+    assert "#llm-settings-modal input," in html
+    assert "font-size: 16px !important;" in html
+    assert "position: sticky;" in html
+    assert "btn-save-llm" in html

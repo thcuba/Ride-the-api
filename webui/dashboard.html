@@ -405,25 +405,524 @@
   .btn-danger { background: var(--red); color: #fff; }
   .btn-danger:hover { opacity: .8; }
 
-  /* ── LLM Settings modal profile cards ─────────────────────────────────── */
+  /* ── LLM Settings Modal & Profile Ergonomics ─────────────────────────── */
+  #llm-settings-modal {
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    background: rgba(0, 0, 0, 0.7);
+  }
+  #llm-settings-modal .profile-modal-content {
+    max-width: 760px;
+    width: 92%;
+    max-height: 88vh;
+    padding: 24px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6), 0 0 1px rgba(255, 255, 255, 0.12);
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    overflow-y: auto;
+  }
+  .llm-modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding-bottom: 12px;
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+    gap: 12px;
+  }
+  .llm-modal-title-group {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .llm-modal-badge {
+    width: 42px;
+    height: 42px;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--accent) 15%, var(--surface2));
+    border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 25%, transparent);
+  }
+  .llm-modal-badge .icon-svg {
+    width: 22px;
+    height: 22px;
+  }
+  .llm-modal-header h3 {
+    font-size: 18px;
+    font-weight: 700;
+    margin: 0;
+    color: var(--text);
+  }
+  .llm-modal-desc {
+    font-size: 12.5px;
+    color: var(--text2);
+    margin: 3px 0 0;
+    line-height: 1.4;
+  }
+  .close-btn {
+    width: 38px;
+    height: 38px;
+    min-width: 38px;
+    border-radius: 8px;
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text2);
+    font-size: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .close-btn:hover {
+    color: var(--text);
+    background: var(--surface2);
+    border-color: var(--border);
+  }
+  .close-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  /* LLM Cards */
+  .llm-card {
+    background: color-mix(in srgb, var(--surface2) 35%, var(--surface));
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    transition: border-color .15s ease;
+  }
+  .llm-card:hover {
+    border-color: color-mix(in srgb, var(--border) 80%, var(--accent) 20%);
+  }
+  .llm-card.field-switch {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    min-height: 52px;
+  }
+  .llm-card .f-info {
+    flex: 1;
+    min-width: 0;
+  }
+  .llm-card .f-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+    display: block;
+    cursor: pointer;
+  }
+  .llm-card .f-desc {
+    font-size: 12px;
+    color: var(--text2);
+    margin-top: 3px;
+    display: block;
+    line-height: 1.4;
+  }
+  .llm-card .f-control {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+  }
+
+  .llm-select {
+    width: 100%;
+    background: var(--surface2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 9px 12px;
+    font-size: 13.5px;
+    font-family: inherit;
+    min-height: 42px;
+    cursor: pointer;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  .llm-select:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
+  }
+
+  .llm-purpose-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .llm-purpose-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    padding: 8px 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 45%, transparent);
+  }
+  .llm-purpose-row:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+  }
+  .llm-purpose-label {
+    flex: 1;
+    min-width: 0;
+    cursor: pointer;
+  }
+  .llm-purpose-label .lp-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    display: block;
+  }
+  .llm-purpose-label .lp-desc {
+    font-size: 11.5px;
+    color: var(--text2);
+    margin-top: 2px;
+    display: block;
+  }
+  .llm-purpose-row .llm-select {
+    flex: 1;
+    max-width: 260px;
+  }
+
+  /* Profiles Section & Cards */
+  .llm-profiles-section {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .llm-section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+  }
+  .llm-profiles-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    max-height: 380px;
+    overflow-y: auto;
+    padding-right: 2px;
+  }
   .llm-profile-card {
-    background: var(--surface2); border: 1px solid var(--border); border-radius: 8px;
-    padding: 12px; display: flex; flex-direction: column; gap: 8px;
+    background: color-mix(in srgb, var(--surface2) 40%, var(--surface));
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    transition: border-color .2s ease, box-shadow .2s ease;
   }
-  .llm-profile-card .lpc-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-  .llm-profile-card .lpc-head .lpc-name { font-size: 13px; font-weight: 700; }
-  .llm-profile-card .lpc-head .lpc-actions { display: flex; gap: 6px; }
-  .llm-profile-card .lpc-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-  .llm-profile-card .lpc-fields .lpc-field { display: flex; flex-direction: column; gap: 2px; }
-  .llm-profile-card .lpc-fields .lpc-field.full { grid-column: 1 / -1; }
-  .llm-profile-card .lpc-fields label { font-size: 11px; color: var(--text2); }
-  .llm-profile-card .lpc-fields input, .llm-profile-card .lpc-fields textarea {
-    width: 100%; background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
-    padding: 6px 8px; color: var(--text); font-family: inherit; font-size: 12px;
+  .llm-profile-card:hover {
+    border-color: color-mix(in srgb, var(--border) 70%, var(--accent) 30%);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25), 0 0 10px rgba(56, 189, 248, 0.15);
   }
-  .llm-profile-card .lpc-fields textarea { min-height: 60px; font-family: 'Courier New', monospace; resize: vertical; }
-  .llm-profile-card .lpc-fields input:focus, .llm-profile-card .lpc-fields textarea:focus { outline: none; border-color: var(--accent); }
-  .llm-profile-card .lpc-enable { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text2); }
+  .llm-profile-card:focus-within {
+    border-color: var(--accent);
+    box-shadow: 0 0 12px rgba(56, 189, 248, 0.2);
+  }
+  .llm-profile-card.lpc-dirty {
+    border-color: #f59e0b;
+    border-left: 3px solid #f59e0b;
+    box-shadow: 0 0 12px rgba(245, 158, 11, 0.2);
+  }
+  .llm-profile-card .lpc-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding-bottom: 8px;
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+  }
+  .lpc-title-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  .lpc-name-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .lpc-icon {
+    width: 16px;
+    height: 16px;
+    stroke: var(--accent);
+    fill: none;
+    stroke-width: 2;
+    flex-shrink: 0;
+  }
+  .lpc-name {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text);
+  }
+  .lpc-status-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.12);
+    color: var(--text2);
+    border: 1px solid var(--border);
+    transition: all .2s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .lpc-status-pill.active {
+    background: rgba(52, 211, 153, 0.18);
+    color: var(--green);
+    border-color: var(--green);
+    box-shadow: 0 0 10px rgba(52, 211, 153, 0.55);
+  }
+  .lpc-unsaved-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 700;
+    border-radius: 999px;
+    background: rgba(245, 158, 11, 0.2);
+    color: #fbbf24;
+    border: 1px solid #f59e0b;
+    box-shadow: 0 0 10px rgba(245, 158, 11, 0.55);
+    letter-spacing: .3px;
+    text-transform: uppercase;
+    animation: pulse-amber-glow 2s infinite ease-in-out;
+  }
+  @keyframes pulse-amber-glow {
+    0%, 100% { box-shadow: 0 0 8px rgba(245, 158, 11, 0.4); }
+    50% { box-shadow: 0 0 14px rgba(245, 158, 11, 0.75); }
+  }
+  .lpc-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .lpc-enable {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text2);
+    cursor: pointer;
+    min-height: 38px;
+  }
+  .lpc-fields {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .lpc-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .lpc-field.full {
+    grid-column: 1 / -1;
+  }
+  .lpc-field label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text2);
+  }
+  .lpc-field input, .lpc-field textarea {
+    width: 100%;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 12px;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 13px;
+    min-height: 40px;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  .lpc-field textarea {
+    min-height: 70px;
+    font-family: ui-monospace, 'Courier New', monospace;
+    font-size: 12.5px;
+    resize: vertical;
+    line-height: 1.45;
+  }
+  .lpc-field input:focus, .lpc-field textarea:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
+  }
+
+  /* Password eye toggle */
+  .pw-wrap {
+    position: relative;
+    display: flex;
+    align-items: center;
+    width: 100%;
+  }
+  .pw-wrap input {
+    padding-right: 44px;
+  }
+  .pw-toggle-btn {
+    position: absolute;
+    right: 4px;
+    width: 38px;
+    height: 38px;
+    border: none;
+    background: transparent;
+    color: var(--text2);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    transition: color .15s, background-color .15s;
+  }
+  .pw-toggle-btn:hover {
+    color: var(--text);
+    background: rgba(255, 255, 255, 0.08);
+  }
+  .pw-toggle-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+
+  /* Smooth, touch-friendly toggle switch matching config.html */
+  .switch-wrap {
+    display: inline-flex;
+    align-items: center;
+    cursor: pointer;
+    min-height: 44px;
+    min-width: 48px;
+    position: relative;
+  }
+  input[type="checkbox"].switch {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 48px;
+    height: 26px;
+    background: var(--border);
+    border-radius: 26px;
+    position: relative;
+    cursor: pointer;
+    transition: background-color .22s ease, box-shadow .15s ease;
+    border: none;
+    margin: 0;
+    flex-shrink: 0;
+  }
+  input[type="checkbox"].switch::after {
+    content: '';
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 20px;
+    height: 20px;
+    background: #fff;
+    border-radius: 50%;
+    transition: left .22s ease, transform .15s ease;
+    box-shadow: 0 2px 4px rgba(0,0,0,.28);
+  }
+  input[type="checkbox"].switch:checked {
+    background: var(--green);
+    box-shadow: 0 0 10px rgba(52, 211, 153, 0.45);
+  }
+  input[type="checkbox"].switch:checked::after {
+    left: 25px;
+  }
+  input[type="checkbox"].switch:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  input[type="checkbox"].switch:active::after {
+    transform: scale(1.08);
+  }
+
+  /* Glowing button pill micro-interaction */
+  .btn-glow-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 700;
+    margin-left: 6px;
+    background: color-mix(in srgb, var(--surface) 60%, transparent);
+    border: 1px solid var(--border);
+    color: var(--text2);
+    transition: all .2s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .btn:hover .btn-glow-pill,
+  .btn:focus-visible .btn-glow-pill {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: #fff;
+    box-shadow: 0 0 10px rgba(56, 189, 248, 0.65);
+    transform: scale(1.08);
+  }
+  .btn-danger:hover .btn-glow-pill,
+  .btn-danger:focus-visible .btn-glow-pill {
+    border-color: var(--red);
+    background: var(--red);
+    color: #fff;
+    box-shadow: 0 0 10px rgba(239, 68, 68, 0.7);
+    transform: scale(1.08);
+  }
+  .btn-primary:hover .btn-glow-pill,
+  .btn-primary:focus-visible .btn-glow-pill {
+    background: #ffffff;
+    color: var(--accent);
+    border-color: #ffffff;
+    box-shadow: 0 0 12px rgba(255, 255, 255, 0.9), 0 0 6px var(--accent);
+    transform: scale(1.1);
+  }
+
+  /* Button touch sizes & icons */
+  .btn-add-profile, .btn-test-profile, .btn-delete-profile, .btn-save-llm {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 38px;
+    padding: 6px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    border-radius: 8px;
+    transition: all .15s ease;
+  }
+  .btn-test-profile:hover {
+    border-color: color-mix(in srgb, var(--accent) 70%, transparent);
+    box-shadow: 0 0 10px rgba(56, 189, 248, 0.35);
+  }
+  .btn-delete-profile:hover {
+    box-shadow: 0 0 10px rgba(239, 68, 68, 0.4);
+  }
+
+  /* Modal Footer */
+  .profile-modal-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+    margin-top: 8px;
+    padding-top: 14px;
+    border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  }
 
   /* ── Responsive: tablet (≤900px) ───────────────────────────────────────── */
   @media (max-width: 900px) {
@@ -461,7 +960,80 @@
     .tls-config .tc-row .tc-label { flex-shrink: 0; }
     .tls-config input, .tls-config select { max-width: 100%; }
     .tls-config .tc-row input[type="number"], .tls-config .tc-row select { width: 100%; }
-    .profile-modal-content { padding: 16px; max-height: 90vh; }
+    /* LLM Settings Mobile Ergonomics */
+    #llm-settings-modal .profile-modal-content {
+      width: 96%;
+      max-height: 94vh;
+      padding: 16px 14px;
+      gap: 12px;
+      border-radius: 12px;
+    }
+    #llm-settings-modal input,
+    #llm-settings-modal select,
+    #llm-settings-modal textarea {
+      font-size: 16px !important;
+      min-height: 44px;
+    }
+    .llm-card.field-switch {
+      padding: 12px;
+    }
+    .llm-purpose-row {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 8px;
+    }
+    .llm-purpose-row .llm-select {
+      max-width: 100%;
+      width: 100%;
+    }
+    .llm-profile-card {
+      padding: 12px;
+    }
+    .llm-profile-card .lpc-head {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 10px;
+    }
+    .lpc-actions {
+      justify-content: space-between;
+      width: 100%;
+    }
+    .lpc-actions .btn {
+      flex: 1;
+      justify-content: center;
+      min-height: 42px;
+    }
+    .llm-profile-card .lpc-fields {
+      grid-template-columns: 1fr;
+    }
+    .profile-modal-actions {
+      position: sticky;
+      bottom: -16px;
+      z-index: 20;
+      background: color-mix(in srgb, var(--surface) 96%, black 4%);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      margin: 8px -14px -14px;
+      padding: 12px 14px;
+      border-top: 1px solid var(--border);
+      box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.35);
+    }
+    .profile-modal-actions .btn {
+      flex: 1;
+      min-height: 46px;
+      justify-content: center;
+      font-size: 14px;
+    }
+    .llm-section-header {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 8px;
+    }
+    .btn-add-profile {
+      width: 100%;
+      justify-content: center;
+      min-height: 44px;
+    }
     .toast-container { top: auto; bottom: 16px; right: 16px; left: 16px; align-items: stretch; }
     .toast { max-width: 100%; }
     .device-filter-bar { width: 100%; }
@@ -664,54 +1236,97 @@
 
 <!-- LLM Settings modal -->
 <div class="profile-modal" id="llm-settings-modal" role="dialog" aria-modal="true" aria-labelledby="llm-settings-title" style="display:none;" onclick="if(event.target===this)closeLLMSettings();">
-  <div class="profile-modal-content" style="max-width:720px;">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-      <h3 id="llm-settings-title" tabindex="-1" style="margin-bottom:0;">&#x1F916; LLM Settings</h3>
+  <div class="profile-modal-content">
+    <div class="llm-modal-header">
+      <div class="llm-modal-title-group">
+        <div class="llm-modal-badge" aria-hidden="true">
+          <svg class="icon-svg" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8.01" y2="16"/><line x1="16" y1="16" x2="16.01" y2="16"/></svg>
+        </div>
+        <div>
+          <h3 id="llm-settings-title" tabindex="-1">LLM Settings</h3>
+          <p class="llm-modal-desc">Configure LLM providers, purpose assignments, and custom prompt templates</p>
+        </div>
+      </div>
       <button class="close-btn" onclick="closeLLMSettings()" aria-label="Close LLM settings modal">&times;</button>
     </div>
 
-    <div class="pm-row">
-      <label for="llm-enabled-toggle" style="display:flex;align-items:center;gap:8px;cursor:pointer;">
-        <input type="checkbox" id="llm-enabled-toggle" role="switch" aria-checked="true" onchange="this.setAttribute('aria-checked', this.checked)">
-        Enable LLM deciphering
-      </label>
+    <!-- Master Switch Card -->
+    <div class="llm-card field-switch">
+      <div class="f-info">
+        <label for="llm-enabled-toggle" class="f-name">Enable LLM deciphering</label>
+        <span class="f-desc">Activate AI-assisted protocol decoding, correlation, and pattern learning</span>
+      </div>
+      <div class="f-control">
+        <label class="switch-wrap" for="llm-enabled-toggle" aria-label="Toggle LLM deciphering">
+          <input type="checkbox" id="llm-enabled-toggle" class="switch" role="switch" aria-checked="true" onchange="this.setAttribute('aria-checked', this.checked)">
+        </label>
+      </div>
     </div>
 
-    <div class="pm-row">
-      <label for="llm-default-profile">Default LLM profile</label>
-      <select id="llm-default-profile" aria-label="Default LLM profile" onchange="onLLMDefaultChange()"></select>
+    <!-- Default Profile Card -->
+    <div class="llm-card">
+      <div class="f-info">
+        <label for="llm-default-profile" class="f-name">Default LLM profile</label>
+        <span class="f-desc">Fallback service profile used when no purpose-specific override is selected</span>
+      </div>
+      <select id="llm-default-profile" class="llm-select" aria-label="Default LLM profile" onchange="onLLMDefaultChange()"></select>
     </div>
 
-    <div class="pm-row">
-      <label>Profile per purpose</label>
-      <div style="display:flex;flex-direction:column;gap:6px;">
-        <div style="display:flex;align-items:center;gap:8px;">
-          <span style="flex:1;font-size:12px;color:var(--text2);" title="Validates a weak (below-threshold) match against the learned patterns">Correlation &amp; validation</span>
-          <select id="llm-task-correlation" style="flex:1;" aria-label="LLM profile for correlation and validation"></select>
+    <!-- Purpose Bindings Card -->
+    <div class="llm-card">
+      <div class="f-info">
+        <span class="f-name">Profile per purpose</span>
+        <span class="f-desc">Assign specific models to specialized operational stages</span>
+      </div>
+      <div class="llm-purpose-list">
+        <div class="llm-purpose-row">
+          <label for="llm-task-correlation" class="llm-purpose-label">
+            <span class="lp-title">Correlation &amp; validation</span>
+            <span class="lp-desc">Validates weak (below-threshold) matches against learned patterns</span>
+          </label>
+          <select id="llm-task-correlation" class="llm-select" aria-label="LLM profile for correlation and validation"></select>
         </div>
-        <div style="display:flex;align-items:center;gap:8px;">
-          <span style="flex:1;font-size:12px;color:var(--text2);" title="Analyses the buffer and learns patterns (Send to LLM)">Buffer flush</span>
-          <select id="llm-task-flush" style="flex:1;" aria-label="LLM profile for the buffer flush"></select>
+        <div class="llm-purpose-row">
+          <label for="llm-task-flush" class="llm-purpose-label">
+            <span class="lp-title">Buffer flush</span>
+            <span class="lp-desc">Analyses capture buffer and learns candidate patterns (Send to LLM)</span>
+          </label>
+          <select id="llm-task-flush" class="llm-select" aria-label="LLM profile for the buffer flush"></select>
         </div>
-        <div style="display:flex;align-items:center;gap:8px;">
-          <span style="flex:1;font-size:12px;color:var(--text2);" title="Analyses the buffer grounded with the already-learned model">Learned context (update)</span>
-          <select id="llm-task-learning_context" style="flex:1;" aria-label="LLM profile for the grounded update flush"></select>
+        <div class="llm-purpose-row">
+          <label for="llm-task-learning_context" class="llm-purpose-label">
+            <span class="lp-title">Learned context (update)</span>
+            <span class="lp-desc">Analyses capture buffer grounded with the existing learned model</span>
+          </label>
+          <select id="llm-task-learning_context" class="llm-select" aria-label="LLM profile for the grounded update flush"></select>
         </div>
       </div>
     </div>
 
-    <div class="pm-row">
-      <label>Profiles</label>
-      <div id="llm-profiles-list" style="display:flex;flex-direction:column;gap:8px;max-height:320px;overflow-y:auto;"></div>
+    <!-- Profiles List Section -->
+    <div class="llm-profiles-section">
+      <div class="llm-section-header">
+        <div class="f-info">
+          <span class="f-name">Service Profiles</span>
+          <span class="f-desc">Configured endpoints, authentication credentials, and prompt templates</span>
+        </div>
+        <button type="button" class="btn btn-ghost btn-add-profile" onclick="addLLMProfile()" aria-label="Add new LLM profile">
+          <svg class="icon-svg-sm" aria-hidden="true" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          <span>Add Profile</span>
+          <span class="btn-glow-pill" aria-hidden="true">+</span>
+        </button>
+      </div>
+      <div id="llm-profiles-list" class="llm-profiles-list"></div>
     </div>
 
-    <div class="pm-row" style="display:flex;gap:8px;justify-content:flex-end;">
-      <button type="button" class="btn btn-ghost" onclick="addLLMProfile()" aria-label="Add new LLM profile">+ Add Profile</button>
-    </div>
-
+    <!-- Modal Actions (Sticky on Mobile) -->
     <div class="profile-modal-actions">
       <button type="button" class="btn btn-ghost" onclick="closeLLMSettings()" aria-label="Cancel LLM settings changes">Cancel</button>
-      <button type="button" class="btn btn-primary" onclick="saveLLMSettings()" aria-label="Save LLM settings">&#x2714; Save</button>
+      <button type="button" class="btn btn-primary btn-save-llm" onclick="saveLLMSettings()" aria-label="Save LLM settings">
+        <svg class="icon-svg-sm" aria-hidden="true" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+        <span>Save</span>
+        <span class="btn-glow-pill" aria-hidden="true">&#x2714;</span>
+      </button>
     </div>
   </div>
 </div>
@@ -2632,6 +3247,14 @@ function renderLLMSettings(settings) {
 
 let savedLLMSettings = null;
 
+window.updateProfileStatusPill = function (safeKey, enabled) {
+  const pill = document.getElementById('lpc-status-pill-' + safeKey);
+  if (pill) {
+    pill.classList.toggle('active', !!enabled);
+    pill.textContent = enabled ? 'Active' : 'Disabled';
+  }
+};
+
 function updateLLMCardDirty(card) {
   if (!card || !savedLLMSettings) return;
   const saved = savedLLMSettings.profiles && savedLLMSettings.profiles[card.dataset.name];
@@ -2647,7 +3270,7 @@ function updateLLMCardDirty(card) {
   const dirty = !saved || Object.keys(values).some(k => String(values[k]) !== String(saved[k]));
   card.classList.toggle('lpc-dirty', dirty);
   const badge = card.querySelector('.lpc-unsaved-badge');
-  if (badge) badge.style.display = dirty ? 'inline-block' : 'none';
+  if (badge) badge.style.display = dirty ? 'inline-flex' : 'none';
 }
 
 function renderLLMProfileCards(settings) {
@@ -2674,29 +3297,46 @@ function renderLLMProfileCards(settings) {
     const safeKey = 'p' + idx + '-' + String(name).replace(/[^a-zA-Z0-9_-]/g, '_');
     card.innerHTML = `
       <div class="lpc-head">
-        <span class="lpc-name">${escapeHtml(name)}</span>
-        <span class="lpc-unsaved-badge" style="display:none;margin-left:8px;padding:1px 6px;font-size:10px;border-radius:8px;background:#ffc107;color:#333;">unsaved</span>
+        <div class="lpc-title-row">
+          <div class="lpc-name-group">
+            <svg class="lpc-icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8.01" y2="16"/><line x1="16" y1="16" x2="16.01" y2="16"/></svg>
+            <span class="lpc-name">${escapeHtml(name)}</span>
+            <span class="lpc-status-pill ${p.enabled ? 'active' : ''}" id="lpc-status-pill-${safeKey}">${p.enabled ? 'Active' : 'Disabled'}</span>
+            <span class="lpc-unsaved-badge" style="display:none;" title="Has unsaved changes">unsaved</span>
+          </div>
+        </div>
         <div class="lpc-actions">
-          <label for="lpc-enabled-${safeKey}" class="lpc-enable">
-            <input type="checkbox" id="lpc-enabled-${safeKey}" class="lpc-enabled" ${p.enabled ? 'checked' : ''}> Enabled
+          <label for="lpc-enabled-${safeKey}" class="lpc-enable" title="Toggle active status for profile ${escapeHtml(name)}">
+            <span class="lpc-enable-label">Enabled</span>
+            <span class="switch-wrap">
+              <input type="checkbox" id="lpc-enabled-${safeKey}" class="switch lpc-enabled" role="switch" aria-checked="${!!p.enabled}" ${p.enabled ? 'checked' : ''} onchange="this.setAttribute('aria-checked', this.checked); updateProfileStatusPill('${safeKey}', this.checked);">
+            </span>
           </label>
-          <button type="button" class="btn" style="padding:2px 8px;font-size:11px;" onclick="testLLMProfile('${escapeJs(name)}')" aria-label="Test ${escapeHtml(name)} LLM connection">Test</button>
-          <button type="button" class="btn btn-danger" style="padding:2px 8px;font-size:11px;" onclick="deleteLLMProfile('${escapeJs(name)}')" aria-label="Delete ${escapeHtml(name)} LLM profile">Delete</button>
+          <button type="button" class="btn btn-test-profile" onclick="testLLMProfile('${escapeJs(name)}')" aria-label="Test ${escapeHtml(name)} LLM connection">
+            <svg class="icon-svg-sm" aria-hidden="true" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            <span class="btn-label">Test</span>
+            <span class="btn-glow-pill" aria-hidden="true">⚡</span>
+          </button>
+          <button type="button" class="btn btn-danger btn-delete-profile" onclick="deleteLLMProfile('${escapeJs(name)}')" aria-label="Delete ${escapeHtml(name)} LLM profile">
+            <svg class="icon-svg-sm" aria-hidden="true" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            <span>Delete</span>
+            <span class="btn-glow-pill" aria-hidden="true">&times;</span>
+          </button>
         </div>
       </div>
       <div class="lpc-fields">
         <div class="lpc-field">
           <label for="lpc-base-url-${safeKey}">Base URL</label>
-          <input type="text" id="lpc-base-url-${safeKey}" class="lpc-base-url" value="${escapeHtml(p.base_url || '')}">
+          <input type="text" id="lpc-base-url-${safeKey}" class="lpc-base-url" value="${escapeHtml(p.base_url || '')}" placeholder="https://api.openai.com/v1">
         </div>
         <div class="lpc-field">
           <label for="lpc-model-id-${safeKey}">Model ID</label>
-          <input type="text" id="lpc-model-id-${safeKey}" class="lpc-model-id" value="${escapeHtml(p.model_id || '')}">
+          <input type="text" id="lpc-model-id-${safeKey}" class="lpc-model-id" value="${escapeHtml(p.model_id || '')}" placeholder="gpt-4o-mini">
         </div>
         <div class="lpc-field full">
           <label for="lpc-api-key-${safeKey}">API Key</label>
-          <div style="position:relative;display:flex;align-items:center;">
-            <input type="password" id="lpc-api-key-${safeKey}" class="lpc-api-key" value="${escapeHtml(p.api_key || '')}" autocomplete="off" style="padding-right:28px;">
+          <div class="pw-wrap">
+            <input type="password" id="lpc-api-key-${safeKey}" class="lpc-api-key" value="${escapeHtml(p.api_key || '')}" autocomplete="off" placeholder="sk-...">
             <button type="button" class="pw-toggle-btn" id="toggle-lpc-api-key-${safeKey}" onclick="toggleLpcKeyVisibility('${safeKey}')" aria-label="Show API key" title="Show API key">
               <svg class="icon-svg-sm" aria-hidden="true" viewBox="0 0 24 24">
                 <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
@@ -2714,7 +3354,7 @@ function renderLLMProfileCards(settings) {
         </div>
         <div class="lpc-field full">
           <label for="lpc-prompt-template-${safeKey}">Prompt Template</label>
-          <textarea id="lpc-prompt-template-${safeKey}" class="lpc-prompt-template">${escapeHtml(p.prompt_template || '')}</textarea>
+          <textarea id="lpc-prompt-template-${safeKey}" class="lpc-prompt-template" placeholder="Custom system instructions or response schema...">${escapeHtml(p.prompt_template || '')}</textarea>
         </div>
       </div>`;
     list.appendChild(card);
@@ -2736,29 +3376,46 @@ function addLLMProfile() {
   const safeKey = 'new-' + Date.now() + '-' + String(name.trim()).replace(/[^a-zA-Z0-9_-]/g, '_');
   card.innerHTML = `
     <div class="lpc-head">
-      <span class="lpc-name">${escapeHtml(name.trim())}</span>
-      <span class="lpc-unsaved-badge" style="display:none;margin-left:8px;padding:1px 6px;font-size:10px;border-radius:8px;background:#ffc107;color:#333;">unsaved</span>
+      <div class="lpc-title-row">
+        <div class="lpc-name-group">
+          <svg class="lpc-icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8.01" y2="16"/><line x1="16" y1="16" x2="16.01" y2="16"/></svg>
+          <span class="lpc-name">${escapeHtml(name.trim())}</span>
+          <span class="lpc-status-pill active" id="lpc-status-pill-${safeKey}">Active</span>
+          <span class="lpc-unsaved-badge" style="display:none;" title="Has unsaved changes">unsaved</span>
+        </div>
+      </div>
       <div class="lpc-actions">
-        <label for="lpc-enabled-${safeKey}" class="lpc-enable">
-          <input type="checkbox" id="lpc-enabled-${safeKey}" class="lpc-enabled" checked> Enabled
+        <label for="lpc-enabled-${safeKey}" class="lpc-enable" title="Toggle active status for profile ${escapeHtml(name.trim())}">
+          <span class="lpc-enable-label">Enabled</span>
+          <span class="switch-wrap">
+            <input type="checkbox" id="lpc-enabled-${safeKey}" class="switch lpc-enabled" role="switch" aria-checked="true" checked onchange="this.setAttribute('aria-checked', this.checked); updateProfileStatusPill('${safeKey}', this.checked);">
+          </span>
         </label>
-        <button type="button" class="btn" style="padding:2px 8px;font-size:11px;" onclick="testLLMProfile('${escapeJs(name.trim())}')" aria-label="Test ${escapeHtml(name.trim())} LLM connection">Test</button>
-        <button type="button" class="btn btn-danger" style="padding:2px 8px;font-size:11px;" onclick="deleteLLMProfile('${escapeJs(name.trim())}')" aria-label="Delete ${escapeHtml(name.trim())} LLM profile">Delete</button>
+        <button type="button" class="btn btn-test-profile" onclick="testLLMProfile('${escapeJs(name.trim())}')" aria-label="Test ${escapeHtml(name.trim())} LLM connection">
+          <svg class="icon-svg-sm" aria-hidden="true" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          <span class="btn-label">Test</span>
+          <span class="btn-glow-pill" aria-hidden="true">⚡</span>
+        </button>
+        <button type="button" class="btn btn-danger btn-delete-profile" onclick="deleteLLMProfile('${escapeJs(name.trim())}')" aria-label="Delete ${escapeHtml(name.trim())} LLM profile">
+          <svg class="icon-svg-sm" aria-hidden="true" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+          <span>Delete</span>
+          <span class="btn-glow-pill" aria-hidden="true">&times;</span>
+        </button>
       </div>
     </div>
     <div class="lpc-fields">
       <div class="lpc-field">
         <label for="lpc-base-url-${safeKey}">Base URL</label>
-        <input type="text" id="lpc-base-url-${safeKey}" class="lpc-base-url" value="https://api.openai.com/v1">
+        <input type="text" id="lpc-base-url-${safeKey}" class="lpc-base-url" value="https://api.openai.com/v1" placeholder="https://api.openai.com/v1">
       </div>
       <div class="lpc-field">
         <label for="lpc-model-id-${safeKey}">Model ID</label>
-        <input type="text" id="lpc-model-id-${safeKey}" class="lpc-model-id" value="gpt-4o-mini">
+        <input type="text" id="lpc-model-id-${safeKey}" class="lpc-model-id" value="gpt-4o-mini" placeholder="gpt-4o-mini">
       </div>
       <div class="lpc-field full">
         <label for="lpc-api-key-${safeKey}">API Key</label>
-        <div style="position:relative;display:flex;align-items:center;">
-          <input type="password" id="lpc-api-key-${safeKey}" class="lpc-api-key" autocomplete="off" style="padding-right:28px;">
+        <div class="pw-wrap">
+          <input type="password" id="lpc-api-key-${safeKey}" class="lpc-api-key" autocomplete="off" placeholder="sk-...">
           <button type="button" class="pw-toggle-btn" id="toggle-lpc-api-key-${safeKey}" onclick="toggleLpcKeyVisibility('${safeKey}')" aria-label="Show API key" title="Show API key">
             <svg class="icon-svg-sm" aria-hidden="true" viewBox="0 0 24 24">
               <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
@@ -2776,7 +3433,7 @@ function addLLMProfile() {
       </div>
       <div class="lpc-field full">
         <label for="lpc-prompt-template-${safeKey}">Prompt Template</label>
-        <textarea id="lpc-prompt-template-${safeKey}" class="lpc-prompt-template"></textarea>
+        <textarea id="lpc-prompt-template-${safeKey}" class="lpc-prompt-template" placeholder="Custom system instructions or response schema..."></textarea>
       </div>
     </div>`;
   list.appendChild(card);
@@ -2812,9 +3469,10 @@ async function testLLMProfile(name) {
   if (!list) return;
   const card = list.querySelector('.llm-profile-card[data-name="' + name + '"]');
   if (!card) return;
-  const btn = card.querySelector('.lpc-actions .btn');
-  const origText = btn ? btn.textContent : '';
-  if (btn) { btn.disabled = true; btn.textContent = 'Testing…'; }
+  const btn = card.querySelector('.btn-test-profile') || card.querySelector('.lpc-actions .btn');
+  const span = btn ? (btn.querySelector('.btn-label') || btn.querySelector('span') || btn) : null;
+  const origText = span ? span.textContent : '';
+  if (btn) { btn.disabled = true; if (span) span.textContent = 'Testing…'; }
   const body = {
     // The profile name lets the server use the stored key when the key field
     // still shows the masked value (stored keys are never sent to the browser).
@@ -2845,7 +3503,7 @@ async function testLLMProfile(name) {
   } catch(e) {
     showToast(`${name}: ${e.message || 'Test failed'}`, 'error');
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = origText; }
+    if (btn) { btn.disabled = false; if (span) span.textContent = origText; }
   }
 }
 
