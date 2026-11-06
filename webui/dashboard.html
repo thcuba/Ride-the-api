@@ -91,11 +91,76 @@
   .global-stat.gs-red .gs-num { color: var(--red); }
 
   /* ── Dashboard hierarchy ──────────────────────────────────────────────── */
-  .primary-nav { display: flex; align-items: center; gap: 4px; margin-top: 12px; }
-  .primary-nav a { color: var(--text2); font-size: 13px; font-weight: 650; text-decoration: none; padding: 6px 9px; border-radius: 7px; }
-  .primary-nav a:hover { color: var(--text); background: var(--surface2); }
-  .primary-nav a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .primary-nav a[aria-current="page"] { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .primary-nav {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 12px;
+    padding: 4px;
+    background: color-mix(in srgb, var(--surface2) 55%, var(--surface));
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+    flex-wrap: wrap;
+  }
+  .primary-nav a {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text2);
+    font-size: 13px;
+    font-weight: 600;
+    text-decoration: none;
+    padding: 6px 12px;
+    min-height: 34px;
+    border-radius: 7px;
+    border: 1px solid transparent;
+    transition: all .2s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    user-select: none;
+  }
+  .primary-nav a::after {
+    content: '';
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--text2) 40%, transparent);
+    border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+    margin-left: 6px;
+    transition: all .22s cubic-bezier(0.4, 0, 0.2, 1);
+    flex-shrink: 0;
+  }
+  .primary-nav a:hover {
+    color: var(--text);
+    background: color-mix(in srgb, var(--surface) 90%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15), 0 0 10px rgba(56, 189, 248, 0.22);
+    transform: translateY(-1px);
+  }
+  .primary-nav a:hover::after {
+    background: var(--accent);
+    border-color: #ffffff;
+    box-shadow: 0 0 10px rgba(56, 189, 248, 0.85), 0 0 3px #ffffff;
+    transform: scale(1.35);
+  }
+  .primary-nav a[aria-current="page"] {
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 15%, var(--surface2));
+    border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+    box-shadow: 0 0 12px rgba(56, 189, 248, 0.35);
+    font-weight: 700;
+  }
+  .primary-nav a[aria-current="page"]::after {
+    background: var(--accent);
+    border-color: #ffffff;
+    box-shadow: 0 0 12px rgba(56, 189, 248, 0.95), 0 0 4px #ffffff;
+    transform: scale(1.35);
+  }
+  .primary-nav a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
   .workspace-controls { position: relative; }
   .workspace-controls summary, .operations-panel summary { cursor: pointer; list-style: none; }
   .workspace-controls summary::-webkit-details-marker, .operations-panel summary::-webkit-details-marker { display: none; }
@@ -1069,6 +1134,7 @@
         <a href="/" aria-current="page">Dashboard</a>
         <a href="/patterns">Patterns</a>
         <a href="/config">Configuration</a>
+        <a href="/#llm-settings" onclick="openLLMSettings()">LLM Settings</a>
         <a href="/options">Options</a>
       </nav>
     </div>
@@ -2328,6 +2394,9 @@ loadVendors();
 // Deep link used by the Configuration page: /#llm-settings opens the LLM page,
 // which owns the profiles (the config page only mirrors them, read-only).
 if (window.location.hash === '#llm-settings') { openLLMSettings(); }
+window.addEventListener('hashchange', function() {
+  if (window.location.hash === '#llm-settings') { openLLMSettings(); }
+});
 setInterval(loadDevices, 8000);
 setInterval(loadTlsBar, 15000);
 setInterval(loadDnsDiscovery, 20000);
@@ -3189,6 +3258,9 @@ function openLLMSettings() {
 function closeLLMSettings() {
   const modal = document.getElementById('llm-settings-modal');
   if (modal) modal.style.display = 'none';
+  if (window.location.hash === '#llm-settings') {
+    history.replaceState(null, '', window.location.pathname + window.location.search);
+  }
   if (lastModalActiveElement && document.body.contains(lastModalActiveElement) && typeof lastModalActiveElement.focus === 'function') {
     lastModalActiveElement.focus();
   } else {

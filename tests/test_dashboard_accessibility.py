@@ -35,11 +35,19 @@ def test_primary_navigation_accessibility_across_pages():
             f"Missing primary navigation landmark in {rel_path}"
         )
 
-        # Every page must link to all 4 core routes
+        # Every page must link to all 5 routes, with LLM Settings between Configuration and Options
         assert 'href="/"' in html
         assert 'href="/patterns"' in html
         assert 'href="/config"' in html
+        assert 'href="/#llm-settings"' in html
         assert 'href="/options"' in html
+
+        config_idx = html.find('href="/config"')
+        llm_idx = html.find('href="/#llm-settings"')
+        options_idx = html.find('href="/options"')
+        assert config_idx < llm_idx < options_idx, (
+            f"LLM Settings must be positioned between Configuration and Options in {rel_path}"
+        )
 
         # And identify its own active route with aria-current="page"
         assert current_link in html, (
