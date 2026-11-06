@@ -72,7 +72,9 @@ def test_page_route_is_registered_before_the_proxy_catch_all():
     If the catch-all were registered earlier it would win and /patterns would silently turn back
     into a proxy call - the original failure, restored without a single test going red.
     """
-    paths = [route.path for route in app.routes]
+    # FastAPI 0.140 keeps a `_IncludedRouter` wrapper per include_router() call in
+    # app.routes, and it has no .path, so only real routes are considered here.
+    paths = [route.path for route in app.routes if hasattr(route, "path")]
     assert "/patterns" in paths, "rotta /patterns assente"
     assert CATCH_ALL in paths, "catch-all del proxy assente"
     assert paths.index("/patterns") < paths.index(CATCH_ALL), (

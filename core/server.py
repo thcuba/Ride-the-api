@@ -1871,12 +1871,7 @@ from core.routes.webui import (
 
 
 def _register_router(target_app: FastAPI, router: APIRouter) -> None:
-
     target_app.include_router(router)
-
-    for r in router.routes:
-        if r not in target_app.routes:
-            target_app.routes.append(r)
 
 
 # Register all modular routers
@@ -1896,6 +1891,11 @@ _register_router(app, llm_router)
 _register_router(app, system_router)
 
 _register_router(app, webui_router)
+
+# The resilience endpoints (/api/independence/...) register themselves straight onto
+# the app instead of living in a router, so they need an explicit call. Without it the
+# paths fall through to the proxy catch-all and answer 503 "Service not ready".
+register_resilience_routes(app, lambda: db_manager, lambda: orchestrator)
 
 
 # Static files for Web UI (registered BEFORE the catch-all proxy route so that
