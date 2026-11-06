@@ -8,20 +8,31 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import time
 from collections import OrderedDict
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from typing import Any
 
-import json_repair
 from cachetools import TTLCache
-from openai import APIStatusError, AsyncOpenAI
-from pydantic import BaseModel, Field, SecretStr, ValidationError, field_validator
+from openai import AsyncOpenAI
+from pydantic import SecretStr, ValidationError
 
 from core.config import SECRET_MASK, get_config_manager, is_env_reference
 from core.fallback_policy import FallbackChain, ProviderCircuitBreaker
+
+# Re-exported for the rest of the codebase and the tests: these names live in
+# core/llm/{models,parser}.py now, but other modules still do
+# `from core.llm_decipher import ...`, so the import belongs at module level.
+from core.llm import (
+    DecipherResult,
+    LLMCallError,
+    LLMDecipherAnalysis,
+    LLMProfile,
+    RequestResponsePair,
+    _is_retryable_llm_error,
+    _parse_llm_json,
+    _raw_secret,
+    _strict_true,
+)
 from core.llm_settings import load_llm_settings, save_llm_settings
 from core.pattern_utils import safe_float as _safe_float
 from core.redaction import redact_body, redact_headers
@@ -34,159 +45,6 @@ logger = logging.getLogger(__name__)
 # capacity.
 _CACHE_MAX_SIZE = 512
 _CACHE_TTL = 3600  # 1 hour
-
-
-def _parse_llm_json(content: str) -> dict | None:
-    """Parse JSON from an LLM response, tolerating surrounding markdown/code fences.
-
-    LLMs often wrap the JSON payload in ```json ... ``` fences, add prose
-    around it, or emit slightly malformed JSON (trailing commas, truncation).
-    ``json_repair`` robustly extracts and repairs such payloads; a plain
-    ``json.loads`` still handles clean output fast. Returns the parsed dict,
-    or ``None`` when nothing recoverable is present.
-    """
-    if not content:
-        return None
-    try:
-        return json.loads(content)
-    except json.JSONDecodeError:
-        try:
-            return json_repair.loads(content)
-        except Exception:  # noqa: BLE001 - best-effort repair
-            return None
-
-
-def _raw_secret(value: object) -> str:
-    """A configured secret as a plain string (unwrapping ``SecretStr``)."""
-    if isinstance(value, SecretStr):
-        return value.get_secret_value()
-    return value if isinstance(value, str) else ""
-
-
-# HTTP statuses worth retrying: request timeout, conflict, rate limit. Every
-# 5xx is retried too. Other 4xx (bad request, auth, not found, ...) fail the
-# same way on every attempt, so retrying only burns time and provider quota.
-_RETRYABLE_STATUS = frozenset({408, 409, 429})
-_SERVER_ERROR_MIN = 500
-
-
-def _is_retryable_llm_error(exc: BaseException) -> bool:
-    """Whether an LLM call failure is worth another attempt."""
-    if isinstance(exc, APIStatusError):
-        return exc.status_code in _RETRYABLE_STATUS or exc.status_code >= _SERVER_ERROR_MIN
-    # Timeouts, connection errors, empty completions: transient by nature.
-    return True
-
-
-_TRUE_STRINGS = frozenset({"true", "yes"})
-
-
-def _strict_true(value: Any) -> bool:  # noqa: ANN401
-    """Read an LLM-supplied yes/no verdict without trusting Python truthiness.
-
-    ``bool("false")`` is True, so a model that quotes its boolean would have
-    every weak match served locally. Only a real ``True`` or the strings
-    ``"true"``/``"yes"`` (any case) count as yes; everything else is no.
-    """
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.strip().lower() in _TRUE_STRINGS
-    return False
-
-
-class LLMProfile(BaseModel):
-    """Configuration for an LLM provider."""
-
-    name: str
-    base_url: str
-    api_key: SecretStr = SecretStr("")
-    model_id: str
-    prompt_template: str
-    enabled: bool = True
-    timeout: int = 30
-    max_retries: int = 2
-    max_tokens: int = 2048  # 0 = leave the ceiling to the provider
-
-    @field_validator("api_key", mode="before")
-    @classmethod
-    def _resolve_env_var(cls, v: object) -> object:
-        """Normalize the API key before it is coerced to ``SecretStr``.
-
-        Accepts a plain string, an already-wrapped ``SecretStr`` (both are used
-        by callers), or ``None``; resolves a ``${ENV_VAR}`` reference from the
-        environment. Anything else becomes an empty string.
-
-        Handling ``SecretStr`` matters: the previous version only accepted
-        ``str``, so callers passing an already-wrapped key (the profile-copy
-        path and the connection test) had it silently blanked, and the SDK then
-        received the ``"not-set"`` placeholder — which made those LLM paths fail
-        authentication no matter what the operator configured.
-        """
-        if isinstance(v, SecretStr):
-            v = v.get_secret_value()
-        if isinstance(v, str) and v.startswith("${") and v.endswith("}"):
-            return os.environ.get(v[2:-1], "")
-        return v if isinstance(v, str) else ""
-
-
-class LLMDecipherAnalysis(BaseModel):
-    """Typed, tolerant view of an unstructured LLM analysis response.
-
-    The LLM is instructed to output structured JSON, but it may omit fields,
-    add extra keys, or emit noisy values (e.g. ``confidence: "high"``). Every
-    field defaults so a partially malformed payload never aborts deciphering,
-    unknown keys are ignored, and ``confidence`` stays untyped to be coerced
-    through :func:`_safe_float` at the point of use.
-    """
-
-    intent: str = "unknown"
-    fields: dict[str, Any] = Field(default_factory=dict)
-    confidence: Any = 0.0
-    suggested_dp_codes: dict[str, Any] = Field(default_factory=dict)
-    protocol_notes: str = ""
-
-    model_config = {"extra": "ignore"}
-
-
-class LLMCallError(Exception):
-    """Raised when an LLM call returns an unusable response."""
-
-
-@dataclass
-class DecipherResult:
-    """Result of LLM deciphering."""
-
-    pair_id: str
-    device_id: str
-    vendor: str
-    intent: str
-    fields: dict[str, Any]
-    confidence: float
-    suggested_dp_codes: dict[str, Any] = field(default_factory=dict)
-    protocol_notes: str = ""
-    raw_response: str = ""
-    success: bool = True
-    error: str | None = None
-    processing_time_ms: float = 0
-    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
-
-
-@dataclass
-class RequestResponsePair:
-    """A correlated request/response pair captured from device traffic.
-
-    Used as the input to the LLM deciphering methods. ``request`` and
-    ``response`` are lightweight dict-like payloads produced by the
-    correlation layer (kept non-typed to stay agnostic of protocol).
-    """
-
-    pair_id: str
-    device_id: str
-    vendor: str
-    protocol: str
-    request: Any
-    response: Any
 
 
 class LLMDecipherService:
