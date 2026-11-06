@@ -10,8 +10,6 @@ from core.llm.models import (
     RequestResponsePair,
 )
 from core.llm.parser import (
-    _RETRYABLE_STATUS,
-    _SERVER_ERROR_MIN,
     _is_retryable_llm_error,
     _parse_llm_json,
     _raw_secret,

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
 
 import json_repair
 from openai import APIStatusError
@@ -53,7 +52,7 @@ def _is_retryable_llm_error(exc: BaseException) -> bool:
 _TRUE_STRINGS = frozenset({"true", "yes"})
 
 
-def _strict_true(value: Any) -> bool:
+def _strict_true(value: object) -> bool:
     """Read an LLM-supplied yes/no verdict without trusting Python truthiness.
 
     ``bool("false")`` is True, so a model that quotes its boolean would have

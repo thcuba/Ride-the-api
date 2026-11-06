@@ -8,20 +8,31 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import time
 from collections import OrderedDict
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from typing import Any
 
-import json_repair
 from cachetools import TTLCache
-from openai import APIStatusError, AsyncOpenAI
-from pydantic import BaseModel, Field, SecretStr, ValidationError, field_validator
+from openai import AsyncOpenAI
+from pydantic import SecretStr, ValidationError
 
 from core.config import SECRET_MASK, get_config_manager, is_env_reference
 from core.fallback_policy import FallbackChain, ProviderCircuitBreaker
+
+# Re-exported for the rest of the codebase and the tests: these names live in
+# core/llm/{models,parser}.py now, but other modules still do
+# `from core.llm_decipher import ...`, so the import belongs at module level.
+from core.llm import (
+    DecipherResult,
+    LLMCallError,
+    LLMDecipherAnalysis,
+    LLMProfile,
+    RequestResponsePair,
+    _is_retryable_llm_error,
+    _parse_llm_json,
+    _raw_secret,
+    _strict_true,
+)
 from core.llm_settings import load_llm_settings, save_llm_settings
 from core.pattern_utils import safe_float as _safe_float
 from core.redaction import redact_body, redact_headers
@@ -34,25 +45,6 @@ logger = logging.getLogger(__name__)
 # capacity.
 _CACHE_MAX_SIZE = 512
 _CACHE_TTL = 3600  # 1 hour
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Re-exported from modular core.llm subpackages
-# ═══════════════════════════════════════════════════════════════════════════════
-
-from core.llm import (
-    DecipherResult,
-    LLMCallError,
-    LLMDecipherAnalysis,
-    LLMProfile,
-    RequestResponsePair,
-    _RETRYABLE_STATUS,
-    _SERVER_ERROR_MIN,
-    _is_retryable_llm_error,
-    _parse_llm_json,
-    _raw_secret,
-    _strict_true,
-)
 
 
 class LLMDecipherService:
