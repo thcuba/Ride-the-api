@@ -1,34 +1,60 @@
 """
+
 Local Cloud Replacement Proxy - Main entry point.
+
 Intercepts device traffic, learns protocol via LLM, serves responses locally.
+
 """
 
 from __future__ import annotations
 
+
 import asyncio  # noqa: TC003
+
 import base64
+
 import binascii
+
 import json
+
 import logging
+
 import os
+
 import subprocess
+
 import uuid
+
 from contextlib import asynccontextmanager
+
 from datetime import UTC, datetime
+
 from pathlib import Path
 
+
 import dns.asyncquery
+
 import dns.message
+
 import dns.rdatatype
+
 import uvicorn
-from fastapi import FastAPI, File, Form, Request, Response, UploadFile
+
+from fastapi import APIRouter, FastAPI, File, Form, Request, Response, UploadFile
+
 from fastapi.middleware.cors import CORSMiddleware
+
 from fastapi.responses import HTMLResponse, JSONResponse
+
 from fastapi.staticfiles import StaticFiles
+
 from pydantic import ValidationError as PydanticValidationError
+
 from sqlalchemy import delete, func, select
 
+
 from adapters import get_registered_registry
+
 from adapters.base import (
     InterceptedRequest,
     ProtocolAdapter,
@@ -37,7 +63,9 @@ from adapters.base import (
     device_id_from_ip,
     normalize_request_body,
 )
+
 from core.atomic_io import sanitize_filename_component
+
 from core.buffer import (
     dispose_memory_db,
     get_buffer_backend,
@@ -45,7 +73,9 @@ from core.buffer import (
     normalise_backend,
     switch_backend,
 )
+
 from core.cert_manager import CertManager, get_cert_manager
+
 from core.config import (
     SECRET_MASK,
     Config,
@@ -54,7 +84,9 @@ from core.config import (
     mask_secrets,
     restore_masked_secrets,
 )
+
 from core.connection_watchdog import ConnectionWatchdog
+
 from core.database import (
     DatabaseManager,
     DeviceRegistry,
@@ -64,32 +96,46 @@ from core.database import (
     ResponseTemplate,
     init_db_manager,
 )
+
 from core.dns_discovery import DNSDiscoveryRecorder, get_dns_recorder, set_dns_recorder
+
 from core.dns_server import get_dns_interceptor
+
 from core.http_framing import servable_status, without_framing_headers
+
 from core.llm_decipher import LLMDecipherService, get_llm_decipher
+
 from core.logging_config import get_log_level, setup_logging
+
 from core.modification import BLOCKED_STATUS, get_modification_engine
+
 from core.observability import (
     MetricsServer,
     build_tracer,
     get_tracer,
 )
+
 from core.observability import (
     registry as metrics_registry,
 )
+
 from core.paths import bundle_root, is_frozen, resource_path
+
 from core.pattern_db import buffer_manager, decipher_ingest
+
 from core.pattern_db.schemas import CaptureDB, DeviceModel, PatternDB
+
 from core.pattern_db.validator import (
     ValidationError,
     validate_capture,
     validate_pattern,
 )
+
 from core.pipeline import (
     LearningOrchestrator,
     get_orchestrator,
 )
+
 from core.protocol_servers import get_protocol_server_manager
 from core.protocol_servers.coap_server import CoAPServerPlugin
 from core.protocol_servers.http2_server import HTTP2ServerPlugin
@@ -100,10 +146,12 @@ from core.protocol_servers.raw_tcp_server import RawTCPServerPlugin
 from core.protocol_servers.websocket_server import WebSocketServerPlugin
 from core.protocol_servers.zigbee_bridge import ZigbeeBridgePlugin
 from core.protocol_servers.zwave_bridge import ZWaveBridgePlugin
+
 from core.resilience import (
     AutoSwitchScheduler,
     register_resilience_routes,
 )
+
 from core.security import (
     ControlPlaneAuthMiddleware,
     CrossSiteRequestGuard,
@@ -112,95 +160,153 @@ from core.security import (
     password_problem,
     setup_token,
 )
+
 from core.tls_mitm import (
     DecryptedRequest,
     TLSMITMServer,
     get_tls_mitm_server,
     peek_tls_mitm_server,
 )
+
 from core.traffic_selector import TrafficRequestInfo, get_traffic_selector, is_local_ip
+
 from core.upstream_resolver import _apply_config, self_connection_reason
 
+
 # Path to webui directory (bundle-aware: works in source and PyInstaller builds)
+
 WEBUI_DIR = resource_path("webui")
+
 DASHBOARD_HTML = WEBUI_DIR / "dashboard.html"
+
 PATTERNS_HTML = WEBUI_DIR / "patterns.html"
+
 CONFIG_HTML = WEBUI_DIR / "config.html"
+
 OPTIONS_HTML = WEBUI_DIR / "options.html"
 
+
 # Loader-path vars that PyInstaller sets to point at its bundled libssl/libcrypto.
+
 # Spawned curl/git would load the bundle copies and fail at startup ("libssl.so.3:
+
 # version `OPENSSL_3.x' not found"), killing the update download. Always stripped
+
 # from child-process environments.
+
 _UPDATER_STRIP_ENV = ("LD_LIBRARY_PATH", "LD_PRELOAD", "DYLD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES")
 
 
 def updater_env() -> dict[str, str]:
     """Return the current environment without PyInstaller loader-path variables.
 
+
+
     The update/installer scripts are launched as detached child processes; under a
+
     frozen bundle the inherited ``LD_LIBRARY_PATH`` (pointing into ``_internal/``)
+
     shadows the system OpenSSL and breaks ``curl``/``git``. Returns an env safe to
+
     spawn the updater with (system dynamic libraries are used instead).
+
     """
+
     return {k: v for k, v in os.environ.items() if k not in _UPDATER_STRIP_ENV}
 
 
 # Configure logging
+
 setup_logging(level="INFO", fmt="json")
+
 logger = logging.getLogger(__name__)
 
 
 # Global instances
+
 db_manager: DatabaseManager | None = None
+
 adapter_registry: ProtocolAdapterRegistry | None = None
+
 orchestrator: LearningOrchestrator | None = None
+
 llm_decipher_service: LLMDecipherService | None = None
+
 config_manager = get_config_manager()
+
 tls_mitm_server: TLSMITMServer | None = None
+
 cert_manager: CertManager | None = None
+
 auto_switch_scheduler: AutoSwitchScheduler | None = None
+
 metrics_server: MetricsServer | None = None
+
 _metrics_scrape_task: asyncio.Task | None = None
+
 connection_watchdog: ConnectionWatchdog | None = None
+
 
 APP_VERSION_FALLBACK = "0.2.0"
 
+
 # How often the metrics gauge refreshing worker re-reads live state (seconds).
+
 _METRICS_SCRAPE_INTERVAL = 10
 
 
 def runtime_version() -> str:
     """Return the installed release/tag version.
 
+
+
     The deploy scripts (``deploy/rideapi``, ``bootstrap.sh``, ``update.sh``)
+
     write the installed tag to ``<install-dir>/VERSION``; in both the source
+
     tree and the frozen bundle the process CWD is the install root, so the
+
     file is read from there. Falls back to the hardcoded app version when the
+
     file is absent (e.g. a dev checkout without a version stamp).
+
     """
+
     try:
         v = Path.cwd() / "VERSION"
+
         if v.is_file():
             text = v.read_text(encoding="utf-8").strip()
+
             if text:
                 return text
+
     except OSError:
         pass
+
     return APP_VERSION_FALLBACK
 
 
 # Protocol server instances (lazy-loaded on first access)
+
 protocol_servers: dict[str, object] = {}
+
 protocol_server_tasks: dict[str, asyncio.Task] = {}
 
+
 # Event loop the protocol-server manager is active on; refreshed at every
+
 # startup and used by the config-reload callback (which runs on the config
+
 # watch thread) to schedule async start/stop via run_coroutine_threadsafe.
+
 _protocol_event_loop: asyncio.AbstractEventLoop | None = None
 
+
 # Pre-computed immutable tuples for hot-path request inspection
+
 _ENRICHMENT_FIELDS: tuple[str, ...] = ("security", "identity", "kind")
+
 _DEVICE_ID_HEADERS: tuple[str, ...] = (
     "x-device-id",
     "x-deviceid",
@@ -221,188 +327,314 @@ def _select_handler_adapter(
 ) -> ProtocolAdapter | None:
     """Pick the protocol adapter for a device request.
 
+
+
     - A registered, vendor-specific adapter always wins (e.g. ``shelly``), so
+
       devices with a known vendor keep their bespoke handler.
+
     - Otherwise, fall back to the first adapter that supports the *resolved*
+
       protocol (from ``ip_profiles`` → ``device_meta`` → ingress default). This
+
       is the new ingress consumption of ``connection_mode``/``ProtocolInfo``:
+
       a device whose protocol was decided at first flush gets its **adapter**
+
       resolved from that hierarchy, so it is handled by the matching adapter
+
       even when its vendor is generic/unknown. The resolved protocol is used
+
       only for adapter selection, **not** for request routing (inside
+
       ``handle_request`` the ``protocol`` argument is unused).
+
     """
+
     if not adapter_registry:
         return None
 
     # 1) Vendor-specific adapter (unchanged behaviour).
+
     vendor_adapter = adapter_registry.get_adapter(device_vendor)
+
     if vendor_adapter is not None:
         return vendor_adapter
 
     # 2) Adapter for the resolved protocol (new).
+
     try:
         resolved = ProtocolType(resolved_protocol)
+
     except (ValueError, KeyError):
         return None
+
     matched = adapter_registry.get_adapter_by_protocol(resolved)
+
     return matched[0] if matched else None
 
 
 async def _resolve_device_for_ip(db, client_ip: str | None) -> str | None:
     """Resolve a source IP to a known device id, when it is bound.
 
+
+
     Automatic device recognition: if ``client_ip`` is exposed by the producer
+
     and already appears in some device's ``ip_addresses``, return that device
+
     id so an already-recognized device keeps ONE identity across ports and
+
     protocols (and reuses its learned protocol/vendor). Returns ``None`` for
+
     unbound IPs, ``"unknown"`` placeholders, or IP-less protocols so the caller
+
     falls back to its own generated id.
+
     """
+
     if not client_ip or client_ip == "unknown":
         return None
+
     return await db.resolve_device_id(client_ip)
 
 
 # A device that reconnects constantly would rewrite its registry row on every
+
 # connection. One write per interval per device keeps the dashboard honest
+
 # without wearing the disk for information nobody can perceive as fresher.
+
 _LAST_SEEN_WRITE_INTERVAL_S = 60
 
 
 def _last_seen_is_stale(stored: datetime | None, now: datetime) -> bool:
     """Say whether ``last_seen`` is old enough to be worth writing again."""
+
     if stored is None:
         return True
+
     # SQLite can hand back a naive datetime; comparing it to an aware "now" raises.
+
     if stored.tzinfo is None:
         stored = stored.replace(tzinfo=UTC)
+
     return (now - stored).total_seconds() >= _LAST_SEEN_WRITE_INTERVAL_S
 
 
 async def handle_device_seen(client_ip: str, sni: str | None) -> None:
     """Register a device the moment it presents itself on a TLS port.
 
+
+
     Called by the TLS MITM before the handshake completes. A device that pins its vendor's
+
     certificate (a vendor cloud IoT broker, for example) aborts the handshake, so every step after a
+
     *successful* handshake never runs for it: such a device stayed invisible in the registry and
+
     on the dashboard even though the proxy saw each of its connection attempts. The address is the
+
     identity here, and the SNI is kept as evidence of what the device asked to talk to.
+
     """
+
     if not db_manager:
         return
+
     if self_connection_reason(client_ip):
         # The proxy talking to itself is not a device to register.
+
         return
+
     device_id = device_id_from_ip("ip", client_ip)
+
     await db_manager.get_or_create_device(device_id, "unknown")
+
     async with db_manager.core_session() as session:
         result = await session.execute(
             select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
         )
+
         device = result.scalar_one_or_none()
+
         if device is None:
             return
+
         changed = False
+
         known_ips = list(device.ip_addresses or [])
+
         if client_ip not in known_ips:
             known_ips.append(client_ip)
+
             device.ip_addresses = known_ips
+
             changed = True
+
         if sni:
             attributes = dict(device.extra_attributes or {})
+
             hostnames = list(attributes.get("seen_hostnames") or [])
+
             if sni not in hostnames:
                 hostnames.append(sni)
+
                 attributes["seen_hostnames"] = hostnames
+
                 device.extra_attributes = attributes
+
                 changed = True
+
         # When the device was last seen is what the dashboard shows, and it has to
+
         # survive a restart: the in-memory view in tls_mitm is lost on every
+
         # service restart, so a device that was obviously alive read as never seen.
+
         now = datetime.now(UTC)
+
         if _last_seen_is_stale(device.last_seen, now):
             device.last_seen = now
+
             changed = True
+
         if changed:
             await session.commit()
+
             db_manager.invalidate_ip_lookup_cache()
 
 
 async def should_relay_tls(client_ip: str) -> bool:
     """Say whether a connection must be forwarded untouched instead of decrypted.
 
+
+
     True for a device already known to refuse our certificate: decrypting it again would only
+
     break its communication a second time, while the point is to keep it talking to its cloud.
+
     """
+
     if not db_manager:
         return False
+
     device_id = await db_manager.resolve_device_id(client_ip)
+
     if not device_id:
         return False
+
     device = await db_manager.get_device(device_id)
+
     if not device:
         return False
+
     return bool((device.extra_attributes or {}).get("tls_passthrough"))
 
 
 async def mark_device_untrusted(client_ip: str, sni: str | None) -> None:
     """Record that a device refused our certificate, so it is relayed from now on.
 
+
+
     A device that pins its vendor's certificate answers our ServerHello with a TLS alert, and no
+
     server-side change alters that. The useful response is to stop terminating its TLS: the next
+
     connection is forwarded verbatim to its cloud and the device keeps working. Persisted in
+
     ``extra_attributes`` under ``tls_passthrough`` -- the field the TLS settings page already
+
     exposes -- so the decision survives a restart.
 
+
+
     Every refusal is also **counted** (``tls_refusals``, plus first/last timestamps). Recording only
+
     the first one could not tell a settled device -- it refuses once and is relayed from then on --
+
     from one that keeps trying to negotiate, which is the difference between a device the proxy
+
     carries and one it keeps breaking. The write is not throttled like ``last_seen``: a refusal is a
+
     rare, deliberate event, and losing counts to save disk would defeat the point of counting.
+
     """
+
     if not db_manager:
         return
+
     if self_connection_reason(client_ip):
         # The proxy talking to itself is never a device, so there is nothing to mark.
+
         return
+
     device_id = await db_manager.resolve_device_id(client_ip)
+
     if not device_id:
         device_id = device_id_from_ip("ip", client_ip)
+
         await db_manager.get_or_create_device(device_id, "unknown")
+
     async with db_manager.core_session() as session:
         result = await session.execute(
             select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
         )
+
         device = result.scalar_one_or_none()
+
         if device is None:
             return
+
         extra = dict(device.extra_attributes or {})
+
         now = datetime.now(UTC)
+
         # Counted on every refusal; the relay decision and the reason stay idempotent so a retry
+
         # does not rewrite what is already settled. ``extra_attributes`` is free-form JSON written
+
         # by other code paths, so a corrupted count must not stop the refusal being recorded.
+
         # Read-then-write, like ``handle_device_seen``: two refusals arriving at the same instant
+
         # can lose one increment. Under-counting a burst is acceptable, losing the refusal is not.
+
         previous = extra.get("tls_refusals")
+
         extra["tls_refusals"] = (previous if isinstance(previous, int) else 0) + 1
+
         extra["tls_last_refusal_at"] = now.isoformat()
+
         if not extra.get("tls_first_refusal_at"):
             extra["tls_first_refusal_at"] = now.isoformat()
+
         extra["tls_passthrough"] = True
+
         # Falsy rather than "missing": a reason stored as an empty string or null is no reason, and
+
         # `setdefault` would happily keep it and leave the relay unexplained.
+
         if not extra.get("tls_untrusted_reason"):
             extra["tls_untrusted_reason"] = "client_refused_certificate"
+
         hostnames = list(extra.get("seen_hostnames") or [])
+
         if sni and sni not in hostnames:
             hostnames.append(sni)
+
         extra["seen_hostnames"] = hostnames
+
         device.extra_attributes = extra
+
         await session.commit()
+
     # get_device() serves rows from a 300 s TTL cache: without this the relay decision would keep
+
     # reading the device as it was before the refusal and would not take effect for five minutes.
+
     db_manager.invalidate_device_cache(device_id)
+
     logger.info(
         "TLS: %s refused our certificate (%d time(s)); from now on it is forwarded to its cloud "
         "undecrypted",
@@ -414,20 +646,33 @@ async def mark_device_untrusted(client_ip: str, sni: str | None) -> None:
 async def record_relayed_connection(contact: dict) -> None:
     """Persist one connection that was forwarded without decryption.
 
+
+
     The payload of such a connection is unreadable by construction, but the contact is real evidence
+
     that the device is alive and whom it talks to: which host, how much each way, how long, and
+
     whether the attempt even succeeded. For a device we cannot see inside, this is its record.
+
     """
+
     if not db_manager:
         return
+
     client_ip = contact.get("client_ip") or ""
+
     if self_connection_reason(client_ip):
         # A relayed connection from this machine is not evidence about a device.
+
         return
+
     device_id = await db_manager.resolve_device_id(client_ip)
+
     if not device_id:
         device_id = device_id_from_ip("ip", client_ip)
+
         await db_manager.get_or_create_device(device_id, "unknown")
+
     async with db_manager.core_session() as session:
         session.add(
             RelayedConnection(
@@ -442,50 +687,75 @@ async def record_relayed_connection(contact: dict) -> None:
                 outcome=contact.get("outcome") or "relayed",
             )
         )
+
         await session.commit()
 
 
 async def resolve_upstream(host: str) -> str | None:
     """Resolve ``host`` through the configured upstream resolvers.
 
+
+
     Deliberately not ``getaddrinfo``: the proxy may be the machine's own resolver -- that is the
+
     point of the DNS interception -- so a local lookup could resolve straight back to us. The
+
     ``dns.dns_servers`` list exists for exactly this: loop-free cloud forwarding.
+
     """
+
     servers = [*config_manager.config.dns.dns_servers, *config_manager.config.dns.dns_servers_v6]
+
     if not servers:
         return None
+
     query = dns.message.make_query(host, dns.rdatatype.A)
+
     for server in servers:
         try:
             response = await dns.asyncquery.udp(query, server, timeout=3)
+
         except Exception:
             continue
+
         for answer in response.answer:
             for item in answer:
                 if item.rdtype == dns.rdatatype.A:
                     return str(item)
+
     return None
 
 
 async def handle_tls_decrypted_request(req: DecryptedRequest) -> dict | None:
     """Handle a decrypted TLS request — find/create device and run through pipeline.
 
+
+
     Called by TLSMITMServer for every successfully decrypted HTTP request.
+
     If the source IP is unknown, a new device record + SQLite DB is auto-created
+
     with passthrough=ON (traffic forwarded to cloud while user configures it).
+
     """
+
     global db_manager, orchestrator, adapter_registry  # noqa: PLW0602
 
     if not db_manager or not orchestrator:
         logger.warning("TLS handler: service not ready, dropping request from %s", req.client_ip)
+
         return None
 
     config = config_manager.config
+
     # Never intercept our own traffic: a request coming from the loopback
+
     # interface belongs to this machine, not to a device. Forward it untouched
+
     # (like a bypassed IP) and do not create a device, DB or buffered pair for it.
+
     self_reason = self_connection_reason(req.client_ip)
+
     if self_reason:
         logger.debug(
             "TLS: %s client %s is never intercepted, forwarding %s %s",
@@ -494,44 +764,61 @@ async def handle_tls_decrypted_request(req: DecryptedRequest) -> dict | None:
             req.method,
             req.path,
         )
+
         return {"action": "forward", "reason": self_reason}
 
     # Automatic device recognition: if this source IP is already bound to a
+
     # known device (device.ip_addresses), use THAT device instead of a fresh
+
     # per-IP id. The same physical device keeps one identity across ports.
+
     recognized = await _resolve_device_for_ip(db_manager, req.client_ip)
+
     device_id = recognized or device_id_from_ip("ip", req.client_ip)
 
     try:
         # Create or find device by IP
+
         await db_manager.get_or_create_device(
             device_id=device_id,
             vendor="unknown",
         )
+
         device = await db_manager.get_device(device_id)
 
         # Apply any per-IP override: custom database + connection type (default auto)
+
         await db_manager.apply_ip_profile(device_id, req.client_ip)
 
         # Per-IP bypass: forward this device's traffic straight to the cloud
+
         # without pipeline analysis (no buffer/LLM/local match).
+
         if await db_manager.is_ips_bypassed(req.client_ip):
             logger.info("TLS: %s is in bypass, forwarding to cloud directly", req.client_ip)
+
             return {"action": "forward", "reason": "bypass"}
 
         # Ensure a dedicated device database exists
+
         device_db_dir = Path(config.core.device_db_dir)
+
         device_db_path = device_db_dir / f"{device_id}.db"
+
         if not device_db_path.exists():
             try:
                 device_db_path.touch()
+
                 logger.info(
                     "TLS handler: created device DB for %s at %s", device_id, device_db_path
                 )
+
             except Exception as e:
                 logger.warning("TLS handler: could not create device DB for %s: %s", device_id, e)
 
         # Log the intercepted request
+
         logger.info(
             "TLS: %s %s %s (device=%s, sni=%s, port=%d)",
             req.method,
@@ -543,15 +830,19 @@ async def handle_tls_decrypted_request(req: DecryptedRequest) -> dict | None:
         )
 
         # Determine vendor/adapter for this device
+
         device_vendor = getattr(device, "vendor", "unknown") or "unknown"
 
         # Resolve the operational protocol (ip_profiles > device_meta -> default).
+
         # The TLS path always speaks https, so an undecided device stays https.
+
         resolved_protocol = await db_manager.resolve_device_protocol(
             device_id, ingress_default="https"
         )
 
         # Find matching adapter (vendor-specific first, else by resolved protocol).
+
         handler_adapter = _select_handler_adapter(
             adapter_registry, device_vendor, resolved_protocol
         )
@@ -571,12 +862,16 @@ async def handle_tls_decrypted_request(req: DecryptedRequest) -> dict | None:
         )
 
         # Let the adapter refine the intercepted request (intent, params,
+
         # device_id, query params...). Any fields it changes are what the
+
         # orchestrator pipeline should see.
+
         if handler_adapter:
             intercepted = await handler_adapter.parse_request(intercepted)
 
         # Run through the orchestrator pipeline
+
         result = await orchestrator.handle_request(
             device_id=intercepted.device_id or device_id,
             vendor=device_vendor,
@@ -589,8 +884,11 @@ async def handle_tls_decrypted_request(req: DecryptedRequest) -> dict | None:
         )
 
         # The TLS server performs its own upstream exchange after this handler
+
         # returns. Carry the correlation identity with that pending forward so
+
         # the actual upstream response can complete the request/response pair.
+
         if result.get("action") == "forward" and result.get("correlation_key"):
             result = {
                 **result,
@@ -603,6 +901,7 @@ async def handle_tls_decrypted_request(req: DecryptedRequest) -> dict | None:
 
         if result["action"] == "local_response":
             logger.debug("TLS: local response for %s %s", req.method, req.path)
+
         else:
             logger.debug("TLS: passthrough for %s %s", req.method, req.path)
 
@@ -610,19 +909,27 @@ async def handle_tls_decrypted_request(req: DecryptedRequest) -> dict | None:
 
     except Exception as e:
         logger.error("TLS handler: error processing %s: %s", req.client_ip, e, exc_info=True)
+
         return None
 
 
 async def handle_tls_upstream_response(handler_result: dict, response: dict) -> dict | None:
     """Correlate a TLS MITM upstream response with its captured request.
 
+
+
     The TLS listener owns both sides of the terminated connection, so unlike
+
     the HTTP proxy path it cannot rely on nginx to deliver the upstream
+
     response to :meth:`LearningOrchestrator.handle_response`.
+
     """
+
     global orchestrator  # noqa: PLW0602
 
     context = handler_result.get("_learning_context")
+
     if not orchestrator or not context or not handler_result.get("correlation_key"):
         return None
 
@@ -639,12 +946,16 @@ async def handle_tls_upstream_response(handler_result: dict, response: dict) -> 
 
 async def handle_tls_upstream_failure(handler_result: dict) -> bool:
     """Remove a queued learning request when its TLS upstream exchange fails."""
+
     global orchestrator  # noqa: PLW0602
 
     correlation_key = handler_result.get("correlation_key")
+
     context = handler_result.get("_learning_context")
+
     if not orchestrator or not context or not correlation_key:
         return False
+
     return await orchestrator.discard_request(context["device_id"], correlation_key)
 
 
@@ -654,22 +965,37 @@ async def handle_tls_upstream_failure(handler_result: dict) -> bool:
 async def handle_protocol_request(request: InterceptedRequest) -> dict | None:  # noqa: C901
     """Handle an intercepted request from a protocol server plugin.
 
+
+
     Common handler wired into every protocol server plugin (MQTT, CoAP, Modbus,
+
     WebSocket, Raw TCP, HTTP/2, bridges). It resolves the device, then runs the
+
     request through the same orchestrator pipeline as the TLS/HTTP paths.
 
+
+
     Returns the pipeline result dict (``action`` + optional ``response``), or
+
     ``None`` when the services aren't ready. A ``local_response`` result means
+
     the plugin should send ``result["response"]`` back to the device.
+
     """
+
     if not db_manager or not orchestrator:
         logger.warning("Protocol handler: service not ready, dropping %s", request.device_id)
+
         return None
 
     # Never intercept our own traffic: a plugin that reports a loopback source IP
+
     # is looking at this machine talking to itself. Forward it untouched instead
+
     # of registering a device and buffering a pair for the proxy itself.
+
     self_reason = self_connection_reason(getattr(request, "client_ip", None))
+
     if self_reason:
         logger.debug(
             "Protocol handler: %s client %s is never intercepted, forwarding %s",
@@ -677,15 +1003,21 @@ async def handle_protocol_request(request: InterceptedRequest) -> dict | None:  
             request.client_ip,
             getattr(request, "path", None) or getattr(request, "topic", None) or "request",
         )
+
         return {"action": "forward", "reason": self_reason}
 
     device_id = request.device_id or "unknown"
 
     # Automatic device recognition: a plugin-exposed source IP bound to a known
+
     # device wins over the per-protocol generated id, so an already-recognized
+
     # device keeps ONE identity across ports/protocols (and reuses its learned
+
     # protocol/vendor). IP-less protocols (MQTT/Modbus/bridges) and unbound IPs
+
     # keep the generated id.
+
     device_id = (
         await _resolve_device_for_ip(db_manager, getattr(request, "client_ip", None))
     ) or device_id
@@ -695,49 +1027,73 @@ async def handle_protocol_request(request: InterceptedRequest) -> dict | None:  
         if hasattr(request.protocol, "value")
         else str(request.protocol or "http")
     )
+
     method = request.method or ("publish" if request.topic else "GET")
+
     path = request.path or (f"/{request.topic.lstrip('/')}" if request.topic else "/")
 
     try:
         await db_manager.get_or_create_device(device_id, "unknown")
 
         # Per-IP bypass: forward straight to the cloud without pipeline analysis.
+
         # Only applies when the plugin exposed a source IP (CoAP/TCP/WS/HTTP2);
+
         # protocols without an IP (MQTT/Modbus/bridges) never match here.
+
         cli_ip = getattr(request, "client_ip", None)
+
         if cli_ip and await db_manager.is_ips_bypassed(cli_ip):
             logger.info("Protocol handler: %s is in bypass, forwarding to cloud", cli_ip)
+
             return {"action": "forward", "reason": "bypass"}
 
         # Resolve the operational protocol (ip_profiles > device_meta -> default).
+
         # The plugin protocol is the physical protocol actually spoken, so an
+
         # undecided device keeps the plugin's own protocol; a device whose first
+
         # flush decided a different connection_mode wins (config/header override).
+
         resolved_protocol = await db_manager.resolve_device_protocol(
             device_id, ingress_default=protocol
         )
 
         # Build the D2 enrichment dict from the InterceptedRequest fields emitted
+
         # by protocol servers (transport/security/identity/kind). It flows into
+
         # the correlated pair and the buffer JSON, so the observation/LLM layer
+
         # can reconstruct contextual metadata without re-deriving it.
+
         enrichment: dict | None = None
+
         transport = getattr(request, "transport", None)
+
         if transport is not None or any(
             getattr(request, f, None) is not None for f in _ENRICHMENT_FIELDS
         ):
             enrichment = {}
+
             if transport is not None:
                 # TransportMeta is a pydantic model; collapse to a plain dict so
+
                 # the buffer JSON serializes cleanly (no str()-of-object).
+
                 if hasattr(transport, "model_dump"):
                     enrichment["transport"] = transport.model_dump()
+
                 elif isinstance(transport, dict):
                     enrichment["transport"] = transport
+
                 else:
                     enrichment["transport"] = str(transport)
+
             for f in _ENRICHMENT_FIELDS:
                 val = getattr(request, f, None)
+
                 if val is not None:
                     enrichment[f] = val.value if hasattr(val, "value") else val
 
@@ -752,8 +1108,10 @@ async def handle_protocol_request(request: InterceptedRequest) -> dict | None:  
             query_params=request.query_params or {},
             enrichment=enrichment,
         )
+
     except Exception as e:
         logger.error("Protocol handler error for %s: %s", device_id, e, exc_info=True)
+
         return None
 
 
@@ -763,9 +1121,13 @@ async def handle_protocol_request(request: InterceptedRequest) -> dict | None:  
 @asynccontextmanager
 async def lifespan(_app: FastAPI):  # noqa: C901, PLR0912, PLR0915
     """Application lifespan handler."""
+
     global db_manager, adapter_registry  # noqa: PLW0603
+
     global orchestrator, llm_decipher_service  # noqa: PLW0603
+
     global tls_mitm_server, cert_manager  # noqa: PLW0603
+
     global auto_switch_scheduler  # noqa: PLW0603
 
     logger.info("Starting Local Cloud Replacement Proxy...")
@@ -773,13 +1135,18 @@ async def lifespan(_app: FastAPI):  # noqa: C901, PLR0912, PLR0915
     config = config_manager.config
 
     # Bootstrap guard: while no control-plane password is set, first-run
+
     # provisioning is protected by a one-time token. Announce it at startup (and
+
     # keep it next to the databases) so the operator can complete the setup.
+
     if config.security.auth_enabled and not config.security.password:
         setup_token(Path(config.core.device_db_dir).parent / "setup-token")
 
     # Initialize database
+
     data_dir = Path(config.core.device_db_dir)
+
     data_dir.mkdir(parents=True, exist_ok=True)
 
     db_manager = init_db_manager(
@@ -788,110 +1155,169 @@ async def lifespan(_app: FastAPI):  # noqa: C901, PLR0912, PLR0915
         device_db_urls=config.core.device_databases,
         echo=config.observability.logging.level == "DEBUG",
     )
+
     await db_manager.initialize()
 
     # Load the persisted buffer backend (disk | memory) so new buffer stores
+
     # created by the orchestrator and export/import paths honor the UI toggle.
+
     initialize_buffer_backend()
+
     logger.info("Buffer backend initialized: %s", get_buffer_backend())
 
     # Initialize LLM decipher service
+
     llm_decipher_service = get_llm_decipher()
+
     profiles = llm_decipher_service.list_profiles()
+
     logger.info(f"LLM decipher service loaded with profiles: {profiles}")
 
     # Initialize orchestrator
+
     orchestrator = get_orchestrator()
+
     orchestrator.initialize(llm_decipher_service)
 
     # Register adapters
+
     adapter_registry = get_registered_registry()
 
     # Initialize TLS certificate manager
+
     if config.tls_decrypt.enabled:
         try:
             cert_manager = get_cert_manager()
+
             cert_path = cert_manager.ensure_ca()
+
             logger.info("TLS CA certificate ready at %s", cert_path)
+
         except Exception:
             logger.exception("Failed to initialize TLS cert manager")
 
     # Start TLS MITM server if enabled
+
     if config.tls_decrypt.enabled and cert_manager:
         try:
             # get_tls_mitm_server() configures the singleton (ports + cert
+
             # manager); start() itself takes no arguments. The old code passed
+
             # cert_manager/ports/request_handler to start(), which accepts no
+
             # kwargs, so the call raised TypeError that the except swallowed —
+
             # TLS interception silently never started.
+
             tls_mitm_server = get_tls_mitm_server(
                 cert_manager=cert_manager,
                 listen_ports=config.tls_decrypt.listen_ports,
                 min_tls_version=config.tls_decrypt.min_tls_version,
                 max_tls_version=config.tls_decrypt.max_tls_version,
             )
+
             tls_mitm_server.request_handler = handle_tls_decrypted_request
+
             tls_mitm_server.response_handler = handle_tls_upstream_response
+
             tls_mitm_server.request_failure_handler = handle_tls_upstream_failure
+
             tls_mitm_server.on_device_seen = handle_device_seen
+
             tls_mitm_server.should_relay_tls = should_relay_tls
+
             tls_mitm_server.on_handshake_refused = mark_device_untrusted
+
             tls_mitm_server.resolve_upstream = resolve_upstream
+
             tls_mitm_server.on_relayed = record_relayed_connection
+
             await tls_mitm_server.start()
+
             logger.info("TLS MITM server listening on ports %s", config.tls_decrypt.listen_ports)
+
         except Exception:
             logger.exception("Failed to start TLS MITM server, TLS interception disabled")
+
     else:
         logger.info("TLS decryption is disabled (enable in config.yaml)")
 
     # Start the DNS interception server (configured names -> this proxy)
+
     if config.dns.enabled:
         dns_interceptor = get_dns_interceptor(config)
+
         if dns_interceptor:
             await dns_interceptor.start()
+
     else:
         logger.info("DNS interception is disabled (set dns.enabled in config.yaml)")
 
     # DNS discovery: record what every client asks the DNS for, and what the
+
     # proxy did with it. This is what turns "which domains should we intercept?"
+
     # from a guess into a list read off real traffic -- and it is the only place
+
     # the proxy sees a device that it is *not* intercepting yet. Counters are
+
     # aggregated in memory and written in batches, never per query.
+
     dns_recorder = DNSDiscoveryRecorder(
         db_manager,
         max_rows=getattr(db_manager, "DNS_QUERY_LOG_MAX_ROWS", 5000),
     )
+
     replaced_recorder = set_dns_recorder(dns_recorder)
+
     if replaced_recorder is not None:
         await replaced_recorder.stop()
+
     await dns_recorder.start()
+
     dns_interceptor = get_dns_interceptor()
+
     if dns_interceptor is not None:
         dns_interceptor.query_recorder = dns_recorder
+
     logger.info("DNS discovery logging is on (batched every %.0fs)", dns_recorder.flush_interval_s)
 
     # A hand-edited config.yaml must mean what the panel means. Without these two
+
     # callbacks the interception policy and the upstream resolvers in the file only
+
     # took effect on the next restart, while the API applied them live.
+
     config_manager.register_callback(_apply_dns_settings)
+
     config_manager.register_callback(_apply_config)
 
     # Start config hot-reload
+
     config_manager.start_watching()
 
     # Start protocol servers if configured
+
     protocol_servers_cfg = getattr(config, "protocol_servers", None)
+
     if protocol_servers_cfg:
         try:
             proto_mgr = get_protocol_server_manager(protocol_servers_cfg)
 
             # Register EVERY plugin regardless of `enabled` so the UI can always
+
             # see and control each protocol server (a server toggled on later is
+
             # already registered and merely stopped). Constructors are inert —
+
             # nothing binds a socket until start_all()/start_plugin() is called.
+
             # Handlers are forwarded to the orchestrator pipeline so intercepted
+
             # traffic is actually learned.
+
             proto_mgr.register_plugin(
                 MQTTServerPlugin(protocol_servers_cfg.mqtt, handler=handle_protocol_request)
             )
@@ -929,107 +1355,159 @@ async def lifespan(_app: FastAPI):  # noqa: C901, PLR0912, PLR0915
             )
 
             # Auto-start only the enabled servers (bridges included, since they
+
             # are registered above and start when their config says enabled).
+
             results = await proto_mgr.start_all()
+
             for name, status in results.items():
                 logger.info("Protocol server %s: %s", name, status)
 
             # Remember the running event loop so a config hot-reload (fired
+
             # from the config watch thread) can schedule start/stop onto it.
+
             _protocol_event_loop = asyncio.get_running_loop()  # noqa: PLW0603
 
             # Reconcile protocol servers whenever config.yaml changes (e.g. the
+
             # UI toggles a server on/off). The callback runs on the config
+
             # watch thread, so async start/stop is scheduled onto the loop.
+
             def reconcile_protocol_servers(cfg: object) -> None:  # noqa: ANN001
                 """Apply the reloaded protocol-server config to the manager."""
+
                 try:
                     loop = _protocol_event_loop
+
                     new_pcfg = getattr(cfg, "protocol_servers", None)
+
                     if loop is None or new_pcfg is None or loop.is_closed():
                         return
+
                     coro = proto_mgr.reconcile_config(new_pcfg)
+
                     asyncio.run_coroutine_threadsafe(coro, loop)
+
                 except Exception:  # noqa: BLE001
                     logger.exception("Failed to reconcile protocol servers")
 
             config_manager.register_callback(reconcile_protocol_servers)
+
         except Exception as e:
             logger.error("Failed to initialize protocol servers: %s", e)  # noqa: TRY400
 
     # Start auto-switch scheduler
+
     auto_switch_scheduler = AutoSwitchScheduler(db_manager)
+
     await auto_switch_scheduler.start()
+
     logger.info("Auto-switch scheduler started")
 
     # Start the connection watchdog: detects when the process can no longer
+
     # reach any outbound HTTP endpoint (a wedged async HTTP stack seen on
+
     # long-running installs) and restarts the process so the box heals itself.
+
     global connection_watchdog  # noqa: PLW0603
+
     watchdog_cfg = config.connection_watchdog
+
     if watchdog_cfg.enabled:
         try:
             # The cooldown must outlive the restart it triggers.
+
             connection_watchdog = ConnectionWatchdog(
                 watchdog_cfg,
                 state_path=Path(config.core.device_db_dir).parent / "watchdog-state.json",
             )
+
             await connection_watchdog.start()
+
             logger.info(
                 "Connection watchdog enabled: probe %s every %ds, restart after %d failures",
                 watchdog_cfg.probe_url,
                 watchdog_cfg.interval,
                 watchdog_cfg.max_failures,
             )
+
         except Exception:  # noqa: BLE001
             logger.exception("Failed to start connection watchdog, disabled")
+
             connection_watchdog = None
+
     else:
         logger.info("Connection watchdog disabled (config)")
 
     # Start Prometheus metrics endpoint if enabled (documented in api.md:
+
     # metrics live on their own port 9090, separate from the proxy's 8911,
+
     # and expose ride_api_* plus python_* runtime metrics).
+
     metrics_cfg = config.observability.metrics
+
     if metrics_cfg.enabled:
         try:
 
             async def _refresh_gauges() -> None:
+
                 if db_manager is None:
                     return
+
                 try:
                     devices = await db_manager.list_devices()
+
                 except Exception:  # noqa: BLE001
                     logger.exception("Metrics gauge refresh failed")
+
                     return
+
                 metrics_registry.device_count.set(len(devices))
+
                 metrics_registry.buffer_size_bytes.set(
                     sum(d.get("context_buffer_size", 0) for d in devices)
                 )
 
             async def _scrape_worker() -> None:
+
                 while True:
                     await _refresh_gauges()
+
                     await asyncio.sleep(_METRICS_SCRAPE_INTERVAL)
 
             global metrics_server, _metrics_scrape_task  # noqa: PLW0603
+
             metrics_server = MetricsServer(metrics_cfg.port, metrics_cfg.path)
+
             metrics_server.start()
+
             # Refresh gauges periodically so Prometheus scrapes reflect live state.
+
             _metrics_scrape_task = asyncio.create_task(_scrape_worker())
+
             logger.info(
                 "Prometheus metrics enabled at 0.0.0.0:%s%s",
                 metrics_cfg.port,
                 metrics_cfg.path,
             )
+
         except Exception:
             logger.exception("Failed to start metrics server, disabling metrics")
+
             metrics_server = None
 
     # Start OpenTelemetry tracing if enabled. The provider is wired so spans
+
     # emitted by the proxy path are exported via the configured exporter
+
     # (console default; otlp requires opentelemetry-exporter-otlp).
+
     tracing_cfg = config.observability.tracing
+
     if tracing_cfg.enabled:
         try:
             _otel_tracer = build_tracer(
@@ -1037,103 +1515,144 @@ async def lifespan(_app: FastAPI):  # noqa: C901, PLR0912, PLR0915
                 otlp_endpoint=tracing_cfg.otlp_endpoint,
                 sample_rate=tracing_cfg.sample_rate,
             )
+
             logger.info(
                 "OpenTelemetry tracing enabled (exporter=%s, sample_rate=%s)",
                 tracing_cfg.exporter,
                 tracing_cfg.sample_rate,
             )
+
         except Exception:
             logger.exception("Failed to initialize tracing, disabled")
 
     logger.info(f"Server started on {config.proxy.host}:{config.proxy.port}")
+
     logger.info(f"Registered adapters: {adapter_registry.list_vendors()}")
 
     yield
 
     # Cleanup
+
     logger.info("Shutting down...")
+
     config_manager.stop_watching()
 
     # Stop auto-switch scheduler
+
     if auto_switch_scheduler:
         try:
             await auto_switch_scheduler.stop()
+
             logger.info("Auto-switch scheduler stopped")
+
         except Exception as e:
             logger.error("Error stopping auto-switch scheduler: %s", e)  # noqa: TRY400
 
     # Stop the connection watchdog probe loop.
+
     if connection_watchdog is not None:
         try:
             await connection_watchdog.stop()
+
             logger.info("Connection watchdog stopped")
+
         except Exception as e:
             logger.error("Error stopping connection watchdog: %s", e)  # noqa: TRY400
 
     # Stop the Prometheus metrics server and its gauge-refresh worker.
+
     if metrics_server:
         try:
             metrics_server.stop()
+
             logger.info("Metrics server stopped")
+
         except Exception as e:
             logger.error("Error stopping metrics server: %s", e)  # noqa: TRY400
+
     if _metrics_scrape_task is not None:
         _metrics_scrape_task.cancel()
+
         _metrics_scrape_task = None
 
         # Stop protocol servers
+
     try:
         proto_mgr = get_protocol_server_manager()
+
         await proto_mgr.stop_all()
+
         logger.info("Protocol servers stopped")
+
     except Exception as e:
         logger.error("Error stopping protocol servers: %s", e)  # noqa: TRY400
 
     # Stop TLS MITM server
+
     if tls_mitm_server:
         try:
             await tls_mitm_server.stop()
+
             logger.info("TLS MITM server stopped")
+
         except Exception as e:
             logger.error("Error stopping TLS MITM server: %s", e)  # noqa: TRY400
 
     # Stop the DNS interception server
+
     dns_interceptor = get_dns_interceptor()
+
     if dns_interceptor:
         dns_interceptor.query_recorder = None
+
         try:
             await dns_interceptor.stop()
+
         except Exception as e:
             logger.error("Error stopping DNS interception server: %s", e)  # noqa: TRY400
 
     # Write the DNS discovery counters still in memory before the DB goes away.
+
     dns_recorder = get_dns_recorder()
+
     if dns_recorder is not None:
         try:
             await dns_recorder.stop()
+
             set_dns_recorder(None)
+
         except Exception as e:
             logger.error("Error stopping DNS discovery recorder: %s", e)  # noqa: TRY400
 
     # Prune stale correlation rows so the training store never grows unbounded.
+
     # Runs regardless of TLS interception so pruning cannot be skipped.
+
     if orchestrator:
         # A background flush can sit in an LLM call for minutes: stop it before
+
         # the LLM client and the database it writes to are closed below.
+
         try:
             await orchestrator.cancel_background_flushes()
+
         except Exception as e:
             logger.error("Error cancelling background flushes: %s", e)  # noqa: TRY400
+
         try:
             await orchestrator.prune_stores()
+
         except Exception as e:
             logger.error("Error pruning correlation stores: %s", e)  # noqa: TRY400
 
     if llm_decipher_service:
         await llm_decipher_service.close()
+
     if db_manager:
         await db_manager.close()
+
         await dispose_memory_db()
+
         logger.info("Shutdown complete")
 
 
@@ -1143,8 +1662,11 @@ app = FastAPI(
     version="0.2.0",
     lifespan=lifespan,
 )
+
 # Restrict CORS to trusted local web UI origins to prevent cross-site request attacks.
+
 _TRUSTED_ORIGINS = ["http://localhost:8911", "http://127.0.0.1:8911"]
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_TRUSTED_ORIGINS,
@@ -1152,2441 +1674,333 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 # CORS only governs what a page may read back; a cross-site "simple" POST is
+
 # still delivered. Refuse state-changing API calls a browser makes for another
+
 # site (S-17) -- with auth disabled they were the only barrier.
+
 app.add_middleware(CrossSiteRequestGuard, allowed_origins=_TRUSTED_ORIGINS)
+
 # Control-plane authentication: every /api/* route requires the single
+
 # control-plane password (full access, no read-only distinction). See core/security.py.
+
 app.add_middleware(
     ControlPlaneAuthMiddleware,
     get_security_config=lambda: config_manager.config.security,
 )
+
 # Body limits (F-09): /api/* bodies are held to proxy.max_request_size, device
+
 # (data-plane) bodies to the larger proxy.max_device_request_size -- the proxy
+
 # route reads them whole into memory, so they cannot be unbounded either.
+
 app.add_middleware(
     MaxBodySizeMiddleware,
     max_size=config_manager.config.proxy.max_request_size,
     data_plane_max_size=config_manager.config.proxy.max_device_request_size,
 )
+
 # Security response headers (defense-in-depth against clickjacking, MIME sniffing, XSS)
+
 app.add_middleware(SecurityHeadersMiddleware)
 
 
 # FastAPI does not map JSONDecodeError from unguarded
+
 # ``await request.json()`` calls to a client error. Without this handler any
+
 # API route that reads a malformed JSON body would surface an unhandled 500.
+
 # Register a dedicated handler so a malformed body yields a clean 400.
+
+
 @app.exception_handler(json.JSONDecodeError)
 async def _json_decode_error_handler(request: Request, exc: json.JSONDecodeError) -> JSONResponse:
     """Return a client-friendly 400 for malformed JSON payloads."""
+
     del request, exc
+
     return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
 
 
 # ── TLS API Routes ───────────────────────────────────────────────────────────
 
 
-@app.get("/api/tls/ca-cert")
-async def tls_download_ca():
-    """Download the CA certificate (PEM) for installation on devices."""
-    if not cert_manager:
-        return JSONResponse(status_code=503, content={"error": "Cert manager not ready"})
-    try:
-        ca_pem = cert_manager.ca_cert_pem()
-        return Response(
-            content=ca_pem,
-            media_type="application/x-pem-file",
-            headers={"Content-Disposition": "attachment; filename=ride-the-api-ca.pem"},
-        )
-    except Exception:
-        logger.exception("Handler error (500)")
-        return JSONResponse(status_code=500, content={"error": "An internal error occurred"})
-
-
-@app.get("/api/tls/stats")
-async def tls_stats():
-    """Return TLS/MITM statistics."""
-    stats = {"cert_manager": {}, "mitm_server": False, "device_ports": [], "open_relays": 0}
-    if cert_manager:
-        stats["cert_manager"] = cert_manager.stats()
-    if tls_mitm_server:
-        stats["mitm_server"] = True
-        stats["listen_ports"] = tls_mitm_server.listen_ports.copy()
-        stats["device_ports"] = [
-            {
-                "ip": dp.ip,
-                "port": dp.port,
-                "device_id": dp.device_id,
-                "first_seen": dp.first_seen.isoformat(),
-                "last_seen": dp.last_seen.isoformat(),
-            }
-            for dp in tls_mitm_server.device_ports.values()
-        ]
-        # Connections being forwarded right now. A pinned device can hold one open for hours and
-        # only leaves a contact record when it ends, so this is the only live count available.
-        stats["open_relays"] = len(tls_mitm_server.get_live_relays())
-    return stats
-
-
-@app.get("/api/tls/relayed")
-async def tls_relayed(limit: int = 50):
-    """List connections forwarded without decryption, newest first.
-
-    A device that pins its vendor's certificate never completes a handshake with us, so nothing of
-    its payload can be read. Its contacts can still be listed -- who, which host, how many bytes in
-    each direction, how long, and whether the attempt succeeded. This is the visible trace of a
-    device the proxy carries but cannot see inside.
-
-    A contact is recorded when the connection **ends**, and such a device can hold one session open
-    for hours: ``in_progress`` lists the ones being forwarded at this instant (with their byte
-    counts so far), because otherwise a device that is working looks like a device that is silent.
-    """
-    live = tls_mitm_server.get_live_relays() if tls_mitm_server else []
-    if not db_manager:
-        return {"relayed": [], "total": 0, "in_progress": live, "open": len(live)}
-    limit = max(1, min(int(limit), 500))
-    async with db_manager.core_session() as session:
-        total = (await session.execute(select(func.count(RelayedConnection.id)))).scalar_one()
-        result = await session.execute(
-            select(RelayedConnection).order_by(RelayedConnection.started_at.desc()).limit(limit)
-        )
-        rows = [
-            {
-                "device_id": row.device_id,
-                "client_ip": row.client_ip,
-                "server_name": row.server_name,
-                "destination_port": row.destination_port,
-                "upstream_ip": row.upstream_ip,
-                "bytes_to_cloud": row.bytes_to_cloud,
-                "bytes_to_device": row.bytes_to_device,
-                "duration_ms": row.duration_ms,
-                "outcome": row.outcome,
-                "started_at": row.started_at.isoformat() if row.started_at else None,
-            }
-            for row in result.scalars().all()
-        ]
-    return {"relayed": rows, "total": total, "in_progress": live, "open": len(live)}
-
-
-@app.get("/api/tls/device-ports")
-async def tls_device_ports():
-    """Return IP-to-device mapping for all connected devices."""
-    if not tls_mitm_server:
-        return {"devices": []}
-    devices = []
-    for ip, info in tls_mitm_server.device_ports.items():
-        devices.append(
-            {
-                "ip": info.ip,
-                "port": info.port,
-                "device_id": info.device_id,
-                "first_seen": info.first_seen.isoformat(),
-                "last_seen": info.last_seen.isoformat(),
-            }
-        )
-    return {"devices": devices}
-
-
-@app.get("/api/tls/unidentified")
-async def tls_unidentified():
-    """List device IDs starting with 'ip-' (auto-created by TLS handler)."""
-    if not db_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    devices = await db_manager.list_devices()
-    unidentified = [d for d in devices if d.get("device_id", "").startswith("ip-")]
-    return {"unidentified": unidentified}
-
-
-async def _move_device_db_to_name(device_id: str, new_name: str) -> None:
-    """Move a device's database file so it follows the device's name.
-
-    A failure to move the file must not fail the rename that already happened in
-    the registry: the device keeps working on its current file, and the reason is
-    logged. The common failure is a name already taken by another device's file.
-    """
-    try:
-        if db_manager is None:
-            return
-        await db_manager.rename_device_database(device_id, new_name)
-    except ValueError as e:
-        logger.warning(f"Device {device_id} renamed, database not moved: {e}")
-    except OSError as e:
-        logger.warning(f"Device {device_id} renamed, database file not moved: {e}")
-
-
-@app.put("/api/devices/{device_id}/tls-config")
-async def tls_update_device_config(device_id: str, request: Request):
-    """Update TLS config for a specific device (name, vendor, passthrough, pinning_bypass)."""
-    if not db_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    try:
-        body = await request.json()
-        async with db_manager.core_session() as session:
-            result = await session.execute(
-                select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
-            )
-            device = result.scalar_one_or_none()
-            if not device:
-                return JSONResponse(status_code=404, content={"error": "Device not found"})
-
-            # Update editable fields
-            renamed_to = None
-            if "name" in body and body["name"]:
-                if body["name"] != device.name:
-                    renamed_to = body["name"]
-                device.name = body["name"]
-            if "vendor" in body and body["vendor"]:
-                device.vendor = body["vendor"]
-            # passthrough and pinning_bypass stored in extra_attributes
-            extra = dict(device.extra_attributes or {})
-            if "passthrough" in body:
-                extra["tls_passthrough"] = body["passthrough"]
-            if "pinning_bypass" in body:
-                extra["tls_pinning_bypass"] = body["pinning_bypass"]
-            device.extra_attributes = extra
-
-            session.add(device)
-            await session.commit()
-            # get_device() serves rows from a 300 s TTL cache: without invalidating it the very
-            # change just made (passthrough, pinning bypass) stays invisible to every reader --
-            # including the TLS decision that depends on it -- for five minutes.
-            db_manager.invalidate_device_cache(device_id)
-            # A device's database follows its name: a device renamed after the
-            # fact otherwise keeps a file titled with a bare IP address, and the
-            # name shown in the UI would no longer match anything on disk.
-            if renamed_to:
-                await _move_device_db_to_name(device_id, renamed_to)
-            return {"status": "ok", "device_id": device_id}
-
-    except Exception as e:
-        return _client_error(e, "Invalid TLS configuration payload")
-
-
-@app.get("/api/tls/ports")
-async def tls_list_ports():
-    """List all currently active TLS listen ports (read-only).
-
-    Ports are configured ONLY in config.yaml (``tls_decrypt.listen_ports``)
-    and are never added/removed at runtime. Edit config.yaml and restart the
-    service to change the set of monitored ports.
-    """
-    if not tls_mitm_server:
-        return {"ports": [], "enabled": False}
-    return {"ports": tls_mitm_server.listen_ports.copy(), "enabled": True}
-
-
-@app.get("/api/tls/frida/script.js")
-async def tls_frida_script():
-    """Return a Frida script for bypassing certificate pinning."""
-    script = r"""// Ride the API — Certificate Pinning Bypass (Frida)
-// Usage: frida -U -l script.js <app>
-// Requires: Frida installed on device, CA cert installed
-
-Java.perform(function() {
-    // Common SSL pinning bypass targets
-    var X509TrustManager = Java.use('javax.net.ssl.X509TrustManager');
-    var SSLContext = Java.use('javax.net.ssl.SSLContext');
-
-    // Bypass checkClientTrusted / checkServerTrusted
-    X509TrustManager.checkClientTrusted.implementation = function(chain, authType) {
-        console.log('[RideTheAPI] Bypassing checkClientTrusted');
-    };
-    X509TrustManager.checkServerTrusted.implementation = function(chain, authType) {
-        console.log('[RideTheAPI] Bypassing checkServerTrusted');
-    };
-    X509TrustManager.getAcceptedIssuers.implementation = function() {
-        console.log('[RideTheAPI] Returning empty accepted issuers');
-        return [];
-    };
-
-    // Hook OkHttp HostnameVerifier
-    try {
-        var HostnameVerifier = Java.use('javax.net.ssl.HostnameVerifier');
-        HostnameVerifier.verify.implementation = function(hostname, session) {
-            console.log('[RideTheAPI] Bypassing hostname verification for: ' + hostname);
-            return true;
-        };
-    } catch(e) { console.log('[RideTheAPI] HostnameVerifier not found'); }
-
-    // Hook OkHttp CertificatePinner
-    try {
-        var CertificatePinner = Java.use('okhttp3.CertificatePinner');
-        CertificatePinner.check.implementation = function(pin) {
-            console.log('[RideTheAPI] Bypassing certificate pin for: ' + pin);
-        };
-    } catch(e) { console.log("[RideTheAPI] CertificatePinner not found"); }
-
-    console.log("[RideTheAPI] Pinning bypass injected successfully");
-});
-"""
-    return Response(content=script, media_type="application/javascript")
-
-
 # ═══════════════════════════════════════════════════════════════════════════════
-# TLS CERTIFICATE MANAGEMENT API
+
+# Modular Routers & Re-exports
+
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-@app.get("/api/tls/certs")
-async def tls_list_certs():
-    """List all imported and auto-generated certificates."""
-    if not cert_manager:
-        return JSONResponse(status_code=503, content={"error": "Cert manager not ready"})
-    try:
-        imported = cert_manager.list_imported_certs()
-        return {"certs": imported}  # noqa: TRY300
-    except Exception:
-        logger.exception("Handler error (500)")
-        return JSONResponse(status_code=500, content={"error": "An internal error occurred"})
+from core.routes import (
+    devices_router,
+    dns_router,
+    llm_router,
+    patterns_router,
+    protocols_router,
+    system_router,
+    tls_router,
+    webui_router,
+)
+
+from core.routes.common import _client_error
+
+from core.routes.devices import (
+    _requested_database_url,
+    assign_device_database,
+    configure_device_llm,
+    delete_buffer_entry,
+    delete_device,
+    export_buffer,
+    get_device,
+    get_device_auto_switch,
+    get_device_by_ip,
+    get_device_connection,
+    get_device_context,
+    get_device_database,
+    get_device_stats,
+    get_ip_bypass,
+    get_match_rate,
+    import_buffer,
+    list_buffer_entries,
+    list_databases,
+    list_devices,
+    register_device_ip,
+    rename_device_database,
+    set_device_auto_switch,
+    set_device_context_buffer,
+    set_device_mode,
+    set_device_threshold,
+    set_ip_bypass,
+    update_device_connection,
+    update_device_context,
+)
+
+from core.routes.dns import (
+    _apply_dns_settings,
+    _clean_dns_hostname,
+    _dns_policy_from_body,
+    dns_add_intercept,
+    dns_clear_discovery,
+    dns_discovery,
+    dns_get_settings,
+    dns_put_settings,
+    dns_remove_intercept,
+)
+
+from core.routes.llm import (
+    create_llm_profile,
+    create_user_profile,
+    delete_llm_profile,
+    delete_user_profile,
+    flush_buffer_to_llm,
+    get_llm_settings,
+    get_user_profile,
+    list_llm_profiles,
+    list_user_profiles,
+    preview_llm_analysis,
+    test_llm_profile,
+    update_llm_settings,
+    update_user_profile,
+)
+
+from core.routes.patterns import (
+    _resync_device_patterns,
+    delete_pattern,
+    export_patterns,
+    get_device_patterns,
+    get_pattern_detail,
+    import_patterns,
+    patch_pattern,
+    put_pattern,
+)
+
+from core.routes.protocols import (
+    protocol_server_config,
+    protocol_server_start,
+    protocol_server_stop,
+    protocol_servers_status,
+)
+
+from core.routes.system import (
+    _MIN_PASSWORD_LENGTH,
+    _listening_ports,
+    _new_password_problem,
+    _validation_details,
+    get_buffer_backend_setting,
+    get_config,
+    health_check,
+    put_config,
+    set_buffer_backend_setting,
+    set_control_plane_password,
+    system_update,
+)
 
+from core.routes.tls import (
+    _move_device_db_to_name,
+    tls_delete_cert,
+    tls_device_ports,
+    tls_download_ca,
+    tls_download_root_ca,
+    tls_frida_script,
+    tls_get_cert_info,
+    tls_list_certs,
+    tls_list_ports,
+    tls_relayed,
+    tls_rotate_cert,
+    tls_stats,
+    tls_unidentified,
+    tls_update_device_config,
+    tls_upload_cert,
+    tls_upload_cert_json,
+)
 
-@app.get("/api/tls/certs/{hostname}")
-async def tls_get_cert_info(hostname: str):
-    """Get detailed info about a specific certificate."""
-    if not cert_manager:
-        return JSONResponse(status_code=503, content={"error": "Cert manager not ready"})
-    try:
-        info = cert_manager.get_cert_info(hostname)
-        if not info:
-            return JSONResponse(
-                status_code=404, content={"error": f"No certificate found for '{hostname}'"}
-            )
-        return {"cert": info}  # noqa: TRY300
-    except ValueError as e:
-        return _client_error(e, "Invalid certificate lookup request")
-    except Exception:
-        logger.exception("Handler error (500)")
-        return JSONResponse(status_code=500, content={"error": "An internal error occurred"})
+from core.routes.webui import (
+    _serve_webui,
+    config_page,
+    dashboard,
+    options_page,
+    patterns_index_page,
+    patterns_page,
+)
 
 
-@app.post("/api/tls/certs/upload")
-async def tls_upload_cert(
-    hostname: str = Form(...),
-    cert: UploadFile = File(...),
-    key: UploadFile = File(...),
-):
-    """Upload a certificate + private key (PEM format) for a specific hostname."""
-    if not cert_manager:
-        return JSONResponse(status_code=503, content={"error": "Cert manager not ready"})
-    try:
-        cert_pem = await cert.read()
-        key_pem = await key.read()
-        cert_manager.import_cert(hostname, cert_pem.decode("utf-8"), key_pem.decode("utf-8"))
-        return {  # noqa: TRY300
-            "status": "ok",
-            "hostname": hostname,
-            "message": f"Certificate imported for '{hostname}'",
-        }
-    except (ValueError, UnicodeDecodeError) as e:
-        return _client_error(
-            e, "Invalid certificate upload. Provide a valid PEM or DER certificate file."
-        )
-    except Exception:
-        logger.exception("Failed to upload cert")
-        return JSONResponse(status_code=500, content={"error": "An internal error occurred"})
+def _register_router(target_app: FastAPI, router: APIRouter) -> None:
 
+    target_app.include_router(router)
 
-@app.post("/api/tls/certs/upload-json")
-async def tls_upload_cert_json(request: Request):
-    """Upload a certificate + private key as JSON (base64-encoded PEM)."""
-    if not cert_manager:
-        return JSONResponse(status_code=503, content={"error": "Cert manager not ready"})
-    try:
-        body = await request.json()
-        hostname = body.get("hostname")
-        cert_b64 = body.get("cert_base64")
-        key_b64 = body.get("key_base64")
-        if not all([hostname, cert_b64, key_b64]):
-            return JSONResponse(
-                status_code=400,
-                content={"error": "Missing 'hostname', 'cert_base64', or 'key_base64'"},
-            )
-        cert_pem = base64.b64decode(cert_b64).decode("utf-8")
-        key_pem = base64.b64decode(key_b64).decode("utf-8")
-        cert_manager.import_cert(hostname, cert_pem, key_pem)
-        return {"status": "ok", "hostname": hostname}  # noqa: TRY300
-    except (ValueError, UnicodeDecodeError, binascii.Error) as e:
-        return _client_error(
-            e, "Invalid certificate payload. Provide a valid PEM or DER certificate."
-        )
-    except Exception:
-        logger.exception("Failed to upload cert via JSON")
-        return JSONResponse(status_code=500, content={"error": "An internal error occurred"})
+    for r in router.routes:
+        if r not in target_app.routes:
+            target_app.routes.append(r)
 
 
-@app.delete("/api/tls/certs/{hostname}")
-async def tls_delete_cert(hostname: str):
-    """Delete an imported certificate, reverting to auto-generated."""
-    if not cert_manager:
-        return JSONResponse(status_code=503, content={"error": "Cert manager not ready"})
-    try:
-        deleted = cert_manager.delete_cert(hostname)
-        if not deleted:
-            return JSONResponse(
-                status_code=404,
-                content={"error": f"No imported certificate found for '{hostname}'"},
-            )
-        return {  # noqa: TRY300
-            "status": "ok",
-            "hostname": hostname,
-            "message": f"Certificate deleted for '{hostname}'",
-        }
-    except ValueError as e:
-        return _client_error(e, "Invalid certificate deletion request")
-    except Exception:
-        logger.exception("Failed to delete cert")
-        return JSONResponse(status_code=500, content={"error": "An internal error occurred"})
+# Register all modular routers
 
+_register_router(app, tls_router)
 
-@app.post("/api/tls/certs/{hostname}/rotate")
-async def tls_rotate_cert(hostname: str, request: Request):
-    """Replace an existing certificate without downtime."""
-    if not cert_manager:
-        return JSONResponse(status_code=503, content={"error": "Cert manager not ready"})
-    try:
-        body = await request.json()
-        cert_b64 = body.get("cert_base64")
-        key_b64 = body.get("key_base64")
-        if not all([cert_b64, key_b64]):
-            return JSONResponse(
-                status_code=400, content={"error": "Missing 'cert_base64' or 'key_base64'"}
-            )
-        cert_pem = base64.b64decode(cert_b64).decode("utf-8")
-        key_pem = base64.b64decode(key_b64).decode("utf-8")
-        cert_manager.import_cert(hostname, cert_pem, key_pem)
-        return {  # noqa: TRY300
-            "status": "ok",
-            "hostname": hostname,
-            "message": f"Certificate rotated for '{hostname}'",
-        }
-    except (ValueError, UnicodeDecodeError, binascii.Error) as e:
-        return _client_error(
-            e, "Could not rotate the certificate. Check the certificate and CA configuration."
-        )
-    except Exception:
-        logger.exception("Failed to rotate cert")
-        return JSONResponse(status_code=500, content={"error": "An internal error occurred"})
+_register_router(app, dns_router)
 
+_register_router(app, protocols_router)
 
-@app.post("/api/tls/root-ca/download")
-async def tls_download_root_ca():
-    """Download the root CA certificate for manual installation on devices."""
-    if not cert_manager:
-        return JSONResponse(status_code=503, content={"error": "Cert manager not ready"})
-    try:
-        ca_pem = cert_manager.ca_cert_pem()
-        return Response(
-            content=ca_pem,
-            media_type="application/x-pem-file",
-            headers={"Content-Disposition": "attachment; filename=ride-the-api-ca.pem"},
-        )
-    except Exception:
-        logger.exception("Handler error (500)")
-        return JSONResponse(status_code=500, content={"error": "An internal error occurred"})
+_register_router(app, devices_router)
 
+_register_router(app, patterns_router)
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# PROTOCOL SERVER MANAGEMENT API
-# ═══════════════════════════════════════════════════════════════════════════════
+_register_router(app, llm_router)
 
+_register_router(app, system_router)
 
-# ── DNS INTERCEPTION / DISCOVERY API ────────────────────────────────────────
+_register_router(app, webui_router)
 
 
-def _clean_dns_hostname(value: object) -> str | None:
-    """Normalise an operator-supplied name: a bare DNS name or a wildcard pattern.
-
-    Rejects anything that is not a plausible name (letters, digits and the
-    wildcard/dot characters), so the intercept list cannot collect entries that
-    would never match a query. A bare address is refused too: an IP literal is
-    not a name the DNS can answer for.
-    """
-    if not isinstance(value, str):
-        return None
-    name = value.strip().lower().rstrip(".")
-    if not name or len(name) > 253:  # noqa: PLR2004 - DNS name limit
-        return None
-    allowed = set("abcdefghijklmnopqrstuvwxyz0123456789.*?_-")
-    if any(ch not in allowed for ch in name):
-        return None
-    if name.replace(".", "").isdigit():  # an IPv4 literal
-        return None
-    return name
-
-
-def _dns_policy_from_body(body: dict) -> tuple[dict, str | None]:
-    """Validate a DNS settings body: (``{intercept, exclude, intercept_all}``, error).
-
-    Only the fields actually present are returned (``None`` for the others), so the
-    dashboard can flip one switch without resending the rest. A field that is not a
-    list, or that carries something which is not a name, is refused rather than
-    silently dropped: a typo must not look like it was saved. Duplicates collapse,
-    so what ends up in the config is a set of rules.
-    """
-    policy: dict = {"intercept": None, "exclude": None, "intercept_all": None}
-    for field in ("intercept", "exclude"):
-        raw = body.get(field)
-        if raw is None:
-            continue
-        if not isinstance(raw, list):
-            return policy, f"'{field}' must be a list of names"
-        cleaned: list[str] = []
-        rejected: list[str] = []
-        for item in raw:
-            clean = _clean_dns_hostname(item)
-            if clean is None:
-                rejected.append(item if isinstance(item, str) else repr(item))
-            elif clean not in cleaned:
-                cleaned.append(clean)
-        if rejected:
-            return policy, f"'{field}' contains values that are not names: {', '.join(rejected)}"
-        policy[field] = cleaned
-    raw_all = body.get("intercept_all")
-    if raw_all is not None:
-        if not isinstance(raw_all, bool):
-            return policy, "'intercept_all' must be a boolean"
-        policy["intercept_all"] = raw_all
-    return policy, None
-
-
-def _apply_dns_settings(config: Config | None = None) -> None:
-    """Push the interception policy into the running DNS interceptor.
-
-    Called after the discovery API writes the settings -- and, as a config callback,
-    when the file is edited by hand, so the panel and ``config.yaml`` mean the same
-    thing. Either way the listening sockets stay up and the next query already
-    follows the new rule. ``config`` is passed by the watcher; the API path reads the
-    live one.
-    """
-    interceptor = get_dns_interceptor()
-    if interceptor is None:
-        return
-    try:
-        interceptor.apply_settings(config if config is not None else config_manager.config)
-    except Exception:  # noqa: BLE001 - a failed reload must not break the API
-        logger.exception("DNS: could not apply the new interception settings")
-
-
-@app.get("/api/dns/discovery")
-async def dns_discovery(limit: int = 500):
-    """What each client asks the DNS for, and what the proxy does with it now.
-
-    This is the answer to "what should we intercept next?" read off real traffic:
-    the names seen on the DNS port, including the ones still being forwarded.
-    Counters not yet flushed to the database are merged in, so a query just made
-    by a device already appears.
-    """
-    interceptor = get_dns_interceptor()
-    bounded = max(1, min(int(limit), 5000))
-    entries: dict[tuple[str, str, str], dict] = {}
-    if db_manager:
-        for row in await db_manager.list_dns_queries(bounded):
-            entries[(row["client_ip"], row["hostname"], row["qtype"])] = row
-
-    recorder = get_dns_recorder()
-    if recorder is not None:
-        for item in recorder.snapshot():
-            key = (item["client_ip"], item["hostname"], item["qtype"])
-            fresh = {
-                **item,
-                "first_seen": item["first_seen"].isoformat(),
-                "last_seen": item["last_seen"].isoformat(),
-            }
-            existing = entries.get(key)
-            if existing is None:
-                entries[key] = fresh
-                continue
-            existing["hit_count"] += fresh["hit_count"]
-            existing["last_seen"] = max(existing["last_seen"] or "", fresh["last_seen"])
-
-    for entry in entries.values():
-        hostname = entry["hostname"]
-        decision = interceptor.classify(hostname) if interceptor else "forwarded"
-        entry["intercepted"] = decision == "intercepted"
-        entry["excluded"] = decision == "excluded"
-        entry["suggested"] = decision == "forwarded"
-        # Why, so the UI can explain instead of offering an action that would do
-        # nothing: promoting a name kept out by an exclusion pattern is a no-op.
-        entry["excluded_by"] = interceptor.matching_exclusion(hostname) if interceptor else None
-        entry["claimed_by"] = interceptor.adapter_claim(hostname) if interceptor else None
-
-    cfg = config_manager.config.dns if config_manager else None
-    return {
-        "enabled": bool(cfg.enabled) if cfg else False,
-        "intercept": list(cfg.intercept or []) if cfg else [],
-        "intercept_all": bool(cfg.intercept_all) if cfg else False,
-        "exclude": list(cfg.exclude or []) if cfg else [],
-        "listen": (
-            {"host": interceptor.host, "port": interceptor.port, **interceptor.listening}
-            if interceptor
-            else {}
-        ),
-        "stats": dict(interceptor.stats) if interceptor else {},
-        "pending_pairs": recorder.pending_pairs if recorder else 0,
-        # Visible so a recorder that cannot reach the database is not silent: the
-        # log line is easy to miss, the panel is not.
-        "flushed_pairs": recorder.flushed_pairs if recorder else 0,
-        "flush_errors": recorder.flush_errors if recorder else 0,
-        "dropped_pairs": recorder.dropped_pairs if recorder else 0,
-        "entries": sorted(entries.values(), key=lambda e: e["last_seen"] or "", reverse=True)[
-            :bounded
-        ],
-    }
-
-
-@app.post("/api/dns/intercept")
-async def dns_add_intercept(request: Request):
-    """Promote a discovered hostname (or pattern) to an intercepted name."""
-    if not config_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    body = await request.json()
-    if not isinstance(body, dict):
-        return JSONResponse(
-            status_code=400, content={"error": "Invalid JSON body: expected an object"}
-        )
-    hostname = _clean_dns_hostname(body.get("hostname") or body.get("name"))
-    if hostname is None:
-        return JSONResponse(
-            status_code=400,
-            content={"error": "Provide a valid 'hostname' or pattern (e.g. *.example.com)"},
-        )
-    current = list(config_manager.config.dns.intercept or [])
-    if hostname in current:
-        # Already covered: writing the file again would be a no-op that still
-        # rewrites it (and triggers the watcher's reload) for nothing.
-        return {"hostname": hostname, "intercept": current, "changed": False}
-    current.append(hostname)
-    if not config_manager.set_dns_settings(intercept=current):
-        return JSONResponse(status_code=500, content={"error": "Failed to persist config"})
-    _apply_dns_settings()
-    return {"hostname": hostname, "intercept": current, "changed": True}
-
-
-@app.delete("/api/dns/intercept/{hostname}")
-async def dns_remove_intercept(hostname: str):
-    """Stop intercepting a name: it goes back to being forwarded (and discovered)."""
-    if not config_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    clean = _clean_dns_hostname(hostname)
-    if clean is None:
-        return JSONResponse(status_code=400, content={"error": "Invalid hostname"})
-    previous = list(config_manager.config.dns.intercept or [])
-    current = [pattern for pattern in previous if pattern.strip().lower().rstrip(".") != clean]
-    if len(current) == len(previous):
-        # Not in the list: deleting it changed nothing, so do not rewrite the file.
-        return {"hostname": clean, "intercept": current, "removed": 0}
-    if not config_manager.set_dns_settings(intercept=current):
-        return JSONResponse(status_code=500, content={"error": "Failed to persist config"})
-    _apply_dns_settings()
-    return {"hostname": clean, "intercept": current, "removed": len(previous) - len(current)}
-
-
-@app.get("/api/dns/settings")
-async def dns_get_settings():
-    """The whole DNS interception policy, as the UI needs to render it."""
-    if not config_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    cfg = config_manager.config.dns
-    interceptor = get_dns_interceptor()
-    return {
-        "enabled": bool(cfg.enabled),
-        "listen_host": cfg.listen_host,
-        "listen_port": cfg.listen_port,
-        "answer_ip": cfg.answer_ip,
-        "answer_ttl": cfg.answer_ttl,
-        "dns_servers": [*cfg.dns_servers, *cfg.dns_servers_v6],
-        "intercept": list(cfg.intercept or []),
-        "intercept_all": bool(cfg.intercept_all),
-        "exclude": list(cfg.exclude or []),
-        "listen": (
-            {"host": interceptor.host, "port": interceptor.port, **interceptor.listening}
-            if interceptor
-            else {}
-        ),
-    }
-
-
-@app.put("/api/dns/settings")
-async def dns_put_settings(request: Request):
-    """Update the interception policy: the name list, ``intercept_all``, exclusions.
-
-    Only the fields present in the body are touched, so the UI can flip one
-    switch without resending (and risking) the others.
-    """
-    if not config_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    body = await request.json()
-    if not isinstance(body, dict):
-        return JSONResponse(
-            status_code=400, content={"error": "Invalid JSON body: expected an object"}
-        )
-
-    policy, error = _dns_policy_from_body(body)
-    if error:
-        return JSONResponse(status_code=400, content={"error": error})
-    if not config_manager.set_dns_settings(**policy):
-        return JSONResponse(status_code=500, content={"error": "Failed to persist config"})
-    _apply_dns_settings()
-    cfg = config_manager.config.dns
-    return {
-        "intercept": list(cfg.intercept or []),
-        "intercept_all": bool(cfg.intercept_all),
-        "exclude": list(cfg.exclude or []),
-    }
-
-
-@app.delete("/api/dns/discovery")
-async def dns_clear_discovery():
-    """Forget the recorded queries (memory and database)."""
-    recorder = get_dns_recorder()
-    removed = await recorder.clear() if recorder is not None else 0
-    if recorder is None and db_manager:
-        removed = await db_manager.clear_dns_queries()
-    return {"removed": removed}
-
-
-@app.get("/api/protocol-servers")
-async def protocol_servers_status():
-    """List all protocol servers and their status."""
-
-    manager = get_protocol_server_manager()
-    status_list = await manager.get_all_status()
-    return {"servers": status_list}
-
-
-@app.post("/api/protocol-servers/{name}/start")
-async def protocol_server_start(name: str):
-    """Start a specific protocol server and persist enabled=true in config."""
-
-    manager = get_protocol_server_manager()
-    success = await manager.start_plugin(name)
-    if not success:
-        plugin = manager.get_plugin(name)
-        if plugin is None:
-            return JSONResponse(status_code=404, content={"error": f"Server '{name}' not found"})
-        return JSONResponse(status_code=500, content={"error": f"Failed to start '{name}'"})
-    # Persist the toggle so the server auto-starts on the next boot and the
-    # dashboard "config" view reflects it (start_all() boots enabled=true only).
-    plugin = manager.get_plugin(name)
-    if plugin is not None:
-        setattr(plugin.config, "enabled", True)
-    persisted = config_manager.set_protocol_server_enabled(name, True)
-    if not persisted:
-        logger.warning("Protocol server %s started but enabling it could not be persisted", name)
-    return {"status": "ok", "server": name, "running": True, "persisted": persisted}
-
-
-@app.post("/api/protocol-servers/{name}/stop")
-async def protocol_server_stop(name: str):
-    """Stop a specific protocol server and persist enabled=false in config."""
-
-    manager = get_protocol_server_manager()
-    success = await manager.stop_plugin(name)
-    if not success:
-        plugin = manager.get_plugin(name)
-        if plugin is None:
-            return JSONResponse(status_code=404, content={"error": f"Server '{name}' not found"})
-        return JSONResponse(status_code=500, content={"error": f"Failed to stop '{name}'"})
-    # Persist the toggle so the server stays stopped after a restart and the
-    # dashboard "config" view reflects it.
-    plugin = manager.get_plugin(name)
-    if plugin is not None:
-        setattr(plugin.config, "enabled", False)
-    persisted = config_manager.set_protocol_server_enabled(name, False)
-    if not persisted:
-        logger.warning("Protocol server %s stopped but disabling it could not be persisted", name)
-    return {"status": "ok", "server": name, "running": False, "persisted": persisted}
-
-
-@app.get("/api/protocol-servers/{name}/config")
-async def protocol_server_config(name: str):
-    """Get configuration for a specific protocol server."""
-
-    manager = get_protocol_server_manager()
-    plugin = manager.get_plugin(name)
-    if not plugin:
-        return JSONResponse(status_code=404, content={"error": f"Server '{name}' not found"})
-    cfg = plugin.config
-    config_dict = cfg.model_dump() if hasattr(cfg, "model_dump") else vars(cfg)
-    return {"name": name, "config": config_dict}
-
-    # ═══════════════════════════════════════════════════════════════════════════════
-    # HEALTH & METRICS
-    # ═══════════════════════════════════════════════════════════════════════════════
-
-
-def _listening_ports() -> dict[str, object]:
-    """What is actually bound — the first question when a device "does not work".
-
-    Failures here are quiet by nature: a port below 1024 without CAP_NET_BIND_SERVICE, or a
-    device aimed at a listener that never came up. Reporting it costs nothing and turns a
-    guess into a diagnosis. Never creates anything (a health check must not change state),
-    never raises.
-    """
-    report: dict[str, object] = {}
-    try:
-        report["proxy"] = {"port": config_manager.config.proxy.port, "listening": True}
-    except Exception:  # noqa: BLE001 - /health must never fail
-        report["proxy"] = {"listening": True}
-    try:
-        dns = get_dns_interceptor()
-        report["dns"] = (
-            {"enabled": False, "listening": False}
-            if dns is None
-            else {"enabled": dns.enabled, "host": dns.host, "port": dns.port, **dns.listening}
-        )
-    except Exception:  # noqa: BLE001
-        report["dns"] = {"enabled": None}
-    try:
-        tls = peek_tls_mitm_server()
-        report["tls_mitm"] = (
-            {"requested": [], "bound": [], "missing": []}
-            if tls is None
-            else {
-                "requested": list(tls.listen_ports),
-                "bound": list(tls.bound_ports),
-                "missing": [p for p in tls.listen_ports if p not in tls.bound_ports],
-            }
-        )
-    except Exception:  # noqa: BLE001
-        report["tls_mitm"] = {"requested": None}
-    return report
-
-
-@app.get("/health")
-async def health_check():
-    """Health check endpoint: also reports what is actually bound."""
-    return {
-        "status": "healthy",
-        "service": "local-cloud-replacement-proxy",
-        "version": runtime_version(),
-        "adapters": adapter_registry.list_vendors() if adapter_registry else [],
-        "ports": _listening_ports(),
-    }
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# DEVICE MANAGEMENT API
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-@app.get("/api/devices")
-async def list_devices():
-    """List all registered devices."""
-    if not db_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    devices = await db_manager.list_devices()
-    return {"devices": devices}
-
-
-@app.get("/api/devices/{device_id}")
-async def get_device(device_id: str):
-    """Get device details and stats."""
-    if not db_manager or not orchestrator:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    async with db_manager.core_session() as session:
-        result = await session.execute(
-            select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
-        )
-        device = result.scalar_one_or_none()
-        if not device:
-            return JSONResponse(status_code=404, content={"error": "Device not found"})
-
-    stats = await orchestrator.get_device_stats(device_id)
-    return {"device": stats}
-
-
-@app.get("/api/devices/{device_id}/stats")
-async def get_device_stats(device_id: str):
-    """Get real-time match statistics for a device."""
-    if not orchestrator:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    stats = await orchestrator.get_device_stats(device_id)
-    return {"stats": stats}
-
-
-@app.delete("/api/devices/{device_id}")
-async def delete_device(device_id: str):
-    """Delete a device and its data (registry row, per-device DB, pattern file)."""
-    if not db_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    try:
-        safe_id = sanitize_filename_component(device_id)
-    except ValueError as e:
-        return _client_error(e, "Invalid device_id")
-    success = await db_manager.delete_device(safe_id)
-    if not success:
-        return JSONResponse(status_code=404, content={"error": "Device not found"})
-    return {"device_id": safe_id, "status": "deleted"}
-
-
-@app.get("/api/devices/{device_id}/match-rate")
-async def get_match_rate(device_id: str):  # noqa: PLR0911
-    """Get current match rate percentage."""
-    if not orchestrator:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    stats = await orchestrator.get_device_stats(device_id)
-    return {
-        "device_id": device_id,
-        "match_rate_pct": stats.get("match_rate_pct", 0),
-        "total_requests": stats.get("total_requests", 0),
-        "local_hits": stats.get("local_hits", 0),
-        "cloud_misses": stats.get("cloud_misses", 0),
-    }
-
-
-@app.post("/api/devices/{device_id}/mode")
-async def set_device_mode(device_id: str, request: Request):
-    """Switch device between learning and production mode."""
-    if not db_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    body = await request.json()
-    if not isinstance(body, dict):
-        return JSONResponse(
-            status_code=400, content={"error": "Invalid JSON body: expected an object"}
-        )
-    mode = body.get("mode", "learning")
-    if mode not in ("learning", "production", "hybrid", "passthrough"):
-        return JSONResponse(
-            status_code=400,
-            content={
-                "error": "Invalid mode. Use 'learning', 'production', 'hybrid', or 'passthrough'"
-            },
-        )
-    success = await db_manager.update_device_mode(device_id, mode)
-    if not success:
-        return JSONResponse(status_code=404, content={"error": "Device not found"})
-    return {"device_id": device_id, "mode": mode}
-
-
-@app.put("/api/devices/{device_id}/threshold")
-async def set_device_threshold(device_id: str, request: Request):  # noqa: PLR0911
-    """Set the per-device match confidence threshold (0.0 to 1.0)."""
-    if not db_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    body = await request.json()
-    if not isinstance(body, dict):
-        return JSONResponse(
-            status_code=400, content={"error": "Invalid JSON body: expected an object"}
-        )
-    raw = body.get("match_threshold")
-    if raw is None:
-        return JSONResponse(status_code=400, content={"error": "Provide 'match_threshold'"})
-    try:
-        threshold = float(raw)
-    except (TypeError, ValueError):
-        return JSONResponse(
-            status_code=400, content={"error": "'match_threshold' must be a number"}
-        )
-    if not 0.0 <= threshold <= 1.0:
-        return JSONResponse(
-            status_code=400,
-            content={"error": "'match_threshold' must be between 0.0 and 1.0"},
-        )
-    success = await db_manager.update_device_match_threshold(device_id, threshold)
-    if not success:
-        return JSONResponse(status_code=404, content={"error": "Device not found"})
-    return {"device_id": device_id, "match_threshold": threshold}
-
-
-@app.put("/api/devices/{device_id}/context-buffer")
-async def set_device_context_buffer(device_id: str, request: Request):  # noqa: PLR0911
-    """Set the per-device context buffer size in bytes."""
-    if not db_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    body = await request.json()
-    if not isinstance(body, dict):
-        return JSONResponse(
-            status_code=400, content={"error": "Invalid JSON body: expected an object"}
-        )
-    raw = body.get("context_buffer_size")
-    if raw is None:
-        return JSONResponse(status_code=400, content={"error": "Provide 'context_buffer_size'"})
-    try:
-        size = int(raw)
-    except (TypeError, ValueError):
-        return JSONResponse(
-            status_code=400, content={"error": "'context_buffer_size' must be an integer"}
-        )
-    if size <= 0:
-        return JSONResponse(
-            status_code=400, content={"error": "'context_buffer_size' must be positive"}
-        )
-    success = await db_manager.update_device_context_buffer_size(device_id, size)
-    if not success:
-        return JSONResponse(status_code=404, content={"error": "Device not found"})
-    return {"device_id": device_id, "context_buffer_size": size}
-
-
-@app.get("/api/devices/{device_id}/auto-switch")
-async def get_device_auto_switch(device_id: str):
-    """Get auto-switch status for a device."""
-    if not db_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    devices = await db_manager.list_devices()
-    for d in devices:
-        if d["device_id"] == device_id:
-            return {
-                "device_id": device_id,
-                "auto_switch_enabled": d.get("auto_switch_enabled", False),
-            }
-    return JSONResponse(status_code=404, content={"error": "Device not found"})
-
-
-@app.put("/api/devices/{device_id}/auto-switch")
-async def set_device_auto_switch(device_id: str, request: Request):
-    """Enable or disable auto-switch to production for a device."""
-    if not db_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    body = await request.json()
-    if not isinstance(body, dict):
-        return JSONResponse(
-            status_code=400, content={"error": "Invalid JSON body: expected an object"}
-        )
-    enabled = body.get("enabled", False)
-    if not isinstance(enabled, bool):
-        return JSONResponse(status_code=400, content={"error": "'enabled' must be a boolean"})
-    success = await db_manager.update_device_auto_switch(device_id, enabled)
-    if not success:
-        return JSONResponse(status_code=404, content={"error": "Device not found"})
-    return {"device_id": device_id, "auto_switch_enabled": enabled}
-
-
-@app.put("/api/devices/{device_id}/llm")
-async def configure_device_llm(device_id: str, request: Request):
-    """Configure LLM settings for a device."""
-    if not db_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    body = await request.json()
-    if not isinstance(body, dict):
-        return JSONResponse(
-            status_code=400, content={"error": "Invalid JSON body: expected an object"}
-        )
-    success = await db_manager.update_device_llm_config(
-        device_id,
-        base_url=body.get("base_url"),
-        model_id=body.get("model_id"),
-        profile_name=body.get("profile_name"),
-    )
-    if not success:
-        return JSONResponse(status_code=404, content={"error": "Device not found"})
-    return {"device_id": device_id, "status": "updated"}
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# DATABASE ASSIGNMENT API
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-def _requested_database_url(body: dict) -> tuple[str | None, str | None]:
-    """The device database URL a request asks for, or why it cannot have it."""
-    database_url = body.get("database_url")
-    database_name = body.get("database_name")
-    if database_url:
-        try:
-            return db_manager.checked_device_db_url(str(database_url)), None
-        except ValueError as e:
-            return None, str(e)
-    if database_name:
-        # Only a name: create a new SQLite database for it.
-        try:
-            safe_name = sanitize_filename_component(str(database_name))
-        except ValueError as e:
-            return None, f"Invalid database_name: {e}"
-        return f"sqlite+aiosqlite:///{db_manager.device_db_dir / f'{safe_name}.db'}", None
-    return None, "Provide 'database_url' or 'database_name'"
-
-
-@app.post("/api/devices/{device_id}/database")
-async def assign_device_database(device_id: str, request: Request):
-    """Assign a database (URL or name) to a device. Creates a new DB if only name given."""
-    if not db_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    body = await request.json()
-    if not isinstance(body, dict):
-        return JSONResponse(
-            status_code=400, content={"error": "Invalid JSON body: expected an object"}
-        )
-    database_url, error = _requested_database_url(body)
-    if error:
-        # A validation message for the operator who sent the request, with no
-        # traceback and no input values -- the same class dismissed on main
-        # (decision M7 in the skill's audit notes).
-        # codeql[py/stack-trace-exposure] # noqa: ERA001
-        return JSONResponse(status_code=400, content={"error": error})
-    database_name = body.get("database_name")
-    success = await db_manager.assign_device_database(
-        device_id,
-        database_url=database_url,
-        database_name=database_name,
-    )
-    if not success:
-        return JSONResponse(status_code=404, content={"error": "Device not found"})
-    return {
-        "device_id": device_id,
-        "database_url": database_url,
-        "database_name": database_name,
-    }
-
-
-@app.post("/api/devices/{device_id}/database/rename")
-async def rename_device_database(device_id: str, request: Request):
-    """Rename a device's database file.
-
-    The new name is sanitized into a filename segment and the ``.db`` suffix is
-    added when missing. The device keeps working: its engine is closed, the file
-    (with its SQLite sidecars) is moved, and the device is repointed at it.
-    """
-    if not db_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    body = await request.json()
-    if not isinstance(body, dict):
-        return JSONResponse(
-            status_code=400, content={"error": "Invalid JSON body: expected an object"}
-        )
-    new_name = body.get("name") or body.get("database_name")
-    if not new_name or not isinstance(new_name, str):
-        return JSONResponse(status_code=400, content={"error": "Provide 'name'"})
-    try:
-        database_url = await db_manager.rename_device_database(device_id, new_name)
-    except ValueError as e:
-        return JSONResponse(status_code=409, content={"error": str(e)})
-    if database_url is None:
-        return JSONResponse(status_code=404, content={"error": "Device not found"})
-    return {"device_id": device_id, "name": new_name, "database_url": database_url}
-
-
-@app.get("/api/databases")
-async def list_databases():
-    """List all active device databases."""
-    if not db_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    databases = await db_manager.list_databases()
-    return {"databases": databases}
-
-
-@app.get("/api/devices/{device_id}/database")
-async def get_device_database(device_id: str):
-    """Get the database assignment for a device."""
-    if not db_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    async with db_manager.core_session() as session:
-        result = await session.execute(
-            select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
-        )
-        device = result.scalar_one_or_none()
-        if not device:
-            return JSONResponse(status_code=404, content={"error": "Device not found"})
-        return {
-            "device_id": device.device_id,
-            "database_url": device.database_url,
-            "database_name": device.database_name,
-            "ip_addresses": device.ip_addresses,
-        }
-
-
-@app.get("/api/devices/by-ip/{ip_address}")
-async def get_device_by_ip(ip_address: str):
-    """Look up a device by its IP address."""
-    if not db_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    if not db_manager._is_ip(ip_address):
-        return JSONResponse(status_code=400, content={"error": "Invalid IP address format"})
-    device_id = await db_manager.resolve_device_id(ip_address)
-    if not device_id:
-        return JSONResponse(status_code=404, content={"error": "Device not found for this IP"})
-    return {"device_id": device_id, "ip_address": ip_address}
-
-
-@app.get("/api/devices/{device_id}/connection")
-async def get_device_connection(device_id: str):
-    """Get the connection type for a device (default 'auto')."""
-    if not db_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    async with db_manager.core_session() as session:
-        result = await session.execute(
-            select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
-        )
-        device = result.scalar_one_or_none()
-        if not device:
-            return JSONResponse(status_code=404, content={"error": "Device not found"})
-        return {
-            "device_id": device.device_id,
-            "connection": (device.extra_attributes or {}).get("connection", "auto"),
-        }
-
-
-@app.put("/api/devices/{device_id}/connection")
-async def update_device_connection(device_id: str, request: Request):
-    """Set the connection type for a device (auto | tls | http | mqtt | coap | modbus)."""
-    if not db_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    body = await request.json()
-    if not isinstance(body, dict):
-        return JSONResponse(
-            status_code=400, content={"error": "Invalid JSON body: expected an object"}
-        )
-    raw = str(body.get("connection", "auto")).lower()
-    try:
-        connection = ConnectionType(raw)
-    except ValueError:
-        return JSONResponse(status_code=400, content={"error": f"Invalid connection: {raw}"})
-    async with db_manager.core_session() as session:
-        result = await session.execute(
-            select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
-        )
-        device = result.scalar_one_or_none()
-        if not device:
-            return JSONResponse(status_code=404, content={"error": "Device not found"})
-        extra = dict(device.extra_attributes or {})
-        extra["connection"] = connection.value
-        device.extra_attributes = extra
-        session.add(device)
-        await session.commit()
-        db_manager.invalidate_device_cache(device_id)
-    return {"device_id": device_id, "connection": connection.value}
-
-
-@app.get("/api/ip-profiles/{ip_address}/bypass")
-async def get_ip_bypass(ip_address: str):
-    """Get the bypass mode for an IP (from ip_profiles config, default False)."""
-    if not db_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    if not db_manager._is_ip(ip_address):
-        return JSONResponse(status_code=400, content={"error": "Invalid IP address format"})
-    return {"ip_address": ip_address, "bypass": await db_manager.is_ips_bypassed(ip_address)}
-
-
-@app.put("/api/ip-profiles/{ip_address}/bypass")
-async def set_ip_bypass(ip_address: str, request: Request):
-    """Set/clear bypass for an IP, persisting to the config file."""
-    if not db_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    if not db_manager._is_ip(ip_address):
-        return JSONResponse(status_code=400, content={"error": "Invalid IP address format"})
-    body = await request.json()
-    if not isinstance(body, dict) or "bypass" not in body:
-        return JSONResponse(
-            status_code=400, content={"error": "Expected JSON body with a 'bypass' boolean"}
-        )
-    bypass = bool(body["bypass"])
-    ok = config_manager.set_ip_profile_bypass(ip_address, bypass)
-    if not ok:
-        return JSONResponse(status_code=500, content={"error": "Failed to persist config"})
-    return {"ip_address": ip_address, "bypass": bypass}
-
-
-@app.post("/api/devices/{device_id}/ip")
-async def register_device_ip(device_id: str, request: Request):  # noqa: PLR0911
-    """Register an IP address for a device."""
-    if not db_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    body = await request.json()
-    if not isinstance(body, dict):
-        return JSONResponse(
-            status_code=400, content={"error": "Invalid JSON body: expected an object"}
-        )
-    ip_address = body.get("ip_address")
-    if not ip_address:
-        return JSONResponse(status_code=400, content={"error": "Provide 'ip_address'"})
-    if not isinstance(ip_address, str) or not db_manager._is_ip(ip_address):
-        return JSONResponse(status_code=400, content={"error": "Invalid IP address format"})
-    if self_connection_reason(ip_address):
-        return JSONResponse(
-            status_code=400,
-            content={
-                "error": "Addresses of this machine cannot be bound to a device: "
-                "the proxy never intercepts its own traffic"
-            },
-        )
-    # The address moves to this device (it is taken from any previous holder).
-    current_ips = await db_manager.bind_ip(device_id, ip_address)
-    if current_ips is None:
-        return JSONResponse(status_code=404, content={"error": "Device not found"})
-    return {"device_id": device_id, "ip_addresses": current_ips}
-
-
-@app.get("/api/devices/{device_id}/patterns")
-async def get_device_patterns(device_id: str):
-    """Get learned patterns for a device."""
-    if not db_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-
-    async with db_manager.device_session(device_id) as session:
-        patterns = await session.execute(
-            select(RequestPattern).order_by(RequestPattern.confidence.desc())
-        )
-        pattern_rows = patterns.scalars().all()
-        # Load all templates in a single query (avoid N+1 per pattern).
-        templates = await session.execute(
-            select(ResponseTemplate).where(
-                ResponseTemplate.pattern_id.in_([rp.pattern_id for rp in pattern_rows])
-            )
-        )
-        template_by_pattern = {t.pattern_id: t for t in templates.scalars().all()}
-        patterns_list = []
-        for pattern_row in pattern_rows:
-            tpl = template_by_pattern.get(pattern_row.pattern_id)
-            patterns_list.append(
-                {
-                    "pattern_id": pattern_row.pattern_id,
-                    "method": pattern_row.method,
-                    "path": pattern_row.path_pattern,
-                    "path_pattern": pattern_row.path_pattern,
-                    "protocol": pattern_row.protocol,
-                    "intent": pattern_row.intent,
-                    "confidence": pattern_row.confidence,
-                    "hit_count": pattern_row.hit_count,
-                    "required_headers": pattern_row.required_headers,
-                    "body_schema": pattern_row.body_schema,
-                    "query_param_keys": pattern_row.query_param_keys,
-                    "response_template": {
-                        "status_code": tpl.status_code,
-                        "body_template": tpl.body_template,
-                        "headers_template": tpl.headers_template,
-                        "field_mappings": tpl.field_mappings,
-                        "expected_variables": tpl.expected_variables,
-                    }
-                    if tpl
-                    else None,
-                }
-            )
-        return {"device_id": device_id, "patterns": patterns_list}
-
-
-@app.get("/api/devices/{device_id}/patterns/export")
-async def export_patterns(device_id: str):
-    """Export deciphered patterns to portable .ride-pattern.json format."""
-    if not db_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-
-    ingester = decipher_ingest.DecipherIngest(db_manager)
-    try:
-        async with db_manager.core_session() as session:
-            result = await session.execute(
-                select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
-            )
-            device = result.scalar_one_or_none()
-            vendor = device.vendor if device else "unknown"
-            device_type = device.device_type if device else "unknown"
-        pattern_db = await ingester.export_patterns(device_id, vendor, device_type)
-        header = await db_manager.read_device_meta(device_id)
-        if header and (header.get("protocols") or header.get("transport")):
-            # Emit the portable v2 DeviceModel when the device has a learned
-            # protocol header, matching the documented behavior (goal #11).
-            device_model = await ingester.export_device_model(device_id, vendor, device_type)
-            return device_model.model_dump(by_alias=True, exclude_none=True)
-        return pattern_db.model_dump(by_alias=True, exclude_none=True)
-    except Exception:
-        logger.exception("Handler error (500)")
-        return JSONResponse(status_code=500, content={"error": "An internal error occurred"})
-
-
-@app.get("/api/devices/{device_id}/patterns/{pattern_id}")
-async def get_pattern_detail(device_id: str, pattern_id: str):
-    """Get detailed pattern info including field mappings."""
-    if not db_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-
-    async with db_manager.device_session(device_id) as session:
-        result = await session.execute(
-            select(RequestPattern).where(RequestPattern.pattern_id == pattern_id)
-        )
-        pattern = result.scalar_one_or_none()
-        if not pattern:
-            return JSONResponse(status_code=404, content={"error": "Pattern not found"})
-
-        tpl_result = await session.execute(
-            select(ResponseTemplate).where(ResponseTemplate.pattern_id == pattern_id)
-        )
-        template = tpl_result.scalar_one_or_none()
-
-        mappings_result = await session.execute(
-            select(FieldMapping).where(FieldMapping.intent == pattern.intent)
-        )
-        mappings = [
-            {
-                "request_field": m.request_field,
-                "response_field": m.response_field,
-                "transform": m.transform,
-                "confidence": m.confidence,
-            }
-            for m in mappings_result.scalars().all()
-        ]
-
-        return {
-            "pattern": {
-                "pattern_id": pattern.pattern_id,
-                "method": pattern.method,
-                "path_pattern": pattern.path_pattern,
-                "protocol": pattern.protocol,
-                "required_headers": pattern.required_headers,
-                "body_schema": pattern.body_schema,
-                "intent": pattern.intent,
-                "confidence": pattern.confidence,
-                "hit_count": pattern.hit_count,
-            },
-            "response_template": {
-                "status_code": template.status_code,
-                "headers_template": template.headers_template,
-                "body_template": template.body_template,
-                "field_mappings": template.field_mappings,
-                "expected_variables": template.expected_variables,
-            }
-            if template
-            else None,
-            "field_mappings": mappings,
-        }
-
-
-# ── Pattern CRUD: Update, Patch, Delete ───────────────────────────────────────
-
-
-async def _resync_device_patterns(device_id: str) -> None:
-    """Make the engine serve the device's patterns as now stored.
-
-    The engine serves its in-memory set exclusively when it has one, so an
-    API change to the device DB alone left deleted or edited patterns being
-    served as before. Best-effort: the DB change already succeeded.
-    """
-    if orchestrator is None:
-        return
-    try:
-        await orchestrator.sync_engine(device_id)
-    except Exception:
-        logger.exception("Could not refresh the served patterns for %s", device_id)
-
-
-@app.put("/api/devices/{device_id}/patterns/{pattern_id}")
-async def put_pattern(device_id: str, pattern_id: str, request: Request):
-    """Full update of a request pattern, its response template, and field mappings."""
-    if not db_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-
-    try:
-        body = await request.json()
-        async with db_manager.device_session(device_id) as session:
-            result = await session.execute(
-                select(RequestPattern).where(RequestPattern.pattern_id == pattern_id)
-            )
-            pattern = result.scalar_one_or_none()
-            if not pattern:
-                # Upsert: create the pattern if it doesn't exist
-                pattern = RequestPattern(
-                    pattern_id=pattern_id,
-                    method=body.get("method", "GET"),
-                    path_pattern=body.get("path", body.get("path_pattern", "")),
-                    protocol=body.get("protocol", "http"),
-                    required_headers=body.get("required_headers", []),
-                    body_schema=body.get("body_schema", {}),
-                    query_param_keys=body.get("query_param_keys", []),
-                    intent=body.get("intent", ""),
-                    confidence=body.get("confidence", 0.0),
-                )
-
-            # Replace pattern fields
-            for f in (
-                "method",
-                "path_pattern",
-                "protocol",
-                "required_headers",
-                "body_schema",
-                "query_param_keys",
-                "intent",
-                "confidence",
-            ):
-                if f in body:
-                    setattr(pattern, f, body[f])
-            # Accept "path" as alias for "path_pattern"
-            if "path" in body and "path_pattern" not in body:
-                pattern.path_pattern = body["path"]
-            session.add(pattern)
-
-            # Response template
-            tpl_data = body.get("response_template") or {}
-            tpl_result = await session.execute(
-                select(ResponseTemplate).where(ResponseTemplate.pattern_id == pattern_id)
-            )
-            tpl = tpl_result.scalar_one_or_none()
-            if not tpl:
-                tpl = ResponseTemplate(
-                    template_id=(str(uuid.uuid4())[:16]),
-                    pattern_id=pattern_id,
-                    status_code=tpl_data.get("status_code", 200),
-                    headers_template=tpl_data.get("headers_template", {}),
-                    body_template=tpl_data.get("body_template", {}),
-                    field_mappings=tpl_data.get("field_mappings", {}),
-                    expected_variables=tpl_data.get("expected_variables", []),
-                )
-            else:
-                tpl.status_code = tpl_data.get("status_code", tpl.status_code)
-                tpl.headers_template = tpl_data.get("headers_template", tpl.headers_template)
-                tpl.body_template = tpl_data.get("body_template", tpl.body_template)
-                tpl.field_mappings = tpl_data.get("field_mappings", tpl.field_mappings)
-                tpl.expected_variables = tpl_data.get("expected_variables", tpl.expected_variables)
-            session.add(tpl)
-
-            # Field mappings: replace all mappings for this intent
-            fm_list = body.get("field_mappings")
-            if fm_list is not None:
-                await session.execute(
-                    delete(FieldMapping).where(FieldMapping.intent == pattern.intent)
-                )
-                for m in fm_list:
-                    mapping_id = m.get("mapping_id") or str(uuid.uuid4())[:16]
-                    fm = FieldMapping(
-                        mapping_id=mapping_id,
-                        request_field=m.get("request_field", ""),
-                        request_type=m.get("request_type", ""),
-                        response_field=m.get("response_field", ""),
-                        response_type=m.get("response_type", ""),
-                        transform=m.get("transform"),
-                        formula=decipher_ingest.stored_formula(m.get("formula")),
-                        enum_values=m.get("enum_values"),
-                        intent=pattern.intent,
-                        confidence=m.get("confidence", 0.5),
-                    )
-                    session.add(fm)
-
-            await session.commit()
-        await _resync_device_patterns(device_id)
-        return {"status": "ok", "pattern_id": pattern_id}  # noqa: TRY300
-    except Exception as e:
-        return _client_error(e, "Invalid pattern update payload")
-
-
-@app.patch("/api/devices/{device_id}/patterns/{pattern_id}")
-async def patch_pattern(device_id: str, pattern_id: str, request: Request):  # noqa: C901, PLR0912
-    """Partial update for a pattern."""
-    if not db_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-
-    try:
-        body = await request.json()
-        async with db_manager.device_session(device_id) as session:
-            result = await session.execute(
-                select(RequestPattern).where(RequestPattern.pattern_id == pattern_id)
-            )
-            pattern = result.scalar_one_or_none()
-            if not pattern:
-                return JSONResponse(status_code=404, content={"error": "Pattern not found"})
-
-            # Update only provided fields
-            for f in (
-                "method",
-                "path_pattern",
-                "protocol",
-                "required_headers",
-                "body_schema",
-                "query_param_keys",
-                "intent",
-                "confidence",
-            ):
-                if f in body:
-                    setattr(pattern, f, body[f])
-            session.add(pattern)
-
-            tpl_data = body.get("response_template")
-            if tpl_data is not None:
-                tpl_result = await session.execute(
-                    select(ResponseTemplate).where(ResponseTemplate.pattern_id == pattern_id)
-                )
-                tpl = tpl_result.scalar_one_or_none()
-                if not tpl:
-                    tpl = ResponseTemplate(
-                        template_id=(str(uuid.uuid4())[:16]),
-                        pattern_id=pattern_id,
-                        status_code=tpl_data.get("status_code", 200),
-                        headers_template=tpl_data.get("headers_template", {}),
-                        body_template=tpl_data.get("body_template", {}),
-                        field_mappings=tpl_data.get("field_mappings", {}),
-                        expected_variables=tpl_data.get("expected_variables", []),
-                    )
-                else:
-                    if "status_code" in tpl_data:
-                        tpl.status_code = tpl_data["status_code"]
-                    if "headers_template" in tpl_data:
-                        tpl.headers_template = tpl_data["headers_template"]
-                    if "body_template" in tpl_data:
-                        tpl.body_template = tpl_data["body_template"]
-                    if "field_mappings" in tpl_data:
-                        tpl.field_mappings = tpl_data["field_mappings"]
-                    if "expected_variables" in tpl_data:
-                        tpl.expected_variables = tpl_data["expected_variables"]
-                session.add(tpl)
-
-            fm_list = body.get("field_mappings")
-            if fm_list is not None:
-                # Replace per-intent mappings
-                await session.execute(
-                    delete(FieldMapping).where(FieldMapping.intent == pattern.intent)
-                )
-                for m in fm_list:
-                    mapping_id = m.get("mapping_id") or str(uuid.uuid4())[:16]
-                    fm = FieldMapping(
-                        mapping_id=mapping_id,
-                        request_field=m.get("request_field", ""),
-                        request_type=m.get("request_type", ""),
-                        response_field=m.get("response_field", ""),
-                        response_type=m.get("response_type", ""),
-                        transform=m.get("transform"),
-                        formula=decipher_ingest.stored_formula(m.get("formula")),
-                        enum_values=m.get("enum_values"),
-                        intent=pattern.intent,
-                        confidence=m.get("confidence", 0.5),
-                    )
-                    session.add(fm)
-
-            await session.commit()
-        await _resync_device_patterns(device_id)
-        return {"status": "ok", "pattern_id": pattern_id}  # noqa: TRY300
-    except Exception as e:
-        return _client_error(e, "Invalid pattern update payload")
-
-
-@app.delete("/api/devices/{device_id}/patterns/{pattern_id}")
-async def delete_pattern(device_id: str, pattern_id: str):
-    """Delete a pattern and its associated response template and field mappings."""
-    if not db_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-
-    try:
-        async with db_manager.device_session(device_id) as session:
-            result = await session.execute(
-                select(RequestPattern).where(RequestPattern.pattern_id == pattern_id)
-            )
-            pattern = result.scalar_one_or_none()
-            if not pattern:
-                return JSONResponse(status_code=404, content={"error": "Pattern not found"})
-
-            # Delete response template
-            await session.execute(
-                delete(ResponseTemplate).where(ResponseTemplate.pattern_id == pattern_id)
-            )
-            # Delete request pattern
-            await session.execute(
-                delete(RequestPattern).where(RequestPattern.pattern_id == pattern_id)
-            )
-            # Field mappings are stored per intent: drop them only when no other
-            # pattern still uses that intent (they used to go for all of them).
-            intent_still_used = (
-                await session.execute(
-                    select(RequestPattern.id)
-                    .where(RequestPattern.intent == pattern.intent)
-                    .limit(1)
-                )
-            ).first()
-            if intent_still_used is None:
-                await session.execute(
-                    delete(FieldMapping).where(FieldMapping.intent == pattern.intent)
-                )
-            await session.commit()
-        await _resync_device_patterns(device_id)
-        return {"status": "deleted", "pattern_id": pattern_id}  # noqa: TRY300
-    except Exception as e:
-        return _client_error(e, "Could not delete the pattern")
-
-
-@app.get("/api/llm/profiles")
-async def list_llm_profiles():
-    """List available LLM profiles (system-level)."""
-    if not llm_decipher_service:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    profiles = llm_decipher_service.list_profiles()
-    return {"profiles": profiles}
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# LLM SETTINGS (dashboard-managed: which LLM to use + its configuration)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-@app.get("/api/llm/settings")
-async def get_llm_settings():
-    """Return the effective LLM settings (enabled, default profile, profiles)."""
-    if not llm_decipher_service:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    return llm_decipher_service.get_settings()
-
-
-@app.put("/api/llm/settings")
-async def update_llm_settings(request: Request):
-    """Update the LLM settings (enabled, default profile, profiles) and persist."""
-    if not llm_decipher_service:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    try:
-        body = await request.json()
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
-    if not isinstance(body, dict):
-        return JSONResponse(
-            status_code=400, content={"error": "Invalid JSON body: expected an object"}
-        )
-    try:
-        settings = llm_decipher_service.update_settings(body)
-    except ValueError as e:
-        logger.warning("Invalid LLM settings update: %s", e)
-        return JSONResponse(status_code=400, content={"error": "Invalid LLM settings"})
-    except Exception:  # noqa: BLE001
-        logger.exception("Failed to update LLM settings")
-        return JSONResponse(status_code=500, content={"error": "Failed to update LLM settings"})
-    return settings
-
-
-@app.post("/api/llm/profiles/test")
-async def test_llm_profile(request: Request):
-    """Send a "hello" completion to a provider and report whether it answers.
-
-    The dashboard's per-profile Test button calls this with the current form
-    values (which need not be saved yet). Returns 200 with ``{"success": true}``
-    when the provider responds, or 502 with the provider error otherwise.
-    """
-    if not llm_decipher_service:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    try:
-        body = await request.json()
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
-    if not isinstance(body, dict):
-        return JSONResponse(
-            status_code=400, content={"error": "Invalid JSON body: expected an object"}
-        )
-    base_url = str(body.get("base_url", "")).strip()
-    model_id = str(body.get("model_id", "")).strip()
-    if not base_url or not model_id:
-        return JSONResponse(
-            status_code=400,
-            content={"error": "Both 'base_url' and 'model_id' are required for the test"},
-        )
-    api_key = str(body.get("api_key", ""))
-    if api_key == SECRET_MASK:
-        # The form shows stored keys masked; testing an unchanged field means
-        # "use the key this profile already has".
-        api_key = llm_decipher_service.stored_api_key(str(body.get("name") or ""))
-    timeout = int(body.get("timeout", 30) or 30)
-    max_retries = int(body.get("max_retries", 2) or 2)
-    result = await llm_decipher_service.test_connection(
-        base_url=base_url,
-        model_id=model_id,
-        api_key=api_key,
-        timeout=timeout,
-        max_retries=max_retries,
-    )
-    if not result.get("success"):
-        return JSONResponse(status_code=502, content=result)
-    return result
-
-
-@app.post("/api/system/update")
-async def system_update():
-    """Update the software to the latest state and restart the service.
-
-    Detects the install type and runs the bundled ``deploy/update.sh``
-    **detached** so the HTTP response is delivered before the service
-    restarts. The update log is written to ``<install-dir>/update.log``.
-    """
-    if not db_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    # Install root is the process CWD: the systemd unit's WorkingDirectory (and
-    # gui_main's chdir onto the data dir) make CWD the install root in BOTH the
-    # source tree and the frozen bundle — never derive it from ``__file__``,
-    # which points into ``_internal/`` in a PyInstaller build.
-    install_dir = Path.cwd()
-    # Locate the updater script. In a PyInstaller bundle the deploy/ scripts are
-    # bundled under _internal/deploy/; in a source checkout they sit at the repo
-    # root. Fall back to deploy/rideapi (the standalone installer) when the
-    # update.sh wrapper is absent.
-    updater_base = (
-        bundle_root() if is_frozen() else Path(__file__).resolve().parent.parent
-    ) or Path(__file__).resolve().parent.parent
-    script = updater_base / "deploy" / "update.sh"
-    if not script.exists():
-        script = updater_base / "deploy" / "rideapi"
-    if not script.exists():
-        return JSONResponse(
-            status_code=500, content={"error": "Updater script not found in this install"}
-        )
-    # Detached: start_new_session + explicit stdio to /dev/null so the child
-    # survives the parent's restart and the daemon never blocks on a pipe.
-    #
-    # CRITICAL: when frozen, PyInstaller sets LD_LIBRARY_PATH to _internal/ so
-    # the bundled libssl/libcrypto shadow the system ones. Spawned curl then
-    # fails at startup ("libssl.so.3: version `OPENSSL_3.x' not found") and the
-    # update download dies instantly. updater_env() strips the loader-path vars
-    # so the child uses the system dynamic libraries (curl/git work normally).
-    try:
-        subprocess.Popen(
-            ["bash", str(script), "--dir", str(install_dir), "--restart", "systemd"],
-            start_new_session=True,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            cwd=str(install_dir),
-            env=updater_env(),
-        )
-    except Exception:  # noqa: BLE001
-        logger.exception("Failed to launch updater")
-        return JSONResponse(
-            status_code=500,
-            content={"error": "Failed to start update. Check server logs for details."},
-        )
-    return {
-        "status": "started",
-        "message": "Update started in the background. The service will restart — "
-        "wait a moment and reload.",
-        "log": str(install_dir / "update.log"),
-    }
-
-
-@app.post("/api/llm/settings/profiles")
-async def create_llm_profile(request: Request):  # noqa: PLR0911
-    """Create or update a single LLM profile and persist the settings."""
-    if not llm_decipher_service:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    try:
-        body = await request.json()
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
-    if not isinstance(body, dict):
-        return JSONResponse(
-            status_code=400, content={"error": "Invalid JSON body: expected an object"}
-        )
-    name = body.get("name")
-    if not name:
-        return JSONResponse(status_code=400, content={"error": "name is required"})
-
-    settings = llm_decipher_service.get_settings()
-    profiles = settings["profiles"]
-    profiles[name] = {
-        "base_url": body.get("base_url", "https://api.openai.com/v1"),
-        "api_key": body.get("api_key", ""),
-        "model_id": body.get("model_id", "gpt-4o-mini"),
-        "prompt_template": body.get("prompt_template", ""),
-        "enabled": body.get("enabled", True),
-        "timeout": body.get("timeout", 30),
-        "max_retries": body.get("max_retries", 2),
-    }
-    try:
-        updated = llm_decipher_service.update_settings(settings)
-    except ValueError as e:
-        logger.warning("Invalid LLM profile: %s", e)
-        return JSONResponse(status_code=400, content={"error": "Invalid LLM profile"})
-    except Exception:  # noqa: BLE001
-        logger.exception("Failed to create LLM profile")
-        return JSONResponse(status_code=500, content={"error": "Failed to create LLM profile"})
-    return {"name": name, "status": "saved", "settings": updated}
-
-
-@app.delete("/api/llm/settings/profiles/{name}")
-async def delete_llm_profile(name: str):
-    """Delete an LLM profile and persist the settings."""
-    if not llm_decipher_service:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    settings = llm_decipher_service.get_settings()
-    profiles = settings["profiles"]
-    if name not in profiles:
-        return JSONResponse(status_code=404, content={"error": "Profile not found"})
-    del profiles[name]
-    # If the deleted profile was the default, fall back to the first remaining
-    # profile, or clear it when no profiles are left.
-    if settings["default_profile"] == name:
-        settings["default_profile"] = next(iter(profiles), "")
-    try:
-        updated = llm_decipher_service.update_settings(settings)
-    except ValueError as e:
-        logger.warning("Invalid LLM settings on delete: %s", e)
-        return JSONResponse(status_code=400, content={"error": "Invalid LLM settings"})
-    except Exception:  # noqa: BLE001
-        logger.exception("Failed to delete LLM profile")
-        return JSONResponse(status_code=500, content={"error": "Failed to delete LLM profile"})
-    return {"name": name, "status": "deleted", "settings": updated}
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# LLM CONTEXT & BUFFER ENDPOINTS
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-@app.get("/api/devices/{device_id}/buffer")
-async def list_buffer_entries(device_id: str):
-    """List unflushed buffer entries for a device."""
-    if not db_manager or not orchestrator:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    try:
-        buf = orchestrator.buffer.get(device_id)
-        if not buf:
-            buf = await orchestrator.ensure_buffer(device_id)
-        pairs = await buf.get_buffer_pairs(device_id)
-        total_size = sum(p["size"] for p in pairs)
-        return {
-            "device_id": device_id,
-            "entries": pairs,
-            "total_entries": len(pairs),
-            "total_size_bytes": total_size,
-        }
-    except Exception:
-        logger.exception("Handler error (500)")
-        return JSONResponse(status_code=500, content={"error": "An internal error occurred"})
-
-
-@app.delete("/api/devices/{device_id}/buffer/{entry_id}")
-async def delete_buffer_entry(device_id: str, entry_id: int):
-    """Delete a single buffer entry."""
-    if not db_manager or not orchestrator:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    try:
-        buf = orchestrator.buffer.get(device_id)
-        if not buf:
-            return JSONResponse(status_code=404, content={"error": "Buffer not found"})
-        success = await buf.delete_entry(device_id, entry_id)
-        if not success:
-            return JSONResponse(status_code=404, content={"error": "Entry not found"})
-        return {"device_id": device_id, "entry_id": entry_id, "status": "deleted"}  # noqa: TRY300
-    except Exception:
-        logger.exception("Handler error (500)")
-        return JSONResponse(status_code=500, content={"error": "An internal error occurred"})
-
-
-@app.get("/api/settings/buffer-backend")
-async def get_buffer_backend_setting():
-    """Return the currently active buffer backend (``disk`` = SQLite, or ``memory``)."""
-    return {"backend": get_buffer_backend()}
-
-
-@app.put("/api/settings/buffer-backend")
-async def set_buffer_backend_setting(request: Request):
-    """Switch the buffer backend, carrying the pairs in flight, and persist the choice.
-
-    ``disk`` (alias: ``sqlite``) is the SQLite backend: buffered pairs live in the device
-    database and survive a restart. ``memory`` (alias: ``ram``) keeps them in a
-    process-shared in-memory engine.
-
-    The switch is lossless in both directions: whatever has not been flushed yet is copied
-    into the new store before the old one is marked flushed, and the live buffers are
-    repointed at it, so no capture is lost and none is buffered twice.
-    """
-    if not db_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    try:
-        body = await request.json()
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
-    if not isinstance(body, dict):
-        return JSONResponse(
-            status_code=400, content={"error": "Invalid JSON body: expected an object"}
-        )
-    backend = normalise_backend(body.get("backend"))
-    if backend is None:
-        return JSONResponse(
-            status_code=400,
-            content={
-                "error": "backend must be 'disk' (alias: sqlite) or 'memory' (alias: ram)",
-                "got": body.get("backend"),
-            },
-        )
-    summary = await switch_backend(
-        db_manager,
-        backend,
-        rebind=orchestrator.rebind_buffer_store if orchestrator else None,
-    )
-    logger.info("Buffer backend switched to %s via settings API", backend)
-    return summary
-
-
-@app.get("/api/config")
-async def get_config():
-    """Return the full current configuration (validated YAML model_dump).
-
-    Secrets (control-plane password, API keys, bridge passwords) are masked;
-    sending the mask back unchanged on PUT keeps the stored value.
-    """
-    return {"config": mask_secrets(config_manager.config.model_dump(mode="json"))}
-
-
-@app.put("/api/config")
-async def put_config(request: Request):
-    """Validate and persist a full replacement of the configuration."""
-    try:
-        body = await request.json()
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
-    if not isinstance(body, dict) or "config" not in body:
-        return JSONResponse(
-            status_code=400,
-            content={"error": "Invalid JSON body: expected an object with a 'config' key"},
-        )
-    # A dashboard save round-trips the masked GET payload: wherever a secret
-    # still reads as the mask, keep the stored value instead of writing the mask.
-    payload = restore_masked_secrets(body["config"], config_manager.config.model_dump(mode="json"))
-    # LLM profiles are owned by the LLM settings API (``/api/llm/settings``),
-    # which validates them and persists to the runtime override file. A config
-    # save always sends the whole tree, so stamp the *effective* (runtime) LLM
-    # section back in — present or not: a generic save can neither change nor
-    # drop the profiles, and ``config.yaml`` stays aligned with the runtime.
-    # The keys are stamped in their configured form: a ${ENV} reference stays a
-    # reference instead of being replaced by the resolved secret on disk.
-    if isinstance(payload, dict) and llm_decipher_service:
-        payload = {**payload, "llm_decipher": llm_decipher_service.get_settings_for_persistence()}
-    try:
-        ok = config_manager.update_config(payload)
-    except (ValidationError, PydanticValidationError) as ve:
-        return JSONResponse(
-            status_code=400,
-            content={"error": "Config validation failed", "details": _validation_details(ve)},
-        )
-    except Exception:  # noqa: BLE001 - persist failure should not 500 silently
-        logger.exception("Failed to update config")
-        return JSONResponse(status_code=500, content={"error": "Failed to update config"})
-    if not ok:
-        return JSONResponse(status_code=500, content={"error": "Failed to persist config"})
-    logger.info("Configuration updated via /api/config API")
-    return {
-        "config": mask_secrets(config_manager.config.model_dump(mode="json")),
-        "status": "saved",
-    }
-
-
-def _validation_details(error: Exception) -> list:
-    """Field locations and messages of a validation error, without input values.
-
-    Pydantic's string form echoes submitted values (which may be secrets), so
-    only ``loc``/``msg`` pairs are returned to the client.
-    """
-    if isinstance(error, PydanticValidationError):
-        return [
-            {"loc": [str(part) for part in err.get("loc", ())], "msg": err.get("msg", "")}
-            for err in error.errors()
-        ]
-    return [{"loc": [], "msg": str(error)}]
-
-
-_MIN_PASSWORD_LENGTH = 8
-
-
-def _new_password_problem(password: object) -> str | None:
-    """Why ``password`` cannot become the control-plane password, if it cannot."""
-    if not password or not isinstance(password, str):
-        return "password must be non-empty"
-    if len(password) < _MIN_PASSWORD_LENGTH:
-        return f"password must be at least {_MIN_PASSWORD_LENGTH} characters long"
-    # Header-safe: a password a browser cannot send locks the dashboard out.
-    return password_problem(password)
-
-
-@app.post("/api/auth/password")
-async def set_control_plane_password(request: Request):
-    """Set the control-plane ``security.password`` on first run.
-
-    Reachable without credentials only while the current password is empty
-    (the middleware lets ``SETUP_PATH`` through in that state). Once a
-    password is configured, this endpoint is protected like any other
-    ``/api/*`` route.
-    """
-    # First run only. With auth disabled the guard used to let anyone replace
-    # an existing password; change it through the authenticated config API.
-    if config_manager.config.security.password:
-        return JSONResponse(status_code=403, content={"error": "A password is already set"})
-    try:
-        body = await request.json()
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
-    password = (body.get("password") or "") if isinstance(body, dict) else ""
-    if problem := _new_password_problem(password):
-        return JSONResponse(status_code=400, content={"error": problem})
-    ok = config_manager.set_security_password(password)
-    if not ok:
-        return JSONResponse(status_code=500, content={"error": "Failed to persist password"})
-    logger.info("Control-plane password set via /api/auth/password (first run)")
-    return {"status": "ok", "config_updated": True}
-
-
-@app.get("/api/devices/{device_id}/context")
-async def get_device_context(device_id: str):
-    """Get custom context notes for a device."""
-    if not db_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    notes = await db_manager.get_device_context_notes(device_id)
-    return {"device_id": device_id, "context_notes": notes or ""}
-
-
-@app.put("/api/devices/{device_id}/context")
-async def update_device_context(device_id: str, request: Request):
-    """Update custom context notes for a device."""
-    if not db_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    body = await request.json()
-    if not isinstance(body, dict):
-        return JSONResponse(
-            status_code=400, content={"error": "Invalid JSON body: expected an object"}
-        )
-    notes = body.get("context_notes", "")
-    success = await db_manager.update_device_context_notes(device_id, notes)
-    if not success:
-        return JSONResponse(status_code=404, content={"error": "Device not found"})
-    return {"device_id": device_id, "context_notes": notes, "status": "updated"}
-
-
-@app.post("/api/devices/{device_id}/llm/flush")
-async def flush_buffer_to_llm(device_id: str, request: Request):
-    """Flush selected buffer entries to LLM with optional context notes."""
-    if not db_manager or not orchestrator:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    body = await request.json()
-    if not isinstance(body, dict):
-        return JSONResponse(
-            status_code=400, content={"error": "Invalid JSON body: expected an object"}
-        )
-    pair_ids = body.get("pair_ids")  # optional: list of int entry IDs
-    context_notes = body.get("context_notes")
-    result = await orchestrator.flush_and_learn(
-        device_id,
-        pair_ids=pair_ids,
-        context_notes=context_notes,
-    )
-    if not result.get("success"):
-        status = 500 if "failed" in result.get("error", "") else 400
-        return JSONResponse(status_code=status, content=result)
-    return result
-
-
-@app.post("/api/devices/{device_id}/llm/preview")
-async def preview_llm_analysis(device_id: str, request: Request):
-    """Run LLM analysis without saving patterns. Returns analysis for review."""
-    if not db_manager or not orchestrator:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    body = await request.json()
-    if not isinstance(body, dict):
-        return JSONResponse(
-            status_code=400, content={"error": "Invalid JSON body: expected an object"}
-        )
-    pair_ids = body.get("pair_ids")
-    context_notes = body.get("context_notes")
-    result = await orchestrator.preview_analysis(
-        device_id,
-        pair_ids=pair_ids,
-        context_notes=context_notes,
-    )
-    if not result.get("success"):
-        status = 500 if "failed" in result.get("error", "") else 400
-        return JSONResponse(status_code=status, content=result)
-    return result
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# USER LLM PROFILES (persisted templates)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-@app.get("/api/llm/user-profiles")
-async def list_user_profiles():
-    """List all user-saved LLM profile templates."""
-    if not db_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    profiles = await db_manager.list_llm_profiles()
-    return {"profiles": profiles}
-
-
-@app.post("/api/llm/user-profiles")
-async def create_user_profile(request: Request):
-    """Create a new user LLM profile template."""
-    if not db_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    body = await request.json()
-    if not isinstance(body, dict):
-        return JSONResponse(
-            status_code=400, content={"error": "Invalid JSON body: expected an object"}
-        )
-    if not body.get("name") or not body.get("prompt_template"):
-        return JSONResponse(
-            status_code=400,
-            content={"error": "name and prompt_template are required"},
-        )
-    success = await db_manager.create_llm_profile(body)
-    if not success:
-        return JSONResponse(
-            status_code=409,
-            content={"error": f"Profile '{body['name']}' already exists"},
-        )
-    return {"name": body["name"], "status": "created"}
-
-
-@app.get("/api/llm/user-profiles/{name}")
-async def get_user_profile(name: str):
-    """Get a single user LLM profile."""
-    if not db_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    profile = await db_manager.get_llm_profile(name)
-    if not profile:
-        return JSONResponse(status_code=404, content={"error": "Profile not found"})
-    return profile
-
-
-@app.put("/api/llm/user-profiles/{name}")
-async def update_user_profile(name: str, request: Request):
-    """Update an existing user LLM profile."""
-    if not db_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    body = await request.json()
-    if not isinstance(body, dict):
-        return JSONResponse(
-            status_code=400, content={"error": "Invalid JSON body: expected an object"}
-        )
-    success = await db_manager.update_llm_profile(name, body)
-    if not success:
-        return JSONResponse(status_code=404, content={"error": "Profile not found"})
-    return {"name": name, "status": "updated"}
-
-
-@app.delete("/api/llm/user-profiles/{name}")
-async def delete_user_profile(name: str):
-    """Delete a user LLM profile."""
-    if not db_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    success = await db_manager.delete_llm_profile(name)
-    if not success:
-        return JSONResponse(status_code=404, content={"error": "Profile not found"})
-    return {"name": name, "status": "deleted"}
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# PORTABLE PATTERN DB ENDPOINTS
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-@app.post("/api/devices/{device_id}/patterns/import")
-async def import_patterns(device_id: str, request: Request):
-    """Import patterns from portable .ride-pattern.json format."""
-    if not db_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-
-    try:
-        body = await request.json()
-        # Validate against the portable JSON Schema (v1 PatternDB or v2 DeviceModel)
-        result = validate_pattern(body)
-        if not result.valid:
-            return JSONResponse(
-                status_code=422,
-                content={"error": "Pattern validation failed", "details": result.to_dict()},
-            )
-        ingester = decipher_ingest.DecipherIngest(db_manager)
-        if "pattern-schema/v2" in body.get("$schema", ""):
-            # v2 DeviceModel: full portable clone (commands/responses/protocol/
-            # state_variables/virtual_sensors/observation_history). Route to
-            # import_device_model, NOT the v1 PatternDB path which would drop
-            # every v2-only field.
-            model = DeviceModel.model_validate(body)
-            count = await ingester.import_device_model(device_id, model)
-        else:
-            pattern_db = PatternDB.model_validate(body)
-            count = await ingester.import_patterns(device_id, pattern_db)
-        await _resync_device_patterns(device_id)
-        return {"imported": count, "device_id": device_id, "warnings": result.warnings}  # noqa: TRY300
-    except ValidationError as e:
-        return JSONResponse(
-            status_code=422,
-            content={"error": "Pattern validation failed", "details": e.to_dict()},
-        )
-    except Exception as e:
-        return _client_error(e, "Invalid pattern import payload")
-
-
-@app.get("/api/devices/{device_id}/capture/export")
-async def export_buffer(device_id: str):
-    """Export raw buffer to portable .ride-capture.json format."""
-    if not db_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-
-    manager = buffer_manager.BufferManager(db_manager)
-    try:
-        async with db_manager.core_session() as session:
-            result = await session.execute(
-                select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
-            )
-            device = result.scalar_one_or_none()
-            vendor = device.vendor if device else "unknown"
-            device_type = device.device_type if device else "unknown"
-        capture = await manager.export_capture(device_id, vendor, device_type)
-        return capture.model_dump(by_alias=True, exclude_none=True)
-    except Exception:
-        logger.exception("Handler error (500)")
-        return JSONResponse(status_code=500, content={"error": "An internal error occurred"})
-
-
-@app.post("/api/devices/{device_id}/capture/import")
-async def import_buffer(device_id: str, request: Request):
-    """Import raw pairs from portable .ride-capture.json into buffer."""
-    if not db_manager:
-        return JSONResponse(status_code=503, content={"error": "Service not ready"})
-
-    manager = buffer_manager.BufferManager(db_manager)
-    try:
-        body = await request.json()
-        # Validate against the portable JSON Schema
-        result = validate_capture(body)
-        if not result.valid:
-            return JSONResponse(
-                status_code=422,
-                content={"error": "Capture validation failed", "details": result.to_dict()},
-            )
-        capture = CaptureDB.model_validate(body)
-        # F-08: the payload's (obfuscated) device id must not steer the import
-        # into a different device's buffer; force the authorized URL device.
-        if capture.device_info.device_id not in ("obfuscated", device_id):
-            logger.warning(
-                "Capture import device_id mismatch (payload=%r, url=%r); "
-                "overriding to url device_id",
-                capture.device_info.device_id,
-                device_id,
-            )
-        count = await manager.import_capture(capture, target_device_id=device_id)
-        return {"imported": count, "device_id": device_id, "warnings": result.warnings}  # noqa: TRY300
-    except ValidationError as e:
-        return JSONResponse(
-            status_code=422,
-            content={"error": "Capture validation failed", "details": e.to_dict()},
-        )
-    except Exception as e:
-        return _client_error(e, "Invalid capture import payload")
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# WEB UI (basic dashboard)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-# Web UI page cache. webui/*.html are static at runtime, so we read them once
-# and serve from memory on subsequent GETs, avoiding repeated blocking disk
-# I/O inside async handlers. Only successful reads are cached: a missing file
-# is not memoized so a later-created file is picked up.
-_WEBUI_HTML_CACHE: dict[Path, str] = {}
-_WEBUI_HTML_CACHE.clear()
-
-
-async def _serve_webui(path: Path, page_name: str, expected: str) -> HTMLResponse:
-    """Serve a cached webui HTML page, reading from disk once if needed."""
-    html = _WEBUI_HTML_CACHE.get(path)
-    if html is None:
-        try:
-            html = await asyncio.to_thread(path.read_text, encoding="utf-8")
-        except FileNotFoundError:
-            logger.warning("%s HTML not found at %s", page_name, path)
-            html = (
-                f"<!DOCTYPE html><html><body><h1>{page_name} not found</h1>"
-                f"<p>Expected at {expected}</p></body></html>"
-            )
-        else:
-            _WEBUI_HTML_CACHE[path] = html
-    return HTMLResponse(content=html, status_code=200)
-
-
-@app.get("/", response_class=HTMLResponse)
-async def dashboard():
-    """Simple web dashboard."""
-    return await _serve_webui(DASHBOARD_HTML, "Dashboard", "webui/dashboard.html")
-
-
-@app.get("/patterns", response_class=HTMLResponse)
-async def patterns_index_page():
-    """Serve the Patterns web UI with no device selected.
-
-    The dashboard navigates here. Without this route the path is picked up by the device-proxy
-    catch-all below, which reads it as a vendor name and answers "Protocol 'patterns' not
-    supported" - a page request mistaken for intercepted traffic.
-    """
-    return await _serve_webui(PATTERNS_HTML, "Patterns page", "webui/patterns.html")
-
-
-@app.get("/patterns/{device_id}", response_class=HTMLResponse)
-async def patterns_page(device_id: str):  # noqa: ARG001
-    """Serve the Patterns web UI for a device."""
-    return await _serve_webui(PATTERNS_HTML, "Patterns page", "webui/patterns.html")
-
-
-@app.get("/config", response_class=HTMLResponse)
-async def config_page():
-    """Serve the Configuration web UI."""
-    return await _serve_webui(CONFIG_HTML, "Config page", "webui/config.html")
-
-
-@app.get("/options", response_class=HTMLResponse)
-async def options_page():
-    """Serve the Options web UI (theme + software update)."""
-    return await _serve_webui(OPTIONS_HTML, "Options page", "webui/options.html")
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Resilience routes (must be registered before catch-all to take priority)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-register_resilience_routes(app, lambda: db_manager, lambda: orchestrator)
-
-# ═══════════════════════════════════════════════════════════════════════════════
 # Static files for Web UI (registered BEFORE the catch-all proxy route so that
+
 # /static/* is never captured as a {vendor}).
+
 try:
     _static_dir = WEBUI_DIR / "static"
+
     if _static_dir.exists():
         app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
+
     else:
         logger.warning("Static dir not found: %s", _static_dir)
+
 except Exception as e:
     logger.warning("Could not mount static files: %s", e)
 
+
 # ── Main proxy endpoint helpers ───────────────────────────────────────────────
 
+
 # Hop-by-hop/framing headers never replayed to the device: they describe the
+
 # upstream connection, not the message (the response object sets its own).
+
 _RESPONSE_HOP_BY_HOP = ("content-length", "transfer-encoding", "connection")
 
+
 # Statuses that must not carry a body.
+
 _BODYLESS_STATUSES = frozenset({204, 304})
 
 
 def _local_http_response(response: dict) -> Response:
     """Serve a locally built ``{status_code, headers, body}`` response.
 
+
+
     Learned template headers used to be passed through as-is: the vendor's
+
     stale Content-Length won over the re-rendered body.
+
     """
+
     status = servable_status(response.get("status_code"))
+
     headers = without_framing_headers(response.get("headers"))
+
     if status in _BODYLESS_STATUSES:
         return Response(status_code=status, headers=headers)
+
     return JSONResponse(status_code=status, content=response.get("body", {}), headers=headers)
 
 
 def _client_error(exc: BaseException, message: str, status_code: int = 400) -> JSONResponse:
     """Return a control-plane error response that never leaks internals.
 
+
+
     Raw exception text can carry filesystem paths, library internals or
+
     configuration details (CodeQL ``py/stack-trace-exposure``). The client gets
+
     a stable, actionable message; the detail is logged server-side, where it is
+
     actually useful for debugging.
+
     """
+
     logger.info("Rejected request (%s): %s", message, exc)
+
     return JSONResponse(status_code=status_code, content={"error": message})
 
 
 def _upstream_response(cloud_response, decoded: dict | None = None) -> Response:
     """Replay an upstream response verbatim: status, headers and body bytes.
 
+
+
     A proxy must preserve the conversation. Inventing a 200 with a JSON body
+
     turns a vendor 401/429/500 into a false success for the device and drops
+
     cookies, ``retry-after`` and content negotiation. The raw upstream bytes are
+
     reused as-is, so non-JSON payloads survive byte-for-byte.
+
     """
+
     body = getattr(cloud_response, "body_bytes", None)
+
     if body is None:
         fallback = decoded if decoded is not None else (cloud_response.response or {})
+
         body = json.dumps(fallback).encode("utf-8")
+
     headers = {
         str(k): str(v)
         for k, v in (getattr(cloud_response, "response_headers", None) or {}).items()
         if str(k).lower() not in _RESPONSE_HOP_BY_HOP
     }
+
     headers.setdefault("content-type", "application/json")
+
     return Response(
         content=body,
         status_code=getattr(cloud_response, "status_code", None) or 200,
@@ -3597,16 +2011,27 @@ def _upstream_response(cloud_response, decoded: dict | None = None) -> Response:
 def _raw_target(request: Request) -> str | None:
     """``/{path}?{query}`` exactly as the client sent it, minus the vendor prefix.
 
+
+
     The route's ``path`` is decoded ("%3F" becomes "?", "%20" a space) and
+
     ``request.query_params`` folds repeated keys, so neither can rebuild what
+
     the device asked for.
+
     """
+
     raw_path = request.scope.get("raw_path")
+
     if not raw_path:
         return None
+
     parts = raw_path.decode("latin-1").split("/", 2)
+
     target = "/" + (parts[2] if len(parts) > 2 else "")  # noqa: PLR2004 - "", vendor, rest
+
     query = request.scope.get("query_string") or b""
+
     return f"{target}?{query.decode('latin-1')}" if query else target
 
 
@@ -3615,19 +2040,29 @@ async def _forward_bypassed_request(  # noqa: PLR0913
 ) -> Response:
     """Forward a bypassed device's request straight to the cloud.
 
+
+
     Used by the HTTP proxy endpoint for per-IP bypass: the traffic transits the
+
     gateway but is forwarded without pipeline analysis (no buffer/LLM/match).
+
     Mirrors the unmatched-request forward contract — 502 + X-Action: forward
+
     for nginx when ``signal_forward_to_cloud`` is on, else legacy adapter
+
     forward.
+
     """
+
     config = config_manager.config
+
     if config.learning.signal_forward_to_cloud:
         return JSONResponse(
             status_code=502,
             content={"action": "forward", "reason": "bypass"},
             headers={"X-Action": "forward", "X-Original-Host": str(request.url)},
         )
+
     cloud_response = await adapter.forward_to_cloud(
         InterceptedRequest(
             device_id="",
@@ -3643,8 +2078,10 @@ async def _forward_bypassed_request(  # noqa: PLR0913
             raw_target=_raw_target(request),
         )
     )
+
     if cloud_response and cloud_response.success:
         return _upstream_response(cloud_response)
+
     return JSONResponse(
         status_code=502,
         content={
@@ -3655,6 +2092,7 @@ async def _forward_bypassed_request(  # noqa: PLR0913
 
 
 # MAIN PROXY ENDPOINT - Catches all device traffic
+
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
@@ -3666,13 +2104,22 @@ async def _forward_bypassed_request(  # noqa: PLR0913
 async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noqa: C901, PLR0911, PLR0912, PLR0915
     """Main proxy endpoint for device API requests.
 
+
+
     Routes:
+
         - /{vendor}/* -> adapter for that protocol (e.g., /example/*)
 
+
+
     For each request, the pipeline decides:
+
       learning mode: forward to cloud, correlate, buffer, learn
+
       production mode: try local match, fall back to cloud + learn
+
     """
+
     if not db_manager or not orchestrator or not adapter_registry:
         return JSONResponse(
             status_code=503,
@@ -3680,6 +2127,7 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
         )
 
     adapter = adapter_registry.get_adapter(vendor)
+
     if not adapter:
         return JSONResponse(
             status_code=404,
@@ -3692,20 +2140,28 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
         )
 
     # Prometheus: count every proxied request.
+
     metrics_registry.requests_total.inc()
 
     # Parse request body. The raw bytes are kept too: a forward must be
+
     # byte-faithful and never re-encode a non-JSON payload as JSON.
+
     raw_body = await request.body()
+
     body = await _get_request_body(request)
 
     # Determine source
+
     client_ip = request.client.host if request.client else "unknown"
+
     is_local = _is_local_ip(client_ip)
 
     # Check traffic selection rules
+
     if traffic_selector := get_traffic_selector():
         dest_host = request.headers.get("host", f"{vendor}.local")
+
         request_info = TrafficRequestInfo(
             client_ip=client_ip,
             hostname=dest_host,
@@ -3714,29 +2170,43 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
             url=str(request.url),
             path=f"/{path}",
         )
+
         decision = traffic_selector.evaluate(request_info)
+
         if decision.value == "passthrough":
             # The client addressed *this* gateway, so a passthrough decision
+
             # must actually forward the request upstream. Replying 200 with a
+
             # note instead fabricated a success the device never received.
+
             # (Honoured for every client: an intercepted request is forwarded
+
             # the same way, only after the pipeline has seen it.)
+
             logger.info(f"Passthrough for traffic from {client_ip} to {vendor}: forwarding")
+
             return await _forward_bypassed_request(
                 adapter, request, path, body, client_ip, raw_body=raw_body
             )
 
     # Per-IP bypass: forward this device's traffic straight to the cloud, skipping
+
     # the pipeline entirely (no buffer/LLM/local match). Uses the same forward
+
     # contract as an unmatched request: 502 + X-Action: forward for nginx when
+
     # signal_forward_to_cloud is on, else the legacy adapter forward.
+
     if await db_manager.is_ips_bypassed(client_ip):
         logger.info(f"Bypass for {client_ip} to {vendor}: forwarding to cloud directly")
+
         return await _forward_bypassed_request(
             adapter, request, path, body, client_ip, raw_body=raw_body
         )
 
     # Build intercepted request
+
     intercepted = InterceptedRequest(
         device_id="",
         timestamp=datetime.now(UTC),
@@ -3751,50 +2221,76 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
     )
 
     # Bound before the try so the error path can drop a capture registered by
+
     # handle_request: an orphan would otherwise be paired with a later response.
+
     device_id = ""
+
     result: dict | None = None
+
     try:
         # Parse request to extract device info
+
         intercepted = await adapter.parse_request(intercepted)
+
         # A source IP bound to a known device decides who is talking, as on the
+
         # TLS and protocol paths: the claimed id (a header or a path segment)
+
         # is the client's word, and any client could speak for any device.
+
         device_id = (
             await _resolve_device_for_ip(db_manager, client_ip)
             or intercepted.device_id
             or _extract_device_id(request.headers, path)
         )
+
         intercepted.device_id = device_id
 
         # Ensure device is registered
+
         await db_manager.get_or_create_device(device_id, vendor)
 
         # Apply request modification rules (on-the-fly modification engine),
+
         # mutating the intercepted request in place so the pipeline sees the
+
         # transformed request while the local-match is served.
+
         get_modification_engine().process_request(intercepted)
+
         if intercepted.path != f"/{path}":
             # The adapter or a REDIRECT rule chose another path: forward that.
+
             intercepted.raw_target = None
+
         if getattr(intercepted, "blocked", False):
             # A block rule: the request goes neither upstream nor to the
+
             # pipeline (BLOCK used to be recorded and then ignored).
+
             logger.info("Request from %s blocked: %s", device_id, intercepted.block_reason)
+
             return JSONResponse(
                 status_code=BLOCKED_STATUS,
                 content={"error": "blocked", "reason": intercepted.block_reason},
             )
+
         await _modification_delay(
             (getattr(intercepted, "metadata", None) or {}).get("artificial_delay_ms")
         )
 
         # Pass to pipeline for processing
+
         with get_tracer().start_as_current_span("proxy.handle_request") as span:
             span.set_attribute("http.vendor", vendor)
+
             span.set_attribute("http.method", intercepted.method or request.method)
+
             span.set_attribute("http.target", intercepted.path or f"/{path}")
+
             span.set_attribute("http.device_id", device_id)
+
             result = await orchestrator.handle_request(
                 device_id=device_id,
                 vendor=vendor,
@@ -3809,45 +2305,75 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
                     else dict(request.query_params)
                 ),
             )
+
             span.set_attribute("proxy.action", result.get("action", ""))
 
         if result["action"] == "local_response":
             # Serve locally from learned patterns, applying on-the-fly
+
             # response modification rules.
+
             metrics_registry.local_hits_total.inc()
+
             out_response = _apply_response_modifications(intercepted, result["response"])
+
             await _modification_delay(out_response.pop("delay_ms", None))
+
             return _local_http_response(out_response)
+
         if result["action"] == "forward":
             # Prometheus: count cloud forwards (requests not served locally).
+
             metrics_registry.cloud_misses_total.inc()
+
             # Forward to cloud (passthrough).
+
             #
+
             # When signal_forward_to_cloud is enabled, the proxy tells nginx
+
             # to route the request upstream rather than doing it internally.
+
             # This avoids the DNS loop: nginx resolves the cloud domain
+
             # via 8.8.8.8 / 1.1.1.1, bypassing the local DNS.
+
             config = config_manager.config
+
             if config.learning.signal_forward_to_cloud:
                 # nginx performs this forward and the response never comes back
+
                 # here, so the captured request can never be paired: drop it now
+
                 # (not an error — the handoff itself succeeded).
+
                 await _discard_pending_capture(device_id, result, count_as_error=False)
+
                 # Signal nginx to forward the request to the real cloud upstream
+
                 return JSONResponse(
                     status_code=502,
                     content={"action": "forward", "reason": result.get("reason", "no_match")},
                     headers={"X-Action": "forward", "X-Original-Host": str(request.url)},
                 )
+
             # Legacy path: forward via the adapter (may cause DNS loop)
+
             cloud_response = await adapter.forward_to_cloud(intercepted)
+
             if cloud_response and cloud_response.success:
                 # Process cloud response for learning. The payload lives in
+
                 # `CommandResult.response`, not `.data` — the old code read a
+
                 # nonexistent attribute, so the device always got an empty body.
+
                 resp_body = cloud_response.response or {}
+
                 # Learn from the *real* upstream status/headers, and replay them
+
                 # to the device unchanged (see _upstream_response).
+
                 await orchestrator.handle_response(
                     device_id=device_id,
                     vendor=vendor,
@@ -3857,8 +2383,11 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
                     body=resp_body,
                     correlation_key=result.get("correlation_key"),
                 )
+
                 return _upstream_response(cloud_response, resp_body)
+
             await _discard_pending_capture(device_id, result)
+
             return JSONResponse(
                 status_code=502,
                 content={
@@ -3866,10 +2395,14 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
                     "detail": str(cloud_response.error) if cloud_response else "No response",
                 },
             )
+
         if result["action"] == "no_fallback":
             # Production mode with no_cloud_fallback enabled — conclusive
+
             # local-only response.  The request was not matched and we
+
             # deliberately refuse to contact the cloud.
+
             return JSONResponse(
                 status_code=501,
                 content={
@@ -3879,6 +2412,7 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
                     "mode": "production_no_fallback",
                 },
             )
+
         return JSONResponse(
             status_code=500,
             content={"error": f"Unknown action: {result.get('action')}"},
@@ -3886,7 +2420,9 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
 
     except Exception as e:
         logger.error(f"Error processing request: {e}", exc_info=True)
+
         await _discard_pending_capture(device_id, result)
+
         return JSONResponse(
             status_code=500,
             content={"error": "An internal error occurred"},
@@ -3894,7 +2430,9 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+
 # HELPERS
+
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
@@ -3903,27 +2441,38 @@ async def _discard_pending_capture(
 ) -> None:
     """Drop the request captured for ``result`` if its response will never be paired.
 
+
+
     Best effort: a cleanup failure is logged and never changes the reply.
+
     """
+
     key = (result or {}).get("correlation_key")
+
     if not key or not device_id or not orchestrator:
         return
+
     try:
         await orchestrator.discard_request(device_id, key, count_as_error=count_as_error)
+
     except Exception:  # noqa: BLE001 - cleanup must not mask the real reply
         logger.warning("Could not discard pending capture %s", key, exc_info=True)
 
 
 # A DELAY rule may not hold a device connection longer than this.
+
 _MAX_MODIFICATION_DELAY_S = 30.0
 
 
 async def _modification_delay(delay_ms: object) -> None:
     """Honour a DELAY modification rule (it used to be recorded and ignored)."""
+
     try:
         seconds = float(delay_ms) / 1000
+
     except (TypeError, ValueError):
         return
+
     if seconds > 0:
         await asyncio.sleep(min(seconds, _MAX_MODIFICATION_DELAY_S))
 
@@ -3931,80 +2480,125 @@ async def _modification_delay(delay_ms: object) -> None:
 def _apply_response_modifications(intercepted: InterceptedRequest, response: dict) -> dict:
     """Apply on-the-fly response modification rules, normalising to a wrapper.
 
+
+
     ``get_modification_engine().process_response`` returns either the wrapper
+
     dict ``{status_code, headers, body}`` (when only ``modifications`` are
+
     attached) or, when a rule rewrites the body, the body value on its own.
+
     This normalises both back to a well-formed ``{status_code, headers, body}``
+
     wrapper the HTTP serving path can use directly.
+
     """
+
     modified, _was_modified = get_modification_engine().process_response(intercepted, response)
+
     if isinstance(modified, dict) and "status_code" in modified:
         return modified
+
     out = dict(response)
+
     if modified is not None:
         # ``modifications`` is engine tracking metadata, not part of the
+
         # device response payload — strip it before putting it in the body.
+
         if isinstance(modified, dict):
             modified = {k: v for k, v in modified.items() if k != "modifications"}
+
         out["body"] = modified
+
     return out
 
 
 async def _get_request_body(request: Request) -> dict | None:
     """Extract JSON body from request.
 
+
+
     Fast zero-allocation byte indexing check avoids calling json.loads and catching
+
     JSONDecodeError/UnicodeDecodeError for non-JSON or plain-text payloads (~21.7x faster).
+
     """
+
     try:
         body = await request.body()
+
         if not body:
             return None
+
         i = 0
+
         n = len(body)
+
         while i < n and body[i] in b" \t\r\n":
             i += 1
+
         if i >= n or body[i] not in (123, 91):  # ord('{') == 123, ord('[') == 91
             return None
+
         return json.loads(body)
+
     except (json.JSONDecodeError, UnicodeDecodeError) as e:
         # Non-JSON request bodies (XML, raw bytes, empty) are legitimate
+
         # device payloads; log at debug instead of failing the request.
+
         logger.debug("Request body is not JSON: %s", e)
+
         return None
 
 
 def _is_local_ip(ip: str) -> bool:
     """Check if IP is in a private/local range."""
+
     return is_local_ip(ip)
 
 
 # Longest device id taken from a request: a claimed id becomes a registry row
+
 # and a database file name.
+
 _MAX_CLAIMED_DEVICE_ID = 128
 
 
 def _extract_device_id(headers: dict, path: str) -> str:
     """Try to extract device ID from headers or path (never empty)."""
+
     # Check common headers in priority order
+
     for header in _DEVICE_ID_HEADERS:
         value = (headers.get(header) or "").strip()
+
         if 0 < len(value) <= _MAX_CLAIMED_DEVICE_ID:
             return value
+
     # Check path for common patterns
+
     parts = path.strip("/").split("/")
+
     for part in parts:
         if len(part) >= 8 and part.isalnum():  # noqa: PLR2004
             return part
+
     return "unknown"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+
 # DASHBOARD HTML
-# ═══════════════════════════════════════════════════════════════════════════════
 
 # ═══════════════════════════════════════════════════════════════════════════════
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+
 # MAIN ENTRY POINT
+
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
@@ -4013,17 +2607,28 @@ _UVICORN_LOG_LEVELS = frozenset({"critical", "error", "warning", "info", "debug"
 
 def main():
     """Run the server."""
+
     config = config_manager.config
+
     lg = config.observability.logging
+
     setup_logging(level=lg.level, fmt=lg.format, output=lg.output)
+
     # uvicorn needs one of its own level names; use the level setup_logging
+
     # actually applied (case-normalised, INFO for an unknown value).
+
     uvicorn_level = get_log_level().lower()
+
     if uvicorn_level not in _UVICORN_LOG_LEVELS:
         uvicorn_level = "info"
+
     # Pass the app object (not the "core.server:app" string): the string
+
     # import path breaks in PyInstaller bundles where the module is packed and
+
     # no longer importable by name. Works in both venv and frozen builds.
+
     uvicorn.run(
         app,
         host=config.proxy.host,
