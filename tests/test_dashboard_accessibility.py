@@ -138,3 +138,30 @@ def test_llm_settings_modal_accessibility_and_mobile_ergonomics():
     assert "font-size: 16px !important;" in html
     assert "position: sticky;" in html
     assert "btn-save-llm" in html
+
+
+def test_llm_settings_deeplink_has_no_temporal_dead_zone():
+    """/#llm-settings calls openLLMSettings() while the document is still parsing.
+
+    Every variable that function assigns must be declared ABOVE that call. With the
+    `let` declared further down, the assignment throws
+    "ReferenceError: Cannot access 'lastModalActiveElement' before initialization"
+    *before* the modal is shown, so the deep link silently does nothing -- while the
+    toolbar button and the nav pill keep working, because they run on click, after
+    parsing. That asymmetry is what makes this regression hard to spot by hand.
+    """
+    content = Path("webui/dashboard.html").read_text(encoding="utf-8")
+
+    declaration = content.find("let lastModalActiveElement = null;")
+    deeplink_snippet = "if (window.location.hash === '#llm-settings') { openLLMSettings(); }"
+    deeplink_call = content.find(deeplink_snippet)
+    first_assignment = content.find("lastModalActiveElement = document.activeElement;")
+
+    assert declaration != -1, "lastModalActiveElement must be declared"
+    assert deeplink_call != -1, "the /#llm-settings deep link must exist"
+    assert first_assignment != -1, "openLLMSettings() must record the element to restore"
+    assert declaration < deeplink_call, (
+        "lastModalActiveElement must be declared before the deep-link call, otherwise "
+        "openLLMSettings() hits its temporal dead zone and the modal never opens"
+    )
+    assert deeplink_call < first_assignment

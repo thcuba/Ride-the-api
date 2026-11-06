@@ -1398,6 +1398,14 @@
 </div>
 
 <script>
+// Focus target restored when the LLM settings modal closes. Declared at the top of
+// the script on purpose: the deep link `/#llm-settings` below calls
+// openLLMSettings() while the document is still parsing, and a `let` declared
+// further down would be in its temporal dead zone -> ReferenceError, the modal
+// never opening (the toolbar button and the nav pill never hit this because they
+// run on click, after parsing).
+let lastModalActiveElement = null;
+
 // ── Control-plane auth ─────────────────────────────────────────────────────
 // Attach the API key (X-API-Key) to every same-origin /api/* request. The key
 // lives in localStorage so it survives reloads, and a 401 triggers a prompt.
@@ -3243,8 +3251,6 @@ async function deleteProfile(deviceId) {
 }
 
 // ── LLM Settings (global: which LLM to use + its configuration) ──────────────
-
-let lastModalActiveElement = null;
 
 function openLLMSettings() {
   lastModalActiveElement = document.activeElement;
