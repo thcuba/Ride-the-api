@@ -167,16 +167,69 @@
     color: color-mix(in srgb, var(--text) 85%, white);
   }
   .section-item .count {
-    font-size: 11px; font-weight: 600; background: var(--surface2); color: var(--text2);
-    padding: 2px 7px; border-radius: 10px; flex-shrink: 0; border: 1px solid var(--border);
-    transition: all .15s; font-variant-numeric: tabular-nums;
+    min-width: 11px;
+    height: 11px;
+    padding: 0 4px;
+    border-radius: 10px;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 11px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: color-mix(in srgb, var(--surface2) 80%, var(--border));
+    color: var(--text2);
+    border: 1px solid var(--border);
+    flex-shrink: 0;
+    transition: all .2s cubic-bezier(0.4, 0, 0.2, 1);
+    font-variant-numeric: tabular-nums;
+  }
+  .section-item:hover .count {
+    background: color-mix(in srgb, var(--accent) 30%, var(--surface2));
+    border-color: var(--accent);
+    box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 70%, transparent), 0 0 3px var(--accent);
+    color: #fff;
+    transform: scale(1.15);
+  }
+  .section-item.active .count {
+    background: #ffffff;
+    border-color: #ffffff;
+    box-shadow: 0 0 12px rgba(255, 255, 255, 0.9), 0 0 18px var(--accent);
+    color: var(--accent);
+    transform: scale(1.18);
+  }
+  [data-theme="light"] .section-item.active .count {
+    background: #ffffff;
+    border-color: #ffffff;
+    box-shadow: 0 0 10px rgba(74, 99, 224, 0.6), 0 2px 6px rgba(0, 0, 0, 0.15);
+    color: var(--accent);
   }
   .section-item.dirty-section .count {
-    background: rgba(251,191,36,.18); color: var(--yellow); border-color: rgba(251,191,36,.4);
+    min-width: 16px;
+    height: 16px;
+    padding: 1px 6px;
+    background: rgba(251, 191, 36, 0.2);
+    color: var(--yellow);
+    border-color: rgba(251, 191, 36, 0.5);
+    box-shadow: 0 0 8px rgba(251, 191, 36, 0.4);
     font-weight: 700;
   }
   .section-item.dirty-section:not(.active) {
     border-left: 3px solid var(--yellow);
+  }
+  .section-item.dirty-section:hover .count {
+    background: rgba(251, 191, 36, 0.35);
+    border-color: var(--yellow);
+    box-shadow: 0 0 12px rgba(251, 191, 36, 0.7);
+    color: var(--yellow);
+    transform: scale(1.1);
+  }
+  .section-item.active.dirty-section .count {
+    background: var(--yellow);
+    color: #0b0e14;
+    border-color: #ffffff;
+    box-shadow: 0 0 14px rgba(251, 191, 36, 0.95), 0 0 4px #ffffff;
+    transform: scale(1.1);
   }
 
   /* Content */
@@ -1403,14 +1456,13 @@ function updateSaveBtn() {
     btn.classList.toggle('dirty-section', isDirty);
     const countEl = btn.querySelector('.count');
     if (countEl) {
+      countEl.style.display = '';
       if (sec === '__raw__') {
         countEl.textContent = isDirty ? '●' : '';
         countEl.title = isDirty ? 'Has unsaved changes' : '';
-        countEl.style.display = isDirty ? '' : 'none';
       } else {
         countEl.textContent = isDirty ? `● ${secDirtyCount}` : '';
         countEl.title = isDirty ? `${secDirtyCount} unsaved change${secDirtyCount > 1 ? 's' : ''}` : '';
-        countEl.style.display = isDirty ? '' : 'none';
       }
     }
   });

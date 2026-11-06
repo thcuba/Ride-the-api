@@ -1,3 +1,7 @@
+## 2026-11-06 - [Glowing Status Indicator Pills in Sidebar Navigation]
+**Learning:** Text-only or static pills at the trailing end of navigation tabs can feel disconnected from the interactive feedback loop. Users expect clear micro-interactions indicating hover proximity and active view selection.
+**Action:** Enhance trailing badge indicators (`.count`) with cubic-bezier transitions, subtle scaling, and vibrant glow halos (`box-shadow: 0 0 10px ...` on hover; brilliant radiant white/accent glow on active state), while preserving amber alerts for unsaved dirty states.
+
 ## 2026-11-05 - [Touch-Friendly Configuration Form Controls & Mobile Ergonomics]
 **Learning:** Dense form editors designed primarily for desktop present severe usability flaws on smartphones: sub-16px input font sizes trigger disruptive iOS auto-zoom viewport jumps, boolean toggles stack awkwardly under descriptions instead of anchoring to the right, and tiny touch targets (<40px) or hidden save buttons require excessive vertical scrolling.
 **Action:** Enforce a minimum 16px font-size for mobile inputs, preserve side-by-side row alignment for boolean toggles (`.field.field-switch`) across all viewports with 48x26px touch-wrapped toggles, implement smooth SVG chevrons for nested card groups, and make the mobile save bar sticky above the bottom edge for effortless one-tap persistence.
