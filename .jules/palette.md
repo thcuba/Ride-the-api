@@ -1,3 +1,7 @@
+## 2026-11-06 - [LLM Settings Modal Aesthetic, Glowing Indicator Pills & Mobile Ergonomics]
+**Learning:** Dense modal settings interfaces designed primarily for desktop suffer from severe usability and visual shortcomings on mobile: tiny hit targets (<25px) on profile test/delete actions lead to mis-taps, sub-16px input font sizes trigger disruptive iOS auto-zoom viewport jumps, and unstyled raw checkboxes feel antiquated. Additionally, users expect micro-interactive feedback on buttons via trailing glowing indicator pills and radiant status badges for active and unsaved states.
+**Action:** Restructure the LLM Settings modal into sleek elevated cards with 48x26px touch toggles (`role="switch"`), illuminated trailing button indicator pills (`.btn-glow-pill`), vibrant glowing status/unsaved badges (`.lpc-status-pill`, `.lpc-unsaved-badge`), 16px minimum font size guard for mobile inputs, and a sticky mobile footer with blur backdrop.
+
 ## 2026-11-06 - [Glowing Status Indicator Pills in Sidebar Navigation]
 **Learning:** Text-only or static pills at the trailing end of navigation tabs can feel disconnected from the interactive feedback loop. Users expect clear micro-interactions indicating hover proximity and active view selection.
 **Action:** Enhance trailing badge indicators (`.count`) with cubic-bezier transitions, subtle scaling, and vibrant glow halos (`box-shadow: 0 0 10px ...` on hover; brilliant radiant white/accent glow on active state), while preserving amber alerts for unsaved dirty states.

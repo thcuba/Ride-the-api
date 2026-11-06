@@ -331,6 +331,40 @@
     padding: 4px 10px; font-size: 12px; min-height: 32px; border-radius: 6px;
     color: var(--text2); transition: all .15s;
   }
+    /* Glowing button pill micro-interaction */
+  .btn-glow-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 700;
+    margin-left: 6px;
+    background: color-mix(in srgb, var(--surface) 60%, transparent);
+    border: 1px solid var(--border);
+    color: var(--text2);
+    transition: all .2s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .btn:hover .btn-glow-pill,
+  .btn:focus-visible .btn-glow-pill {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: #fff;
+    box-shadow: 0 0 10px rgba(56, 189, 248, 0.65);
+    transform: scale(1.08);
+  }
+  .btn-primary:hover .btn-glow-pill,
+  .btn-primary:focus-visible .btn-glow-pill {
+    background: #ffffff;
+    color: var(--accent);
+    border-color: #ffffff;
+    box-shadow: 0 0 12px rgba(255, 255, 255, 0.9), 0 0 6px var(--accent);
+    transform: scale(1.1);
+  }
+
   .btn-remove:hover {
     color: var(--red); border-color: color-mix(in srgb, var(--red) 50%, transparent);
     background: color-mix(in srgb, var(--red) 12%, transparent);
@@ -872,20 +906,33 @@ function buildSidebar() {
 // changes.
 let llmSectionLoaded = false;
 async function renderLLMSection(container) {
-  const note = document.createElement('p');
-  note.className = 'sec-desc';
-  note.style.marginBottom = '10px';
-  note.textContent = 'Profiles actually in use by the decipher. Saving applies them through the LLM settings API — the same store the LLM page uses.';
-  container.appendChild(note);
+  const banner = document.createElement('div');
+  banner.className = 'field-group llm-banner-card';
+  banner.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:16px;padding:14px 18px;background:color-mix(in srgb, var(--surface2) 60%, var(--surface));border:1px solid var(--border);border-radius:10px;';
+
+  const bannerText = document.createElement('div');
+  bannerText.style.cssText = 'flex:1;min-width:240px;';
+  const bannerTitle = document.createElement('div');
+  bannerTitle.style.cssText = 'font-weight:700;font-size:14px;color:var(--text);margin-bottom:4px;display:flex;align-items:center;gap:8px;';
+  bannerTitle.innerHTML = '<svg class="sec-icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8.01" y2="16"/><line x1="16" y1="16" x2="16.01" y2="16"/></svg><span>Dedicated LLM Service Manager</span>';
+  const bannerDesc = document.createElement('div');
+  bannerDesc.className = 'sec-desc';
+  bannerDesc.style.cssText = 'margin-bottom:0;font-size:12.5px;line-height:1.45;';
+  bannerDesc.textContent = 'Profiles configured here are applied through the LLM settings API — the same service store the LLM page uses.';
+  bannerText.appendChild(bannerTitle);
+  bannerText.appendChild(bannerDesc);
+  banner.appendChild(bannerText);
 
   const openBtn = document.createElement('button');
   openBtn.type = 'button';
-  openBtn.className = 'btn btn-primary';
-  openBtn.style.marginBottom = '14px';
-  openBtn.textContent = '🤖 Open LLM Settings';
+  openBtn.className = 'btn btn-primary btn-open-llm';
+  openBtn.style.cssText = 'min-height:42px;padding:8px 16px;font-size:13.5px;font-weight:600;display:inline-flex;align-items:center;gap:8px;border-radius:8px;';
+  openBtn.innerHTML = '<span>Open LLM Settings</span><span class="btn-glow-pill" aria-hidden="true">↗</span>';
   openBtn.setAttribute('aria-label', 'Open the LLM settings page');
   openBtn.addEventListener('click', () => { window.location.href = '/#llm-settings'; });
-  container.appendChild(openBtn);
+  banner.appendChild(openBtn);
+
+  container.appendChild(banner);
 
   const box = document.createElement('div');
   container.appendChild(box);
