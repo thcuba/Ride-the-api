@@ -189,5 +189,7 @@ async def switch_backend(
     return {"backend": canonical, "from": previous, "devices": devices, "pairs": pairs}
 
 
-# Re-exported from context_buffer
-from core.buffer.context_buffer import ContextBuffer, CorrelatedPair
+# Re-exported from context_buffer. Must stay below the module body: context_buffer
+# imports `create_buffer_store` from this package, so importing it at the top would
+# make the two modules import each other.
+from core.buffer.context_buffer import ContextBuffer, CorrelatedPair  # noqa: E402
