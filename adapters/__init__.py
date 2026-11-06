@@ -6,6 +6,7 @@ Supports built-in adapters and community plugins via entry points.
 from __future__ import annotations
 
 import logging
+
 from adapters.base import ProtocolAdapterRegistry, get_adapter_registry
 
 logger = logging.getLogger(__name__)
