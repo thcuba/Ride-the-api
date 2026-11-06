@@ -43,6 +43,13 @@ dependencies = [
     "websockets>=12.0",
     "dnspython>=2.6.0",
     "python-multipart>=0.0.9",
+    # HTTP/2 is NOT optional: core/server.py imports
+    # core/protocol_servers/http2_server.py at startup, which imports h2 at module
+    # level. Moving it to an extra makes `import core.server` fail on a clean install
+    # (42 test modules failed at collection). Unlike paho/aiocoap/pymodbus, whose
+    # imports sit inside the adapter constructors, this one cannot be deferred until
+    # the plugin discovery lands.
+    "h2>=4.1.0",
     
     # Model Serving (optional — see extras "inference" below)
     # onnxruntime/numpy are NOT imported by any module; CPU inference is an
@@ -92,16 +99,14 @@ modbus = [
     "pymodbus>=3.5.0",
     "pyserial>=3.5",
 ]
-http2 = [
-    "h2>=4.1.0",
-]
 protocols = [
+    # h2 is deliberately absent: it is a base dependency (see [project.dependencies]),
+    # because the HTTP/2 server is imported by core/server.py at startup.
     "paho-mqtt>=2.0.0",
     "amqtt>=0.11.0",
     "aiocoap>=0.4.7",
     "pymodbus>=3.5.0",
     "pyserial>=3.5",
-    "h2>=4.1.0",
 ]
 dev = [
     "ruff>=0.4.0,<0.18",
