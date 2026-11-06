@@ -247,3 +247,34 @@ def get_protocol_server_manager(
     if _manager is None:
         _manager = ProtocolServerManager(config)
     return _manager
+
+
+def register_standard_plugins(
+    manager: ProtocolServerManager,
+    config: ProtocolServersConfig,
+    handler: Callable | None = None,
+) -> None:
+    """Register all built-in protocol server plugins with the manager."""
+    from core.protocol_servers.coap_server import CoAPServerPlugin  # noqa: PLC0415
+    from core.protocol_servers.http2_server import HTTP2ServerPlugin  # noqa: PLC0415
+    from core.protocol_servers.matter_bridge import MatterBridgePlugin  # noqa: PLC0415
+    from core.protocol_servers.modbus_server import ModbusServerPlugin  # noqa: PLC0415
+    from core.protocol_servers.mqtt_server import MQTTServerPlugin  # noqa: PLC0415
+    from core.protocol_servers.raw_tcp_server import RawTCPServerPlugin  # noqa: PLC0415
+    from core.protocol_servers.websocket_server import WebSocketServerPlugin  # noqa: PLC0415
+    from core.protocol_servers.zigbee_bridge import ZigbeeBridgePlugin  # noqa: PLC0415
+    from core.protocol_servers.zwave_bridge import ZWaveBridgePlugin  # noqa: PLC0415
+
+    plugins = [
+        MQTTServerPlugin(config.mqtt, handler=handler),
+        CoAPServerPlugin(config.coap, handler=handler),
+        ModbusServerPlugin(config.modbus, handler=handler),
+        WebSocketServerPlugin(config.websocket, handler=handler),
+        RawTCPServerPlugin(config.raw_tcp, handler=handler),
+        HTTP2ServerPlugin(config.http2, handler=handler),
+        ZigbeeBridgePlugin(config.zigbee, handler=handler),
+        ZWaveBridgePlugin(config.zwave, handler=handler),
+        MatterBridgePlugin(config.matter, handler=handler),
+    ]
+    for p in plugins:
+        manager.register_plugin(p)
