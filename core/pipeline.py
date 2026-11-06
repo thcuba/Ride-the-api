@@ -25,13 +25,11 @@ from uuid import uuid4
 from sqlalchemy import and_, delete, select, update
 
 from core.atomic_io import _SAFE_FILENAME_RE
-from core.buffer import create_buffer_store
 from core.capture_state import describe_capture
 from core.database import (
     DatabaseManager,
     DeviceRegistry,
     FieldMapping,
-    LLMContextBuffer,
     MatchStats,
     RequestPattern,
     ResponseTemplate,
@@ -62,6 +60,14 @@ logger = logging.getLogger(__name__)
 
 # After a failed automatic flush, wait this long before trying again.
 _FLUSH_RETRY_COOLDOWN_S = 60
+
+
+# Re-exported. These stay below the module-level constants on purpose: importing
+# core.buffer.context_buffer at the top makes core.buffer and this module import each
+# other while both are still initialising, which fails with a partially initialised
+# module error.
+from core.buffer.context_buffer import ContextBuffer, CorrelatedPair  # noqa: E402
+from core.match_tracker import MatchRateTracker, MatchResult  # noqa: E402
 
 
 class FlushCoordinator:
@@ -110,13 +116,13 @@ class FlushCoordinator:
     async def cancel_all(self) -> None:
         """Cancel the background flushes still running (shutdown).
 
-        An LLM call can take minutes; it must not outlive the database it
-        writes to. The pairs stay unflushed in the buffer for the next run.
+        Running flushes will raise CancelledError when they yield to the event loop.
         """
-        tasks = [task for task in self._tasks.values() if not task.done()]
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        for task in self._tasks.values():
+            if not task.done():
+                task.cancel()
+        if self._tasks:
+            await asyncio.gather(*self._tasks.values(), return_exceptions=True)
         self._tasks.clear()
 
 
@@ -256,14 +262,6 @@ class PipelineMode(StrEnum):
     PASSTHROUGH = "passthrough"
 
 
-class MatchResult(StrEnum):
-    """Result of a pattern match attempt."""
-
-    LOCAL_HIT = "local_hit"  # Served from local database
-    CLOUD_MISS = "cloud_miss"  # Forwarded to cloud, will learn
-    ERROR = "error"  # Processing error
-
-
 @dataclass
 class ScoringInput:
     """Inputs required for calculating request pattern similarity scores."""
@@ -273,306 +271,6 @@ class ScoringInput:
     headers: dict
     body: Any  # noqa: ANN401
     query_params: dict
-
-
-@dataclass
-class CorrelatedPair:
-    """A correlated request/response pair ready for buffer and analysis."""
-
-    pair_id: str
-    device_id: str
-    vendor: str
-    protocol: str
-    method: str
-    path: str
-    request_headers: dict
-    request_body: Any
-    request_query: dict
-    response_status: int
-    response_headers: dict
-    response_body: Any
-    latency_ms: float
-    correlation_confidence: float
-    timestamp: datetime
-    # Observation enrichment (D2): transport/security/identity/kind carried from
-    # the protocol server. Absent (None) for HTTP/TLS-passthrough pairs and for
-    # legacy paths, so the buffer JSON stays backward-compatible.
-    enrichment: dict | None = None
-
-
-class ContextBuffer:
-    """Sliding-window context buffer per device.
-
-    A thin wrapper over a :class:`BufferStore`; the store decides whether the
-    buffered pairs live on durable storage (``disk``) or in-process RAM
-    (``memory``), selected at construction time via the current runtime
-    backend.
-    """
-
-    def __init__(
-        self,
-        db_manager: DatabaseManager,
-        max_size_bytes: int = 524288,
-        store: BufferStore | None = None,
-    ) -> None:
-        self.db_manager = db_manager
-        self.max_size_bytes = max_size_bytes
-        self.store: BufferStore = store or create_buffer_store(db_manager)
-
-    def rebind_store(self, store: BufferStore) -> None:
-        """Point this buffer at another store (used when the backend switches).
-
-        Rebinding beats rebuilding the buffer: the pairs already in flight stay in the
-        buffer they were carried into, and the next pair lands in the new backend.
-        """
-        self.store = store
-
-    async def add_pair(self, device_id: str, pair: CorrelatedPair) -> int:
-        """Add a pair and return the device's current buffered byte size."""
-        pair_json = {
-            "pair_id": pair.pair_id,
-            "protocol": pair.protocol,
-            "method": pair.method,
-            "path": pair.path,
-            "request_headers": pair.request_headers,
-            "request_body": pair.request_body,
-            "request_query": pair.request_query,
-            "response_status": pair.response_status,
-            "response_headers": pair.response_headers,
-            "response_body": pair.response_body,
-            "latency_ms": pair.latency_ms,
-            "timestamp": pair.timestamp.isoformat(),
-        }
-        if pair.enrichment:
-            pair_json["enrichment"] = pair.enrichment
-        # Performance optimization: pair_json values (strings, numbers, dicts,
-        # lists, booleans, None, and timestamp via .isoformat()) are natively
-        # JSON serializable. Removing default=str avoids fallback handler lookup.
-        # Since json.dumps defaults to ensure_ascii=True, all non-ASCII characters
-        # are escaped as \uHHHH ASCII sequences, so string character count
-        # len(serialized) exactly equals its UTF-8 byte size len(serialized.encode('utf-8'))
-        # without allocating intermediate bytes objects (~1.20x speedup).
-        serialized = json.dumps(pair_json)
-        estimated_size = len(serialized)
-
-        return await self.store.add_pair(device_id, pair_json, estimated_size)
-
-    async def get_buffer_pairs(self, device_id: str) -> list[dict]:
-        """Get all unflushed buffer entries for a device."""
-        return await self.store.get_buffer_pairs(device_id)
-
-    async def flush(self, device_id: str) -> int:
-        """Mark all buffer entries for a device as flushed and clear buffer size."""
-        return await self.store.flush(device_id)
-
-    async def flush_selected(self, device_id: str, entry_ids: list[int]) -> int:
-        """Mark only the specified buffer entries as flushed."""
-        return await self.store.flush_selected(device_id, entry_ids)
-
-    async def delete_entry(self, device_id: str, entry_id: int) -> bool:
-        """Delete a single buffer entry."""
-        return await self.store.delete_entry(device_id, entry_id)
-
-    async def clear_cache(self, device_id: str):
-        """Clear session cache for a device after flush."""
-        await self.store.clear_cache(device_id)
-
-    async def get_current_size(self, device_id: str) -> int:
-        """Get current buffer size for a device."""
-        return await self.store.get_current_size(device_id)
-
-    async def prune(
-        self,
-        device_id: str,
-        max_pairs_per_device: int = 10000,
-        pair_ttl_hours: int = 168,
-    ) -> int:
-        """Delete persisted buffer rows that are too old or exceed the cap.
-
-        Applies ``pair_ttl_hours`` to a device's flushed rows and caps the
-        retained pairs per device at ``max_pairs_per_device`` so the on-disk
-        training store cannot grow without bound. Returns rows deleted.
-        """
-        cutoff = datetime.now(UTC) - timedelta(hours=pair_ttl_hours)
-        total = 0
-        async with self.db_manager.device_session(device_id) as session:
-            result = await session.execute(
-                delete(LLMContextBuffer).where(
-                    and_(
-                        LLMContextBuffer.device_id == device_id,
-                        LLMContextBuffer.flushed == True,  # noqa: E712
-                        LLMContextBuffer.flushed_at != None,  # noqa: E711
-                        LLMContextBuffer.flushed_at < cutoff,
-                    )
-                )
-            )
-            total += result.rowcount or 0
-
-            retained = await session.execute(
-                select(LLMContextBuffer.sequence)
-                .where(
-                    and_(
-                        LLMContextBuffer.device_id == device_id,
-                        LLMContextBuffer.flushed == True,  # noqa: E712
-                    )
-                )
-                .order_by(LLMContextBuffer.sequence.desc())
-                .offset(max_pairs_per_device)
-                .limit(1)
-            )
-            oldest_kept = retained.scalar_one_or_none()
-            if oldest_kept is not None:
-                # ``oldest_kept`` is the (max_pairs+1)th-newest sequence; drop it
-                # and anything older so only the newest ``max_pairs`` survive.
-                result = await session.execute(
-                    delete(LLMContextBuffer).where(
-                        and_(
-                            LLMContextBuffer.device_id == device_id,
-                            LLMContextBuffer.flushed == True,  # noqa: E712
-                            LLMContextBuffer.sequence <= oldest_kept,
-                        )
-                    )
-                )
-                total += result.rowcount or 0
-        return total
-
-
-class MatchRateTracker:
-    """Tracks real-time match hit/miss rate per device."""
-
-    def __init__(self, db_manager: DatabaseManager) -> None:
-        self.db_manager = db_manager
-        self._rolling_window = 1000
-        # F-12: per-device locks serialize MatchStats updates.
-        self._locks: dict[str, asyncio.Lock] = {}
-        # Performance optimization: cache stats in memory and flush periodically
-        self._stats_cache: dict[str, dict] = {}
-        self._flush_threshold = 50
-
-    async def _flush_cache(self, device_id: str):
-        """Flush in-memory stats cache to the database."""
-        cache = self._stats_cache.get(device_id)
-        if not cache or cache["updates_pending"] == 0:
-            return
-
-        lock = self._locks.setdefault(device_id, asyncio.Lock())
-        async with lock, self.db_manager.device_session(device_id) as session:
-            result_obj = await session.execute(
-                select(MatchStats).where(MatchStats.device_id == device_id)
-            )
-            stats = result_obj.scalar_one_or_none()
-
-            if not stats:
-                stats = MatchStats(
-                    device_id=device_id,
-                    total_requests=0,
-                    local_hits=0,
-                    cloud_misses=0,
-                    errors=0,
-                    match_rate_pct=0.0,
-                    patterns_learned=0,
-                    templates_created=0,
-                    buffer_flushes=0,
-                    current_buffer_size_bytes=0,
-                )
-                session.add(stats)
-                await session.flush()
-
-            stats.total_requests += cache["updates_pending"]
-            stats.local_hits += cache["local_hits"]
-            stats.cloud_misses += cache["cloud_misses"]
-            stats.errors += cache["errors"]
-
-            # Recalculate match rate
-            total_attempted = stats.local_hits + stats.cloud_misses
-            stats.match_rate_pct = round(
-                (stats.local_hits / total_attempted * 100) if total_attempted > 0 else 0.0,
-                2,
-            )
-
-            # Rolling window for recent results
-            recent = list(stats.recent_results or [])
-            recent.extend(cache["recent_results"])
-            if len(recent) > self._rolling_window:
-                recent = recent[-self._rolling_window :]
-            stats.recent_results = recent
-
-            # Reset cache
-            cache["updates_pending"] = 0
-            cache["local_hits"] = 0
-            cache["cloud_misses"] = 0
-            cache["errors"] = 0
-            cache["recent_results"] = []
-
-    async def record_result(self, device_id: str, match_result: MatchResult):
-        """Record a match result and update stats."""
-        cache = self._stats_cache.setdefault(
-            device_id,
-            {
-                "updates_pending": 0,
-                "local_hits": 0,
-                "cloud_misses": 0,
-                "errors": 0,
-                "recent_results": [],
-            },
-        )
-
-        cache["updates_pending"] += 1
-
-        if match_result == MatchResult.LOCAL_HIT:
-            cache["local_hits"] += 1
-        elif match_result == MatchResult.CLOUD_MISS:
-            cache["cloud_misses"] += 1
-        else:
-            cache["errors"] += 1
-
-        cache["recent_results"].append(
-            {
-                "result": match_result.value,
-                "timestamp": datetime.now(UTC).isoformat(),
-            }
-        )
-
-        if len(cache["recent_results"]) > self._rolling_window * 2:
-            cache["recent_results"] = cache["recent_results"][-self._rolling_window :]
-
-        if cache["updates_pending"] >= self._flush_threshold:
-            await self._flush_cache(device_id)
-
-    async def get_stats(self, device_id: str) -> dict:
-        """Get current match stats for a device."""
-        await self._flush_cache(device_id)
-
-        async with self.db_manager.device_session(device_id) as session:
-            result = await session.execute(
-                select(MatchStats).where(MatchStats.device_id == device_id)
-            )
-            stats = result.scalar_one_or_none()
-            if not stats:
-                return {
-                    "total_requests": 0,
-                    "local_hits": 0,
-                    "cloud_misses": 0,
-                    "match_rate_pct": 0.0,
-                    "errors": 0,
-                    "patterns_learned": 0,
-                    "buffer_flushes": 0,
-                    "current_buffer_size_bytes": 0,
-                    "recent_results": [],
-                }
-            return {
-                "total_requests": stats.total_requests,
-                "local_hits": stats.local_hits,
-                "cloud_misses": stats.cloud_misses,
-                "errors": stats.errors,
-                "match_rate_pct": stats.match_rate_pct,
-                "patterns_learned": stats.patterns_learned,
-                "templates_created": stats.templates_created,
-                "buffer_flushes": stats.buffer_flushes,
-                "current_buffer_size_bytes": stats.current_buffer_size_bytes,
-                "last_flush_at": stats.last_flush_at.isoformat() if stats.last_flush_at else None,
-                "recent_results": (stats.recent_results or [])[-100:],  # Last 100
-            }
 
 
 def _llm_task_profile(llm_decipher: Any, task: str) -> str | None:  # noqa: ANN401

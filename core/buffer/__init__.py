@@ -35,6 +35,9 @@ __all__ = [
     "persist_backend",
     "initialize_buffer_backend",
     "create_buffer_store",
+    "ContextBuffer",
+    "CorrelatedPair",
+    "FlushCoordinator",
 ]
 
 
@@ -184,3 +187,9 @@ async def switch_backend(
         devices,
     )
     return {"backend": canonical, "from": previous, "devices": devices, "pairs": pairs}
+
+
+# Re-exported from context_buffer. Must stay below the module body: context_buffer
+# imports `create_buffer_store` from this package, so importing it at the top would
+# make the two modules import each other.
+from core.buffer.context_buffer import ContextBuffer, CorrelatedPair  # noqa: E402
