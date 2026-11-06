@@ -7,7 +7,9 @@ name: Docker
 
 on:
   schedule:
-    - cron: '15 12 * * *'
+    # Weekly, not daily: rebuilding the image every day when nothing changed only burns
+    # runner minutes. This exists to pick up base-image patches, so Monday is enough.
+    - cron: '15 12 * * 1'
   push:
     branches: [ "main" ]
     # Publish semver tags as releases.
