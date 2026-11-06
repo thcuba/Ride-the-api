@@ -804,10 +804,12 @@ class TestCoreExports:
     """Verify exported symbols and module interface of the core package."""
 
     def test_core_all_exports(self):
-        """Check that __all__ defines valid public attributes and excludes Base."""
+        """Check that __all__ defines valid public attributes and excludes Base and MatchStats."""
         assert hasattr(core, "__all__")
         assert "Base" not in core.__all__
         assert not hasattr(core, "Base")
+        assert "MatchStats" not in core.__all__
+        assert not hasattr(core, "MatchStats")
 
         for name in core.__all__:
             assert hasattr(core, name), f"{name} listed in core.__all__ but not exported"
