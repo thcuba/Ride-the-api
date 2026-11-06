@@ -1,13 +1,19 @@
 """
 Adapters package - Register protocol adapters.
-Users/community add their own adapter implementations here.
+Supports built-in adapters and community plugins via entry points.
 """
+
+from __future__ import annotations
+
+import logging
 
 from adapters.base import ProtocolAdapterRegistry, get_adapter_registry
 
+logger = logging.getLogger(__name__)
+
 
 def register_all_adapters() -> ProtocolAdapterRegistry:
-    """Register all available protocol adapters."""
+    """Register all available protocol adapters (built-in and entry-point discovered)."""
     registry = get_adapter_registry()
 
     # Import and register the example reference adapter
@@ -52,10 +58,21 @@ def register_all_adapters() -> ProtocolAdapterRegistry:
 
     registry.register(MatterProtocolAdapter("matter", {}))
 
-    # Users/community: add your own adapter registrations here, e.g.:
-    # from adapters.my_protocol import MyProtocolAdapter  # noqa: ERA001
-    # my_adapter = MyProtocolAdapter("my_protocol", {})  # noqa: ERA001
-    # registry.register(my_adapter)  # noqa: ERA001
+    # Discover and register third-party / community adapter plugins
+    try:
+        from importlib.metadata import entry_points  # noqa: PLC0415
+
+        eps = entry_points(group="ride_the_api.adapters")
+        for ep in eps:
+            try:
+                if not registry.get_adapter(ep.name):
+                    adapter_cls = ep.load()
+                    registry.register(adapter_cls(ep.name, {}))
+                    logger.info("Loaded adapter plugin from entry point: %s", ep.name)
+            except Exception:
+                logger.exception("Failed to load adapter entry point %s", ep.name)
+    except Exception:
+        pass
 
     return registry
 
