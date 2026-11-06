@@ -35,6 +35,9 @@ __all__ = [
     "persist_backend",
     "initialize_buffer_backend",
     "create_buffer_store",
+    "ContextBuffer",
+    "CorrelatedPair",
+    "FlushCoordinator",
 ]
 
 
@@ -184,3 +187,7 @@ async def switch_backend(
         devices,
     )
     return {"backend": canonical, "from": previous, "devices": devices, "pairs": pairs}
+
+
+# Re-exported from context_buffer
+from core.buffer.context_buffer import ContextBuffer, CorrelatedPair
