@@ -75,3 +75,30 @@ async def test_unserved_requests_leak_nothing(h2):
 
     assert response.status_code == 502  # noqa: PLR2004
     assert b"correlation" not in response.content
+
+
+@pytest.mark.asyncio
+async def test_non_json_and_plain_text_bodies(h2):
+    client, state = h2
+    state["result"] = _served(200, {"ok": True})
+
+    # Test plain text / non-JSON request body
+    content = b"sensor_id=123&state=active"
+    response = await client.post("/stream", content=content)
+    assert response.status_code == 200  # noqa: PLR2004
+    req1 = state["requests"][-1]
+    assert req1.body == {"raw": content.hex()}
+
+    # Test binary non-JSON request body
+    binary_content = b"\x00\x01\x02\x03\xff\xfe"
+    response2 = await client.post("/binary", content=binary_content)
+    assert response2.status_code == 200  # noqa: PLR2004
+    req2 = state["requests"][-1]
+    assert req2.body == {"raw": binary_content.hex()}
+
+    # Test JSON array with leading whitespace
+    array_content = b"   [1, 2, 3]  "
+    response3 = await client.post("/array", content=array_content)
+    assert response3.status_code == 200  # noqa: PLR2004
+    req3 = state["requests"][-1]
+    assert req3.body == [1, 2, 3]
