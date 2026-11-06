@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
-from sqlalchemy import JSON, DateTime, Float, Index, Integer, String, UniqueConstraint, func
+from sqlalchemy import JSON, DateTime, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from core.models.base import Base

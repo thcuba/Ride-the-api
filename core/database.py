@@ -20,13 +20,6 @@ if TYPE_CHECKING:
 
 from cachetools import TTLCache
 from sqlalchemy import (
-    JSON,
-    DateTime,
-    Float,
-    Index,
-    Integer,
-    String,
-    UniqueConstraint,
     delete,
     event,
     func,
@@ -39,12 +32,33 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.pool import NullPool
 
 from core.atomic_io import sanitize_filename_component
 from core.config import get_config
 from core.migrations import SchemaMigrator
+
+# Models live in core/models now, but this module keeps re-exporting them: core/__init__
+# and 47 test modules import them as `from core.database import X`. Dropping the
+# re-export breaks those imports, so it is deliberate even though the names look
+# unused inside this file.
+from core.models import (  # noqa: F401
+    Base,
+    DeviceMetaRow,
+    DeviceRegistry,
+    DeviceState,
+    DNSQueryLog,
+    FieldMapping,
+    InterceptedRequest,
+    LLMContextBuffer,
+    LLMProfile,
+    MatchStats,
+    ModelRegistry,
+    RelayedConnection,
+    RequestPattern,
+    ResponseTemplate,
+    SessionCache,
+)
 from core.pattern_db.schemas import DeviceMeta, normalize_connection_mode
 
 logger = logging.getLogger(__name__)
@@ -93,29 +107,6 @@ def create_configured_engine(db_url: str, *, echo: bool = False) -> AsyncEngine:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# MODELS (modularized under core/models)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-from core.models import (
-    Base,
-    DNSQueryLog,
-    DeviceMetaRow,
-    DeviceRegistry,
-    DeviceState,
-    FieldMapping,
-    InterceptedRequest,
-    LLMContextBuffer,
-    LLMProfile,
-    MatchStats,
-    ModelRegistry,
-    RelayedConnection,
-    RequestPattern,
-    ResponseTemplate,
-    SessionCache,
-)
-
-
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•  # noqa: E501
 def _iso_utc(value: datetime | None) -> str | None:
     """Render a stored timestamp as ISO-8601 UTC.
 
