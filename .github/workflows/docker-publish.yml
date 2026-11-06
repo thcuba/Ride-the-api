@@ -80,6 +80,11 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # Supply-chain metadata: SBOM (SPDX) and build provenance are attached to the
+          # image in the registry and covered by the cosign signature below, so what we
+          # distribute can be traced back to this workflow run and its inputs.
+          sbom: true
+          provenance: mode=max
 
       # Sign the resulting Docker image digest except on PRs.
       # This will only write to the public Rekor transparency log when the Docker
