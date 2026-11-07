@@ -491,6 +491,7 @@ def test_security_headers_present(client):
     assert response.headers.get("x-frame-options") == "DENY"
     assert response.headers.get("x-xss-protection") == "1; mode=block"
     assert response.headers.get("referrer-policy") == "strict-origin-when-cross-origin"
+    assert response.headers.get("permissions-policy") == "geolocation=(), camera=(), microphone=()"
 
     # Verify on an authenticated /api route as well
     api_resp = _get(client, "/api/devices", key=_PASSWORD)
@@ -499,3 +500,4 @@ def test_security_headers_present(client):
     assert api_resp.headers.get("x-frame-options") == "DENY"
     assert api_resp.headers.get("x-xss-protection") == "1; mode=block"
     assert api_resp.headers.get("referrer-policy") == "strict-origin-when-cross-origin"
+    assert api_resp.headers.get("permissions-policy") == "geolocation=(), camera=(), microphone=()"
