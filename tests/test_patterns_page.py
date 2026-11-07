@@ -131,3 +131,25 @@ def test_page_lists_devices_when_no_device_is_in_the_url():
     assert "'/api/devices'" in html, "la vista senza device non elenca i device"
     # The old derivation, which produced the page name as a device id.
     assert "slice(-1)[0]" not in html, "e' tornata la derivazione dell'id dal solo ultimo segmento"
+
+
+# ── Accessibility and UX styling for pattern action buttons ───────────────────
+
+
+def test_pattern_action_buttons_styling_and_tooltips():
+    """Pattern card action buttons must have accessible danger styling and title tooltips."""
+    html = PATTERNS_HTML_PATH.read_text(encoding="utf-8")
+
+    # .btn-danger class defined with semantic --red token
+    assert ".btn-danger { background:var(--red); color:#fff; }" in html
+    assert ".btn-danger:hover" in html
+    assert ".btn-danger:focus-visible" in html
+
+    # Pattern card Delete button has btn-danger class and accessible tooltip
+    assert "class:'btn btn-danger'" in html
+    assert "title:`Delete pattern ${p.method} ${p.path}`" in html
+    assert "title:`Save pattern ${p.method} ${p.path}`" in html
+
+    # New pattern card action buttons have tooltips
+    assert "title:'Save new pattern'" in html
+    assert "title:'Cancel new pattern'" in html

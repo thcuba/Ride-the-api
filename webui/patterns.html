@@ -42,6 +42,9 @@
   .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .btn-ghost { background:var(--surface2); border:1px solid var(--border); color:var(--text); }
   .btn-primary { background:linear-gradient(135deg,var(--accent),var(--accent2)); color:#fff; }
+  .btn-danger { background:var(--red); color:#fff; }
+  .btn-danger:hover { opacity:.85; }
+  .btn-danger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .container { max-width:1100px; margin:0 auto; }
   .cards { display:grid; gap:12px; }
   .pattern-card { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:14px; }
@@ -567,8 +570,8 @@ if (resp.status === 401 && !sessionStorage.getItem('ride-401-shown')) {
       body.appendChild(form);
 
       const actions = el('div',{class:'actions'});
-      const saveBtn = el('button',{class:'btn btn-primary','aria-label':`Save pattern ${p.method} ${p.path}`},'Save');
-      const delBtn = el('button',{class:'btn btn-ghost','aria-label':`Delete pattern ${p.method} ${p.path}`},'Delete');
+      const saveBtn = el('button',{class:'btn btn-primary','aria-label':`Save pattern ${p.method} ${p.path}`,title:`Save pattern ${p.method} ${p.path}`},'Save');
+      const delBtn = el('button',{class:'btn btn-danger','aria-label':`Delete pattern ${p.method} ${p.path}`,title:`Delete pattern ${p.method} ${p.path}`},'Delete');
       actions.appendChild(delBtn); actions.appendChild(saveBtn);
       body.appendChild(actions);
 
@@ -791,8 +794,8 @@ if (resp.status === 401 && !sessionStorage.getItem('ride-401-shown')) {
       body.appendChild(form);
 
       const actions = el('div',{class:'actions'});
-      const saveBtn = el('button',{class:'btn btn-primary','aria-label':'Save new pattern'},'Save');
-      const cancelBtn = el('button',{class:'btn btn-ghost','aria-label':'Cancel new pattern'},'Cancel');
+      const saveBtn = el('button',{class:'btn btn-primary','aria-label':'Save new pattern',title:'Save new pattern'},'Save');
+      const cancelBtn = el('button',{class:'btn btn-ghost','aria-label':'Cancel new pattern',title:'Cancel new pattern'},'Cancel');
       actions.appendChild(cancelBtn); actions.appendChild(saveBtn);
       body.appendChild(actions);
       card.appendChild(body);
