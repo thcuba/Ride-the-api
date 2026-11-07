@@ -26,6 +26,5 @@ from core.pattern_db.schemas import (  # noqa: F401
     ServerConfig,
     ServerResponse,
     StateVariable,
-    TransportMeta,
     VirtualSensor,
 )
