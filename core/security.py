@@ -426,6 +426,7 @@ _DEFAULT_SECURITY_HEADERS = (
     (b"x-frame-options", b"DENY"),
     (b"x-xss-protection", b"1; mode=block"),
     (b"referrer-policy", b"strict-origin-when-cross-origin"),
+    (b"permissions-policy", b"geolocation=(), camera=(), microphone=()"),
 )
 
 
@@ -435,7 +436,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):  # noqa: ANN001
         response = await call_next(request)
         raw = response.raw_headers
-        # Performance optimization: single pass tuple inspection avoids 4x
+        # Performance optimization: single pass tuple inspection avoids 5x
         # MutableHeaders.setdefault linear scans (~2.3x speedup per response).
         has_security_header = False
         for name, _ in raw:
@@ -445,6 +446,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 b"x-frame-options",
                 b"x-xss-protection",
                 b"referrer-policy",
+                b"permissions-policy",
             ):
                 has_security_header = True
                 break
