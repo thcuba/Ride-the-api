@@ -27,6 +27,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import core.server as server_mod
+from core.routes.introspection import route_paths
 from core.server import app
 
 PATTERNS_HTML_PATH = pathlib.Path(__file__).resolve().parent.parent / "webui" / "patterns.html"
@@ -72,7 +73,7 @@ def test_page_route_is_registered_before_the_proxy_catch_all():
     If the catch-all were registered earlier it would win and /patterns would silently turn back
     into a proxy call - the original failure, restored without a single test going red.
     """
-    paths = [route.path for route in app.routes]
+    paths = route_paths(app)
     assert "/patterns" in paths, "rotta /patterns assente"
     assert CATCH_ALL in paths, "catch-all del proxy assente"
     assert paths.index("/patterns") < paths.index(CATCH_ALL), (

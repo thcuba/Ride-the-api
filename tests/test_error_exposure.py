@@ -12,6 +12,7 @@ import logging
 from fastapi.testclient import TestClient
 
 import core.server as server_mod
+from core.routes.common import _client_error as client_error
 
 SECRET = "/etc/ride-secret/private.key"
 PASSWORD = "testpass"
@@ -107,7 +108,7 @@ def test_rejected_request_is_logged_server_side(monkeypatch, caplog):
 
 def test_client_error_helper_never_returns_the_exception_text():
     """The helper itself is the single choke point for error responses."""
-    resp = server_mod._client_error(ValueError(f"secret at {SECRET}"), "Nope")
+    resp = client_error(ValueError(f"secret at {SECRET}"), "Nope")
 
     assert resp.status_code == 400  # noqa: PLR2004
     assert resp.body == b'{"error":"Nope"}'
