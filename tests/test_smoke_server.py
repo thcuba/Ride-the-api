@@ -18,6 +18,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import core.server as server_mod
+from core.routes.introspection import route_paths
 from core.server import app
 
 pytestmark = pytest.mark.smoke
@@ -27,11 +28,7 @@ def test_server_app_imports() -> None:
     """The production app object is importable (top-level deps load)."""
     assert app is not None
     # A couple of expected routes that must be registered by import time.
-    paths = {
-        str(getattr(route, "path", ""))
-        for route in app.routes
-        if getattr(route, "path", None) is not None
-    }
+    paths = set(route_paths(app))
     assert "/health" in paths
     assert "/api/devices" in paths
     assert "/api/config" in paths

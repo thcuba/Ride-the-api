@@ -16,7 +16,7 @@ router = APIRouter(tags=["llm"])
 
 
 def _server():
-    from core import server
+    from core import server  # noqa: PLC0415 - lazy import avoids a cycle with core.server
 
     return server
 
@@ -105,7 +105,7 @@ async def test_llm_profile(request: Request):
 
 
 @router.post("/api/llm/settings/profiles")
-async def create_llm_profile(request: Request):
+async def create_llm_profile(request: Request):  # noqa: PLR0911
     """Create or update a single LLM profile and persist the settings."""
     if not _server().llm_decipher_service:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})

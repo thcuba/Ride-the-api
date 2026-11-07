@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 import core.server as server_mod
+from core.routes.introspection import iter_routes
 
 DASHBOARD = Path(__file__).resolve().parents[1] / "webui" / "dashboard.html"
 
@@ -36,7 +37,7 @@ def _dashboard_paths() -> list[str]:
 def _route_patterns() -> list[re.Pattern[str]]:
     """One regex per app route, with `{param}` turned into a single path segment."""
     patterns = []
-    for route in server_mod.app.routes:
+    for route in iter_routes(server_mod.app):
         path = getattr(route, "path", None)
         if isinstance(path, str) and path.startswith("/"):
             patterns.append(re.compile("^" + re.sub(r"\{[^}]+\}", "[^/]+", path) + "$"))
@@ -51,7 +52,7 @@ def _literal_tails() -> set[str]:
     list kept here, so the check follows the API instead of drifting from it.
     """
     tails: set[str] = set()
-    for route in server_mod.app.routes:
+    for route in iter_routes(server_mod.app):
         path = getattr(route, "path", None)
         if isinstance(path, str) and path.startswith("/"):
             tail = path.rsplit("/", 1)[-1]

@@ -2,50 +2,20 @@
 
 from __future__ import annotations
 
-
 import logging
 
-
 from fastapi import APIRouter, Request
-
-
 from fastapi.responses import JSONResponse
-
-
+from pydantic import ValidationError
 from sqlalchemy import select
 
-
-from core.pattern_db import buffer_manager
-
-
-from pydantic import ValidationError
-
-
-from core.pattern_db import buffer_manager
-
-from pydantic import ValidationError
-
 from core.atomic_io import sanitize_filename_component
-
-from core.pattern_db.schemas import CaptureDB
-
-from core.pattern_db.validator import validate_capture
-
-
-from core.pattern_db.schemas import CaptureDB
-
-
-from core.pattern_db.validator import validate_capture
-
-
 from core.config import ConnectionType
-
-
 from core.database import DeviceRegistry
-
-
+from core.pattern_db import buffer_manager
+from core.pattern_db.schemas import CaptureDB
+from core.pattern_db.validator import validate_capture
 from core.routes.common import _client_error
-
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +25,7 @@ router = APIRouter(tags=["devices"])
 
 def _server():
 
-    from core import server
+    from core import server  # noqa: PLC0415 - lazy import avoids a cycle with core.server
 
     return server
 
@@ -178,7 +148,7 @@ async def set_device_mode(device_id: str, request: Request):
 
 
 @router.put("/api/devices/{device_id}/threshold")
-async def set_device_threshold(device_id: str, request: Request):
+async def set_device_threshold(device_id: str, request: Request):  # noqa: PLR0911
     """Set the per-device match confidence threshold (0.0 to 1.0)."""
 
     if not _server().db_manager:
@@ -218,7 +188,7 @@ async def set_device_threshold(device_id: str, request: Request):
 
 
 @router.put("/api/devices/{device_id}/context-buffer")
-async def set_device_context_buffer(device_id: str, request: Request):
+async def set_device_context_buffer(device_id: str, request: Request):  # noqa: PLR0911
     """Set the per-device context buffer size in bytes."""
 
     if not _server().db_manager:
@@ -610,7 +580,7 @@ async def set_ip_bypass(ip_address: str, request: Request):
 
 
 @router.post("/api/devices/{device_id}/ip")
-async def register_device_ip(device_id: str, request: Request):
+async def register_device_ip(device_id: str, request: Request):  # noqa: PLR0911
     """Register an IP address for a device."""
 
     if not _server().db_manager:
@@ -635,7 +605,8 @@ async def register_device_ip(device_id: str, request: Request):
         return JSONResponse(
             status_code=400,
             content={
-                "error": "Addresses of this machine cannot be bound to a device: the proxy never intercepts its own traffic"
+                "error": "Addresses of this machine cannot be bound to a device: "
+                "the proxy never intercepts its own traffic"
             },
         )
 
@@ -695,7 +666,11 @@ async def delete_buffer_entry(device_id: str, entry_id: int):
         if not success:
             return JSONResponse(status_code=404, content={"error": "Entry not found"})
 
-        return {"device_id": device_id, "entry_id": entry_id, "status": "deleted"}
+        return {  # noqa: TRY300 - the return is the handler's success path
+            "device_id": device_id,
+            "entry_id": entry_id,
+            "status": "deleted",
+        }
 
     except Exception:
         logger.exception("Handler error (500)")
@@ -792,16 +767,23 @@ async def import_buffer(device_id: str, request: Request):
 
         capture = CaptureDB.model_validate(body)
 
+        # F-08: the payload's (obfuscated) device id must not steer the import
+        # into a different device's buffer; force the authorized URL device.
         if capture.device_info.device_id not in ("obfuscated", device_id):
             logger.warning(
-                "Capture import device_id mismatch (payload=%r, url=%r); overriding to url device_id",
+                "Capture import device_id mismatch (payload=%r, url=%r); "
+                "overriding to url device_id",
                 capture.device_info.device_id,
                 device_id,
             )
 
         count = await manager.import_capture(capture, target_device_id=device_id)
 
-        return {"imported": count, "device_id": device_id, "warnings": result.warnings}
+        return {  # noqa: TRY300 - the return is the handler's success path
+            "imported": count,
+            "device_id": device_id,
+            "warnings": result.warnings,
+        }
 
     except ValidationError as e:
         return JSONResponse(

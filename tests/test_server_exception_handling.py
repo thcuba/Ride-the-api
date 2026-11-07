@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+import core.routes.system as system_mod
 import core.server as server_mod
 from core.server import _get_request_body, app
 
@@ -203,7 +204,7 @@ def test_system_update_starts_detached_updater(client, monkeypatch):
             launched["kwargs"] = kwargs
             return object()
 
-    monkeypatch.setattr(server_mod, "subprocess", _SP)
+    monkeypatch.setattr(system_mod, "subprocess", _SP)
     resp = client.post("/api/system/update")
     assert resp.status_code == _HTTP_OK
     body = resp.json()
@@ -233,9 +234,9 @@ def test_system_update_finds_script_in_frozen_bundle(client, monkeypatch, tmp_pa
             launched["kwargs"] = kwargs
             return object()
 
-    monkeypatch.setattr(server_mod, "subprocess", _SP)
-    monkeypatch.setattr(server_mod, "is_frozen", lambda: True)
-    monkeypatch.setattr(server_mod, "bundle_root", lambda: bundle)
+    monkeypatch.setattr(system_mod, "subprocess", _SP)
+    monkeypatch.setattr(system_mod, "is_frozen", lambda: True)
+    monkeypatch.setattr(system_mod, "bundle_root", lambda: bundle)
     resp = client.post("/api/system/update")
     assert resp.status_code == _HTTP_OK
     assert launched["args"][0][1] == str(deploy / "update.sh")

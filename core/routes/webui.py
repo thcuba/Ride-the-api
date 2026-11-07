@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from fastapi import APIRouter
 from fastapi.responses import HTMLResponse
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +20,7 @@ _WEBUI_HTML_CACHE: dict[Path, str] = {}
 
 
 def _server():
-    from core import server
+    from core import server  # noqa: PLC0415 - lazy import avoids a cycle with core.server
 
     return server
 
@@ -30,7 +33,10 @@ async def _serve_webui(path: Path, page_name: str, expected: str) -> HTMLRespons
             html = await asyncio.to_thread(path.read_text, encoding="utf-8")
         except FileNotFoundError:
             logger.warning("%s HTML not found at %s", page_name, path)
-            html = f"<!DOCTYPE html><html><body><h1>{page_name} not found</h1><p>Expected at {expected}</p></body></html>"
+            html = (
+                f"<!DOCTYPE html><html><body><h1>{page_name} not found</h1>"
+                f"<p>Expected at {expected}</p></body></html>"
+            )
         else:
             _WEBUI_HTML_CACHE[path] = html
     return HTMLResponse(content=html, status_code=200)
@@ -54,7 +60,7 @@ async def patterns_index_page():
 
 
 @router.get("/patterns/{device_id}", response_class=HTMLResponse)
-async def patterns_page(device_id: str):
+async def patterns_page(device_id: str):  # noqa: ARG001 - the id only selects the page
     """Serve the Patterns web UI for a device."""
     return await _serve_webui(_server().PATTERNS_HTML, "Patterns page", "webui/patterns.html")
 

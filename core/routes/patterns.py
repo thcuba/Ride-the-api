@@ -2,50 +2,19 @@
 
 from __future__ import annotations
 
-
 import logging
-
-
 import uuid
 
-
 from fastapi import APIRouter, Request
-
-
 from fastapi.responses import JSONResponse
-
-
+from pydantic import ValidationError
 from sqlalchemy import delete, select
 
-
 from core.database import DeviceRegistry, FieldMapping, RequestPattern, ResponseTemplate
-
-
 from core.pattern_db import decipher_ingest
-
-
-from pydantic import ValidationError
-
-
-from core.pattern_db import decipher_ingest
-
-
 from core.pattern_db.schemas import DeviceModel, PatternDB
-
-
 from core.pattern_db.validator import validate_pattern
-
-
-from pydantic import ValidationError
-
-from core.pattern_db import decipher_ingest
-
-from core.pattern_db.schemas import DeviceModel, PatternDB
-
-from core.pattern_db.validator import validate_pattern
-
 from core.routes.common import _client_error
-
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +24,7 @@ router = APIRouter(tags=["patterns"])
 
 def _server():
 
-    from core import server
+    from core import server  # noqa: PLC0415 - lazy import avoids a cycle with core.server
 
     return server
 
@@ -357,14 +326,16 @@ async def put_pattern(device_id: str, pattern_id: str, request: Request):
 
         await _resync_device_patterns(device_id)
 
-        return {"status": "ok", "pattern_id": pattern_id}
+        return {"status": "ok", "pattern_id": pattern_id}  # noqa: TRY300
 
     except Exception as e:
         return _client_error(e, "Invalid pattern update payload")
 
 
 @router.patch("/api/devices/{device_id}/patterns/{pattern_id}")
-async def patch_pattern(device_id: str, pattern_id: str, request: Request):
+async def patch_pattern(  # noqa: C901, PLR0912
+    device_id: str, pattern_id: str, request: Request
+):
     """Partial update for a pattern."""
 
     if not _server().db_manager:
@@ -465,7 +436,7 @@ async def patch_pattern(device_id: str, pattern_id: str, request: Request):
 
         await _resync_device_patterns(device_id)
 
-        return {"status": "ok", "pattern_id": pattern_id}
+        return {"status": "ok", "pattern_id": pattern_id}  # noqa: TRY300
 
     except Exception as e:
         return _client_error(e, "Invalid pattern update payload")
@@ -514,7 +485,7 @@ async def delete_pattern(device_id: str, pattern_id: str):
 
         await _resync_device_patterns(device_id)
 
-        return {"status": "deleted", "pattern_id": pattern_id}
+        return {"status": "deleted", "pattern_id": pattern_id}  # noqa: TRY300
 
     except Exception as e:
         return _client_error(e, "Could not delete the pattern")
@@ -552,7 +523,11 @@ async def import_patterns(device_id: str, request: Request):
 
         await _resync_device_patterns(device_id)
 
-        return {"imported": count, "device_id": device_id, "warnings": result.warnings}
+        return {  # noqa: TRY300
+            "imported": count,
+            "device_id": device_id,
+            "warnings": result.warnings,
+        }
 
     except ValidationError as e:
         return JSONResponse(

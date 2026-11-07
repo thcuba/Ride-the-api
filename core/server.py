@@ -8,53 +8,25 @@ Intercepts device traffic, learns protocol via LLM, serves responses locally.
 
 from __future__ import annotations
 
-
 import asyncio  # noqa: TC003
-
-import base64
-
-import binascii
-
 import json
-
 import logging
-
 import os
-
-import subprocess
-
-import uuid
-
 from contextlib import asynccontextmanager
-
 from datetime import UTC, datetime
-
 from pathlib import Path
 
-
 import dns.asyncquery
-
 import dns.message
-
 import dns.rdatatype
-
 import uvicorn
-
-from fastapi import APIRouter, FastAPI, File, Form, Request, Response, UploadFile
-
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-
-from fastapi.responses import HTMLResponse, JSONResponse
-
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-
-from pydantic import ValidationError as PydanticValidationError
-
-from sqlalchemy import delete, func, select
-
+from sqlalchemy import select
 
 from adapters import get_registered_registry
-
 from adapters.base import (
     InterceptedRequest,
     ProtocolAdapter,
@@ -63,79 +35,41 @@ from adapters.base import (
     device_id_from_ip,
     normalize_request_body,
 )
-
-from core.atomic_io import sanitize_filename_component
-
 from core.buffer import (
     dispose_memory_db,
     get_buffer_backend,
     initialize_buffer_backend,
-    normalise_backend,
-    switch_backend,
 )
-
 from core.cert_manager import CertManager, get_cert_manager
-
 from core.config import (
-    SECRET_MASK,
-    Config,
-    ConnectionType,
     get_config_manager,
-    mask_secrets,
-    restore_masked_secrets,
 )
-
 from core.connection_watchdog import ConnectionWatchdog
-
 from core.database import (
     DatabaseManager,
     DeviceRegistry,
-    FieldMapping,
     RelayedConnection,
-    RequestPattern,
-    ResponseTemplate,
     init_db_manager,
 )
-
 from core.dns_discovery import DNSDiscoveryRecorder, get_dns_recorder, set_dns_recorder
-
 from core.dns_server import get_dns_interceptor
-
 from core.http_framing import servable_status, without_framing_headers
-
 from core.llm_decipher import LLMDecipherService, get_llm_decipher
-
 from core.logging_config import get_log_level, setup_logging
-
 from core.modification import BLOCKED_STATUS, get_modification_engine
-
 from core.observability import (
     MetricsServer,
     build_tracer,
     get_tracer,
 )
-
 from core.observability import (
     registry as metrics_registry,
 )
-
-from core.paths import bundle_root, is_frozen, resource_path
-
-from core.pattern_db import buffer_manager, decipher_ingest
-
-from core.pattern_db.schemas import CaptureDB, DeviceModel, PatternDB
-
-from core.pattern_db.validator import (
-    ValidationError,
-    validate_capture,
-    validate_pattern,
-)
-
+from core.paths import resource_path
 from core.pipeline import (
     LearningOrchestrator,
     get_orchestrator,
 )
-
 from core.protocol_servers import get_protocol_server_manager
 from core.protocol_servers.coap_server import CoAPServerPlugin
 from core.protocol_servers.http2_server import HTTP2ServerPlugin
@@ -146,32 +80,35 @@ from core.protocol_servers.raw_tcp_server import RawTCPServerPlugin
 from core.protocol_servers.websocket_server import WebSocketServerPlugin
 from core.protocol_servers.zigbee_bridge import ZigbeeBridgePlugin
 from core.protocol_servers.zwave_bridge import ZWaveBridgePlugin
-
 from core.resilience import (
     AutoSwitchScheduler,
     register_resilience_routes,
 )
-
+from core.routes import (
+    devices_router,
+    dns_router,
+    llm_router,
+    patterns_router,
+    protocols_router,
+    system_router,
+    tls_router,
+    webui_router,
+)
+from core.routes.dns import _apply_dns_settings
 from core.security import (
     ControlPlaneAuthMiddleware,
     CrossSiteRequestGuard,
     MaxBodySizeMiddleware,
     SecurityHeadersMiddleware,
-    password_problem,
     setup_token,
 )
-
 from core.tls_mitm import (
     DecryptedRequest,
     TLSMITMServer,
     get_tls_mitm_server,
-    peek_tls_mitm_server,
 )
-
 from core.traffic_selector import TrafficRequestInfo, get_traffic_selector, is_local_ip
-
 from core.upstream_resolver import _apply_config, self_connection_reason
-
 
 # Path to webui directory (bundle-aware: works in source and PyInstaller builds)
 
@@ -1732,165 +1669,28 @@ async def _json_decode_error_handler(request: Request, exc: json.JSONDecodeError
 
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# Modular Routers & Re-exports
+# Modular Routers
 
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-from core.routes import (
-    devices_router,
-    dns_router,
-    llm_router,
-    patterns_router,
-    protocols_router,
-    system_router,
-    tls_router,
-    webui_router,
-)
-
-from core.routes.common import _client_error
-
-from core.routes.devices import (
-    _requested_database_url,
-    assign_device_database,
-    configure_device_llm,
-    delete_buffer_entry,
-    delete_device,
-    export_buffer,
-    get_device,
-    get_device_auto_switch,
-    get_device_by_ip,
-    get_device_connection,
-    get_device_context,
-    get_device_database,
-    get_device_stats,
-    get_ip_bypass,
-    get_match_rate,
-    import_buffer,
-    list_buffer_entries,
-    list_databases,
-    list_devices,
-    register_device_ip,
-    rename_device_database,
-    set_device_auto_switch,
-    set_device_context_buffer,
-    set_device_mode,
-    set_device_threshold,
-    set_ip_bypass,
-    update_device_connection,
-    update_device_context,
-)
-
-from core.routes.dns import (
-    _apply_dns_settings,
-    _clean_dns_hostname,
-    _dns_policy_from_body,
-    dns_add_intercept,
-    dns_clear_discovery,
-    dns_discovery,
-    dns_get_settings,
-    dns_put_settings,
-    dns_remove_intercept,
-)
-
-from core.routes.llm import (
-    create_llm_profile,
-    create_user_profile,
-    delete_llm_profile,
-    delete_user_profile,
-    flush_buffer_to_llm,
-    get_llm_settings,
-    get_user_profile,
-    list_llm_profiles,
-    list_user_profiles,
-    preview_llm_analysis,
-    test_llm_profile,
-    update_llm_settings,
-    update_user_profile,
-)
-
-from core.routes.patterns import (
-    _resync_device_patterns,
-    delete_pattern,
-    export_patterns,
-    get_device_patterns,
-    get_pattern_detail,
-    import_patterns,
-    patch_pattern,
-    put_pattern,
-)
-
-from core.routes.protocols import (
-    protocol_server_config,
-    protocol_server_start,
-    protocol_server_stop,
-    protocol_servers_status,
-)
-
-from core.routes.system import (
-    _MIN_PASSWORD_LENGTH,
-    _listening_ports,
-    _new_password_problem,
-    _validation_details,
-    get_buffer_backend_setting,
-    get_config,
-    health_check,
-    put_config,
-    set_buffer_backend_setting,
-    set_control_plane_password,
-    system_update,
-)
-
-from core.routes.tls import (
-    _move_device_db_to_name,
-    tls_delete_cert,
-    tls_device_ports,
-    tls_download_ca,
-    tls_download_root_ca,
-    tls_frida_script,
-    tls_get_cert_info,
-    tls_list_certs,
-    tls_list_ports,
-    tls_relayed,
-    tls_rotate_cert,
-    tls_stats,
-    tls_unidentified,
-    tls_update_device_config,
-    tls_upload_cert,
-    tls_upload_cert_json,
-)
-
-from core.routes.webui import (
-    _serve_webui,
-    config_page,
-    dashboard,
-    options_page,
-    patterns_index_page,
-    patterns_page,
-)
-
-
-def _register_router(target_app: FastAPI, router: APIRouter) -> None:
-    target_app.include_router(router)
-
-
 # Register all modular routers
 
-_register_router(app, tls_router)
+app.include_router(tls_router)
 
-_register_router(app, dns_router)
+app.include_router(dns_router)
 
-_register_router(app, protocols_router)
+app.include_router(protocols_router)
 
-_register_router(app, devices_router)
+app.include_router(devices_router)
 
-_register_router(app, patterns_router)
+app.include_router(patterns_router)
 
-_register_router(app, llm_router)
+app.include_router(llm_router)
 
-_register_router(app, system_router)
+app.include_router(system_router)
 
-_register_router(app, webui_router)
+app.include_router(webui_router)
 
 # The resilience endpoints (/api/independence/...) register themselves straight onto
 # the app instead of living in a router, so they need an explicit call. Without it the
@@ -1949,26 +1749,6 @@ def _local_http_response(response: dict) -> Response:
         return Response(status_code=status, headers=headers)
 
     return JSONResponse(status_code=status, content=response.get("body", {}), headers=headers)
-
-
-def _client_error(exc: BaseException, message: str, status_code: int = 400) -> JSONResponse:
-    """Return a control-plane error response that never leaks internals.
-
-
-
-    Raw exception text can carry filesystem paths, library internals or
-
-    configuration details (CodeQL ``py/stack-trace-exposure``). The client gets
-
-    a stable, actionable message; the detail is logged server-side, where it is
-
-    actually useful for debugging.
-
-    """
-
-    logger.info("Rejected request (%s): %s", message, exc)
-
-    return JSONResponse(status_code=status_code, content={"error": message})
 
 
 def _upstream_response(cloud_response, decoded: dict | None = None) -> Response:
@@ -2327,8 +2107,6 @@ async def proxy_vendor_request(vendor: str, path: str, request: Request):  # noq
             metrics_registry.cloud_misses_total.inc()
 
             # Forward to cloud (passthrough).
-
-            #
 
             # When signal_forward_to_cloud is enabled, the proxy tells nginx
 

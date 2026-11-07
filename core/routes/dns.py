@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from core.config import Config
 from core.dns_discovery import get_dns_recorder
 from core.dns_server import get_dns_interceptor
+
+if TYPE_CHECKING:
+    from core.config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +20,7 @@ router = APIRouter(tags=["dns"])
 
 
 def _server():
-    from core import server
+    from core import server  # noqa: PLC0415 - lazy import avoids a cycle with core.server
 
     return server
 
@@ -33,7 +36,7 @@ def _clean_dns_hostname(value: object) -> str | None:
     if not isinstance(value, str):
         return None
     name = value.strip().lower().rstrip(".")
-    if not name or len(name) > 253:
+    if not name or len(name) > 253:  # noqa: PLR2004 - DNS name limit
         return None
     allowed = set("abcdefghijklmnopqrstuvwxyz0123456789.*?_-")
     if any(ch not in allowed for ch in name):

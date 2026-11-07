@@ -15,7 +15,7 @@ router = APIRouter(tags=["protocols"])
 
 
 def _server():
-    from core import server
+    from core import server  # noqa: PLC0415 - lazy import avoids a cycle with core.server
 
     return server
 

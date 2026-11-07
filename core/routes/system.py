@@ -2,33 +2,22 @@
 
 from __future__ import annotations
 
-
 import json
-
 import logging
-
+import subprocess
 from pathlib import Path
 
-
 from fastapi import APIRouter, Request
-
 from fastapi.responses import JSONResponse
-
 from jsonschema.exceptions import ValidationError
-
 from pydantic import ValidationError as PydanticValidationError
 
-
 from core.buffer import get_buffer_backend, normalise_backend, switch_backend
-
 from core.config import mask_secrets, restore_masked_secrets
-
-from core.security import password_problem
-
 from core.dns_server import get_dns_interceptor
-
+from core.paths import bundle_root, is_frozen
+from core.security import password_problem
 from core.tls_mitm import peek_tls_mitm_server
-
 
 logger = logging.getLogger(__name__)
 
@@ -40,8 +29,7 @@ _MIN_PASSWORD_LENGTH = 8
 
 
 def _server():
-
-    from core import server
+    from core import server  # noqa: PLC0415 - lazy import avoids a cycle with core.server
 
     return server
 
@@ -134,9 +122,7 @@ async def system_update():
 
     server_root = Path(_server().__file__).resolve().parent.parent
 
-    updater_base = (
-        _server().bundle_root() if _server().is_frozen() else server_root
-    ) or server_root
+    updater_base = (bundle_root() if is_frozen() else server_root) or server_root
 
     script = updater_base / "deploy" / "update.sh"
 
@@ -149,12 +135,12 @@ async def system_update():
         )
 
     try:
-        _server().subprocess.Popen(
+        subprocess.Popen(
             ["bash", str(script), "--dir", str(install_dir), "--restart", "systemd"],
             start_new_session=True,
-            stdin=_server().subprocess.DEVNULL,
-            stdout=_server().subprocess.DEVNULL,
-            stderr=_server().subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             cwd=str(install_dir),
             env=_server().updater_env(),
         )
@@ -169,7 +155,8 @@ async def system_update():
 
     return {
         "status": "started",
-        "message": "Update started in the background. The service will restart — wait a moment and reload.",
+        "message": "Update started in the background. The service will restart — "
+        "wait a moment and reload.",
         "log": str(install_dir / "update.log"),
     }
 

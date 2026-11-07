@@ -10,13 +10,15 @@ logger = logging.getLogger(__name__)
 
 
 def _client_error(exc: BaseException, message: str, status_code: int = 400) -> JSONResponse:
-    """Return a sanitized JSONResponse for client errors (400, 422, etc.).
+    """Return a control-plane error response that never leaks internals.
 
-    Internal exception details are stripped in production to prevent information disclosure.
-    The one real implementation lives in core.server (it also emits the
-    "Rejected request" log line the tests assert on); it is imported lazily because
-    core.server imports the routers, so a module-level import would be circular.
+    Raw exception text can carry filesystem paths, library internals or configuration
+    details (CodeQL ``py/stack-trace-exposure``). The client gets a stable, actionable
+    message; the detail is logged server-side, where it is actually useful for debugging.
+
+    This is the single implementation. core.server re-exports it, so the proxy and every
+    router share one behaviour and one log line, and nobody needs a lazy import to reach
+    it (the old delegation did a `from core import server` on every call).
     """
-    from core import server
-
-    return server._client_error(exc, message, status_code)
+    logger.info("Rejected request (%s): %s", message, exc)
+    return JSONResponse(status_code=status_code, content={"error": message})

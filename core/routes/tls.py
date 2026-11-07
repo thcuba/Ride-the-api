@@ -19,7 +19,7 @@ router = APIRouter(tags=["tls"])
 
 
 def _server():
-    from core import server
+    from core import server  # noqa: PLC0415 - lazy import avoids a cycle with core.server
 
     return server
 
@@ -203,7 +203,47 @@ async def tls_list_ports():
 @router.get("/api/tls/frida/script.js")
 async def tls_frida_script():
     """Return a Frida script for bypassing certificate pinning."""
-    script = "// Ride the API — Certificate Pinning Bypass (Frida)\n// Usage: frida -U -l script.js <app>\n// Requires: Frida installed on device, CA cert installed\n\nJava.perform(function() {\n    // Common SSL pinning bypass targets\n    var X509TrustManager = Java.use('javax.net.ssl.X509TrustManager');\n    var SSLContext = Java.use('javax.net.ssl.SSLContext');\n\n    // Bypass checkClientTrusted / checkServerTrusted\n    X509TrustManager.checkClientTrusted.implementation = function(chain, authType) {\n        console.log('[RideTheAPI] Bypassing checkClientTrusted');\n    };\n    X509TrustManager.checkServerTrusted.implementation = function(chain, authType) {\n        console.log('[RideTheAPI] Bypassing checkServerTrusted');\n    };\n    X509TrustManager.getAcceptedIssuers.implementation = function() {\n        console.log('[RideTheAPI] Returning empty accepted issuers');\n        return [];\n    };\n\n    // Hook OkHttp HostnameVerifier\n    try {\n        var HostnameVerifier = Java.use('javax.net.ssl.HostnameVerifier');\n        HostnameVerifier.verify.implementation = function(hostname, session) {\n            console.log('[RideTheAPI] Bypassing hostname verification for: ' + hostname);\n            return true;\n        };\n    } catch(e) { console.log('[RideTheAPI] HostnameVerifier not found'); }\n\n    // Hook OkHttp CertificatePinner\n    try {\n        var CertificatePinner = Java.use('okhttp3.CertificatePinner');\n        CertificatePinner.check.implementation = function(pin) {\n            console.log('[RideTheAPI] Bypassing certificate pin for: ' + pin);\n        };\n    } catch(e) { console.log(\"[RideTheAPI] CertificatePinner not found\"); }\n\n    console.log(\"[RideTheAPI] Pinning bypass injected successfully\");\n});\n"
+    script = r"""// Ride the API — Certificate Pinning Bypass (Frida)
+// Usage: frida -U -l script.js <app>
+// Requires: Frida installed on device, CA cert installed
+
+Java.perform(function() {
+    // Common SSL pinning bypass targets
+    var X509TrustManager = Java.use('javax.net.ssl.X509TrustManager');
+    var SSLContext = Java.use('javax.net.ssl.SSLContext');
+
+    // Bypass checkClientTrusted / checkServerTrusted
+    X509TrustManager.checkClientTrusted.implementation = function(chain, authType) {
+        console.log('[RideTheAPI] Bypassing checkClientTrusted');
+    };
+    X509TrustManager.checkServerTrusted.implementation = function(chain, authType) {
+        console.log('[RideTheAPI] Bypassing checkServerTrusted');
+    };
+    X509TrustManager.getAcceptedIssuers.implementation = function() {
+        console.log('[RideTheAPI] Returning empty accepted issuers');
+        return [];
+    };
+
+    // Hook OkHttp HostnameVerifier
+    try {
+        var HostnameVerifier = Java.use('javax.net.ssl.HostnameVerifier');
+        HostnameVerifier.verify.implementation = function(hostname, session) {
+            console.log('[RideTheAPI] Bypassing hostname verification for: ' + hostname);
+            return true;
+        };
+    } catch(e) { console.log('[RideTheAPI] HostnameVerifier not found'); }
+
+    // Hook OkHttp CertificatePinner
+    try {
+        var CertificatePinner = Java.use('okhttp3.CertificatePinner');
+        CertificatePinner.check.implementation = function(pin) {
+            console.log('[RideTheAPI] Bypassing certificate pin for: ' + pin);
+        };
+    } catch(e) { console.log("[RideTheAPI] CertificatePinner not found"); }
+
+    console.log("[RideTheAPI] Pinning bypass injected successfully");
+});
+"""
     return Response(content=script, media_type="application/javascript")
 
 
@@ -214,7 +254,7 @@ async def tls_list_certs():
         return JSONResponse(status_code=503, content={"error": "Cert manager not ready"})
     try:
         imported = _server().cert_manager.list_imported_certs()
-        return {"certs": imported}
+        return {"certs": imported}  # noqa: TRY300
     except Exception:
         logger.exception("Handler error (500)")
         return JSONResponse(status_code=500, content={"error": "An internal error occurred"})
@@ -231,7 +271,7 @@ async def tls_get_cert_info(hostname: str):
             return JSONResponse(
                 status_code=404, content={"error": f"No certificate found for '{hostname}'"}
             )
-        return {"cert": info}
+        return {"cert": info}  # noqa: TRY300
     except ValueError as e:
         return _client_error(e, "Invalid certificate lookup request")
     except Exception:
@@ -252,7 +292,7 @@ async def tls_upload_cert(
         _server().cert_manager.import_cert(
             hostname, cert_pem.decode("utf-8"), key_pem.decode("utf-8")
         )
-        return {
+        return {  # noqa: TRY300
             "status": "ok",
             "hostname": hostname,
             "message": f"Certificate imported for '{hostname}'",
@@ -284,7 +324,7 @@ async def tls_upload_cert_json(request: Request):
         cert_pem = base64.b64decode(cert_b64).decode("utf-8")
         key_pem = base64.b64decode(key_b64).decode("utf-8")
         _server().cert_manager.import_cert(hostname, cert_pem, key_pem)
-        return {"status": "ok", "hostname": hostname}
+        return {"status": "ok", "hostname": hostname}  # noqa: TRY300
     except (ValueError, UnicodeDecodeError, binascii.Error) as e:
         return _client_error(
             e, "Invalid certificate payload. Provide a valid PEM or DER certificate."
@@ -306,7 +346,7 @@ async def tls_delete_cert(hostname: str):
                 status_code=404,
                 content={"error": f"No imported certificate found for '{hostname}'"},
             )
-        return {
+        return {  # noqa: TRY300
             "status": "ok",
             "hostname": hostname,
             "message": f"Certificate deleted for '{hostname}'",
@@ -334,7 +374,7 @@ async def tls_rotate_cert(hostname: str, request: Request):
         cert_pem = base64.b64decode(cert_b64).decode("utf-8")
         key_pem = base64.b64decode(key_b64).decode("utf-8")
         _server().cert_manager.import_cert(hostname, cert_pem, key_pem)
-        return {
+        return {  # noqa: TRY300
             "status": "ok",
             "hostname": hostname,
             "message": f"Certificate rotated for '{hostname}'",
