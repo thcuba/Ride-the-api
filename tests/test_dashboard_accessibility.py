@@ -172,7 +172,9 @@ def test_llm_settings_deeplink_has_no_temporal_dead_zone():
     """
     dash_path = Path("webui/dashboard.html")
     dash_js = Path("webui/static/js/dashboard.js")
-    content = (dash_js.read_text(encoding="utf-8") if dash_js.exists() else "") or dash_path.read_text(encoding="utf-8")
+    content = (
+        dash_js.read_text(encoding="utf-8") if dash_js.exists() else ""
+    ) or dash_path.read_text(encoding="utf-8")
 
     declaration = content.find("let lastModalActiveElement = null;")
     deeplink_snippet = "if (window.location.hash === '#llm-settings') { openLLMSettings(); }"
