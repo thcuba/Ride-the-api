@@ -3,8 +3,11 @@ from pathlib import Path
 
 def test_auto_switch_toggle_accessibility():
     dashboard_path = Path("webui/dashboard.html")
+    dashboard_js = Path("webui/static/js/dashboard.js")
     assert dashboard_path.exists(), "webui/dashboard.html must exist"
     content = dashboard_path.read_text(encoding="utf-8")
+    if dashboard_js.exists():
+        content += "\n" + dashboard_js.read_text(encoding="utf-8")
 
     # Verify Auto-Switch toggle uses switch role and accessible slider styling
     assert 'role="switch"' in content
@@ -57,8 +60,11 @@ def test_primary_navigation_accessibility_across_pages():
 
 def test_configuration_sidebar_accessibility():
     config_path = Path("webui/config.html")
+    config_js = Path("webui/static/js/config.js")
     assert config_path.exists(), "webui/config.html must exist"
     html = config_path.read_text(encoding="utf-8")
+    if config_js.exists():
+        html += "\n" + config_js.read_text(encoding="utf-8")
 
     # Verify search input has explicit accessibility label and type search
     assert 'aria-label="Filter configuration sections"' in html
@@ -91,8 +97,11 @@ def test_configuration_sidebar_accessibility():
 
 def test_configuration_form_controls_and_mobile_accessibility():
     config_path = Path("webui/config.html")
+    config_js = Path("webui/static/js/config.js")
     assert config_path.exists(), "webui/config.html must exist"
     html = config_path.read_text(encoding="utf-8")
+    if config_js.exists():
+        html += "\n" + config_js.read_text(encoding="utf-8")
 
     # Verify toggle switches have switch role, label association, and touch wrap
     assert "switchWrap.className = 'switch-wrap'" in html
@@ -111,8 +120,11 @@ def test_configuration_form_controls_and_mobile_accessibility():
 
 def test_llm_settings_modal_accessibility_and_mobile_ergonomics():
     dash_path = Path("webui/dashboard.html")
+    dash_js = Path("webui/static/js/dashboard.js")
     assert dash_path.exists(), "webui/dashboard.html must exist"
     html = dash_path.read_text(encoding="utf-8")
+    if dash_js.exists():
+        html += "\n" + dash_js.read_text(encoding="utf-8")
 
     # Verify modal dialog semantics
     assert 'id="llm-settings-modal"' in html
@@ -158,7 +170,11 @@ def test_llm_settings_deeplink_has_no_temporal_dead_zone():
     toolbar button and the nav pill keep working, because they run on click, after
     parsing. That asymmetry is what makes this regression hard to spot by hand.
     """
-    content = Path("webui/dashboard.html").read_text(encoding="utf-8")
+    dash_path = Path("webui/dashboard.html")
+    dash_js = Path("webui/static/js/dashboard.js")
+    content = (
+        dash_js.read_text(encoding="utf-8") if dash_js.exists() else ""
+    ) or dash_path.read_text(encoding="utf-8")
 
     declaration = content.find("let lastModalActiveElement = null;")
     deeplink_snippet = "if (window.location.hash === '#llm-settings') { openLLMSettings(); }"
