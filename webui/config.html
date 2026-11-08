@@ -90,13 +90,27 @@
   }
   .sidebar-search {
     width: 100%; box-sizing: border-box; background: var(--surface2); color: var(--text);
-    border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px 7px 30px;
+    border: 1px solid var(--border); border-radius: 8px; padding: 7px 28px 7px 30px;
     font-size: 12px; font-family: inherit; transition: border-color .15s, box-shadow .15s;
   }
   .sidebar-search:focus {
     outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent);
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
   }
+  .sidebar-search::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
+  .sidebar-search-wrap .search-kbd {
+    position: absolute; right: 8px; top: 50%; transform: translateY(-50%); pointer-events: none;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 4px; color: var(--text2);
+    font-family: inherit; font-size: 10px; font-weight: 600; padding: 1px 5px; line-height: 1.3; transition: opacity .15s;
+  }
+  .sidebar-search:focus ~ .search-kbd, .sidebar-search:not(:placeholder-shown) ~ .search-kbd { opacity: 0; }
+  .sidebar-search-wrap .clear-search-btn {
+    position: absolute; right: 6px; top: 50%; transform: translateY(-50%); background: none; border: none;
+    color: var(--text2); font-size: 15px; cursor: pointer; padding: 2px 4px; border-radius: 4px; line-height: 1; display: none;
+  }
+  .sidebar-search-wrap .clear-search-btn:hover { color: var(--text); }
+  .sidebar-search-wrap .clear-search-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
   .sidebar-items {
     overflow-y: auto; display: flex; flex-direction: column; gap: 3px; padding-right: 2px;
     flex: 1; min-height: 0;
@@ -1251,10 +1265,23 @@ const SECTION_ICONS = {
   _default: '<svg class="sec-icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>',
 };
 
+function clearSidebarSearch() {
+  const input = document.getElementById('sidebarSearch');
+  if (input) {
+    input.value = '';
+    input.focus();
+    filterSidebar('');
+  }
+}
+window.clearSidebarSearch = clearSidebarSearch;
+
 function filterSidebar(query) {
   const q = (query || '').trim().toLowerCase();
+  const clearBtn = document.getElementById('clearSidebarSearchBtn');
+  if (clearBtn) clearBtn.style.display = q ? 'block' : 'none';
+  const allBtns = document.querySelectorAll('#sidebar .sidebar-items .section-item');
   let matches = 0;
-  document.querySelectorAll('#sidebar .sidebar-items .section-item').forEach(btn => {
+  allBtns.forEach(btn => {
     const sec = btn.dataset.section || '';
     const label = SECTION_LABELS[sec] || sec;
     const detail = SECTION_DETAILS[sec] || '';
@@ -1265,6 +1292,10 @@ function filterSidebar(query) {
   const emptyEl = document.getElementById('sidebarEmpty');
   if (emptyEl) {
     emptyEl.style.display = (matches === 0 && q) ? 'block' : 'none';
+  }
+  const statusEl = document.getElementById('sidebarFilterStatus');
+  if (statusEl && allBtns.length > 0) {
+    statusEl.textContent = q ? `Showing ${matches} of ${allBtns.length} sections` : '';
   }
 }
 
@@ -1295,9 +1326,14 @@ function buildSidebar() {
       <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
     </svg>
     <input type="search" class="sidebar-search" id="sidebarSearch" placeholder="Filter sections…" aria-label="Filter configuration sections" />
+    <kbd class="search-kbd" aria-hidden="true">/</kbd>
+    <button type="button" class="clear-search-btn" id="clearSidebarSearchBtn" aria-label="Clear configuration search filter" title="Clear configuration search filter">&times;</button>
+    <span class="sr-only" id="sidebarFilterStatus" aria-live="polite"></span>
   `;
   const searchInput = searchWrap.querySelector('input');
   searchInput.addEventListener('input', (e) => filterSidebar(e.target.value));
+  searchInput.addEventListener('keydown', (e) => { if (e.key === 'Escape') { clearSidebarSearch(); e.stopPropagation(); } });
+  searchWrap.querySelector('#clearSidebarSearchBtn').addEventListener('click', clearSidebarSearch);
   sidebar.appendChild(searchWrap);
 
   // Scrollable sections list
@@ -2258,6 +2294,12 @@ document.addEventListener('keydown', (event) => {
       saveConfig();
     } else {
       showToast('No unsaved changes', 'info');
+    }
+  } else if ((!event.ctrlKey && !event.metaKey && !event.altKey && event.key === '/') || ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k')) {
+    const a = document.activeElement;
+    if (!a || (!['INPUT', 'TEXTAREA', 'SELECT'].includes(a.tagName) && !a.isContentEditable)) {
+      const s = document.getElementById('sidebarSearch');
+      if (s) { event.preventDefault(); s.focus(); s.select(); }
     }
   }
 });
