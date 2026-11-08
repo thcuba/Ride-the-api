@@ -167,3 +167,4 @@ def test_pattern_db_package_reexports() -> None:
     assert hasattr(pdb, "PatternDB")
     assert not hasattr(pdb, "AuthConfig")
     assert not hasattr(pdb, "TransportMeta")
+    assert not hasattr(pdb, "VirtualSensor")
