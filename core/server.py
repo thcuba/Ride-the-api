@@ -12,9 +12,11 @@ import asyncio  # noqa: TC003
 import json
 import logging
 import os
+import sys
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import dns.asyncquery
 import dns.message
@@ -109,6 +111,9 @@ from core.tls_mitm import (
 )
 from core.traffic_selector import TrafficRequestInfo, get_traffic_selector, is_local_ip
 from core.upstream_resolver import _apply_config, self_connection_reason
+
+if TYPE_CHECKING:
+    from types import ModuleType
 
 # Path to webui directory (bundle-aware: works in source and PyInstaller builds)
 
@@ -2416,5 +2421,35 @@ def main():
     )
 
 
+_CANONICAL_MODULE = "core.server"
+
+
+def publish_entrypoint_module(executing: ModuleType | None = None) -> None:
+    """Publish the ``python -m core.server`` instance under its canonical name.
+
+    ``python -m`` executes this file as ``__main__``, so ``sys.modules`` holds no
+    ``core.server`` entry. The route modules in ``core/routes/`` reach the live
+    runtime with a lazy ``from core import server`` (deferred to break the import
+    cycle); without the entry the import machinery executes this file a SECOND
+    time and hands the routers that fresh copy, whose globals are all ``None``.
+    The visible symptom is a service that logs a clean startup and then answers
+    ``503 {"error": "Service not ready"}`` on everything routed that way
+    (``/api/devices``, ``/api/llm/*``, ``/api/tls/certs``), i.e. the dashboard
+    showing no devices and no LLM profiles.
+
+    Alias the executing module so the process keeps exactly one runtime state.
+    This is a no-op when the module was imported normally (tests, PyInstaller
+    bundle, ``from core.server import main``).
+    """
+    module = executing if executing is not None else sys.modules.get(__name__)
+    if module is None or sys.modules.get(_CANONICAL_MODULE) is not None:
+        return
+    sys.modules[_CANONICAL_MODULE] = module
+    package = sys.modules.get("core")
+    if package is not None and getattr(package, "server", None) is None:
+        package.server = module
+
+
 if __name__ == "__main__":
+    publish_entrypoint_module()
     main()
