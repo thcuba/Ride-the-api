@@ -70,7 +70,7 @@ def test_configuration_sidebar_accessibility():
     assert 'aria-label="Clear configuration search filter"' in html
     assert 'id="sidebarFilterStatus"' in html
     assert 'aria-live="polite"' in html
-    assert 'search-kbd' in html
+    assert "search-kbd" in html
     assert "clearSidebarSearch" in html
 
     # Verify tablist structure and orientation
