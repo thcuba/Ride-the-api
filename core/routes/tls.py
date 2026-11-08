@@ -12,6 +12,7 @@ from sqlalchemy import func, select
 
 from core.database import DeviceRegistry, RelayedConnection
 from core.routes.common import _client_error
+from core.tls import get_frida_script
 
 logger = logging.getLogger(__name__)
 
@@ -203,48 +204,7 @@ async def tls_list_ports():
 @router.get("/api/tls/frida/script.js")
 async def tls_frida_script():
     """Return a Frida script for bypassing certificate pinning."""
-    script = r"""// Ride the API — Certificate Pinning Bypass (Frida)
-// Usage: frida -U -l script.js <app>
-// Requires: Frida installed on device, CA cert installed
-
-Java.perform(function() {
-    // Common SSL pinning bypass targets
-    var X509TrustManager = Java.use('javax.net.ssl.X509TrustManager');
-    var SSLContext = Java.use('javax.net.ssl.SSLContext');
-
-    // Bypass checkClientTrusted / checkServerTrusted
-    X509TrustManager.checkClientTrusted.implementation = function(chain, authType) {
-        console.log('[RideTheAPI] Bypassing checkClientTrusted');
-    };
-    X509TrustManager.checkServerTrusted.implementation = function(chain, authType) {
-        console.log('[RideTheAPI] Bypassing checkServerTrusted');
-    };
-    X509TrustManager.getAcceptedIssuers.implementation = function() {
-        console.log('[RideTheAPI] Returning empty accepted issuers');
-        return [];
-    };
-
-    // Hook OkHttp HostnameVerifier
-    try {
-        var HostnameVerifier = Java.use('javax.net.ssl.HostnameVerifier');
-        HostnameVerifier.verify.implementation = function(hostname, session) {
-            console.log('[RideTheAPI] Bypassing hostname verification for: ' + hostname);
-            return true;
-        };
-    } catch(e) { console.log('[RideTheAPI] HostnameVerifier not found'); }
-
-    // Hook OkHttp CertificatePinner
-    try {
-        var CertificatePinner = Java.use('okhttp3.CertificatePinner');
-        CertificatePinner.check.implementation = function(pin) {
-            console.log('[RideTheAPI] Bypassing certificate pin for: ' + pin);
-        };
-    } catch(e) { console.log("[RideTheAPI] CertificatePinner not found"); }
-
-    console.log("[RideTheAPI] Pinning bypass injected successfully");
-});
-"""
-    return Response(content=script, media_type="application/javascript")
+    return Response(content=get_frida_script(), media_type="application/javascript")
 
 
 @router.get("/api/tls/certs")
