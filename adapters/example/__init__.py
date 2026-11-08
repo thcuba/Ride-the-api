@@ -22,6 +22,7 @@ from adapters.base import (
     DeviceState,
     InterceptedRequest,
     ProtocolAdapter,
+    ProtocolDefinition,
     ProtocolType,
     host_from_request,
 )
@@ -510,3 +511,17 @@ class ExampleProtocolAdapter(ProtocolAdapter):
             power_watts=dps.get(self.DP_CODES["power_consumption"]),
             vendor_data=data,
         )
+
+
+PROTOCOL_DEFINITION = ProtocolDefinition(
+    name="example",
+    adapter_class=ExampleProtocolAdapter,
+    server_plugin_class=None,
+    adapter_config={"region": "eu", "api_version": "v1.0"},
+    description="Reference HVAC protocol adapter",
+)
+
+__all__ = [
+    "ExampleProtocolAdapter",
+    "PROTOCOL_DEFINITION",
+]

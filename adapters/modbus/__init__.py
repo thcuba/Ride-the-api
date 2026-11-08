@@ -30,6 +30,7 @@ from adapters.base import (
     DeviceState,
     InterceptedRequest,
     ProtocolAdapter,
+    ProtocolDefinition,
     ProtocolType,
 )
 
@@ -217,3 +218,24 @@ class ModbusProtocolAdapter(ProtocolAdapter):
     async def on_device_disconnect(self, device_id: str) -> None:
         self._devices.pop(device_id, None)
         logger.info("Modbus device disconnected: %s", device_id)
+
+
+try:
+    from core.protocol_servers.modbus_server import ModbusServerPlugin
+except ImportError:  # pragma: no cover
+    ModbusServerPlugin = None  # type: ignore[assignment, misc]
+
+PROTOCOL_DEFINITION = ProtocolDefinition(
+    name="modbus",
+    adapter_class=ModbusProtocolAdapter,
+    server_plugin_class=ModbusServerPlugin,
+    config_attr="modbus",
+    adapter_vendor="modbus_example",
+    description="Modbus TCP industrial server and protocol adapter",
+)
+
+__all__ = [
+    "ModbusProtocolAdapter",
+    "ModbusServerPlugin",
+    "PROTOCOL_DEFINITION",
+]

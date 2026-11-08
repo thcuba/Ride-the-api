@@ -28,6 +28,7 @@ from adapters.base import (
     DeviceState,
     InterceptedRequest,
     ProtocolAdapter,
+    ProtocolDefinition,
     ProtocolType,
 )
 
@@ -209,3 +210,23 @@ class ZigbeeProtocolAdapter(ProtocolAdapter):
     async def on_device_disconnect(self, device_id: str) -> None:
         self._devices.pop(device_id, None)
         logger.info("Zigbee device disconnected: %s", device_id)
+
+
+try:
+    from core.protocol_servers.zigbee_bridge import ZigbeeBridgePlugin
+except ImportError:  # pragma: no cover
+    ZigbeeBridgePlugin = None  # type: ignore[assignment, misc]
+
+PROTOCOL_DEFINITION = ProtocolDefinition(
+    name="zigbee",
+    adapter_class=ZigbeeProtocolAdapter,
+    server_plugin_class=ZigbeeBridgePlugin,
+    config_attr="zigbee_bridge",
+    description="Zigbee2MQTT bridge listener and generic ZCL adapter",
+)
+
+__all__ = [
+    "ZigbeeProtocolAdapter",
+    "ZigbeeBridgePlugin",
+    "PROTOCOL_DEFINITION",
+]

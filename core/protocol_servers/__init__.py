@@ -109,6 +109,25 @@ class ProtocolServerManager:
             self._callbacks[plugin.name] = handler
         logger.info("Protocol plugin registered: %s", plugin.name)
 
+    def register_from_definition(
+        self,
+        definition: object,
+        servers_config: ProtocolServersConfig | None = None,
+        handler: Callable | None = None,
+    ) -> bool:
+        """Register a server plugin from a ProtocolDefinition if available."""
+        if not getattr(definition, "server_plugin_class", None):
+            return False
+        cfg = servers_config or self._config
+        create_fn = getattr(definition, "create_server_plugin", None)
+        if not callable(create_fn):
+            return False
+        plugin = create_fn(cfg, handler=handler)
+        if plugin:
+            self.register_plugin(plugin, handler=handler)
+            return True
+        return False
+
     def set_request_handler(self, protocol: str, handler: Callable) -> None:
         """Set a request handler for a protocol."""
         self._callbacks[protocol] = handler
@@ -272,9 +291,85 @@ def register_standard_plugins(
         WebSocketServerPlugin(config.websocket, handler=handler),
         RawTCPServerPlugin(config.raw_tcp, handler=handler),
         HTTP2ServerPlugin(config.http2, handler=handler),
-        ZigbeeBridgePlugin(config.zigbee, handler=handler),
-        ZWaveBridgePlugin(config.zwave, handler=handler),
-        MatterBridgePlugin(config.matter, handler=handler),
+        ZigbeeBridgePlugin(config.zigbee_bridge, handler=handler),
+        ZWaveBridgePlugin(config.zwave_bridge, handler=handler),
+        MatterBridgePlugin(config.matter_bridge, handler=handler),
     ]
     for p in plugins:
-        manager.register_plugin(p)
+        manager.register_plugin(p, handler=handler)
+
+
+def _load_protocol_server_definitions(
+    manager: ProtocolServerManager,
+    cfg: ProtocolServersConfig,
+    handler: Callable | None,
+) -> None:
+    try:
+        from importlib.metadata import entry_points  # noqa: PLC0415
+
+        defs = entry_points(group="ride_the_api.protocols")
+    except Exception:
+        return
+
+    for ep in defs:
+        try:
+            target = ep.load()
+            proto_def = (
+                target()
+                if callable(target) and not hasattr(target, "server_plugin_class")
+                else target
+            )
+            if hasattr(proto_def, "server_plugin_class") and proto_def.server_plugin_class:
+                plugin_name = getattr(proto_def.server_plugin_class, "name", proto_def.name)
+                if not manager.get_plugin(plugin_name):
+                    manager.register_from_definition(proto_def, servers_config=cfg, handler=handler)
+                    logger.info(
+                        "Loaded server plugin from protocol definition entry point: %s",
+                        ep.name,
+                    )
+        except Exception:
+            logger.exception("Failed to load protocol entry point %s for server plugins", ep.name)
+
+
+def _load_standalone_server_plugins(
+    manager: ProtocolServerManager,
+    cfg: ProtocolServersConfig,
+    handler: Callable | None,
+) -> None:
+    try:
+        from importlib.metadata import entry_points  # noqa: PLC0415
+
+        eps = entry_points(group="ride_the_api.protocol_servers")
+    except Exception:
+        return
+
+    for ep in eps:
+        try:
+            plugin_cls = ep.load()
+            plugin_name = getattr(plugin_cls, "name", ep.name)
+            if not manager.get_plugin(plugin_name):
+                sub_cfg = getattr(cfg, plugin_name, cfg)
+                try:
+                    plugin_inst = plugin_cls(sub_cfg, handler=handler)
+                except TypeError:
+                    plugin_inst = plugin_cls(sub_cfg)
+                manager.register_plugin(plugin_inst, handler=handler)
+                logger.info("Loaded protocol server plugin from entry point: %s", ep.name)
+        except Exception:
+            logger.exception("Failed to load protocol server entry point %s", ep.name)
+
+
+def discover_server_plugin_entry_points(
+    manager: ProtocolServerManager,
+    config: ProtocolServersConfig | None = None,
+    handler: Callable | None = None,
+) -> None:
+    """Discover and register third-party / community server plugins via entry points.
+
+    Supports:
+    - ride_the_api.protocols: unified ProtocolDefinition instances or factories
+    - ride_the_api.protocol_servers: standalone ProtocolServerPlugin subclasses or factories
+    """
+    cfg = config or manager._config
+    _load_protocol_server_definitions(manager, cfg, handler)
+    _load_standalone_server_plugins(manager, cfg, handler)

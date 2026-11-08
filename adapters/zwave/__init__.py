@@ -32,6 +32,7 @@ from adapters.base import (
     DeviceState,
     InterceptedRequest,
     ProtocolAdapter,
+    ProtocolDefinition,
     ProtocolType,
 )
 
@@ -250,3 +251,23 @@ class ZWaveProtocolAdapter(ProtocolAdapter):
     async def on_device_disconnect(self, device_id: str) -> None:
         self._devices.pop(device_id, None)
         logger.info("Z-Wave device disconnected: %s", device_id)
+
+
+try:
+    from core.protocol_servers.zwave_bridge import ZWaveBridgePlugin
+except ImportError:  # pragma: no cover
+    ZWaveBridgePlugin = None  # type: ignore[assignment, misc]
+
+PROTOCOL_DEFINITION = ProtocolDefinition(
+    name="zwave",
+    adapter_class=ZWaveProtocolAdapter,
+    server_plugin_class=ZWaveBridgePlugin,
+    config_attr="zwave_bridge",
+    description="Z-Wave JS UI bridge listener and command class adapter",
+)
+
+__all__ = [
+    "ZWaveProtocolAdapter",
+    "ZWaveBridgePlugin",
+    "PROTOCOL_DEFINITION",
+]
