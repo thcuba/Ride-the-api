@@ -36,14 +36,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      # Install the cosign tool except on PR
-      # https://github.com/sigstore/cosign-installer
-      - name: Install cosign
-        if: github.event_name != 'pull_request'
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 #v4.1.2
-        with:
-          cosign-release: 'v2.2.4'
-
       # Set up BuildKit Docker container builder to be able to build
       # multi-platform images and export cache
       # https://github.com/docker/setup-buildx-action
@@ -87,6 +79,23 @@ jobs:
           # distribute can be traced back to this workflow run and its inputs.
           sbom: true
           provenance: mode=max
+
+      # Install cosign except on PRs, right before it is needed and AFTER the push.
+      # Source is the OCI image pinned by digest, not the Release download: GitHub's
+      # release CDN can answer 504 from its edge gateways (observed on cosign and on
+      # unrelated repos alike) and sigstore/cosign-installer has no retry, while this
+      # path goes through the registry service and cannot silently change content.
+      - name: Install cosign from its pinned OCI image
+        if: github.event_name != 'pull_request'
+        env:
+          COSIGN_IMAGE: ghcr.io/sigstore/cosign/cosign@sha256:bed7ba33a8610c1607c16dee696f62bad168814016126abb9da01e9fb7cb2167
+        run: |
+          set -euo pipefail
+          docker create --name cosign-src "${COSIGN_IMAGE}" >/dev/null
+          docker cp cosign-src:/ko-app/cosign /usr/local/bin/cosign
+          docker rm cosign-src >/dev/null
+          chmod +x /usr/local/bin/cosign
+          cosign version
 
       # Sign the resulting Docker image digest except on PRs.
       # This will only write to the public Rekor transparency log when the Docker
