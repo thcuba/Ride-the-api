@@ -65,6 +65,14 @@ def test_configuration_sidebar_accessibility():
     assert 'type="search"' in html
     assert 'id="sidebarSearch"' in html
 
+    # Verify clear search button, keyboard hint, and aria-live status
+    assert 'id="clearSidebarSearchBtn"' in html
+    assert 'aria-label="Clear configuration search filter"' in html
+    assert 'id="sidebarFilterStatus"' in html
+    assert 'aria-live="polite"' in html
+    assert 'search-kbd' in html
+    assert "clearSidebarSearch" in html
+
     # Verify tablist structure and orientation
     assert "itemsContainer.setAttribute('role', 'tablist')" in html
     assert "itemsContainer.setAttribute('aria-orientation', 'vertical')" in html
