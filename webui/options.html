@@ -150,49 +150,9 @@
     </div>
   </main>
 
+<script src="/static/js/common.js"></script>
+<script src="/static/js/api.js"></script>
 <script>
-  // ── Toast ────────────────────────────────────────────────────────────────────
-  function showToast(msg, type) {
-    var c = document.getElementById('toasts');
-    if (!c) return;
-    var t = document.createElement('div');
-    var toastType = type || 'info';
-    t.className = 'toast ' + toastType;
-    var icons = { success: '✓', error: '✕', warning: '⚠', info: 'ℹ' };
-    var iconSpan = document.createElement('span');
-    iconSpan.className = 'toast-icon';
-    iconSpan.setAttribute('aria-hidden', 'true');
-    iconSpan.textContent = icons[toastType] || 'ℹ';
-    var textSpan = document.createElement('span');
-    textSpan.textContent = msg;
-    t.appendChild(iconSpan);
-    t.appendChild(textSpan);
-    c.appendChild(t);
-    setTimeout(function () { t.style.opacity = '0'; t.style.transition = 'opacity .3s'; setTimeout(function () { t.remove(); }, 300); }, 3000);
-  }
-
-  // ── Theme ───────────────────────────────────────────────────────────────────
-  function updateThemeUI(theme) {
-    var sel = document.getElementById('themeSelect');
-    var icon = document.getElementById('themeIcon');
-    var isLight = theme === 'light';
-    if (sel) {
-      sel.setAttribute('aria-label', 'Colour theme, currently ' + (isLight ? 'Light' : 'Dark'));
-    }
-    if (icon) {
-      icon.innerHTML = isLight
-        ? '<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>'
-        : '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>';
-    }
-  }
-
-  function setTheme(theme) {
-    document.documentElement.setAttribute('data-theme', theme);
-    try { localStorage.setItem('rta-theme', theme); } catch (e) {}
-    updateThemeUI(theme);
-    showToast('Theme updated to ' + (theme.charAt(0).toUpperCase() + theme.slice(1)), 'info');
-  }
-
   (function () {
     var sel = document.getElementById('themeSelect');
     if (!sel) return;
@@ -210,26 +170,6 @@
       .then(function (r) { return r.json(); })
       .then(function (d) { el.textContent = 'Version ' + (d.version || 'unknown'); })
       .catch(function () { el.textContent = 'Version unavailable'; });
-  })();
-
-  // ── Control-plane auth ──────────────────────────────────────────────────
-  // Attach the shared API key (X-API-Key) to every same-origin /api/* request.
-  // dashboard/config/patterns persist it in localStorage under 'rideApiKey',
-  // which this page reads too (same origin) so /api/* calls here are authorized.
-  (function () {
-    var apiKey = '';
-    try { apiKey = localStorage.getItem('rideApiKey') || sessionStorage.getItem('rideSessionKey') || ''; } catch (e) {}
-    var origFetch = window.fetch.bind(window);
-    window.fetch = function (input, init) {
-      init = init || {};
-      var url = (typeof input === 'string') ? input : (input && input.url);
-      if (typeof url === 'string' && url.indexOf('/api/') === 0 && apiKey) {
-        var headers = new Headers(init.headers || (input && input.headers) || {});
-        if (!headers.has('X-API-Key')) headers.set('X-API-Key', apiKey);
-        init.headers = headers;
-      }
-      return origFetch(input, init);
-    };
   })();
 
   // ── Update ──────────────────────────────────────────────────────────────────

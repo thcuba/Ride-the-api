@@ -18,6 +18,8 @@ import core.server as server_mod
 from core.routes.introspection import iter_routes
 
 DASHBOARD = Path(__file__).resolve().parents[1] / "webui" / "dashboard.html"
+DASHBOARD_JS = Path(__file__).resolve().parents[1] / "webui" / "static" / "js" / "dashboard.js"
+API_JS = Path(__file__).resolve().parents[1] / "webui" / "static" / "js" / "api.js"
 
 #: Stands in for a `${...}` template hole while matching route patterns.
 _HOLE = "\x00"
@@ -27,9 +29,14 @@ _FETCH_CALL = re.compile(r"fetch\(\s*[`'\"]([^`'\"\n]+)")
 
 def _dashboard_paths() -> list[str]:
     """API paths the dashboard fetches, with template holes normalised."""
+    text = DASHBOARD.read_text(encoding="utf-8")
+    if DASHBOARD_JS.exists():
+        text += "\n" + DASHBOARD_JS.read_text(encoding="utf-8")
+    if API_JS.exists():
+        text += "\n" + API_JS.read_text(encoding="utf-8")
     found = {
         re.sub(r"\$\{[^}]*\}", _HOLE, match.group(1)).split("?")[0]
-        for match in _FETCH_CALL.finditer(DASHBOARD.read_text(encoding="utf-8"))
+        for match in _FETCH_CALL.finditer(text)
     }
     return sorted(path for path in found if path.startswith("/api/") or path == "/health")
 

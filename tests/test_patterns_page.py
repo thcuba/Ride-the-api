@@ -31,7 +31,15 @@ from core.routes.introspection import route_paths
 from core.server import app
 
 PATTERNS_HTML_PATH = pathlib.Path(__file__).resolve().parent.parent / "webui" / "patterns.html"
+PATTERNS_JS_PATH = PATTERNS_HTML_PATH.parent / "static" / "js" / "patterns.js"
 CATCH_ALL = "/{vendor}/{path:path}"
+
+
+def _patterns_source() -> str:
+    html = PATTERNS_HTML_PATH.read_text(encoding="utf-8")
+    if PATTERNS_JS_PATH.exists():
+        html += "\n" + PATTERNS_JS_PATH.read_text(encoding="utf-8")
+    return html
 
 
 @pytest.fixture
@@ -86,7 +94,7 @@ def test_page_route_is_registered_before_the_proxy_catch_all():
 
 def _device_id_for(paths: list[str]) -> list[str]:
     """Run the page's own deviceIdFromPath() under node, so the check tests real behaviour."""
-    html = PATTERNS_HTML_PATH.read_text(encoding="utf-8")
+    html = _patterns_source()
     match = re.search(r"function deviceIdFromPath\(pathname\)\{(.*?)\n  \}", html, re.S)
     assert match, "deviceIdFromPath non trovata in webui/patterns.html"
     js = (
@@ -127,7 +135,7 @@ def test_device_id_is_read_for_the_per_device_view():
 
 def test_page_lists_devices_when_no_device_is_in_the_url():
     """Without an id the page loads the device list instead of a per-device endpoint."""
-    html = PATTERNS_HTML_PATH.read_text(encoding="utf-8")
+    html = _patterns_source()
     assert "renderDeviceList" in html, "manca la vista senza device"
     assert "'/api/devices'" in html, "la vista senza device non elenca i device"
     # The old derivation, which produced the page name as a device id.
@@ -139,7 +147,7 @@ def test_page_lists_devices_when_no_device_is_in_the_url():
 
 def test_pattern_action_buttons_styling_and_tooltips():
     """Pattern card action buttons must have accessible danger styling and title tooltips."""
-    html = PATTERNS_HTML_PATH.read_text(encoding="utf-8")
+    html = _patterns_source()
 
     # .btn-danger class defined with semantic --red token
     assert ".btn-danger { background:var(--red); color:#fff; }" in html
