@@ -24,6 +24,7 @@ from adapters.base import (
     DeviceState,
     InterceptedRequest,
     ProtocolAdapter,
+    ProtocolDefinition,
     ProtocolType,
     host_from_request,
 )
@@ -230,3 +231,16 @@ class ShellyProtocolAdapter(ProtocolAdapter):
     async def on_device_disconnect(self, device_id: str) -> None:
         self._devices.pop(device_id, None)
         logger.info("Shelly device disconnected: %s", device_id)
+
+
+PROTOCOL_DEFINITION = ProtocolDefinition(
+    name="shelly",
+    adapter_class=ShellyProtocolAdapter,
+    server_plugin_class=None,
+    description="Shelly smart home device adapter",
+)
+
+__all__ = [
+    "ShellyProtocolAdapter",
+    "PROTOCOL_DEFINITION",
+]

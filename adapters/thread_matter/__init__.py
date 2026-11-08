@@ -35,6 +35,7 @@ from adapters.base import (
     DeviceState,
     InterceptedRequest,
     ProtocolAdapter,
+    ProtocolDefinition,
     ProtocolType,
 )
 
@@ -253,3 +254,23 @@ class MatterProtocolAdapter(ProtocolAdapter):
     async def on_device_disconnect(self, device_id: str) -> None:
         self._devices.pop(device_id, None)
         logger.info("Matter device disconnected: %s", device_id)
+
+
+try:
+    from core.protocol_servers.matter_bridge import MatterBridgePlugin
+except ImportError:  # pragma: no cover
+    MatterBridgePlugin = None  # type: ignore[assignment, misc]
+
+PROTOCOL_DEFINITION = ProtocolDefinition(
+    name="matter",
+    adapter_class=MatterProtocolAdapter,
+    server_plugin_class=MatterBridgePlugin,
+    config_attr="matter_bridge",
+    description="Matter controller bridge listener and interaction model adapter",
+)
+
+__all__ = [
+    "MatterProtocolAdapter",
+    "MatterBridgePlugin",
+    "PROTOCOL_DEFINITION",
+]

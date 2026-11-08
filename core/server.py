@@ -72,16 +72,11 @@ from core.pipeline import (
     LearningOrchestrator,
     get_orchestrator,
 )
-from core.protocol_servers import get_protocol_server_manager
-from core.protocol_servers.coap_server import CoAPServerPlugin
-from core.protocol_servers.http2_server import HTTP2ServerPlugin
-from core.protocol_servers.matter_bridge import MatterBridgePlugin
-from core.protocol_servers.modbus_server import ModbusServerPlugin
-from core.protocol_servers.mqtt_server import MQTTServerPlugin
-from core.protocol_servers.raw_tcp_server import RawTCPServerPlugin
-from core.protocol_servers.websocket_server import WebSocketServerPlugin
-from core.protocol_servers.zigbee_bridge import ZigbeeBridgePlugin
-from core.protocol_servers.zwave_bridge import ZWaveBridgePlugin
+from core.protocol_servers import (
+    discover_server_plugin_entry_points,
+    get_protocol_server_manager,
+    register_standard_plugins,
+)
 from core.resilience import (
     AutoSwitchScheduler,
     register_resilience_routes,
@@ -1260,40 +1255,11 @@ async def lifespan(_app: FastAPI):  # noqa: C901, PLR0912, PLR0915
 
             # traffic is actually learned.
 
-            proto_mgr.register_plugin(
-                MQTTServerPlugin(protocol_servers_cfg.mqtt, handler=handle_protocol_request)
+            register_standard_plugins(
+                proto_mgr, protocol_servers_cfg, handler=handle_protocol_request
             )
-            proto_mgr.register_plugin(
-                CoAPServerPlugin(protocol_servers_cfg.coap, handler=handle_protocol_request)
-            )
-            proto_mgr.register_plugin(
-                ModbusServerPlugin(protocol_servers_cfg.modbus, handler=handle_protocol_request)
-            )
-            proto_mgr.register_plugin(
-                WebSocketServerPlugin(
-                    protocol_servers_cfg.websocket, handler=handle_protocol_request
-                )
-            )
-            proto_mgr.register_plugin(
-                RawTCPServerPlugin(protocol_servers_cfg.raw_tcp, handler=handle_protocol_request)
-            )
-            proto_mgr.register_plugin(
-                HTTP2ServerPlugin(protocol_servers_cfg.http2, handler=handle_protocol_request)
-            )
-            proto_mgr.register_plugin(
-                ZigbeeBridgePlugin(
-                    protocol_servers_cfg.zigbee_bridge, handler=handle_protocol_request
-                )
-            )
-            proto_mgr.register_plugin(
-                ZWaveBridgePlugin(
-                    protocol_servers_cfg.zwave_bridge, handler=handle_protocol_request
-                )
-            )
-            proto_mgr.register_plugin(
-                MatterBridgePlugin(
-                    protocol_servers_cfg.matter_bridge, handler=handle_protocol_request
-                )
+            discover_server_plugin_entry_points(
+                proto_mgr, protocol_servers_cfg, handler=handle_protocol_request
             )
 
             # Auto-start only the enabled servers (bridges included, since they

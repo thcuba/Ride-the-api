@@ -148,6 +148,37 @@ inference = [
     "numpy>=1.26.0",
 ]
 
+[project.entry-points."ride_the_api.adapters"]
+example = "adapters.example:ExampleProtocolAdapter"
+coap = "adapters.coap:CoAPProtocolAdapter"
+modbus = "adapters.modbus:ModbusProtocolAdapter"
+shelly = "adapters.shelly:ShellyProtocolAdapter"
+zigbee = "adapters.zigbee:ZigbeeProtocolAdapter"
+zwave = "adapters.zwave:ZWaveProtocolAdapter"
+matter = "adapters.thread_matter:MatterProtocolAdapter"
+mqtt = "adapters.mqtt:MQTTProtocolAdapter"
+
+[project.entry-points."ride_the_api.protocol_servers"]
+mqtt = "core.protocol_servers.mqtt_server:MQTTServerPlugin"
+coap = "core.protocol_servers.coap_server:CoAPServerPlugin"
+modbus = "core.protocol_servers.modbus_server:ModbusServerPlugin"
+websocket = "core.protocol_servers.websocket_server:WebSocketServerPlugin"
+raw_tcp = "core.protocol_servers.raw_tcp_server:RawTCPServerPlugin"
+http2 = "core.protocol_servers.http2_server:HTTP2ServerPlugin"
+zigbee_bridge = "core.protocol_servers.zigbee_bridge:ZigbeeBridgePlugin"
+zwave_bridge = "core.protocol_servers.zwave_bridge:ZWaveBridgePlugin"
+matter_bridge = "core.protocol_servers.matter_bridge:MatterBridgePlugin"
+
+[project.entry-points."ride_the_api.protocols"]
+mqtt = "adapters.mqtt:PROTOCOL_DEFINITION"
+coap = "adapters.coap:PROTOCOL_DEFINITION"
+modbus = "adapters.modbus:PROTOCOL_DEFINITION"
+zigbee = "adapters.zigbee:PROTOCOL_DEFINITION"
+zwave = "adapters.zwave:PROTOCOL_DEFINITION"
+matter = "adapters.thread_matter:PROTOCOL_DEFINITION"
+shelly = "adapters.shelly:PROTOCOL_DEFINITION"
+example = "adapters.example:PROTOCOL_DEFINITION"
+
 [build-system]
 requires = ["setuptools>=69.0", "wheel"]
 build-backend = "setuptools.build_meta"

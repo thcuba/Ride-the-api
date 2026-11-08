@@ -7,9 +7,60 @@ from __future__ import annotations
 
 import logging
 
-from adapters.base import ProtocolAdapterRegistry, get_adapter_registry
+from adapters.base import ProtocolAdapterRegistry, ProtocolDefinition, get_adapter_registry
 
 logger = logging.getLogger(__name__)
+
+
+def _load_protocol_definition_entry_points(registry: ProtocolAdapterRegistry) -> None:
+    try:
+        from importlib.metadata import entry_points  # noqa: PLC0415
+
+        defs = entry_points(group="ride_the_api.protocols")
+    except Exception:
+        return
+
+    for ep in defs:
+        try:
+            target = ep.load()
+            proto_def = (
+                target() if callable(target) and not hasattr(target, "adapter_class") else target
+            )
+            if hasattr(proto_def, "adapter_class") and proto_def.adapter_class:
+                registry.register_definition(proto_def)
+                logger.info("Loaded protocol adapter from protocol entry point: %s", ep.name)
+        except Exception:
+            logger.exception("Failed to load protocol entry point %s for adapters", ep.name)
+
+
+def _load_standalone_adapter_entry_points(registry: ProtocolAdapterRegistry) -> None:
+    try:
+        from importlib.metadata import entry_points  # noqa: PLC0415
+
+        eps = entry_points(group="ride_the_api.adapters")
+    except Exception:
+        return
+
+    for ep in eps:
+        try:
+            if not registry.get_adapter(ep.name):
+                adapter_cls = ep.load()
+                if callable(adapter_cls):
+                    registry.register(adapter_cls(ep.name, {}))
+                    logger.info("Loaded adapter plugin from entry point: %s", ep.name)
+        except Exception:
+            logger.exception("Failed to load adapter entry point %s", ep.name)
+
+
+def discover_adapter_entry_points(registry: ProtocolAdapterRegistry) -> None:
+    """Discover and register third-party / community adapter plugins via entry points.
+
+    Supports:
+    - ride_the_api.protocols: unified ProtocolDefinition instances or factories
+    - ride_the_api.adapters: standalone ProtocolAdapter classes or factories
+    """
+    _load_protocol_definition_entry_points(registry)
+    _load_standalone_adapter_entry_points(registry)
 
 
 def register_all_adapters() -> ProtocolAdapterRegistry:
@@ -58,21 +109,13 @@ def register_all_adapters() -> ProtocolAdapterRegistry:
 
     registry.register(MatterProtocolAdapter("matter", {}))
 
-    # Discover and register third-party / community adapter plugins
-    try:
-        from importlib.metadata import entry_points  # noqa: PLC0415
+    # MQTT adapter
+    from adapters.mqtt import MQTTProtocolAdapter  # noqa: PLC0415
 
-        eps = entry_points(group="ride_the_api.adapters")
-        for ep in eps:
-            try:
-                if not registry.get_adapter(ep.name):
-                    adapter_cls = ep.load()
-                    registry.register(adapter_cls(ep.name, {}))
-                    logger.info("Loaded adapter plugin from entry point: %s", ep.name)
-            except Exception:
-                logger.exception("Failed to load adapter entry point %s", ep.name)
-    except Exception:
-        pass
+    registry.register(MQTTProtocolAdapter("mqtt", {}))
+
+    # Discover and register third-party / community adapter plugins
+    discover_adapter_entry_points(registry)
 
     return registry
 
@@ -87,3 +130,11 @@ def get_registered_registry() -> ProtocolAdapterRegistry:
     if _adapter_registry is None:
         _adapter_registry = register_all_adapters()
     return _adapter_registry
+
+
+__all__ = [
+    "ProtocolDefinition",
+    "discover_adapter_entry_points",
+    "get_registered_registry",
+    "register_all_adapters",
+]

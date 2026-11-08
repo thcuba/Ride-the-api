@@ -27,6 +27,7 @@ from adapters.base import (
     DeviceState,
     InterceptedRequest,
     ProtocolAdapter,
+    ProtocolDefinition,
     ProtocolType,
 )
 
@@ -173,3 +174,24 @@ class CoAPProtocolAdapter(ProtocolAdapter):
     async def on_device_disconnect(self, device_id: str) -> None:
         self._devices.pop(device_id, None)
         logger.info("CoAP device disconnected: %s", device_id)
+
+
+try:
+    from core.protocol_servers.coap_server import CoAPServerPlugin
+except ImportError:  # pragma: no cover
+    CoAPServerPlugin = None  # type: ignore[assignment, misc]
+
+PROTOCOL_DEFINITION = ProtocolDefinition(
+    name="coap",
+    adapter_class=CoAPProtocolAdapter,
+    server_plugin_class=CoAPServerPlugin,
+    config_attr="coap",
+    adapter_vendor="coap_example",
+    description="CoAP UDP server and protocol adapter",
+)
+
+__all__ = [
+    "CoAPProtocolAdapter",
+    "CoAPServerPlugin",
+    "PROTOCOL_DEFINITION",
+]

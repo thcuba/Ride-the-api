@@ -28,6 +28,7 @@ from adapters.base import (
     DeviceState,
     InterceptedRequest,
     ProtocolAdapter,
+    ProtocolDefinition,
     ProtocolType,
 )
 
@@ -228,3 +229,23 @@ class MQTTProtocolAdapter(ProtocolAdapter):
     async def on_device_disconnect(self, device_id: str) -> None:
         self._devices.pop(device_id, None)
         logger.info("MQTT device disconnected: %s", device_id)
+
+
+try:
+    from core.protocol_servers.mqtt_server import MQTTServerPlugin
+except ImportError:  # pragma: no cover
+    MQTTServerPlugin = None  # type: ignore[assignment, misc]
+
+PROTOCOL_DEFINITION = ProtocolDefinition(
+    name="mqtt",
+    adapter_class=MQTTProtocolAdapter,
+    server_plugin_class=MQTTServerPlugin,
+    config_attr="mqtt",
+    description="Standard MQTT broker server and generic protocol adapter",
+)
+
+__all__ = [
+    "MQTTProtocolAdapter",
+    "MQTTServerPlugin",
+    "PROTOCOL_DEFINITION",
+]
