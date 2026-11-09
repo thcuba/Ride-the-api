@@ -72,3 +72,57 @@ def test_a_refused_connection_is_not_connected():
 
     plugin._on_disconnect(client, None, None, "connection lost", None)
     assert plugin._connected is False
+
+
+@pytest.mark.asyncio
+async def test_route_to_pipeline_payload_parsing():
+    received = []
+
+    async def _handler(req):
+        received.append(req)
+
+    plugin = ZigbeeBridgePlugin(ZigbeeBridgeConfig(), handler=_handler)
+
+    # Valid JSON dict payload
+    await plugin._route_to_pipeline("zigbee2mqtt/sensor1", b'{"state": "ON", "temperature": 21.5}')
+    assert len(received) == 1
+    assert received[-1].device_id == "zigbee-sensor1"
+    assert received[-1].body == {"state": "ON", "temperature": 21.5}
+
+    # Valid JSON list payload with leading whitespace
+    await plugin._route_to_pipeline("zigbee2mqtt/sensor2", b"  \n\t[1, 2, 3]  ")
+    assert len(received) == 1 + 1  # noqa: PLR2004
+    assert received[-1].device_id == "zigbee-sensor2"
+    assert received[-1].body == [1, 2, 3]
+
+    # Valid JSON primitive values (boolean, number, string)
+    await plugin._route_to_pipeline("zigbee2mqtt/sensor2b", b"true")
+    assert received[-1].body is True
+
+    expected_number = 42.5
+    await plugin._route_to_pipeline("zigbee2mqtt/sensor2c", b"42.5")
+    assert received[-1].body == expected_number
+
+    # Valid JSON null payload
+    await plugin._route_to_pipeline("zigbee2mqtt/sensor2d", b"null")
+    assert received[-1].body is None
+
+    # Whitespace-only payload fallback
+    await plugin._route_to_pipeline("zigbee2mqtt/sensor2e", b"   \t\n  ")
+    assert received[-1].body == {"raw": b"   \t\n  ".hex()}
+
+    # Non-JSON string payload fallback
+    await plugin._route_to_pipeline("zigbee2mqtt/sensor3", b"raw_data_string")
+    assert received[-1].device_id == "zigbee-sensor3"
+    assert received[-1].body == {"raw": b"raw_data_string".hex()}
+
+    # Binary payload fallback
+    binary_data = bytes([0xDE, 0xAD, 0xBE, 0xEF])
+    await plugin._route_to_pipeline("zigbee2mqtt/sensor4", binary_data)
+    assert received[-1].device_id == "zigbee-sensor4"
+    assert received[-1].body == {"raw": binary_data.hex()}
+
+    # Empty payload fallback
+    await plugin._route_to_pipeline("zigbee2mqtt/sensor5", b"")
+    assert received[-1].device_id == "zigbee-sensor5"
+    assert received[-1].body == {"raw": ""}
