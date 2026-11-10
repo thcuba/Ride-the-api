@@ -70,6 +70,74 @@ async def test_raw_tcp_server_binds_and_routes():
 
 
 @pytest.mark.asyncio
+async def test_matter_bridge_non_json_and_payload_variants():
+    received = []
+    cfg = MatterBridgeConfig(controller_port=0, enabled=True)
+    plugin = MatterBridgePlugin(cfg, handler=lambda r: received.append(r.body))
+    await plugin.start()
+    port = await _bind_port(plugin._server)  # noqa: SLF001
+
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    # Test non-JSON binary/text
+    raw_payload = b"non_json_binary_frame"
+    writer.write(raw_payload)
+    await writer.drain()
+    await asyncio.sleep(0.05)
+    assert len(received) == 1
+    assert received[-1] == {"raw": raw_payload.hex()}
+
+    # Test whitespace-padded JSON null
+    writer.write(b"  null  ")
+    await writer.drain()
+    await asyncio.sleep(0.05)
+    assert len(received) == 1 + 1
+    assert received[-1] is None
+
+    # Test JSON list
+    writer.write(b"[1, 2, 3]")
+    await writer.drain()
+    await asyncio.sleep(0.05)
+    assert len(received) == 1 + 2
+    assert received[-1] == [1, 2, 3]
+
+    writer.close()
+    await writer.wait_closed()
+    await plugin.stop()
+
+
+@pytest.mark.asyncio
+async def test_zwave_bridge_on_message_fast_path():
+    cfg = ZWaveBridgeConfig(enabled=True)
+    received = []
+    plugin = ZWaveBridgePlugin(cfg, handler=lambda r: received.append(r.body))
+    plugin._loop = asyncio.get_running_loop()
+
+    class FakeMsg:
+        def __init__(self, topic: str, payload: bytes) -> None:
+            self.topic = topic
+            self.payload = payload
+
+    # Non-JSON payload should fast-path to {"raw": hex}
+    raw_payload = b"sensor_hex_binary_123"
+    plugin._on_message(None, None, FakeMsg("zwave/dev1", raw_payload))
+    await asyncio.sleep(0.05)
+    assert len(received) == 1
+    assert received[-1] == {"raw": raw_payload.hex()}
+
+    # Valid JSON null payload should be preserved as None
+    plugin._on_message(None, None, FakeMsg("zwave/dev1", b"null"))
+    await asyncio.sleep(0.05)
+    assert len(received) == 1 + 1
+    assert received[-1] is None
+
+    # Valid JSON dict payload with whitespace padding
+    plugin._on_message(None, None, FakeMsg("zwave/dev1", b'  {"state": true}  '))
+    await asyncio.sleep(0.05)
+    assert len(received) == 1 + 2
+    assert received[-1] == {"state": True}
+
+
+@pytest.mark.asyncio
 async def test_matter_bridge_binds_and_routes():
     received = asyncio.get_running_loop().create_future()
     handler = received.set_result
