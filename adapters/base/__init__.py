@@ -13,8 +13,6 @@ from datetime import datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel  # noqa: F401  (re-exported for adapter authors)
-
 if TYPE_CHECKING:
     from collections.abc import Callable
 
