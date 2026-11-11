@@ -110,7 +110,8 @@
         const ips = (d.ip_addresses || []).join(', ');
         if(ips) body.appendChild(meta(`ip: ${ips}`));
         if(d.status) body.appendChild(meta(`status: ${d.status}`));
-        body.appendChild(el('a',{class:'btn btn-primary',style:'margin-top:10px;display:inline-block;',href:`/patterns/${encodeURIComponent(id)}`},'View Patterns'));
+        const devLabel = d.name || id;
+        body.appendChild(el('a',{class:'btn btn-primary',style:'margin-top:10px;display:inline-block;',href:`/patterns/${encodeURIComponent(id)}`,'aria-label':`View learned patterns for ${devLabel}`,title:`View learned patterns for ${devLabel}`},'View Patterns'));
         card.appendChild(body);
         cardsEl.appendChild(card);
       });

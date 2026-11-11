@@ -1038,12 +1038,6 @@ function renderField(path, label, value) {
     attachTip(help, hint);
   }
   info.appendChild(nameRow);
-  if (hint) {
-    const desc = document.createElement('div');
-    desc.className = 'f-desc';
-    desc.textContent = hint;
-    info.appendChild(desc);
-  }
   const pathLine = document.createElement('div');
   pathLine.className = 'f-path';
   const pathCode = document.createElement('span');
@@ -1262,12 +1256,6 @@ function renderArray(path, label, arr) {
       attachTip(nameRow, itemHint + ' (' + path + ')');
     }
     info.appendChild(nameRow);
-    if (itemHint) {
-      const desc = document.createElement('div');
-      desc.className = 'f-desc';
-      desc.textContent = itemHint;
-      info.appendChild(desc);
-    }
     const pathLine = document.createElement('div');
     pathLine.className = 'f-path';
     const pathCode = document.createElement('span');
