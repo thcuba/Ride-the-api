@@ -189,3 +189,19 @@ def test_llm_settings_deeplink_has_no_temporal_dead_zone():
         "openLLMSettings() hits its temporal dead zone and the modal never opens"
     )
     assert deeplink_call < first_assignment
+
+
+def test_options_update_button_accessibility():
+    options_path = Path("webui/options.html")
+    assert options_path.exists(), "webui/options.html must exist"
+    html = options_path.read_text(encoding="utf-8")
+
+    # Verify #updateBtn accessible attributes
+    assert 'id="updateBtn"' in html
+    assert 'aria-label="Update software to latest release"' in html
+    assert 'aria-describedby="update-desc"' in html
+    assert 'aria-busy="false"' in html
+
+    # Verify updateSoftware manages aria-busy lifecycle
+    assert "btn.setAttribute('aria-busy', 'true')" in html
+    assert "btn.setAttribute('aria-busy', 'false')" in html

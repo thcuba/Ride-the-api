@@ -142,7 +142,7 @@
         <h2 id="update-title">Software update</h2>
         <p class="desc" id="update-desc">Update ride-the-api to the latest release. The service will be restarted.</p>
         <div class="opt-row">
-          <button class="btn btn-primary" id="updateBtn" onclick="updateSoftware()" aria-label="Update software to latest release" aria-describedby="update-desc">&#x21bb; Update now</button>
+          <button class="btn btn-primary" id="updateBtn" onclick="updateSoftware()" aria-label="Update software to latest release" aria-describedby="update-desc" aria-busy="false"><span class="btn-label">&#x21bb; Update now</span></button>
         </div>
         <span class="status" id="updateStatus" role="status" aria-live="polite"></span>
         <div class="meta" id="versionInfo" role="status" aria-live="polite">Checking version…</div>
@@ -177,8 +177,14 @@
     if (!confirm('Update ride-the-api to the latest release?\n\nThe service will restart.')) return;
     var btn = document.getElementById('updateBtn');
     var status = document.getElementById('updateStatus');
-    var origText = btn ? btn.textContent : '↻ Update now';
-    if (btn) { btn.disabled = true; btn.classList.add('btn-spinning'); btn.textContent = 'Updating…'; }
+    var label = btn ? btn.querySelector('.btn-label') : null;
+    var origLabel = label ? label.textContent : (btn ? btn.textContent : '↻ Update now');
+    if (btn) {
+      btn.disabled = true;
+      btn.classList.add('btn-spinning');
+      btn.setAttribute('aria-busy', 'true');
+      if (label) { label.textContent = 'Updating…'; } else { btn.textContent = 'Updating…'; }
+    }
     if (status) { status.textContent = 'Update in progress…'; status.className = 'status'; }
     try {
       var res = await fetch('/api/system/update', { method: 'POST' });
@@ -187,7 +193,12 @@
         var msg = (data && data.error) ? data.error : ('HTTP ' + res.status);
         if (status) { status.textContent = 'Update failed: ' + msg; status.className = 'status err'; }
         showToast('Update failed: ' + msg, 'error');
-        if (btn) { btn.disabled = false; btn.classList.remove('btn-spinning'); btn.textContent = origText; }
+        if (btn) {
+          btn.disabled = false;
+          btn.classList.remove('btn-spinning');
+          btn.setAttribute('aria-busy', 'false');
+          if (label) { label.textContent = origLabel; } else { btn.textContent = origLabel; }
+        }
         return;
       }
       var okMsg = (data && data.message) || 'Update started';
@@ -199,7 +210,12 @@
       var errStr = String((e && e.message) || e);
       if (status) { status.textContent = errStr; status.className = 'status err'; }
       showToast('Update failed: ' + errStr, 'error');
-      if (btn) { btn.disabled = false; btn.classList.remove('btn-spinning'); btn.textContent = origText; }
+      if (btn) {
+        btn.disabled = false;
+        btn.classList.remove('btn-spinning');
+        btn.setAttribute('aria-busy', 'false');
+        if (label) { label.textContent = origLabel; } else { btn.textContent = origLabel; }
+      }
     }
   }
 </script>
