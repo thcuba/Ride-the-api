@@ -162,3 +162,17 @@ def test_pattern_action_buttons_styling_and_tooltips():
     # New pattern card action buttons have tooltips
     assert "title:'Save new pattern'" in html
     assert "title:'Cancel new pattern'" in html
+
+
+def test_patterns_page_search_clear_and_device_links_accessibility():
+    """Clear search button and device list links must have accessible tooltip and aria labels."""
+    html = _patterns_source()
+
+    # Clear search button has accessible title and aria-label matching dashboard/config
+    assert 'id="clearPatternSearchBtn"' in html
+    assert 'aria-label="Clear pattern search filter"' in html
+    assert 'title="Clear pattern search filter"' in html
+
+    # Device list "View Patterns" link button has explicit aria-label and title
+    assert "title:`View learned patterns for ${devLabel}`" in html
+    assert "'aria-label':`View learned patterns for ${devLabel}`" in html
