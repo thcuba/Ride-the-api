@@ -7,7 +7,6 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from pydantic import BaseModel
 
 import adapters.base
 from adapters import register_all_adapters
@@ -394,11 +393,10 @@ class TestProtocolAdapterIsAuthRequest:
 class TestBaseAdapterReExports:
     """Verify exported symbols in adapters.base."""
 
-    def test_basemodel_exported(self):
-        """BaseModel is re-exported for adapter authors."""
+    def test_basemodel_not_exported(self):
+        """BaseModel is not imported or re-exported in adapters.base."""
 
-        assert hasattr(adapters.base, "BaseModel")
-        assert adapters.base.BaseModel is BaseModel
+        assert not hasattr(adapters.base, "BaseModel")
 
     def test_field_not_exported(self):
         """Field is not imported or re-exported in adapters.base."""
