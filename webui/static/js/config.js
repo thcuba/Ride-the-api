@@ -439,12 +439,31 @@ function copyFieldPath(path, btn) {
     setTimeout(() => { btn.textContent = label; }, 1200);
     showToast('Path copied: ' + path, 'success');
   };
-  if (navigator.clipboard && navigator.clipboard.writeText) {
+  if (typeof copyToClipboard === 'function') {
+    copyToClipboard(path, done, () => showToast('Copy failed', 'error'));
+  } else if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(path).then(done).catch(() => showToast('Copy failed', 'error'));
   } else {
     showToast('Clipboard not available', 'error');
   }
 }
+
+// Copy configuration file path from header chip
+function copyConfigPath() {
+  const pathEl = document.getElementById('configPath');
+  const path = pathEl ? (pathEl.textContent || 'config/config.yaml') : 'config/config.yaml';
+  const done = () => {
+    showToast('Config path copied to clipboard', 'success');
+  };
+  if (typeof copyToClipboard === 'function') {
+    copyToClipboard(path, done, () => showToast('Copy failed', 'error'));
+  } else if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(path).then(done).catch(() => showToast('Copy failed', 'error'));
+  } else {
+    showToast('Clipboard not available', 'error');
+  }
+}
+window.copyConfigPath = copyConfigPath;
 
 let cfg = null;            // working copy
 const dirty = new Set();   // touched section paths
