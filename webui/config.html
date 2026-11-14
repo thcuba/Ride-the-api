@@ -309,13 +309,13 @@
 
   /* Field help: name row, "?" affordance, machine path, copy shortcut */
   .field .f-name-row { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-  .field .f-help {
+  .f-help, .field .f-help {
     width: 17px; height: 17px; padding: 0; border-radius: 50%; cursor: help;
     border: 1px solid var(--border); background: var(--surface2); color: var(--text2);
     font-size: 11px; font-weight: 700; line-height: 1; display: inline-flex;
     align-items: center; justify-content: center; flex-shrink: 0;
   }
-  .field .f-help:hover, .field .f-help:focus-visible { color: var(--accent); border-color: var(--accent); outline: none; }
+  .f-help:hover, .f-help:focus-visible, .field .f-help:hover, .field .f-help:focus-visible { color: var(--accent); border-color: var(--accent); outline: none; }
   .field .f-path {
     display: inline-block; margin-top: 3px; font-family: ui-monospace, monospace;
     font-size: 10.5px; color: color-mix(in srgb, var(--text2) 75%, transparent);
@@ -556,6 +556,6 @@
 
 <script src="/static/js/common.js"></script>
 <script src="/static/js/api.js"></script>
-<script src="/static/js/config.js"></script>
+<script src="/static/js/config.js?v=20261114"></script>
 </body>
 </html>

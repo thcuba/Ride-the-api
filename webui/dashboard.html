@@ -1319,8 +1319,10 @@
     <!-- Master Switch Card -->
     <div class="llm-card field-switch">
       <div class="f-info">
-        <label for="llm-enabled-toggle" class="f-name">Enable LLM deciphering</label>
-        <span class="f-desc">Activate AI-assisted protocol decoding, correlation, and pattern learning</span>
+        <span class="f-name-row">
+          <label for="llm-enabled-toggle" class="f-name">Enable LLM deciphering</label>
+          <button type="button" class="f-help" title="Activate AI-assisted protocol decoding, correlation, and pattern learning" aria-label="What does Enable LLM deciphering do">?</button>
+        </span>
       </div>
       <div class="f-control">
         <label class="switch-wrap" for="llm-enabled-toggle" aria-label="Toggle LLM deciphering">
@@ -1332,8 +1334,10 @@
     <!-- Default Profile Card -->
     <div class="llm-card">
       <div class="f-info">
-        <label for="llm-default-profile" class="f-name">Default LLM profile</label>
-        <span class="f-desc">Fallback service profile used when no purpose-specific override is selected</span>
+        <span class="f-name-row">
+          <label for="llm-default-profile" class="f-name">Default LLM profile</label>
+          <button type="button" class="f-help" title="Fallback service profile used when no purpose-specific override is selected" aria-label="What does Default LLM profile do">?</button>
+        </span>
       </div>
       <select id="llm-default-profile" class="llm-select" aria-label="Default LLM profile" onchange="onLLMDefaultChange()"></select>
     </div>
@@ -1341,8 +1345,10 @@
     <!-- Purpose Bindings Card -->
     <div class="llm-card">
       <div class="f-info">
-        <span class="f-name">Profile per purpose</span>
-        <span class="f-desc">Assign specific models to specialized operational stages</span>
+        <span class="f-name-row">
+          <span class="f-name">Profile per purpose</span>
+          <button type="button" class="f-help" title="Assign specific models to specialized operational stages" aria-label="What does Profile per purpose do">?</button>
+        </span>
       </div>
       <div class="llm-purpose-list">
         <div class="llm-purpose-row">
@@ -1373,8 +1379,10 @@
     <div class="llm-profiles-section">
       <div class="llm-section-header">
         <div class="f-info">
-          <span class="f-name">Service Profiles</span>
-          <span class="f-desc">Configured endpoints, authentication credentials, and prompt templates</span>
+          <span class="f-name-row">
+            <span class="f-name">Service Profiles</span>
+            <button type="button" class="f-help" title="Configured endpoints, authentication credentials, and prompt templates" aria-label="What does Service Profiles do">?</button>
+          </span>
         </div>
         <button type="button" class="btn btn-ghost btn-add-profile" onclick="addLLMProfile()" aria-label="Add new LLM profile">
           <svg class="icon-svg-sm" aria-hidden="true" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -1399,6 +1407,6 @@
 
 <script src="/static/js/common.js"></script>
 <script src="/static/js/api.js"></script>
-<script src="/static/js/dashboard.js"></script>
+<script src="/static/js/dashboard.js?v=20261114"></script>
 </body>
 </html>
