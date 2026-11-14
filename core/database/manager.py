@@ -56,6 +56,7 @@ def _get_config():
     fn = getattr(db_mod, "get_config", get_config)
     return fn()
 
+
 class DatabaseManager:
     """Manages core DB + per-device DBs."""
 
@@ -82,7 +83,6 @@ class DatabaseManager:
         self._device_connection_cache: TTLCache[str, str] = TTLCache(maxsize=2048, ttl=300)
         self._device_meta_cache: TTLCache[str, dict | None] = TTLCache(maxsize=2048, ttl=300)
         self._device_cache: TTLCache[str, DeviceRegistry | None] = TTLCache(maxsize=2048, ttl=300)
-
 
     # ── Backward-compatible properties delegating to device_pool ─────────────
 

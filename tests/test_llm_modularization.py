@@ -180,4 +180,3 @@ async def test_service_builder_override_respected(monkeypatch: pytest.MonkeyPatc
     client = svc._get_client(profile)
     assert client is custom_sentinel
     await svc.close()
-

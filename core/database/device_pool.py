@@ -95,9 +95,7 @@ class DeviceDatabasePool:
                 )
         return database_url
 
-    def resolve_device_db_path(
-        self, device_id: str, custom_url: str | None = None
-    ) -> Path | None:
+    def resolve_device_db_path(self, device_id: str, custom_url: str | None = None) -> Path | None:
         """Return the on-disk SQLite file backing a device, or None."""
         db_url = self._device_db_urls.get(device_id) or custom_url
         if not db_url:
