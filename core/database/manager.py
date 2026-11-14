@@ -219,39 +219,15 @@ class DatabaseManager:
         return self._ip_lookup_cache.get(ip_address)
 
     #: Drivers a device database may use through the API (the engine is async).
-    DEVICE_DB_SCHEMES = frozenset({"sqlite+aiosqlite", "postgresql+asyncpg"})
-    _SQLITE_PREFIX = "sqlite+aiosqlite:///"
+    DEVICE_DB_SCHEMES = DeviceDatabasePool.DEVICE_DB_SCHEMES
+    _SQLITE_PREFIX = DeviceDatabasePool._SQLITE_PREFIX
 
     def _inside_device_dir(self, path: Path) -> bool:
-        # The path is derived from API input by design: this check IS the
-        # containment, its boolean result is all that is used here, and the URL
-        # that reaches the engine was rebuilt from the device DB directory.
-        # codeql[py/path-injection] # noqa: ERA001
-        return path.resolve().is_relative_to(self.device_db_dir.resolve())
+        return self.device_pool._inside_device_dir(path)
 
     def checked_device_db_url(self, database_url: str) -> str:
-        """``database_url`` when the API may assign it to a device, else ``ValueError``.
-
-        A device database is a SQLite file inside ``device_db_dir`` or a server
-        database behind an async driver. The URL used to be stored as given, so
-        an API call could point a device -- and the schema creation and file
-        rename that follow -- at any file on the machine.
-        """
-        scheme, sep, _rest = database_url.partition("://")
-        if not sep or scheme.lower() not in self.DEVICE_DB_SCHEMES:
-            allowed = ", ".join(sorted(self.DEVICE_DB_SCHEMES))
-            raise ValueError(f"database_url must use one of: {allowed}")
-        if scheme.lower() == "sqlite+aiosqlite":
-            raw_path = database_url[len(self._SQLITE_PREFIX) :].split("?", 1)[0]
-            if (
-                not raw_path
-                or raw_path == ":memory:"
-                or not self._inside_device_dir(Path(raw_path))
-            ):
-                raise ValueError(
-                    "a SQLite device database must be a file inside the device database directory"
-                )
-        return database_url
+        """Validate database_url for assignment to a device, delegating to device_pool."""
+        return self.device_pool.checked_device_db_url(database_url)
 
     async def bind_ip(self, device_id: str, ip_address: str) -> list[str] | None:
         """Give ``ip_address`` to ``device_id``, taking it from any other device.
@@ -334,23 +310,8 @@ class DatabaseManager:
         return Path(db_url[len(prefix) :])
 
     def _move_db_file(self, old_path: Path, new_path: Path) -> None:
-        """Move a device DB file with its SQLite sidecars -- only one this manager owns.
-
-        A URL assigned before it was validated may name any file on the
-        machine; renaming must not move that.
-        """
-        if not old_path.exists():
-            return
-        if not self._inside_device_dir(old_path):
-            raise ValueError("the database file is outside the device database directory")
-        new_path.parent.mkdir(parents=True, exist_ok=True)
-        old_path.rename(new_path)
-        # SQLite write-ahead log and shared-memory sidecars travel with the
-        # database; leaving them behind loses recent writes.
-        for suffix in ("-wal", "-shm"):
-            sidecar = Path(f"{old_path}{suffix}")
-            if sidecar.exists():
-                sidecar.rename(Path(f"{new_path}{suffix}"))
+        """Move a device DB file with its SQLite sidecars, delegating to device_pool."""
+        self.device_pool._move_db_file(old_path, new_path)
 
     async def rename_device_database(
         self,
@@ -431,35 +392,15 @@ class DatabaseManager:
 
     def _default_device_db_url(self, device_id: str) -> str:
         """The URL a device's database has when nothing else was configured."""
-        db_path = self.device_db_dir / self._safe_db_name(device_id)
-        return f"sqlite+aiosqlite:///{db_path}"
+        return self.device_pool._default_device_db_url(device_id)
 
     async def list_databases(self) -> list[dict]:
-        """List the device databases that exist, with their assignments.
-
-        Reading the open engines alone listed a database only once its device had
-        touched it during this process, so a database sitting on disk was missing
-        from the inventory and the whole list emptied on restart. The registry is
-        the source of truth; ``is_active`` says whether its engine is open now.
-        """
-        databases: list[dict] = []
+        """List the device databases that exist, with their assignments."""
         async with await self.get_core_session() as session:
             result = await session.execute(
                 select(DeviceRegistry).order_by(DeviceRegistry.device_id)
             )
-            for device in result.scalars():
-                databases.append(
-                    {
-                        "device_id": device.device_id,
-                        "database_url": (
-                            self._device_db_urls.get(device.device_id)
-                            or device.database_url
-                            or self._default_device_db_url(device.device_id)
-                        ),
-                        "is_active": device.device_id in self._device_engines,
-                    }
-                )
-        return databases
+            return self.device_pool.list_databases(list(result.scalars()))
 
     async def get_device_engine(self, device_id: str) -> AsyncEngine:
         """Get or create a device-specific database engine.
@@ -473,18 +414,12 @@ class DatabaseManager:
         custom_url = await self._get_device_db_url(device_id)
         return await self.device_pool.get_device_engine(device_id, custom_url=custom_url)
 
-    _SAFE_DB_NAME_RE = re.compile(r"[^A-Za-z0-9_.-]")
+    _SAFE_DB_NAME_RE = DeviceDatabasePool._SAFE_DB_NAME_RE
 
     @classmethod
     def _safe_db_name(cls, device_id: str) -> str:
-        """Sanitize a device_id into a safe SQLite filename segment.
-
-        Performance optimization: use pre-compiled regex `_SAFE_DB_NAME_RE` to
-        avoid raw regex compilation overhead on every database path resolution.
-        """
-        sanitized = cls._SAFE_DB_NAME_RE.sub("_", device_id)
-        sanitized = sanitized.strip("._")
-        return f"{sanitized or 'device'}.db"
+        """Sanitize a device_id into a safe SQLite filename segment."""
+        return DeviceDatabasePool._safe_db_name(device_id)
 
     async def get_device_session(self, device_id: str) -> AsyncSession:
         """Get an async session for a device database."""
@@ -928,11 +863,7 @@ class DatabaseManager:
             await session.commit()
 
         db_path = self.device_db_dir / self._safe_db_name(device_id)
-        if db_path.exists():
-            try:
-                db_path.unlink()
-            except OSError as e:
-                logger.warning(f"Could not remove device DB {db_path}: {e}")
+        self.device_pool.delete_storage_files(db_path)
 
         pattern_file = (
             self.device_db_dir.parent
