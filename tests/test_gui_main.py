@@ -96,3 +96,30 @@ def test_gui_controller_flags_a_failed_start(monkeypatch, outcome) -> None:
     controller.start()
     controller._thread.join(timeout=5)
     assert controller.error.is_set()
+
+
+def test_app_log_clear_and_copy(tmp_path, monkeypatch) -> None:
+    """Test that clear_log empties the log area and copy_log provides visual feedback."""
+    if gui_main.tk is None:
+        pytest.skip("tkinter not available")
+    try:
+        root = gui_main.tk.Tk()
+        root.withdraw()
+    except Exception:
+        pytest.skip("headless environment without display")
+    try:
+        monkeypatch.setattr(gui_main, "_probe", lambda *_args: True)
+        args = gui_main.get_args(["--no-browser"])
+        app = gui_main.App(root, tmp_path, args)
+
+        app._append("test log entry\n")
+        assert "test log entry" in app.log.get("1.0", gui_main.tk.END)
+
+        app.clear_log()
+        assert app.log.get("1.0", gui_main.tk.END).strip() == ""
+
+        app._append("copied log text\n")
+        app.copy_log()
+        assert app.btn_copy.cget("text") == "Copied!"
+    finally:
+        root.destroy()

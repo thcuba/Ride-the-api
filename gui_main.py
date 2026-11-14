@@ -138,6 +138,7 @@ class LogWriter:
     is supplied, pushes chunks to the GUI log widget."""
 
     def __init__(self, path: Path, q: queue.Queue | None = None) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
         self._fh = path.open("a", encoding="utf-8", buffering=1)
         self._q = q
         self._lock = threading.Lock()
@@ -375,9 +376,8 @@ class App:
             side=tk.LEFT
         )
         ttk.Button(log_header, text="Clear", command=self.clear_log, width=6).pack(side=tk.RIGHT)
-        ttk.Button(log_header, text="Copy", command=self.copy_log, width=6).pack(
-            side=tk.RIGHT, padx=(0, 4)
-        )
+        self.btn_copy = ttk.Button(log_header, text="Copy", command=self.copy_log, width=7)
+        self.btn_copy.pack(side=tk.RIGHT, padx=(0, 4))
 
         self.log = scrolledtext.ScrolledText(
             main,
@@ -445,6 +445,8 @@ class App:
         if content:
             self.root.clipboard_clear()
             self.root.clipboard_append(content)
+            self.btn_copy.config(text="Copied!")
+            self.root.after(1500, lambda: self.btn_copy.config(text="Copy"))
 
     def toggle_server(self) -> None:
         if self.controller.running or self.online:
