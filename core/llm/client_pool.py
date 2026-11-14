@@ -64,13 +64,19 @@ class LLMClientPool:
             max_retries=0,
         )
 
-    def get_client(self, profile: LLMProfile) -> AsyncOpenAI:
+    def get_client(
+        self,
+        profile: LLMProfile,
+        *,
+        builder: Any = None,  # noqa: ANN401
+    ) -> AsyncOpenAI:
         """Get or create an OpenAI-compatible async client for a profile."""
         key = (profile.name, self.client_fingerprint(profile))
         cached = self._clients.get(key)
         if cached is not None:
             return cached
-        client = self.build_client(profile)
+        build_fn = builder or self.build_client
+        client = build_fn(profile)
         self._clients[key] = client
         return client
 
