@@ -10,8 +10,6 @@ import logging
 from contextlib import suppress
 from datetime import UTC, datetime
 
-from fastapi import Request  # noqa: TC002 - FastAPI resolves route annotations at runtime
-from fastapi.responses import JSONResponse
 from sqlalchemy import func, select
 
 from core.database import (
@@ -437,88 +435,7 @@ class CloudIndependenceVerifier:
         return count
 
 
-# API endpoint handlers for resilience endpoints
-
-
-def _service_not_ready() -> JSONResponse:
-    # A bare ``return {...}, 503`` is serialised by FastAPI as a 200 JSON array.
-    return JSONResponse(status_code=503, content={"error": "Service not ready"})
-
-
-def register_resilience_routes(app, get_db, get_orch):  # noqa: C901
-    """Register resilience-related API routes."""
-
-    @app.get("/api/independence/{device_id}")
-    async def check_device_independence(device_id: str):
-        """Check if a device can operate without vendor cloud."""
-        db = get_db()
-        if not db:
-            return _service_not_ready()
-        verifier = CloudIndependenceVerifier(db)
-        status = await verifier.check_cloud_independence(device_id)
-        return {"device_id": device_id, "independence": status}
-
-    # The trailing-slash form used to fall through to the vendor proxy route.
-    @app.get("/api/independence/", include_in_schema=False)
-    @app.get("/api/independence")
-    async def check_all_independence():
-        """Check independence for all devices."""
-        db = get_db()
-        if not db:
-            return _service_not_ready()
-        verifier = CloudIndependenceVerifier(db)
-        results = await verifier.verify_all_devices()
-        return {"devices": results}
-
-    @app.post("/api/independence/{device_id}/auto-switch")
-    async def auto_switch_device(device_id: str):
-        """Auto-switch device to production if conditions are met."""
-        db = get_db()
-        if not db:
-            return _service_not_ready()
-        verifier = CloudIndependenceVerifier(db)
-        switched = await verifier.auto_switch_to_production(device_id)
-        return {"device_id": device_id, "switched": switched}
-
-    @app.get("/api/independence/{device_id}/export")
-    async def export_device_patterns(device_id: str):
-        """Export learned patterns for backup/sharing."""
-        db = get_db()
-        if not db:
-            return _service_not_ready()
-        verifier = CloudIndependenceVerifier(db)
-        return await verifier.export_device_patterns(device_id)
-
-    @app.post("/api/independence/{device_id}/import")
-    async def import_device_patterns(device_id: str, request: Request):
-        """Import previously exported patterns.
-
-        ``request`` used to be un-annotated, so FastAPI read it as a required
-        query parameter and every import was rejected with a 422.
-        """
-        db = get_db()
-        if not db:
-            return _service_not_ready()
-        try:
-            body = await request.json()
-        except ValueError:
-            return JSONResponse(status_code=400, content={"error": "Body is not JSON"})
-        if not isinstance(body, dict):
-            return JSONResponse(status_code=400, content={"error": "Expected a JSON object"})
-        verifier = CloudIndependenceVerifier(db)
-        try:
-            count = await verifier.import_device_patterns(device_id, body)
-        except Exception:
-            logger.exception("Pattern import for %s failed", device_id)
-            return JSONResponse(status_code=400, content={"error": "Invalid pattern import"})
-        # The engine serves its in-memory set when it has one: refresh it.
-        orchestrator = get_orch()
-        if orchestrator is not None:
-            try:
-                await orchestrator.sync_engine(device_id)
-            except Exception:
-                logger.exception("Could not refresh the served patterns for %s", device_id)
-        return {"device_id": device_id, "patterns_imported": count}
+from core.routes.resilience import register_resilience_routes  # noqa: E402
 
 
 class AutoSwitchScheduler:
@@ -587,3 +504,10 @@ class AutoSwitchScheduler:
                 rolled_back = await self.verifier.should_rollback_to_learning(device_id)
                 if rolled_back:
                     logger.warning(f"AutoSwitchScheduler: {device_id} rolled back to learning")
+
+
+__all__ = [
+    "AutoSwitchScheduler",
+    "CloudIndependenceVerifier",
+    "register_resilience_routes",
+]

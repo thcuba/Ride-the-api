@@ -100,10 +100,7 @@ from core.proxy import (
     resolve_upstream,
     should_relay_tls,
 )
-from core.resilience import (
-    AutoSwitchScheduler,
-    register_resilience_routes,
-)
+from core.resilience import AutoSwitchScheduler
 from core.routes import (
     devices_router,
     dns_router,
@@ -115,6 +112,7 @@ from core.routes import (
     webui_router,
 )
 from core.routes.dns import _apply_dns_settings
+from core.routes.resilience import register_resilience_routes
 from core.security import (
     ControlPlaneAuthMiddleware,
     CrossSiteRequestGuard,
@@ -131,6 +129,8 @@ from core.upstream_resolver import _apply_config, self_connection_reason
 
 if TYPE_CHECKING:
     from types import ModuleType
+
+    from core.config import Config
 
 __all__ = [
     # Re-exported from core.proxy for backward compatibility
@@ -324,35 +324,14 @@ _protocol_event_loop: asyncio.AbstractEventLoop | None = None
 # ── Application Lifespan ───────────────────────────────────────────────────────
 
 
-@asynccontextmanager
-async def lifespan(_app: FastAPI):  # noqa: C901, PLR0912, PLR0915
-    """Application lifespan handler."""
-
-    global db_manager, adapter_registry  # noqa: PLW0603
-
-    global orchestrator, llm_decipher_service  # noqa: PLW0603
-
-    global tls_mitm_server, cert_manager  # noqa: PLW0603
-
-    global auto_switch_scheduler  # noqa: PLW0603
-
-    logger.info("Starting Local Cloud Replacement Proxy...")
-
-    config = config_manager.config
-
-    # Bootstrap guard: while no control-plane password is set, first-run
-
-    # provisioning is protected by a one-time token. Announce it at startup (and
-
-    # keep it next to the databases) so the operator can complete the setup.
+async def _init_core_runtime(config: Config) -> None:
+    """Initialize persistent databases, buffer backends, orchestrator, and adapters."""
+    global db_manager, adapter_registry, orchestrator, llm_decipher_service  # noqa: PLW0603
 
     if config.security.auth_enabled and not config.security.password:
         setup_token(Path(config.core.device_db_dir).parent / "setup-token")
 
-    # Initialize database
-
     data_dir = Path(config.core.device_db_dir)
-
     data_dir.mkdir(parents=True, exist_ok=True)
 
     db_manager = init_db_manager(
@@ -361,330 +340,191 @@ async def lifespan(_app: FastAPI):  # noqa: C901, PLR0912, PLR0915
         device_db_urls=config.core.device_databases,
         echo=config.observability.logging.level == "DEBUG",
     )
-
     await db_manager.initialize()
 
-    # Load the persisted buffer backend (disk | memory) so new buffer stores
-
-    # created by the orchestrator and export/import paths honor the UI toggle.
-
     initialize_buffer_backend()
-
     logger.info("Buffer backend initialized: %s", get_buffer_backend())
 
-    # Initialize LLM decipher service
-
     llm_decipher_service = get_llm_decipher()
-
     profiles = llm_decipher_service.list_profiles()
-
     logger.info(f"LLM decipher service loaded with profiles: {profiles}")
 
-    # Initialize orchestrator
-
     orchestrator = get_orchestrator()
-
     orchestrator.initialize(llm_decipher_service)
-
-    # Register adapters
 
     adapter_registry = get_registered_registry()
 
-    # Initialize TLS certificate manager
 
-    if config.tls_decrypt.enabled:
+async def _start_tls_mitm(config: Config) -> None:
+    """Start the TLS certificate manager and MITM interception server if enabled."""
+    global tls_mitm_server, cert_manager  # noqa: PLW0603
+
+    if not config.tls_decrypt.enabled:
+        logger.info("TLS decryption is disabled (enable in config.yaml)")
+        return
+
+    try:
+        cert_manager = get_cert_manager()
+        cert_path = cert_manager.ensure_ca()
+        logger.info("TLS CA certificate ready at %s", cert_path)
+    except Exception:
+        logger.exception("Failed to initialize TLS cert manager")
+
+    if cert_manager:
         try:
-            cert_manager = get_cert_manager()
-
-            cert_path = cert_manager.ensure_ca()
-
-            logger.info("TLS CA certificate ready at %s", cert_path)
-
-        except Exception:
-            logger.exception("Failed to initialize TLS cert manager")
-
-    # Start TLS MITM server if enabled
-
-    if config.tls_decrypt.enabled and cert_manager:
-        try:
-            # get_tls_mitm_server() configures the singleton (ports + cert
-
-            # manager); start() itself takes no arguments. The old code passed
-
-            # cert_manager/ports/request_handler to start(), which accepts no
-
-            # kwargs, so the call raised TypeError that the except swallowed —
-
-            # TLS interception silently never started.
-
             tls_mitm_server = get_tls_mitm_server(
                 cert_manager=cert_manager,
                 listen_ports=config.tls_decrypt.listen_ports,
                 min_tls_version=config.tls_decrypt.min_tls_version,
                 max_tls_version=config.tls_decrypt.max_tls_version,
             )
-
             tls_mitm_server.request_handler = handle_tls_decrypted_request
-
             tls_mitm_server.response_handler = handle_tls_upstream_response
-
             tls_mitm_server.request_failure_handler = handle_tls_upstream_failure
-
             tls_mitm_server.on_device_seen = handle_device_seen
-
             tls_mitm_server.should_relay_tls = should_relay_tls
-
             tls_mitm_server.on_handshake_refused = mark_device_untrusted
-
             tls_mitm_server.resolve_upstream = resolve_upstream
-
             tls_mitm_server.on_relayed = record_relayed_connection
-
             await tls_mitm_server.start()
-
             logger.info("TLS MITM server listening on ports %s", config.tls_decrypt.listen_ports)
-
         except Exception:
             logger.exception("Failed to start TLS MITM server, TLS interception disabled")
 
-    else:
-        logger.info("TLS decryption is disabled (enable in config.yaml)")
 
-    # Start the DNS interception server (configured names -> this proxy)
-
+async def _start_dns_and_config_watch(config: Config) -> None:
+    """Start DNS interception, discovery query recorder, and config watchers."""
     if config.dns.enabled:
         dns_interceptor = get_dns_interceptor(config)
-
         if dns_interceptor:
             await dns_interceptor.start()
-
     else:
         logger.info("DNS interception is disabled (set dns.enabled in config.yaml)")
-
-    # DNS discovery: record what every client asks the DNS for, and what the
-
-    # proxy did with it. This is what turns "which domains should we intercept?"
-
-    # from a guess into a list read off real traffic -- and it is the only place
-
-    # the proxy sees a device that it is *not* intercepting yet. Counters are
-
-    # aggregated in memory and written in batches, never per query.
 
     dns_recorder = DNSDiscoveryRecorder(
         db_manager,
         max_rows=getattr(db_manager, "DNS_QUERY_LOG_MAX_ROWS", 5000),
     )
-
     replaced_recorder = set_dns_recorder(dns_recorder)
-
     if replaced_recorder is not None:
         await replaced_recorder.stop()
-
     await dns_recorder.start()
 
     dns_interceptor = get_dns_interceptor()
-
     if dns_interceptor is not None:
         dns_interceptor.query_recorder = dns_recorder
-
     logger.info("DNS discovery logging is on (batched every %.0fs)", dns_recorder.flush_interval_s)
 
-    # A hand-edited config.yaml must mean what the panel means. Without these two
-
-    # callbacks the interception policy and the upstream resolvers in the file only
-
-    # took effect on the next restart, while the API applied them live.
-
     config_manager.register_callback(_apply_dns_settings)
-
     config_manager.register_callback(_apply_config)
-
-    # Start config hot-reload
-
     config_manager.start_watching()
 
-    # Start protocol servers if configured
+
+async def _start_protocol_servers(config: Config) -> None:
+    """Start background protocol servers (MQTT, CoAP, etc.) if configured."""
+    global _protocol_event_loop  # noqa: PLW0603
 
     protocol_servers_cfg = getattr(config, "protocol_servers", None)
+    if not protocol_servers_cfg:
+        return
 
-    if protocol_servers_cfg:
-        try:
-            proto_mgr = get_protocol_server_manager(protocol_servers_cfg)
+    try:
+        proto_mgr = get_protocol_server_manager(protocol_servers_cfg)
+        register_standard_plugins(
+            proto_mgr, protocol_servers_cfg, handler=handle_protocol_request
+        )
+        discover_server_plugin_entry_points(
+            proto_mgr, protocol_servers_cfg, handler=handle_protocol_request
+        )
+        results = await proto_mgr.start_all()
+        for name, status in results.items():
+            logger.info("Protocol server %s: %s", name, status)
 
-            # Register EVERY plugin regardless of `enabled` so the UI can always
+        _protocol_event_loop = asyncio.get_running_loop()
 
-            # see and control each protocol server (a server toggled on later is
+        def reconcile_protocol_servers(cfg: object) -> None:
+            try:
+                loop = _protocol_event_loop
+                new_pcfg = getattr(cfg, "protocol_servers", None)
+                if loop is None or new_pcfg is None or loop.is_closed():
+                    return
+                coro = proto_mgr.reconcile_config(new_pcfg)
+                asyncio.run_coroutine_threadsafe(coro, loop)
+            except Exception:
+                logger.exception("Failed to reconcile protocol servers")
 
-            # already registered and merely stopped). Constructors are inert —
+        config_manager.register_callback(reconcile_protocol_servers)
+    except Exception as e:
+        logger.error("Failed to initialize protocol servers: %s", e)  # noqa: TRY400
 
-            # nothing binds a socket until start_all()/start_plugin() is called.
 
-            # Handlers are forwarded to the orchestrator pipeline so intercepted
-
-            # traffic is actually learned.
-
-            register_standard_plugins(
-                proto_mgr, protocol_servers_cfg, handler=handle_protocol_request
-            )
-            discover_server_plugin_entry_points(
-                proto_mgr, protocol_servers_cfg, handler=handle_protocol_request
-            )
-
-            # Auto-start only the enabled servers (bridges included, since they
-
-            # are registered above and start when their config says enabled).
-
-            results = await proto_mgr.start_all()
-
-            for name, status in results.items():
-                logger.info("Protocol server %s: %s", name, status)
-
-            # Remember the running event loop so a config hot-reload (fired
-
-            # from the config watch thread) can schedule start/stop onto it.
-
-            _protocol_event_loop = asyncio.get_running_loop()  # noqa: PLW0603
-
-            # Reconcile protocol servers whenever config.yaml changes (e.g. the
-
-            # UI toggles a server on/off). The callback runs on the config
-
-            # watch thread, so async start/stop is scheduled onto the loop.
-
-            def reconcile_protocol_servers(cfg: object) -> None:  # noqa: ANN001
-                """Apply the reloaded protocol-server config to the manager."""
-
-                try:
-                    loop = _protocol_event_loop
-
-                    new_pcfg = getattr(cfg, "protocol_servers", None)
-
-                    if loop is None or new_pcfg is None or loop.is_closed():
-                        return
-
-                    coro = proto_mgr.reconcile_config(new_pcfg)
-
-                    asyncio.run_coroutine_threadsafe(coro, loop)
-
-                except Exception:  # noqa: BLE001
-                    logger.exception("Failed to reconcile protocol servers")
-
-            config_manager.register_callback(reconcile_protocol_servers)
-
-        except Exception as e:
-            logger.error("Failed to initialize protocol servers: %s", e)  # noqa: TRY400
-
-    # Start auto-switch scheduler
+async def _start_watchdog_and_scheduler(config: Config) -> None:
+    """Start auto-switch scheduler and optional connection watchdog."""
+    global auto_switch_scheduler, connection_watchdog  # noqa: PLW0603
 
     auto_switch_scheduler = AutoSwitchScheduler(db_manager)
-
     await auto_switch_scheduler.start()
-
     logger.info("Auto-switch scheduler started")
 
-    # Start the connection watchdog: detects when the process can no longer
-
-    # reach any outbound HTTP endpoint (a wedged async HTTP stack seen on
-
-    # long-running installs) and restarts the process so the box heals itself.
-
-    global connection_watchdog  # noqa: PLW0603
-
     watchdog_cfg = config.connection_watchdog
-
     if watchdog_cfg.enabled:
         try:
-            # The cooldown must outlive the restart it triggers.
-
             connection_watchdog = ConnectionWatchdog(
                 watchdog_cfg,
                 state_path=Path(config.core.device_db_dir).parent / "watchdog-state.json",
             )
-
             await connection_watchdog.start()
-
             logger.info(
                 "Connection watchdog enabled: probe %s every %ds, restart after %d failures",
                 watchdog_cfg.probe_url,
                 watchdog_cfg.interval,
                 watchdog_cfg.max_failures,
             )
-
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.exception("Failed to start connection watchdog, disabled")
-
             connection_watchdog = None
-
     else:
         logger.info("Connection watchdog disabled (config)")
 
-    # Start Prometheus metrics endpoint if enabled (documented in api.md:
 
-    # metrics live on their own port 9090, separate from the proxy's 8911,
-
-    # and expose ride_api_* plus python_* runtime metrics).
+async def _start_metrics_and_tracing(config: Config) -> None:
+    """Start Prometheus metrics endpoint and OpenTelemetry tracing if enabled."""
+    global metrics_server, _metrics_scrape_task, _otel_tracer  # noqa: PLW0603
 
     metrics_cfg = config.observability.metrics
-
     if metrics_cfg.enabled:
         try:
-
             async def _refresh_gauges() -> None:
-
                 if db_manager is None:
                     return
-
                 try:
                     devices = await db_manager.list_devices()
-
-                except Exception:  # noqa: BLE001
+                except Exception:
                     logger.exception("Metrics gauge refresh failed")
-
                     return
-
                 metrics_registry.device_count.set(len(devices))
-
                 metrics_registry.buffer_size_bytes.set(
                     sum(d.get("context_buffer_size", 0) for d in devices)
                 )
 
             async def _scrape_worker() -> None:
-
                 while True:
                     await _refresh_gauges()
-
                     await asyncio.sleep(_METRICS_SCRAPE_INTERVAL)
 
-            global metrics_server, _metrics_scrape_task  # noqa: PLW0603
-
             metrics_server = MetricsServer(metrics_cfg.port, metrics_cfg.path)
-
             metrics_server.start()
-
-            # Refresh gauges periodically so Prometheus scrapes reflect live state.
-
             _metrics_scrape_task = asyncio.create_task(_scrape_worker())
-
             logger.info(
                 "Prometheus metrics enabled at 0.0.0.0:%s%s",
                 metrics_cfg.port,
                 metrics_cfg.path,
             )
-
         except Exception:
             logger.exception("Failed to start metrics server, disabling metrics")
-
             metrics_server = None
 
-    # Start OpenTelemetry tracing if enabled. The provider is wired so spans
-
-    # emitted by the proxy path are exported via the configured exporter
-
-    # (console default; otlp requires opentelemetry-exporter-otlp).
-
     tracing_cfg = config.observability.tracing
-
     if tracing_cfg.enabled:
         try:
             _otel_tracer = build_tracer(
@@ -692,133 +532,94 @@ async def lifespan(_app: FastAPI):  # noqa: C901, PLR0912, PLR0915
                 otlp_endpoint=tracing_cfg.otlp_endpoint,
                 sample_rate=tracing_cfg.sample_rate,
             )
-
             logger.info(
                 "OpenTelemetry tracing enabled (exporter=%s, sample_rate=%s)",
                 tracing_cfg.exporter,
                 tracing_cfg.sample_rate,
             )
-
         except Exception:
             logger.exception("Failed to initialize tracing, disabled")
 
-    logger.info(f"Server started on {config.proxy.host}:{config.proxy.port}")
 
-    logger.info(f"Registered adapters: {adapter_registry.list_vendors()}")
-
-    yield
-
-    # Cleanup
-
-    logger.info("Shutting down...")
-
-    config_manager.stop_watching()
-
-    # Stop auto-switch scheduler
-
-    if auto_switch_scheduler:
-        try:
-            await auto_switch_scheduler.stop()
-
-            logger.info("Auto-switch scheduler stopped")
-
-        except Exception as e:
-            logger.error("Error stopping auto-switch scheduler: %s", e)  # noqa: TRY400
-
-    # Stop the connection watchdog probe loop.
-
-    if connection_watchdog is not None:
-        try:
-            await connection_watchdog.stop()
-
-            logger.info("Connection watchdog stopped")
-
-        except Exception as e:
-            logger.error("Error stopping connection watchdog: %s", e)  # noqa: TRY400
-
-    # Stop the Prometheus metrics server and its gauge-refresh worker.
+async def _shutdown_network_servers() -> None:
+    """Stop metrics, protocol servers, TLS MITM, and DNS interception."""
+    global _metrics_scrape_task  # noqa: PLW0603
 
     if metrics_server:
         try:
             metrics_server.stop()
-
             logger.info("Metrics server stopped")
-
         except Exception as e:
             logger.error("Error stopping metrics server: %s", e)  # noqa: TRY400
 
     if _metrics_scrape_task is not None:
         _metrics_scrape_task.cancel()
-
         _metrics_scrape_task = None
-
-        # Stop protocol servers
 
     try:
         proto_mgr = get_protocol_server_manager()
-
         await proto_mgr.stop_all()
-
         logger.info("Protocol servers stopped")
-
     except Exception as e:
         logger.error("Error stopping protocol servers: %s", e)  # noqa: TRY400
-
-    # Stop TLS MITM server
 
     if tls_mitm_server:
         try:
             await tls_mitm_server.stop()
-
             logger.info("TLS MITM server stopped")
-
         except Exception as e:
             logger.error("Error stopping TLS MITM server: %s", e)  # noqa: TRY400
 
-    # Stop the DNS interception server
+    await _stop_dns_services()
 
+
+async def _stop_dns_services() -> None:
+    """Stop DNS interception server and discovery recorder."""
     dns_interceptor = get_dns_interceptor()
-
     if dns_interceptor:
         dns_interceptor.query_recorder = None
-
         try:
             await dns_interceptor.stop()
-
         except Exception as e:
             logger.error("Error stopping DNS interception server: %s", e)  # noqa: TRY400
 
-    # Write the DNS discovery counters still in memory before the DB goes away.
-
     dns_recorder = get_dns_recorder()
-
     if dns_recorder is not None:
         try:
             await dns_recorder.stop()
-
             set_dns_recorder(None)
-
         except Exception as e:
             logger.error("Error stopping DNS discovery recorder: %s", e)  # noqa: TRY400
 
-    # Prune stale correlation rows so the training store never grows unbounded.
 
-    # Runs regardless of TLS interception so pruning cannot be skipped.
+async def _shutdown_services() -> None:
+    """Cleanly shut down all background services, schedulers, and storage."""
+    config_manager.stop_watching()
+
+    if auto_switch_scheduler:
+        try:
+            await auto_switch_scheduler.stop()
+            logger.info("Auto-switch scheduler stopped")
+        except Exception as e:
+            logger.error("Error stopping auto-switch scheduler: %s", e)  # noqa: TRY400
+
+    if connection_watchdog is not None:
+        try:
+            await connection_watchdog.stop()
+            logger.info("Connection watchdog stopped")
+        except Exception as e:
+            logger.error("Error stopping connection watchdog: %s", e)  # noqa: TRY400
+
+    await _shutdown_network_servers()
 
     if orchestrator:
-        # A background flush can sit in an LLM call for minutes: stop it before
-
-        # the LLM client and the database it writes to are closed below.
-
         try:
             await orchestrator.cancel_background_flushes()
-
         except Exception as e:
             logger.error("Error cancelling background flushes: %s", e)  # noqa: TRY400
 
         try:
             await orchestrator.prune_stores()
-
         except Exception as e:
             logger.error("Error pruning correlation stores: %s", e)  # noqa: TRY400
 
@@ -827,10 +628,31 @@ async def lifespan(_app: FastAPI):  # noqa: C901, PLR0912, PLR0915
 
     if db_manager:
         await db_manager.close()
-
         await dispose_memory_db()
 
-        logger.info("Shutdown complete")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Application lifespan handler."""
+    logger.info("Starting Local Cloud Replacement Proxy...")
+    config = config_manager.config
+
+    await _init_core_runtime(config)
+    await _start_tls_mitm(config)
+    await _start_dns_and_config_watch(config)
+    await _start_protocol_servers(config)
+    await _start_watchdog_and_scheduler(config)
+    await _start_metrics_and_tracing(config)
+
+    logger.info(f"Server started on {config.proxy.host}:{config.proxy.port}")
+    if adapter_registry:
+        logger.info(f"Registered adapters: {adapter_registry.list_vendors()}")
+
+    yield
+
+    logger.info("Shutting down...")
+    await _shutdown_services()
+    logger.info("Shutdown complete")
 
 
 app = FastAPI(
