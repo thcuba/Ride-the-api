@@ -14,9 +14,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import httpx
 import pytest
 import pytest_asyncio
-from fastapi.testclient import TestClient
 
 import core.server as server_mod
 from core.buffer import (
@@ -45,8 +45,9 @@ async def db_manager(tmp_path):
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def _disk_backend():
+async def _disk_backend(tmp_path, monkeypatch):
     """Start from the SQLite backend and leave no RAM state behind."""
+    monkeypatch.setattr("core.buffer._settings_path", lambda: tmp_path / "runtime_settings.json")
     set_buffer_backend("disk")
     yield
     set_buffer_backend("disk")
@@ -205,23 +206,23 @@ class TestBackendIsReported:
 class TestSwitchThroughTheApi:
     """The endpoint is what the dashboard and an operator actually call."""
 
-    def _client(self, monkeypatch, db_manager, orchestrator=None):
+    def _client(self, monkeypatch, db_manager, orchestrator=None) -> httpx.AsyncClient:
         monkeypatch.setattr(server_mod, "db_manager", db_manager)
         monkeypatch.setattr(server_mod, "orchestrator", orchestrator)
         monkeypatch.setattr(server_mod.config_manager.config.security, "password", "testpass")
-        return TestClient(server_mod.app)
+        transport = httpx.ASGITransport(app=server_mod.app)
+        return httpx.AsyncClient(transport=transport, base_url="http://test")
 
     @pytest.mark.asyncio
     async def test_sqlite_is_accepted_and_the_pairs_travel(self, db_manager, monkeypatch):
         set_buffer_backend("memory")
         await _buffer_with_a_pair(db_manager, "via-api")
-        client = self._client(monkeypatch, db_manager)
-
-        response = client.put(
-            "/api/settings/buffer-backend",
-            json={"backend": "sqlite"},
-            headers={"X-API-Key": "testpass"},
-        )
+        async with self._client(monkeypatch, db_manager) as client:
+            response = await client.put(
+                "/api/settings/buffer-backend",
+                json={"backend": "sqlite"},
+                headers={"X-API-Key": "testpass"},
+            )
 
         assert response.status_code == 200  # noqa: PLR2004
         body = response.json()
@@ -231,13 +232,12 @@ class TestSwitchThroughTheApi:
 
     @pytest.mark.asyncio
     async def test_an_unknown_backend_is_refused_by_name(self, db_manager, monkeypatch):
-        client = self._client(monkeypatch, db_manager)
-
-        response = client.put(
-            "/api/settings/buffer-backend",
-            json={"backend": "postgres"},
-            headers={"X-API-Key": "testpass"},
-        )
+        async with self._client(monkeypatch, db_manager) as client:
+            response = await client.put(
+                "/api/settings/buffer-backend",
+                json={"backend": "postgres"},
+                headers={"X-API-Key": "testpass"},
+            )
 
         assert response.status_code == 400  # noqa: PLR2004
         assert "sqlite" in response.json()["error"]
@@ -245,12 +245,11 @@ class TestSwitchThroughTheApi:
 
     @pytest.mark.asyncio
     async def test_a_non_object_body_is_refused(self, db_manager, monkeypatch):
-        client = self._client(monkeypatch, db_manager)
-
-        response = client.put(
-            "/api/settings/buffer-backend",
-            json=["disk"],
-            headers={"X-API-Key": "testpass"},
-        )
+        async with self._client(monkeypatch, db_manager) as client:
+            response = await client.put(
+                "/api/settings/buffer-backend",
+                json=["disk"],
+                headers={"X-API-Key": "testpass"},
+            )
 
         assert response.status_code == 400  # noqa: PLR2004
