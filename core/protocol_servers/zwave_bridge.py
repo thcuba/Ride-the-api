@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import json
 import logging
 import threading
@@ -162,7 +163,7 @@ class ZWaveBridgePlugin(ProtocolServerPlugin):
         )
         if self.handler:
             try:
-                if asyncio.iscoroutinefunction(self.handler):
+                if inspect.iscoroutinefunction(self.handler):
                     await self.handler(request)
                 else:
                     self.handler(request)

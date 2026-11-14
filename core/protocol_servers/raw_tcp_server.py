@@ -9,6 +9,7 @@ attempt protocol identification before falling back to a raw handler.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import time
 from typing import TYPE_CHECKING, Any
@@ -122,7 +123,7 @@ class RawTCPServerPlugin(ProtocolServerPlugin):
             )
 
             if self.handler:
-                if asyncio.iscoroutinefunction(self.handler):
+                if inspect.iscoroutinefunction(self.handler):
                     await self.handler(request)
                 else:
                     self.handler(request)

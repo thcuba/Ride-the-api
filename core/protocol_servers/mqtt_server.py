@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import json
 import logging
 import threading
@@ -257,7 +258,7 @@ class MQTTServerPlugin(ProtocolServerPlugin):
         )
 
         try:
-            if asyncio.iscoroutinefunction(self.handler):
+            if inspect.iscoroutinefunction(self.handler):
                 result = await self.handler(request)
             else:
                 result = self.handler(request)
