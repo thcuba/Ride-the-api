@@ -75,7 +75,7 @@ def _get_metrics_registry() -> object:
     reg = getattr(server, "metrics_registry", None)
     if reg is not None:
         return reg
-    from core.observability import metrics_registry  # noqa: PLC0415
+    from core.observability import registry as metrics_registry  # noqa: PLC0415
 
     return metrics_registry
 
