@@ -102,7 +102,7 @@ line over disabling the rule globally.
 - `core/tls_mitm.py` — TLS interception. HTTP/1.1 parsing/serialization must use
   the `h11` state machine (`parse_decrypted_http_request`,
   `serialize_http_response`); do not reintroduce regex parsers.
-- `core/pipeline.py` — request handling is built on explicit **fallback
+- `core/pipeline/` — request handling is built on explicit **fallback
   chains** (`core/fallback_policy.py`): learned pattern → cloud forward → safe
   local default. A new handling path should preserve that ordering.
 - State and buffered data must never be lost on restart — persistence is
