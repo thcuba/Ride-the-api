@@ -43,6 +43,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
 class LearningOrchestrator:
     """Orchestrates the full learning/production pipeline per device."""
 
@@ -645,8 +646,6 @@ class LearningOrchestrator:
                     last_refusal_at=stats["tls_last_refusal_at"],
                 )
         return stats
-
-
 
 
 # Global instance
