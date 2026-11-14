@@ -129,4 +129,3 @@ def test_get_metrics_registry_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(server_mod, "metrics_registry", None)
     result = _get_metrics_registry()
     assert result is registry
-

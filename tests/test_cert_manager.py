@@ -375,4 +375,3 @@ class TestKeyIdentifiers:
         assert leaf_aki is not None
         assert not leaf_aki.critical
         assert leaf_aki.value.key_identifier == ca_ski.value.key_identifier
-
