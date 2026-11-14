@@ -24,6 +24,7 @@ from core.llm.models import (
 )
 from core.llm.parser import _parse_llm_json, _raw_secret, _strict_true
 from core.llm.profiles import (
+    call_single_profile,
     execute_profile_chain,
     get_available_profiles,
     order_profiles,
@@ -355,7 +356,7 @@ class LLMDecipherService:
             prompt,
             context,
             build_kwargs,
-            self._call_profile,
+            self.call_llm,
             self.profile_breaker,
         )
 
@@ -363,23 +364,18 @@ class LLMDecipherService:
         self,
         profile: LLMProfile,
         prompt: str,
-        context: dict | None,
-        build_kwargs: dict | None,
+        context: dict | None = None,
+        build_kwargs: dict | None = None,
     ) -> tuple[bool, str]:
         """Call a single profile, recording its health in the breaker."""
-        try:
-            kwargs = dict(build_kwargs or {})
-            if context:
-                kwargs.setdefault("context", context)
-            result = await self.call_llm(profile, prompt)
-            if result.get("success"):
-                self.profile_breaker.record_success(profile.name)
-                return True, result["content"]
-            self.profile_breaker.record_failure(profile.name)
-            return False, result.get("error") or "unknown error"
-        except Exception as exc:  # noqa: BLE001
-            self.profile_breaker.record_failure(profile.name)
-            return False, str(exc)
+        return await call_single_profile(
+            profile,
+            prompt,
+            context,
+            build_kwargs,
+            self.call_llm,
+            self.profile_breaker,
+        )
 
     async def test_connection(
         self,
