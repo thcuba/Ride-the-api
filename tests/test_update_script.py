@@ -17,7 +17,8 @@ import pytest
 UPDATE_SH = Path(__file__).resolve().parents[1] / "deploy" / "update.sh"
 
 pytestmark = pytest.mark.skipif(
-    shutil.which("git") is None or shutil.which("bash") is None, reason="needs git and bash"
+    os.name == "nt" or shutil.which("git") is None or shutil.which("bash") is None,
+    reason="deploy/update.sh requires a POSIX environment with bash and git",
 )
 
 # Stands in for .venv/bin/python: "pip install -e <dir>" fails while the
