@@ -41,6 +41,8 @@ from core.config import (
 from core.connection_watchdog import ConnectionWatchdog
 from core.database import (
     DatabaseManager,
+    DeviceRegistry,
+    RelayedConnection,
     init_db_manager,
 )
 from core.dns_discovery import DNSDiscoveryRecorder, get_dns_recorder, set_dns_recorder
@@ -166,8 +168,10 @@ __all__ = [
     "self_connection_reason",
     "should_relay_tls",
     # Re-exported types and getters for backward compatibility
+    "DeviceRegistry",
     "InterceptedRequest",
     "ProtocolType",
+    "RelayedConnection",
     "get_modification_engine",
     "get_tracer",
     "get_traffic_selector",
