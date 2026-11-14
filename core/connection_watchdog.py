@@ -44,7 +44,8 @@ _LOADER_PATH_ENV = ("LD_LIBRARY_PATH", "LD_PRELOAD", "DYLD_LIBRARY_PATH", "DYLD_
 
 def _xdg_runtime_dir() -> str:
     """Return the per-user systemd runtime dir so ``systemctl --user`` works."""
-    return f"/run/user/{os.geteuid()}"
+    euid = getattr(os, "geteuid", lambda: 1000)()
+    return f"/run/user/{euid}"
 
 
 def _child_env() -> dict[str, str]:
