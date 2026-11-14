@@ -288,6 +288,7 @@ async function loadDeviceStats(deviceId) {
     const s = stats.stats, pct = s.match_rate_pct || 0, rc = rateClass(pct);
     const detail = document.getElementById('details');
     detail.classList.remove('invisible');
+    document.body.style.overflow = 'hidden';
 
     // SVG ring
     const circum = 2 * Math.PI * 44;
@@ -609,7 +610,8 @@ async function loadDeviceStats(deviceId) {
 
 function closeDetails() {
   const detail = document.getElementById('details');
-  detail.classList.add('invisible');
+  if (detail) detail.classList.add('invisible');
+  document.body.style.overflow = '';
   // Return focus to previously active element or first device card
   if (lastActiveElement && document.body.contains(lastActiveElement) && typeof lastActiveElement.focus === 'function') {
     lastActiveElement.focus();

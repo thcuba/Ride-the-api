@@ -197,13 +197,53 @@
   .device-card .dc-stat .dc-label { color: var(--text2); }
   .device-card .dc-stat .dc-value { font-weight: 600; }
 
-  /* ── Detail Panel ──────────────────────────────────────────────────────── */
-  #details { margin-bottom: 24px; }
-  .detail-card {
-    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px;
-    box-shadow: var(--shadow); max-width: 800px; margin: 0 auto;
+  /* ── Detail Panel: Slide-over Drawer ──────────────────────────────────── */
+  #details:not(.invisible) {
+    position: fixed;
+    inset: 0;
+    z-index: 999;
+    display: flex;
+    justify-content: flex-end;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    overflow-y: auto;
+    animation: fadeIn .2s ease;
   }
-  .detail-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  .detail-card {
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    box-shadow: -8px 0 32px rgba(0, 0, 0, .45);
+    width: 100%;
+    max-width: 680px;
+    min-height: 100vh;
+    padding: 24px;
+    margin: 0;
+    animation: slideInRight .22s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  @keyframes slideInRight {
+    from { transform: translateX(100%); }
+    to { transform: translateX(0); }
+  }
+  @media (max-width: 720px) {
+    .detail-card {
+      max-width: 100%;
+      border-left: none;
+      padding: 16px;
+    }
+  }
+  .detail-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+  }
   .detail-header h2 { font-size: 18px; font-weight: 700; color: var(--accent); }
   .close-btn { background: none; border: 1px solid var(--border); color: var(--text2); font-size: 20px; cursor: pointer; padding: 2px 12px; border-radius: 6px; transition: all .2s; }
   .close-btn:hover { color: var(--red); border-color: var(--red); background: rgba(248,113,113,.1); }
@@ -1298,7 +1338,7 @@
   </div>
 </div>
 
-<div id="details" class="invisible" role="dialog" aria-labelledby="details-title" aria-modal="true"></div>
+<div id="details" class="invisible" role="dialog" aria-labelledby="details-title" aria-modal="true" onclick="if(event.target===this)closeDetails();"></div>
 
 <!-- LLM Settings modal -->
 <div class="profile-modal" id="llm-settings-modal" role="dialog" aria-modal="true" aria-labelledby="llm-settings-title" style="display:none;" onclick="if(event.target===this)closeLLMSettings();">
