@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+from html.parser import HTMLParser
 from pathlib import Path
 
 import pytest
@@ -30,6 +31,24 @@ EXPECTED_MODULES = [
 ]
 
 MAX_ORCHESTRATOR_LINES = 350
+
+
+class DashboardHtmlParser(HTMLParser):
+    """Parses dashboard.html to extract script sources and inline event handlers."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.script_srcs: list[str] = []
+        self.inline_handlers: set[str] = set()
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        for name, val in attrs:
+            if tag == "script" and name == "src" and val:
+                self.script_srcs.append(val)
+            elif name.startswith("on") and val:
+                match = re.match(r"([a-zA-Z0-9_]+)\(", val.strip())
+                if match:
+                    self.inline_handlers.add(match.group(1))
 
 
 def test_modular_dashboard_files_exist():
@@ -53,13 +72,12 @@ def test_dashboard_js_is_decomposed_and_lightweight():
 
 def test_dashboard_html_includes_all_modules_in_correct_order():
     """webui/dashboard.html must include modular scripts before dashboard.js."""
-    html = DASHBOARD_HTML.read_text(encoding="utf-8")
+    parser = DashboardHtmlParser()
+    parser.feed(DASHBOARD_HTML.read_text(encoding="utf-8"))
 
-    # Find script tags referencing /static/js/
-    script_srcs = re.findall(r'<script\s+src="([^"]+)"></script>', html)
     dashboard_related = [
         s.split("?")[0]
-        for s in script_srcs
+        for s in parser.script_srcs
         if "/static/js/dashboard" in s or s.endswith("/dashboard.js")
     ]
 
@@ -99,8 +117,8 @@ def test_modular_scripts_pass_node_syntax_check():
 
 def test_all_html_event_handlers_are_defined():
     """All inline onclick/onchange/oninput handlers in dashboard.html must be defined in scripts."""
-    html = DASHBOARD_HTML.read_text(encoding="utf-8")
-    handler_calls = re.findall(r'on[a-z]+="([a-zA-Z0-9_]+)\(', html)
+    parser = DashboardHtmlParser()
+    parser.feed(DASHBOARD_HTML.read_text(encoding="utf-8"))
 
     # Collect all JS text from all scripts loaded in dashboard.html
     js_text = ""
@@ -115,7 +133,7 @@ def test_all_html_event_handlers_are_defined():
     # Native JS keywords/statements that might match regex
     ignored = {"if"}
 
-    for handler in set(handler_calls):
+    for handler in parser.inline_handlers:
         if handler in ignored:
             continue
         # Function must be defined or assigned to window
