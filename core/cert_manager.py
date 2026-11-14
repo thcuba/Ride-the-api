@@ -121,6 +121,10 @@ class CertManager:
                 critical=True,
             )
             .add_extension(
+                x509.SubjectKeyIdentifier.from_public_key(key.public_key()),
+                critical=False,
+            )
+            .add_extension(
                 x509.KeyUsage(
                     key_cert_sign=True,
                     crl_sign=True,
@@ -275,6 +279,14 @@ class CertManager:
             )
             .add_extension(
                 x509.ExtendedKeyUsage([x509.oid.ExtendedKeyUsageOID.SERVER_AUTH]),
+                critical=False,
+            )
+            .add_extension(
+                x509.SubjectKeyIdentifier.from_public_key(key.public_key()),
+                critical=False,
+            )
+            .add_extension(
+                x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()),
                 critical=False,
             )
             .sign(ca_key, hashes.SHA256())

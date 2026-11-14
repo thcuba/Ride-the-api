@@ -16,8 +16,25 @@ import pytest
 
 UPDATE_SH = Path(__file__).resolve().parents[1] / "deploy" / "update.sh"
 
+def _has_working_bash() -> bool:
+    if shutil.which("bash") is None:
+        return False
+    try:
+        res = subprocess.run(
+            ["bash", "-c", "echo ok"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+        return res.returncode == 0 and res.stdout.strip() == "ok"
+    except Exception:
+        return False
+
+
 pytestmark = pytest.mark.skipif(
-    shutil.which("git") is None or shutil.which("bash") is None, reason="needs git and bash"
+    shutil.which("git") is None or not _has_working_bash(),
+    reason="needs git and working bash",
 )
 
 # Stands in for .venv/bin/python: "pip install -e <dir>" fails while the
