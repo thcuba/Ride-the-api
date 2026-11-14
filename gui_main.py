@@ -339,11 +339,11 @@ class App:
             if icon_path is not None:
                 with contextlib.suppress(tk.TclError):
                     root.iconbitmap(default=str(icon_path))
-        root.geometry("460x300")
-        root.minsize(420, 280)
-        root.resizable(False, False)
+        root.geometry("520x360")
+        root.minsize(440, 280)
+        root.resizable(True, True)
 
-        main = ttk.Frame(root, padding=(12, 10))
+        main = ttk.Frame(root, padding=(14, 12))
         main.pack(fill=tk.BOTH, expand=True)
 
         # Status row: coloured dot + text
@@ -361,20 +361,27 @@ class App:
         # Actions
         actions = ttk.Frame(main)
         actions.pack(fill=tk.X)
-        self.btn_start = ttk.Button(actions, text="Avvia server", command=self.toggle_server)
+        self.btn_start = ttk.Button(actions, text="Start server", command=self.toggle_server)
         self.btn_start.pack(side=tk.LEFT)
-        ttk.Button(actions, text="Apri dashboard", command=self.open_dashboard).pack(
+        ttk.Button(actions, text="Open dashboard", command=self.open_dashboard).pack(
             side=tk.LEFT, padx=(8, 0)
         )
-        ttk.Button(actions, text="Esci", command=self.do_exit).pack(side=tk.RIGHT)
+        ttk.Button(actions, text="Exit", command=self.do_exit).pack(side=tk.RIGHT)
 
-        # Small log area: a few lines, fixed height, not a terminal
-        tk.Label(main, text="Log", font=("Segoe UI", 9), foreground="#888888").pack(
-            anchor="w", pady=(12, 2)
+        # Log header and area: expandable with window resize
+        log_header = ttk.Frame(main)
+        log_header.pack(fill=tk.X, pady=(12, 4))
+        tk.Label(log_header, text="Logs", font=("Segoe UI", 9), foreground="#888888").pack(
+            side=tk.LEFT
         )
+        ttk.Button(log_header, text="Clear", command=self.clear_log, width=6).pack(side=tk.RIGHT)
+        ttk.Button(log_header, text="Copy", command=self.copy_log, width=6).pack(
+            side=tk.RIGHT, padx=(0, 4)
+        )
+
         self.log = scrolledtext.ScrolledText(
             main,
-            height=5,
+            height=8,
             state=tk.DISABLED,
             wrap=tk.WORD,
             font=("Consolas", 9),
@@ -404,29 +411,40 @@ class App:
     def _set_state(self, state: str) -> None:
         self._state = state
         if state == "starting":
-            text, fg, dot = "Avvio del server...", "#b8860b", "#e6a817"
-            btn_state, btn_text = "disabled", "Avvio..."
+            text, fg, dot = "Starting server...", "#b8860b", "#e6a817"
+            btn_state, btn_text = "disabled", "Starting..."
         elif state == "stopping":
-            text, fg, dot = "Arresto del server...", "#b8860b", "#e6a817"
-            btn_state, btn_text = "disabled", "Arresto..."
+            text, fg, dot = "Stopping server...", "#b8860b", "#e6a817"
+            btn_state, btn_text = "disabled", "Stopping..."
         elif state == "external":
-            text, fg, dot = "Server gi\u00e0 in esecuzione", "#2e8b57", "#2e8b57"
-            btn_state, btn_text = "disabled", "Avvia server"
+            text, fg, dot = "Server already running", "#2e8b57", "#2e8b57"
+            btn_state, btn_text = "disabled", "Start server"
         elif state == "online":
-            text, fg, dot = f"Online su {self.url}", "#2e8b57", "#2e8b57"
-            btn_state, btn_text = "normal", "Arresta server"
+            text, fg, dot = f"Online at {self.url}", "#2e8b57", "#2e8b57"
+            btn_state, btn_text = "normal", "Stop server"
         elif state == "stopped":
-            text, fg, dot = "Server fermo", "#666666", "#bbbbbb"
-            btn_state, btn_text = "normal", "Avvia server"
+            text, fg, dot = "Server stopped", "#666666", "#bbbbbb"
+            btn_state, btn_text = "normal", "Start server"
         elif state == "error":
-            text, fg, dot = "Errore di avvio (vedi log)", "#c0392b", "#c0392b"
-            btn_state, btn_text = "normal", "Avvia server"
+            text, fg, dot = "Startup error (see logs)", "#c0392b", "#c0392b"
+            btn_state, btn_text = "normal", "Start server"
         else:
             text, fg, dot = state, "#333333", "#bbbbbb"
-            btn_state, btn_text = "normal", "Avvia server"
+            btn_state, btn_text = "normal", "Start server"
         self.status.config(text=text, foreground=fg)
         self._set_dot(dot)
         self.btn_start.config(state=btn_state, text=btn_text)
+
+    def clear_log(self) -> None:
+        self.log.config(state=tk.NORMAL)
+        self.log.delete("1.0", tk.END)
+        self.log.config(state=tk.DISABLED)
+
+    def copy_log(self) -> None:
+        content = self.log.get("1.0", tk.END).strip()
+        if content:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(content)
 
     def toggle_server(self) -> None:
         if self.controller.running or self.online:
@@ -522,12 +540,12 @@ def main(argv: list[str] | None = None) -> int:
     want_gui = args.gui or os.name == "nt"
     if want_gui:
         if tk is None:
-            _log("[launcher] tkinter non disponibile: avvio in modalit\u00e0 headless")
+            _log("[launcher] tkinter not available: running in headless mode")
             return run_headless(data_dir)
         try:
             root = tk.Tk()
         except Exception as e:  # e.g. no display on headless POSIX
-            _log(f"[launcher] Impossibile aprire la finestra GUI ({e}): avvio headless")
+            _log(f"[launcher] Unable to open GUI window ({e}): running headless")
             return run_headless(data_dir)
         App(root, data_dir, args)
         root.mainloop()
