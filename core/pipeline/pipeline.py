@@ -68,6 +68,7 @@ def _monotonic() -> float:
         return parent_time.monotonic()
     return time.monotonic()
 
+
 class FlushCoordinator:
     """Per-device flush bookkeeping, shared by every pipeline an orchestrator builds.
 
@@ -1467,5 +1468,3 @@ class LearningPipeline:
             )
         except Exception as e:  # noqa: BLE001 - header is best-effort, never blocks learning
             logger.warning("Failed to write device_meta for %s: %s", device_id, e)
-
-
