@@ -10,6 +10,7 @@ from starlette.requests import Request
 import core.proxy as proxy_mod
 import core.server as server_mod
 from adapters.base import ProtocolAdapterRegistry
+from core.observability import registry
 from core.proxy import (
     _DEVICE_ID_HEADERS,
     _extract_device_id,
@@ -17,6 +18,7 @@ from core.proxy import (
     _select_handler_adapter,
     proxy_vendor_request,
 )
+from core.proxy.router import _get_metrics_registry
 from core.routes.introspection import iter_routes
 
 EXPECTED_STATUS_SERVICE_UNAVAILABLE = 503
@@ -117,3 +119,14 @@ async def test_proxy_vendor_request_service_not_ready() -> None:
         assert resp.status_code == EXPECTED_STATUS_SERVICE_UNAVAILABLE
     finally:
         server_mod.db_manager = orig_db
+
+
+def test_get_metrics_registry_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify _get_metrics_registry falls back to core.observability.registry.
+
+    When server.metrics_registry is None, it should import registry as fallback.
+    """
+    monkeypatch.setattr(server_mod, "metrics_registry", None)
+    result = _get_metrics_registry()
+    assert result is registry
+
