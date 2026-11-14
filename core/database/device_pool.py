@@ -53,10 +53,8 @@ class DeviceDatabasePool:
     @classmethod
     def _safe_db_name(cls, device_id: str) -> str:
         """Sanitize a device ID into a safe database file name with .db extension."""
-        cleaned = cls._SAFE_DB_NAME_RE.sub("_", device_id)
-        if not cleaned.endswith(".db"):
-            cleaned = f"{cleaned}.db"
-        return cleaned
+        cleaned = cls._SAFE_DB_NAME_RE.sub("_", device_id).strip("._")
+        return f"{cleaned or 'device'}.db"
 
     @staticmethod
     def _is_ip(value: str) -> bool:
