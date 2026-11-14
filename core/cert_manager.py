@@ -134,6 +134,10 @@ class CertManager:
                 ),
                 critical=True,
             )
+            .add_extension(
+                x509.SubjectKeyIdentifier.from_public_key(key.public_key()),
+                critical=False,
+            )
             .sign(key, hashes.SHA256())
         )
 
@@ -243,6 +247,12 @@ class CertManager:
                 ]
             )
 
+        try:
+            ca_ski = ca_cert.extensions.get_extension_for_class(x509.SubjectKeyIdentifier)
+            aki = x509.AuthorityKeyIdentifier.from_issuer_subject_key_identifier(ca_ski.value)
+        except x509.ExtensionNotFound:
+            aki = x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_cert.public_key())
+
         cert = (
             x509.CertificateBuilder()
             .subject_name(subject_name)
@@ -275,6 +285,14 @@ class CertManager:
             )
             .add_extension(
                 x509.ExtendedKeyUsage([x509.oid.ExtendedKeyUsageOID.SERVER_AUTH]),
+                critical=False,
+            )
+            .add_extension(
+                x509.SubjectKeyIdentifier.from_public_key(key.public_key()),
+                critical=False,
+            )
+            .add_extension(
+                aki,
                 critical=False,
             )
             .sign(ca_key, hashes.SHA256())

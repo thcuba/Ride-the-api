@@ -346,3 +346,33 @@ class TestCertEndpointsErrorHandling:
         )
         assert response.status_code == 500  # noqa: PLR2004
         assert response.json() == {"error": "An internal error occurred"}
+
+
+class TestKeyIdentifiers:
+    def test_ca_and_leaf_include_subject_and_authority_key_identifiers(self, tmp_path):
+        """RFC 5280 and OpenSSL 3.x require Authority Key Identifier for verification."""
+        cm = CertManager(
+            CertManagerConfig(
+                ca_cert_path=str(tmp_path / "certs" / "ca.pem"),
+                ca_key_path=str(tmp_path / "certs" / "ca.key"),
+                device_certs_dir=str(tmp_path / "device_certs"),
+                external_certs_dir=str(tmp_path / "external_certs"),
+            )
+        )
+        ca_cert, _ = cm.ensure_ca()
+        ca_ski = ca_cert.extensions.get_extension_for_class(x509.SubjectKeyIdentifier)
+        assert ca_ski is not None
+        assert not ca_ski.critical
+
+        cert_pem, _ = cm.get_cert_for_hostname("device.local")
+        leaf_cert = x509.load_pem_x509_certificate(cert_pem.encode())
+
+        leaf_ski = leaf_cert.extensions.get_extension_for_class(x509.SubjectKeyIdentifier)
+        assert leaf_ski is not None
+        assert not leaf_ski.critical
+
+        leaf_aki = leaf_cert.extensions.get_extension_for_class(x509.AuthorityKeyIdentifier)
+        assert leaf_aki is not None
+        assert not leaf_aki.critical
+        assert leaf_aki.value.key_identifier == ca_ski.value.key_identifier
+
