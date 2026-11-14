@@ -219,7 +219,8 @@ def test_restart_command_strips_loader_paths_and_sets_runtime_dir() -> None:
     mock_popen.assert_called_once()
     env = mock_popen.call_args.kwargs["env"]
     assert "LD_LIBRARY_PATH" not in env
-    assert env.get("XDG_RUNTIME_DIR") == f"/run/user/{os.geteuid()}"
+    expected_euid = getattr(os, "geteuid", lambda: 1000)()
+    assert env.get("XDG_RUNTIME_DIR") == f"/run/user/{expected_euid}"
     assert env.get("HOME") == "/home/pi4ride"
 
 
