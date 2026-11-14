@@ -20,6 +20,7 @@ import json
 import os
 import re
 import tempfile
+import time
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -65,6 +66,21 @@ def _validate_destination(path: Path) -> Path:
     return path
 
 
+def _replace_atomic(src: Path, dest: Path) -> None:
+    """Replace dest with src, retrying transient sharing violations on Windows."""
+    max_retries = 10
+    for attempt in range(max_retries):
+        try:
+            src.replace(dest)
+        except PermissionError:
+            if os.name == "nt" and attempt < max_retries - 1:
+                time.sleep(0.05 * (attempt + 1))
+            else:
+                raise
+        else:
+            return
+
+
 def write_text(path: Path | str, data: str, encoding: str = "utf-8") -> None:
     """Atomically write ``data`` to ``path`` via temp file + fsync + replace."""
     dest = _validate_destination(Path(path)).resolve()
@@ -75,7 +91,7 @@ def write_text(path: Path | str, data: str, encoding: str = "utf-8") -> None:
             f.write(data)
             f.flush()
             os.fsync(f.fileno())
-        Path(tmp_name).replace(dest)
+        _replace_atomic(Path(tmp_name), dest)
     except BaseException:
         with contextlib.suppress(OSError):
             Path(tmp_name).unlink()

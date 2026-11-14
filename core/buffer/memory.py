@@ -41,7 +41,18 @@ _BUFFER_TABLES: list[Table] = [
 _engine: AsyncEngine | None = None
 _factory: async_sessionmaker[AsyncSession] | None = None
 _initialized = False
-_init_lock = asyncio.Lock()
+_init_lock: asyncio.Lock | None = None
+_init_lock_loop: asyncio.AbstractEventLoop | None = None
+
+
+def _get_init_lock() -> asyncio.Lock:
+    """The init lock for the running event loop (an asyncio lock is loop-bound)."""
+    global _init_lock, _init_lock_loop  # noqa: PLW0603
+    loop = asyncio.get_running_loop()
+    if _init_lock is None or _init_lock_loop is not loop:
+        _init_lock = asyncio.Lock()
+        _init_lock_loop = loop
+    return _init_lock
 
 
 class _SessionGate:
@@ -96,7 +107,7 @@ async def _ensure_initialized() -> AsyncEngine:
     global _engine, _factory, _initialized  # noqa: PLW0603
     if _initialized and _engine is not None:
         return _engine
-    async with _init_lock:
+    async with _get_init_lock():
         if _initialized and _engine is not None:
             return _engine
         engine = create_async_engine(
@@ -153,8 +164,8 @@ async def memory_session(_device_id: str) -> AsyncGenerator[AsyncSession, None]:
 
 async def dispose_memory_db() -> None:
     """Drop the shared in-memory engine (used at shutdown and in tests)."""
-    global _engine, _factory, _initialized, _gate, _gate_loop  # noqa: PLW0603
-    async with _init_lock:
+    global _engine, _factory, _initialized, _gate, _gate_loop, _init_lock, _init_lock_loop  # noqa: PLW0603
+    async with _get_init_lock():
         if _engine is not None:
             await _engine.dispose()
         _engine = None
@@ -162,3 +173,5 @@ async def dispose_memory_db() -> None:
         _initialized = False
         _gate = None
         _gate_loop = None
+        _init_lock = None
+        _init_lock_loop = None
