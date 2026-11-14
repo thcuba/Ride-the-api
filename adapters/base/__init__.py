@@ -9,7 +9,7 @@ import abc
 import base64
 import json
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
@@ -138,7 +138,7 @@ class Command:
     confidence: float | None = None
     # Execution
     correlation_id: str | None = None
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 @dataclass
@@ -148,7 +148,7 @@ class CommandResult:
     success: bool
     response: dict[str, Any] | None = None
     error: str | None = None
-    executed_at: datetime = field(default_factory=datetime.utcnow)
+    executed_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     # If forwarded to cloud
     forwarded: bool = False
     cloud_response: dict[str, Any] | None = None

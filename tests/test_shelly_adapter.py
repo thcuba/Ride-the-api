@@ -2,7 +2,7 @@
 Tests for Shelly Protocol Adapter — Gen1, Gen2, Gen3 intent parsing and lifecycle.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -31,7 +31,7 @@ def adapter():
 def http_request():
     return InterceptedRequest(
         device_id="shelly-1-abc123",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(UTC),
         protocol=ProtocolType.HTTP,
         method="GET",
         path="/status",
@@ -79,7 +79,7 @@ class TestGen1HTTP:
     async def test_turn_on(self, adapter):
         req = InterceptedRequest(
             device_id="shelly-1",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             protocol=ProtocolType.HTTP,
             method="GET",
             path="/relay/0?turn=on",
@@ -91,7 +91,7 @@ class TestGen1HTTP:
     async def test_turn_off(self, adapter):
         req = InterceptedRequest(
             device_id="shelly-1",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             protocol=ProtocolType.HTTP,
             method="GET",
             path="/relay/0?turn=off",
@@ -103,7 +103,7 @@ class TestGen1HTTP:
     async def test_settings_endpoint(self, adapter):
         req = InterceptedRequest(
             device_id="shelly-1",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             protocol=ProtocolType.HTTP,
             method="GET",
             path="/settings",
@@ -115,7 +115,7 @@ class TestGen1HTTP:
     async def test_unknown_path_unchanged(self, adapter):
         req = InterceptedRequest(
             device_id="shelly-1",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             protocol=ProtocolType.HTTP,
             method="GET",
             path="/some/unknown",
@@ -135,7 +135,7 @@ class TestGen2HTTP:
     async def test_rpc_get_status(self, adapter):
         req = InterceptedRequest(
             device_id="shelly-plus-1",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             protocol=ProtocolType.HTTP,
             method="GET",
             path="/rpc/Shelly.GetStatus",
@@ -147,7 +147,7 @@ class TestGen2HTTP:
     async def test_rpc_switch_set(self, adapter):
         req = InterceptedRequest(
             device_id="shelly-plus-1",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             protocol=ProtocolType.HTTP,
             method="POST",
             path="/rpc/Switch.Set",
@@ -159,7 +159,7 @@ class TestGen2HTTP:
     async def test_rpc_light_set(self, adapter):
         req = InterceptedRequest(
             device_id="shelly-plus-1",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             protocol=ProtocolType.HTTP,
             method="POST",
             path="/rpc/Light.Set",
@@ -171,7 +171,7 @@ class TestGen2HTTP:
     async def test_rpc_get_config(self, adapter):
         req = InterceptedRequest(
             device_id="shelly-plus-1",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             protocol=ProtocolType.HTTP,
             method="GET",
             path="/rpc/Shelly.GetConfig",
@@ -183,7 +183,7 @@ class TestGen2HTTP:
     async def test_rpc_unknown_fallsback(self, adapter):
         req = InterceptedRequest(
             device_id="shelly-plus-1",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             protocol=ProtocolType.HTTP,
             method="POST",
             path="/rpc/Unknown.Method",
@@ -195,7 +195,7 @@ class TestGen2HTTP:
     async def test_rpc_toggle(self, adapter):
         req = InterceptedRequest(
             device_id="shelly-plus-1",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             protocol=ProtocolType.HTTP,
             method="POST",
             path="/rpc/Switch.Toggle",
@@ -214,7 +214,7 @@ class TestCoAP:
     async def test_shelly_coap_path(self, adapter):
         req = InterceptedRequest(
             device_id="shelly-1",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             protocol=ProtocolType.COAP,
             path="/shelly/status",
         )
@@ -225,7 +225,7 @@ class TestCoAP:
     async def test_non_shelly_coap_path(self, adapter):
         req = InterceptedRequest(
             device_id="shelly-1",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             protocol=ProtocolType.COAP,
             path="/other/resource",
             parsed_intent=CommandType.UNKNOWN,
@@ -237,7 +237,7 @@ class TestCoAP:
     async def test_parse_request_delegates_coap(self, adapter):
         req = InterceptedRequest(
             device_id="shelly-1",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             protocol=ProtocolType.COAP,
             path="/shelly/status",
         )
@@ -255,7 +255,7 @@ class TestMQTT:
     async def test_status_topic(self, adapter):
         req = InterceptedRequest(
             device_id="shelly-plus-1",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             protocol=ProtocolType.MQTT,
             topic="shelly/device-1/status",
         )
@@ -266,7 +266,7 @@ class TestMQTT:
     async def test_status_subtopic(self, adapter):
         req = InterceptedRequest(
             device_id="shelly-plus-1",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             protocol=ProtocolType.MQTT,
             topic="shelly/device-1/status/power",
         )
@@ -277,7 +277,7 @@ class TestMQTT:
     async def test_rpc_response_with_src(self, adapter):
         req = InterceptedRequest(
             device_id="shelly-plus-1",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             protocol=ProtocolType.MQTT,
             topic="shelly/device-1/rpc",
             body={"src": "shelly", "method": "Switch.Set"},
@@ -289,7 +289,7 @@ class TestMQTT:
     async def test_rpc_response_no_src_unchanged(self, adapter):
         req = InterceptedRequest(
             device_id="shelly-plus-1",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             protocol=ProtocolType.MQTT,
             topic="shelly/device-1/cmd",
             body={"method": "Switch.Set"},
@@ -302,7 +302,7 @@ class TestMQTT:
     async def test_websocket_status(self, adapter):
         req = InterceptedRequest(
             device_id="shelly-plus-1",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             protocol=ProtocolType.WEBSOCKET,
             path="/ws/device-1/status",
         )
@@ -313,7 +313,7 @@ class TestMQTT:
     async def test_parse_request_delegates_mqtt(self, adapter, http_request):  # noqa: ARG002
         req = InterceptedRequest(
             device_id="shelly-plus-1",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             protocol=ProtocolType.MQTT,
             topic="shelly/device-1/status",
         )
@@ -324,7 +324,7 @@ class TestMQTT:
     async def test_parse_request_delegates_ws(self, adapter):
         req = InterceptedRequest(
             device_id="shelly-plus-1",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             protocol=ProtocolType.WEBSOCKET,
             path="/ws/device-1/status",
         )
@@ -354,7 +354,7 @@ class TestHandleRequest:
 
         req = InterceptedRequest(
             device_id=device_id,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             protocol=ProtocolType.HTTP,
             method="GET",
             path="/status",
@@ -371,7 +371,7 @@ class TestHandleRequest:
     async def test_get_state_no_device_forwards(self, adapter):
         req = InterceptedRequest(
             device_id="unknown",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             protocol=ProtocolType.HTTP,
             method="GET",
             path="/status",
@@ -387,7 +387,7 @@ class TestHandleRequest:
         await adapter.on_device_connect(device_id, {"model": "shelly1pm"})
         req = InterceptedRequest(
             device_id=device_id,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             protocol=ProtocolType.HTTP,
             method="GET",
             path="/relay/0?turn=on",
@@ -410,7 +410,7 @@ class TestForwardAndBuild:
         # (forwarded signal set) without a network call.
         req = InterceptedRequest(
             device_id="test",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             protocol=ProtocolType.HTTP,
         )
         result = await adapter.forward_to_cloud(req)
@@ -422,7 +422,7 @@ class TestForwardAndBuild:
     async def test_forward_to_cloud_uses_host_header_as_hostname(self, adapter):
         req = InterceptedRequest(
             device_id="test",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             protocol=ProtocolType.HTTP,
             headers={"Host": "shelly-api-eu.shelly.cloud:443"},
         )
@@ -441,7 +441,7 @@ class TestForwardAndBuild:
     async def test_build_response_success(self, adapter):
         req = InterceptedRequest(
             device_id="test",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             protocol=ProtocolType.HTTP,
         )
         result = CommandResult(success=True, response={"power": 100})
@@ -452,7 +452,7 @@ class TestForwardAndBuild:
     async def test_build_response_failure(self, adapter):
         req = InterceptedRequest(
             device_id="test",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             protocol=ProtocolType.HTTP,
         )
         result = CommandResult(success=False, error="fail")
@@ -531,7 +531,7 @@ class TestParseRequestRouting:
     async def test_http_routed_to_parse_http(self, adapter):
         req = InterceptedRequest(
             device_id="shelly-1",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             protocol=ProtocolType.HTTPS,
             method="GET",
             path="/status",
@@ -543,7 +543,7 @@ class TestParseRequestRouting:
     async def test_unhandled_protocol_passthrough(self, adapter):
         req = InterceptedRequest(
             device_id="shelly-1",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             protocol=ProtocolType.MODBUS,  # not in Shelly's list
             parsed_intent=CommandType.UNKNOWN,
         )
