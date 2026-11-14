@@ -257,3 +257,16 @@ a { text-underline-offset: .18em; }
   html { scroll-behavior: auto; }
   *, *::before, *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; }
 }
+
+/* Universal '?' help button */
+.f-help {
+  width: 17px; height: 17px; padding: 0; border-radius: 50%; cursor: help;
+  border: 1px solid var(--border); background: var(--surface2); color: var(--text2);
+  font-size: 11px; font-weight: 700; line-height: 1; display: inline-flex;
+  align-items: center; justify-content: center; flex-shrink: 0;
+  vertical-align: middle;
+}
+.f-help:hover, .f-help:focus-visible {
+  color: var(--accent); border-color: var(--accent); outline: none;
+}
+.f-name-row { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }

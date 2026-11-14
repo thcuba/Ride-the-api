@@ -137,7 +137,7 @@ passed through (forwarded directly to the cloud).
   [`fnmatch.translate`](https://docs.python.org/3/library/fnmatch.html) (stdlib) rather than a
   hand-rolled `*` → `.*` conversion.
 
-### 2.3 LearningOrchestrator (Pipeline) (`core/pipeline.py`)
+### 2.3 LearningOrchestrator (Pipeline) (`core/pipeline/`)
 
 **Role**: central orchestrator that manages the learning and production cycle for each
 device. Coordinates BufferManager → LLMRouter → DecipherIngest → PatternEngine.

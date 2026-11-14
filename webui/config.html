@@ -51,7 +51,21 @@
   .brand-row { display: flex; align-items: center; gap: 10px; }
   .brand-row img { border-radius: 8px; }
   .header-actions { display: flex; gap: 10px; align-items: center; }
-  .path-chip { font-size: 12px; color: var(--text2); background: var(--surface2); border: 1px solid var(--border); padding: 5px 10px; border-radius: 8px; font-family: ui-monospace, monospace; }
+  .path-chip {
+    font-size: 12px; color: var(--text2); background: var(--surface2); border: 1px solid var(--border);
+    padding: 5px 10px; border-radius: 8px; font-family: ui-monospace, monospace;
+    display: inline-flex; align-items: center; gap: 6px; cursor: pointer; transition: all .15s ease;
+  }
+  .path-chip:hover {
+    color: var(--text); border-color: var(--accent); background: color-mix(in srgb, var(--surface2) 80%, var(--accent) 20%);
+  }
+  .path-chip:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px;
+  }
+  .path-chip-icon {
+    width: 13px; height: 13px; flex-shrink: 0; opacity: .7; transition: opacity .15s;
+  }
+  .path-chip:hover .path-chip-icon { opacity: 1; color: var(--accent); }
 
   .btn { padding: 8px 18px; border: none; border-radius: 8px; font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; transition: all .2s; display: inline-flex; align-items: center; gap: 6px; }
   .btn-primary { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff; box-shadow: 0 4px 14px rgba(108,140,255,.25); }
@@ -295,13 +309,13 @@
 
   /* Field help: name row, "?" affordance, machine path, copy shortcut */
   .field .f-name-row { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-  .field .f-help {
+  .f-help, .field .f-help {
     width: 17px; height: 17px; padding: 0; border-radius: 50%; cursor: help;
     border: 1px solid var(--border); background: var(--surface2); color: var(--text2);
     font-size: 11px; font-weight: 700; line-height: 1; display: inline-flex;
     align-items: center; justify-content: center; flex-shrink: 0;
   }
-  .field .f-help:hover, .field .f-help:focus-visible { color: var(--accent); border-color: var(--accent); outline: none; }
+  .f-help:hover, .f-help:focus-visible, .field .f-help:hover, .field .f-help:focus-visible { color: var(--accent); border-color: var(--accent); outline: none; }
   .field .f-path {
     display: inline-block; margin-top: 3px; font-family: ui-monospace, monospace;
     font-size: 10.5px; color: color-mix(in srgb, var(--text2) 75%, transparent);
@@ -516,7 +530,13 @@
     </nav>
   </div>
   <div class="header-actions">
-    <span class="path-chip" id="configPath">…</span>
+    <button type="button" class="path-chip" id="configPathBtn" onclick="copyConfigPath()" aria-label="Copy configuration file path" title="Copy configuration file path">
+      <svg class="path-chip-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+      </svg>
+      <span id="configPath">…</span>
+    </button>
     <button class="btn btn-primary" id="saveBtn" onclick="saveConfig()" aria-label="Save all configuration changes" title="No unsaved changes (Ctrl+S)" disabled>&#x2714; Save All</button>
   </div>
 </div>
@@ -536,6 +556,6 @@
 
 <script src="/static/js/common.js"></script>
 <script src="/static/js/api.js"></script>
-<script src="/static/js/config.js"></script>
+<script src="/static/js/config.js?v=20261114"></script>
 </body>
 </html>

@@ -191,17 +191,26 @@ def test_llm_settings_deeplink_has_no_temporal_dead_zone():
     assert deeplink_call < first_assignment
 
 
-def test_options_update_button_accessibility():
-    options_path = Path("webui/options.html")
-    assert options_path.exists(), "webui/options.html must exist"
-    html = options_path.read_text(encoding="utf-8")
+def test_configuration_path_chip_accessibility_and_copy():
+    config_path = Path("webui/config.html")
+    config_js = Path("webui/static/js/config.js")
+    assert config_path.exists(), "webui/config.html must exist"
+    assert config_js.exists(), "webui/static/js/config.js must exist"
 
-    # Verify #updateBtn accessible attributes
-    assert 'id="updateBtn"' in html
-    assert 'aria-label="Update software to latest release"' in html
-    assert 'aria-describedby="update-desc"' in html
-    assert 'aria-busy="false"' in html
+    html = config_path.read_text(encoding="utf-8")
+    js = config_js.read_text(encoding="utf-8")
 
-    # Verify updateSoftware manages aria-busy lifecycle
-    assert "btn.setAttribute('aria-busy', 'true')" in html
-    assert "btn.setAttribute('aria-busy', 'false')" in html
+    # Verify button element with accessible label and title
+    assert 'id="configPathBtn"' in html
+    assert 'aria-label="Copy configuration file path"' in html
+    assert 'title="Copy configuration file path"' in html
+    assert 'onclick="copyConfigPath()"' in html
+    assert '<svg class="path-chip-icon"' in html
+
+    # Verify path chip focus styling
+    assert ".path-chip:focus-visible" in html
+
+    # Verify copyConfigPath implementation with toast feedback and copyToClipboard usage
+    assert "function copyConfigPath()" in js
+    assert "copyToClipboard(path, done" in js
+    assert "Config path copied to clipboard" in js

@@ -41,7 +41,6 @@ from core.config import (
 from core.connection_watchdog import ConnectionWatchdog
 from core.database import (
     DatabaseManager,
-    RelayedConnection,
     init_db_manager,
 )
 from core.dns_discovery import DNSDiscoveryRecorder, get_dns_recorder, set_dns_recorder
@@ -169,7 +168,6 @@ __all__ = [
     # Re-exported types and getters for backward compatibility
     "InterceptedRequest",
     "ProtocolType",
-    "RelayedConnection",
     "get_modification_engine",
     "get_tracer",
     "get_traffic_selector",

@@ -439,12 +439,31 @@ function copyFieldPath(path, btn) {
     setTimeout(() => { btn.textContent = label; }, 1200);
     showToast('Path copied: ' + path, 'success');
   };
-  if (navigator.clipboard && navigator.clipboard.writeText) {
+  if (typeof copyToClipboard === 'function') {
+    copyToClipboard(path, done, () => showToast('Copy failed', 'error'));
+  } else if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(path).then(done).catch(() => showToast('Copy failed', 'error'));
   } else {
     showToast('Clipboard not available', 'error');
   }
 }
+
+// Copy configuration file path from header chip
+function copyConfigPath() {
+  const pathEl = document.getElementById('configPath');
+  const path = pathEl ? (pathEl.textContent || 'config/config.yaml') : 'config/config.yaml';
+  const done = () => {
+    showToast('Config path copied to clipboard', 'success');
+  };
+  if (typeof copyToClipboard === 'function') {
+    copyToClipboard(path, done, () => showToast('Copy failed', 'error'));
+  } else if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(path).then(done).catch(() => showToast('Copy failed', 'error'));
+  } else {
+    showToast('Clipboard not available', 'error');
+  }
+}
+window.copyConfigPath = copyConfigPath;
 
 let cfg = null;            // working copy
 const dirty = new Set();   // touched section paths
@@ -955,13 +974,16 @@ function renderObject(container, obj, path) {
       leftDiv.appendChild(nameSpan);
       const groupHint = hintFor(childPath);
       if (groupHint) {
-        const hintSpan = document.createElement('span');
-        hintSpan.className = 'fg-hint';
-        hintSpan.textContent = groupHint;
-        leftDiv.appendChild(hintSpan);
+        const help = document.createElement('button');
+        help.type = 'button';
+        help.className = 'f-help';
+        help.textContent = '?';
+        help.setAttribute('aria-label', 'What does ' + k + ' do');
+        help.addEventListener('click', (e) => e.stopPropagation());
+        leftDiv.appendChild(help);
+        attachTip(help, groupHint);
       }
       head.appendChild(leftDiv);
-      attachTip(head, groupHint ? groupHint + ' (' + childPath + ')' : childPath);
 
       const body = document.createElement('div');
       body.id = bodyId;
@@ -1019,12 +1041,6 @@ function renderField(path, label, value) {
     attachTip(help, hint);
   }
   info.appendChild(nameRow);
-  if (hint) {
-    const desc = document.createElement('div');
-    desc.className = 'f-desc';
-    desc.textContent = hint;
-    info.appendChild(desc);
-  }
   const pathLine = document.createElement('div');
   pathLine.className = 'f-path';
   const pathCode = document.createElement('span');
@@ -1038,7 +1054,6 @@ function renderField(path, label, value) {
   copyBtn.addEventListener('click', () => copyFieldPath(path, copyBtn));
   pathLine.appendChild(copyBtn);
   info.appendChild(pathLine);
-  attachTip(nameRow, hint ? hint + ' (' + path + ')' : path);
   row.appendChild(info);
   const ctrl = document.createElement('div');
   ctrl.className = 'f-control';
@@ -1192,13 +1207,16 @@ function renderArray(path, label, arr) {
   leftDiv.appendChild(nameSpan);
   const arrHint = hintFor(path);
   if (arrHint) {
-    const hintSpan = document.createElement('span');
-    hintSpan.className = 'fg-hint';
-    hintSpan.textContent = arrHint;
-    leftDiv.appendChild(hintSpan);
+    const help = document.createElement('button');
+    help.type = 'button';
+    help.className = 'f-help';
+    help.textContent = '?';
+    help.setAttribute('aria-label', 'What does ' + label + ' do');
+    help.addEventListener('click', (e) => e.stopPropagation());
+    leftDiv.appendChild(help);
+    attachTip(help, arrHint);
   }
   head.appendChild(leftDiv);
-  attachTip(head, arrHint ? arrHint + ' (' + path + ')' : path);
 
   const body = document.createElement('div');
   body.id = bodyId;
@@ -1243,12 +1261,6 @@ function renderArray(path, label, arr) {
       attachTip(nameRow, itemHint + ' (' + path + ')');
     }
     info.appendChild(nameRow);
-    if (itemHint) {
-      const desc = document.createElement('div');
-      desc.className = 'f-desc';
-      desc.textContent = itemHint;
-      info.appendChild(desc);
-    }
     const pathLine = document.createElement('div');
     pathLine.className = 'f-path';
     const pathCode = document.createElement('span');

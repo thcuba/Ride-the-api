@@ -1,5 +1,5 @@
 """
-Unit tests for core/pipeline.py covering ContextBuffer, MatchRateTracker,
+Unit tests for core/pipeline/ covering ContextBuffer, MatchRateTracker,
 LearningPipeline, and LearningOrchestrator.
 """
 
