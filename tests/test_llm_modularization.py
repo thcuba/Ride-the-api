@@ -162,3 +162,22 @@ async def test_service_delegation() -> None:
     # Method delegation check
     assert svc._build_validation_prompt is build_validation_prompt
     await svc.close()
+
+
+@pytest.mark.asyncio
+async def test_service_builder_override_respected(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify overriding svc._build_client is respected by svc._get_client."""
+    svc = LLMDecipherService()
+    profile = LLMProfile(
+        name="override-prof",
+        base_url="https://api.example.com/v1",
+        api_key="secret",
+        model_id="gpt-4",
+        prompt_template="",
+    )
+    custom_sentinel = object()
+    monkeypatch.setattr(svc, "_build_client", lambda _p: custom_sentinel)
+    client = svc._get_client(profile)
+    assert client is custom_sentinel
+    await svc.close()
+

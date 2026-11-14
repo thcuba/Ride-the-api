@@ -108,7 +108,7 @@ class LLMDecipherService:
         return self.client_pool.build_client(profile)
 
     def _get_client(self, profile: LLMProfile) -> AsyncOpenAI:
-        return self.client_pool.get_client(profile)
+        return self.client_pool.get_client(profile, builder=self._build_client)
 
     async def _complete(self, client: AsyncOpenAI, kwargs: dict[str, Any]) -> str:
         return await self.client_pool.complete(client, kwargs)
@@ -356,8 +356,7 @@ class LLMDecipherService:
             prompt,
             context,
             build_kwargs,
-            self.call_llm,
-            self.profile_breaker,
+            self._call_profile,
         )
 
     async def _call_profile(

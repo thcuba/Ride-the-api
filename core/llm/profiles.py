@@ -99,8 +99,7 @@ async def execute_profile_chain(  # noqa: PLR0913, PLR0917
     prompt: str,
     context: dict | None,
     build_kwargs: dict | None,
-    call_fn: Any,  # noqa: ANN401
-    breaker: ProviderCircuitBreaker,
+    call_profile_fn: Any,  # noqa: ANN401
 ) -> dict[str, Any]:
     """Execute a rotation of profiles via a FallbackChain."""
     if not available_names:
@@ -109,11 +108,7 @@ async def execute_profile_chain(  # noqa: PLR0913, PLR0917
     handlers = OrderedDict(
         (
             name,
-            (
-                lambda p=profiles[name]: call_single_profile(
-                    p, prompt, context, build_kwargs, call_fn, breaker
-                )
-            ),
+            (lambda p=profiles[name]: call_profile_fn(p, prompt, context, build_kwargs)),
         )
         for name in available_names
     )
