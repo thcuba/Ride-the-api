@@ -185,9 +185,15 @@ class DeviceDatabasePool:
     def delete_storage_files(self, db_path: Path) -> None:
         """Delete database file and SQLite WAL/SHM sidecars."""
         if db_path.exists():
-            db_path.unlink()
+            try:
+                db_path.unlink()
+            except OSError as e:
+                logger.warning("Could not remove device DB %s: %s", db_path, e)
             for sidecar in ("-wal", "-shm"):
-                Path(f"{db_path}{sidecar}").unlink(missing_ok=True)
+                try:
+                    Path(f"{db_path}{sidecar}").unlink(missing_ok=True)
+                except OSError as e:
+                    logger.warning("Could not remove sidecar %s%s: %s", db_path, sidecar, e)
 
     def list_device_ids_with_storage(self) -> list[str]:
         """Device ids having a SQLite database file in the device DB directory."""
