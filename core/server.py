@@ -430,9 +430,7 @@ async def _start_protocol_servers(config: Config) -> None:
 
     try:
         proto_mgr = get_protocol_server_manager(protocol_servers_cfg)
-        register_standard_plugins(
-            proto_mgr, protocol_servers_cfg, handler=handle_protocol_request
-        )
+        register_standard_plugins(proto_mgr, protocol_servers_cfg, handler=handle_protocol_request)
         discover_server_plugin_entry_points(
             proto_mgr, protocol_servers_cfg, handler=handle_protocol_request
         )
@@ -494,6 +492,7 @@ async def _start_metrics_and_tracing(config: Config) -> None:
     metrics_cfg = config.observability.metrics
     if metrics_cfg.enabled:
         try:
+
             async def _refresh_gauges() -> None:
                 if db_manager is None:
                     return
