@@ -8,6 +8,8 @@ def test_auto_switch_toggle_accessibility():
     content = dashboard_path.read_text(encoding="utf-8")
     if dashboard_js.exists():
         content += "\n" + dashboard_js.read_text(encoding="utf-8")
+    for extra in sorted(Path("webui/static/js/dashboard").glob("*.js")):
+        content += "\n" + extra.read_text(encoding="utf-8")
 
     # Verify Auto-Switch toggle uses switch role and accessible slider styling
     assert 'role="switch"' in content
@@ -125,6 +127,8 @@ def test_llm_settings_modal_accessibility_and_mobile_ergonomics():
     html = dash_path.read_text(encoding="utf-8")
     if dash_js.exists():
         html += "\n" + dash_js.read_text(encoding="utf-8")
+    for extra in sorted(Path("webui/static/js/dashboard").glob("*.js")):
+        html += "\n" + extra.read_text(encoding="utf-8")
 
     # Verify modal dialog semantics
     assert 'id="llm-settings-modal"' in html
