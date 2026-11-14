@@ -974,13 +974,16 @@ function renderObject(container, obj, path) {
       leftDiv.appendChild(nameSpan);
       const groupHint = hintFor(childPath);
       if (groupHint) {
-        const hintSpan = document.createElement('span');
-        hintSpan.className = 'fg-hint';
-        hintSpan.textContent = groupHint;
-        leftDiv.appendChild(hintSpan);
+        const help = document.createElement('button');
+        help.type = 'button';
+        help.className = 'f-help';
+        help.textContent = '?';
+        help.setAttribute('aria-label', 'What does ' + k + ' do');
+        help.addEventListener('click', (e) => e.stopPropagation());
+        leftDiv.appendChild(help);
+        attachTip(help, groupHint);
       }
       head.appendChild(leftDiv);
-      attachTip(head, groupHint ? groupHint + ' (' + childPath + ')' : childPath);
 
       const body = document.createElement('div');
       body.id = bodyId;
@@ -1051,7 +1054,6 @@ function renderField(path, label, value) {
   copyBtn.addEventListener('click', () => copyFieldPath(path, copyBtn));
   pathLine.appendChild(copyBtn);
   info.appendChild(pathLine);
-  attachTip(nameRow, hint ? hint + ' (' + path + ')' : path);
   row.appendChild(info);
   const ctrl = document.createElement('div');
   ctrl.className = 'f-control';
@@ -1205,13 +1207,16 @@ function renderArray(path, label, arr) {
   leftDiv.appendChild(nameSpan);
   const arrHint = hintFor(path);
   if (arrHint) {
-    const hintSpan = document.createElement('span');
-    hintSpan.className = 'fg-hint';
-    hintSpan.textContent = arrHint;
-    leftDiv.appendChild(hintSpan);
+    const help = document.createElement('button');
+    help.type = 'button';
+    help.className = 'f-help';
+    help.textContent = '?';
+    help.setAttribute('aria-label', 'What does ' + label + ' do');
+    help.addEventListener('click', (e) => e.stopPropagation());
+    leftDiv.appendChild(help);
+    attachTip(help, arrHint);
   }
   head.appendChild(leftDiv);
-  attachTip(head, arrHint ? arrHint + ' (' + path + ')' : path);
 
   const body = document.createElement('div');
   body.id = bodyId;
