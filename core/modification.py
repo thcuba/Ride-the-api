@@ -12,7 +12,7 @@ import re
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from enum import Enum, StrEnum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 import dpath
@@ -80,7 +80,7 @@ class ModificationAction(StrEnum):
     DELAY = "delay"  # Add artificial delay
 
 
-class ModificationOperation(str, Enum):  # noqa: UP042
+class ModificationOperation(StrEnum):
     """Operations for field modification."""
 
     SET = "set"  # Set to specific value
