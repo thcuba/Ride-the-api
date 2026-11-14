@@ -128,9 +128,36 @@ async function loadDevices() {
     gs.querySelectorAll('.gs-num')[3].textContent = hybrid;
 
     if (devices.length === 0) {
-      container.innerHTML = '<div class="empty"><div class="empty-icon">' +
-        '<svg class="icon-svg" aria-hidden="true" viewBox="0 0 24 24" style="width:48px;height:48px;"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="12" y1="17" x2="12" y2="21"/></svg>' +
-        '</div><div class="empty-text">No devices yet</div><div class="empty-sub">Route a device through the proxy to begin learning.</div></div>';
+      container.innerHTML = '<div class="empty empty-onboarding">' +
+        '<div class="empty-icon">' +
+        '<svg class="icon-svg" aria-hidden="true" viewBox="0 0 24 24" style="width:48px;height:48px;"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>' +
+        '</div>' +
+        '<div class="empty-text">No devices intercepted yet</div>' +
+        '<div class="empty-sub">Follow these steps to route IoT device traffic through Ride-the-API and begin learning:</div>' +
+        '<div class="onboarding-steps">' +
+        '  <div class="onboarding-step">' +
+        '    <div class="step-num">1</div>' +
+        '    <div class="step-content">' +
+        '      <div class="step-title">Configure DNS Interception</div>' +
+        '      <div class="step-desc">Set your IoT device or router DNS resolver to point to this host\'s IP address.</div>' +
+        '    </div>' +
+        '  </div>' +
+        '  <div class="onboarding-step">' +
+        '    <div class="step-num">2</div>' +
+        '    <div class="step-content">' +
+        '      <div class="step-title">Verify Captured Queries</div>' +
+        '      <div class="step-desc">Open <strong>Network &amp; protocol controls</strong> above to monitor detected queries in <strong>DNS Discovery</strong>.</div>' +
+        '    </div>' +
+        '  </div>' +
+        '  <div class="onboarding-step">' +
+        '    <div class="step-num">3</div>' +
+        '    <div class="step-content">' +
+        '      <div class="step-title">Automatic Learning</div>' +
+        '      <div class="step-desc">As the device talks to vendor cloud endpoints, requests are mirrored and analyzed by the LLM pattern engine.</div>' +
+        '    </div>' +
+        '  </div>' +
+        '</div>' +
+        '</div>';
       return;
     }
     container.innerHTML = devices.map(d => {
