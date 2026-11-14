@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import stat
 
 import pytest
@@ -366,7 +367,8 @@ def test_setup_token_is_persisted_owner_only(monkeypatch, tmp_path):
 
     assert token
     assert target.read_text().strip() == token
-    assert stat.S_IMODE(target.stat().st_mode) == 0o600  # noqa: PLR2004
+    if os.name != "nt":
+        assert stat.S_IMODE(target.stat().st_mode) == 0o600  # noqa: PLR2004
     # Idempotent: a second call returns the same token (no re-issue).
     assert security_mod.setup_token() == token
 
