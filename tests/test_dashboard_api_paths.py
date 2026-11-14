@@ -32,6 +32,10 @@ def _dashboard_paths() -> list[str]:
     text = DASHBOARD.read_text(encoding="utf-8")
     if DASHBOARD_JS.exists():
         text += "\n" + DASHBOARD_JS.read_text(encoding="utf-8")
+    js_dir = DASHBOARD_JS.parent / "dashboard"
+    if js_dir.is_dir():
+        for extra in sorted(js_dir.glob("*.js")):
+            text += "\n" + extra.read_text(encoding="utf-8")
     if API_JS.exists():
         text += "\n" + API_JS.read_text(encoding="utf-8")
     found = {
