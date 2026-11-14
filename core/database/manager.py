@@ -1,7 +1,4 @@
-"""
-Core Database Architecture - Device-Specific Protocol Databases
-Core DB + Per-Device DB (SQLite default, PostgreSQL optional)
-"""
+"""Core database manager: central registry, DNS logging, and device pool coordination."""
 
 from __future__ import annotations
 
@@ -11,7 +8,6 @@ import hashlib
 import ipaddress
 import logging
 import re
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -21,7 +17,6 @@ if TYPE_CHECKING:
 from cachetools import TTLCache
 from sqlalchemy import (
     delete,
-    event,
     func,
     select,
 )
@@ -30,119 +25,36 @@ from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
-    create_async_engine,
 )
-from sqlalchemy.pool import NullPool
 
 from core.atomic_io import sanitize_filename_component
 from core.config import get_config
+from core.database.device_pool import DeviceDatabasePool
+from core.database.engine import (
+    _collapse_dns_observations,
+    _iso_utc,
+    create_configured_engine,
+)
 from core.migrations import SchemaMigrator
-
-# Models live in core/models now, but this module keeps re-exporting them: core/__init__
-# and 47 test modules import them as `from core.database import X`. Dropping the
-# re-export breaks those imports, so it is deliberate even though the names look
-# unused inside this file.
-from core.models import (  # noqa: F401
+from core.models import (
     Base,
     DeviceMetaRow,
     DeviceRegistry,
-    DeviceState,
     DNSQueryLog,
-    FieldMapping,
-    InterceptedRequest,
-    LLMContextBuffer,
     LLMProfile,
     MatchStats,
-    ModelRegistry,
     RelayedConnection,
-    RequestPattern,
-    ResponseTemplate,
-    SessionCache,
 )
 from core.pattern_db.schemas import DeviceMeta, normalize_connection_mode
 
 logger = logging.getLogger(__name__)
 
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•  # noqa: E501
-# BASE CLASSES
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•  # noqa: E501
+def _get_config():
+    import core.database as db_mod  # noqa: PLC0415
 
-
-# Sqlite durability settings applied to every engine connection. WAL journaling
-# plus synchronous=NORMAL keeps reads concurrent and commits crash-safe without
-# the write-lock stalls of the default rollback journal. busy_timeout avoids
-# "database is locked" under concurrent writers, and foreign_keys enforce
-# referential integrity the default SQLite doesn't.
-_SQLITE_PRAGMAS = (
-    "PRAGMA journal_mode=WAL",
-    "PRAGMA synchronous=NORMAL",
-    "PRAGMA busy_timeout=5000",
-    "PRAGMA foreign_keys=ON",
-)
-
-
-def _apply_sqlite_pragmas(dbapi_connection, _connection_record) -> None:
-    """Apply durability PRAGMAs to a SQLite connection (no-op otherwise)."""
-    try:
-        cursor = dbapi_connection.cursor()
-        for pragma in _SQLITE_PRAGMAS:
-            cursor.execute(pragma)
-        cursor.close()
-    except Exception:  # pragma: no cover - defensive for non-sqlite drivers
-        return
-
-
-def create_configured_engine(db_url: str, *, echo: bool = False) -> AsyncEngine:
-    """Create an async engine with durability PRAGMAs for SQLite backends.
-
-    Uses NullPool (the de-facto setting for aiosqlite here) so that every
-    connection re-runs the PRAGMAs via the connect listener. PostgreSQL accepts
-    no SQLite PRAGMAs; the listener returns without touching them.
-    """
-    engine = create_async_engine(db_url, echo=echo, poolclass=NullPool)
-    if db_url.startswith("sqlite"):
-        event.listen(engine.sync_engine, "connect", _apply_sqlite_pragmas)
-    return engine
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-def _iso_utc(value: datetime | None) -> str | None:
-    """Render a stored timestamp as ISO-8601 UTC.
-
-    SQLite hands the rows back naive (it has no timezone type), so an unqualified
-    ``isoformat()`` would leave the caller guessing -- and comparing a naive string
-    with the aware one of a not-yet-flushed counter is not the same comparison.
-    """
-    if value is None:
-        return None
-    return (value if value.tzinfo else value.replace(tzinfo=UTC)).isoformat()
-
-
-def _collapse_dns_observations(observations: list[dict]) -> list[dict]:
-    """Merge observations sharing (client_ip, hostname, qtype) into one row each.
-
-    A batch must not carry the same unique key twice: SQLite refuses a single
-    ``ON CONFLICT DO UPDATE`` statement that would touch one row two times, so
-    collapsing here keeps a duplicated pair a hit counter, not a failed flush.
-    """
-    merged: dict[tuple, dict] = {}
-    for obs in observations:
-        key = (obs["client_ip"], obs["hostname"], obs["qtype"])
-        current = merged.get(key)
-        if current is None:
-            merged[key] = dict(obs)
-            continue
-        current["hit_count"] = int(current.get("hit_count") or 1) + int(obs.get("hit_count") or 1)
-        current["first_seen"] = min(current["first_seen"], obs["first_seen"])
-        current["last_seen"] = max(current["last_seen"], obs["last_seen"])
-        current["status"] = obs["status"]
-    return list(merged.values())
-
-
-# DATABASE MANAGER
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•  # noqa: E501
-
+    fn = getattr(db_mod, "get_config", get_config)
+    return fn()
 
 class DatabaseManager:
     """Manages core DB + per-device DBs."""
@@ -161,18 +73,50 @@ class DatabaseManager:
 
         self._core_engine: AsyncEngine | None = None
         self._core_session_factory: async_sessionmaker[AsyncSession] | None = None
-        self._device_engines: dict[str, AsyncEngine] = {}
-        self._device_sessions: dict[str, async_sessionmaker[AsyncSession]] = {}
-        self._device_db_urls = device_db_urls or {}
-        self._engine_locks: dict[str, asyncio.Lock] = {}
-        # F-12: per-device locks serialize registry/device-DB creation.
-        self._device_locks: dict[str, asyncio.Lock] = {}
+        self.device_pool = DeviceDatabasePool(
+            self.device_db_dir, device_db_urls=device_db_urls, echo=self.echo
+        )
         self._ip_lookup_cache: dict[str, str] | None = None
 
         # Bounded in-memory caches for device connection mode and device meta header (5-min TTL)
         self._device_connection_cache: TTLCache[str, str] = TTLCache(maxsize=2048, ttl=300)
         self._device_meta_cache: TTLCache[str, dict | None] = TTLCache(maxsize=2048, ttl=300)
         self._device_cache: TTLCache[str, DeviceRegistry | None] = TTLCache(maxsize=2048, ttl=300)
+
+
+    # ── Backward-compatible properties delegating to device_pool ─────────────
+
+    @property
+    def _device_engines(self) -> dict[str, AsyncEngine]:
+        return self.device_pool._device_engines
+
+    @_device_engines.setter
+    def _device_engines(self, val: dict[str, AsyncEngine]) -> None:
+        self.device_pool._device_engines = val
+
+    @property
+    def _device_sessions(self) -> dict[str, async_sessionmaker[AsyncSession]]:
+        return self.device_pool._device_sessions
+
+    @_device_sessions.setter
+    def _device_sessions(self, val: dict[str, async_sessionmaker[AsyncSession]]) -> None:
+        self.device_pool._device_sessions = val
+
+    @property
+    def _device_db_urls(self) -> dict[str, str]:
+        return self.device_pool._device_db_urls
+
+    @_device_db_urls.setter
+    def _device_db_urls(self, val: dict[str, str]) -> None:
+        self.device_pool._device_db_urls = val
+
+    @property
+    def _device_locks(self) -> dict[str, asyncio.Lock]:
+        return self.device_pool._device_locks
+
+    @property
+    def _engine_locks(self) -> dict[str, asyncio.Lock]:
+        return self.device_pool._engine_locks
 
     def invalidate_device_cache(self, device_id: str | None = None) -> None:
         """Invalidate in-memory caches for a device or all devices."""
@@ -521,48 +465,13 @@ class DatabaseManager:
         """Get or create a device-specific database engine.
         Checks device_registry for a custom database_url override first.
         Also supports resolving device_id from an IP address."""
-        # IP resolution: if device_id looks like an IP, try reverse lookup
         if device_id not in self._device_engines and self._is_ip(device_id):
             resolved = await self.resolve_device_id(device_id)
             if resolved:
                 device_id = resolved
 
-        if device_id in self._device_engines:
-            return self._device_engines[device_id]
-
-        # Serialize engine creation for a given device so concurrent callers
-        # cannot each build/assign two different engines (check-then-create race).
-        lock = self._engine_locks.get(device_id)
-        if lock is None:
-            lock = asyncio.Lock()
-            self._engine_locks[device_id] = lock
-        async with lock:
-            # Re-check under the lock.
-            if device_id in self._device_engines:
-                return self._device_engines[device_id]
-            if device_id in self._device_db_urls:
-                db_url = self._device_db_urls[device_id]
-            else:
-                # Check registry for custom database URL
-                custom_url = await self._get_device_db_url(device_id)
-                if custom_url:
-                    db_url = custom_url
-                    self._device_db_urls[device_id] = custom_url
-                else:
-                    db_path = self.device_db_dir / self._safe_db_name(device_id)
-                    db_url = f"sqlite+aiosqlite:///{db_path}"
-            engine = create_configured_engine(db_url, echo=self.echo)
-            async with engine.begin() as conn:
-                await conn.run_sync(Base.metadata.create_all)
-            await SchemaMigrator(engine).run()
-            self._device_engines[device_id] = engine
-            self._device_sessions[device_id] = async_sessionmaker(
-                engine,
-                class_=AsyncSession,
-                expire_on_commit=False,
-            )
-            logger.info(f"Device database '{device_id}' initialized at {db_url}")
-            return engine
+        custom_url = await self._get_device_db_url(device_id)
+        return await self.device_pool.get_device_engine(device_id, custom_url=custom_url)
 
     _SAFE_DB_NAME_RE = re.compile(r"[^A-Za-z0-9_.-]")
 
@@ -603,7 +512,7 @@ class DatabaseManager:
             if not device:
                 # Inherit global learning defaults into the per-device config
                 try:
-                    learning = get_config().learning
+                    learning = _get_config().learning
                     device_config = {
                         "production_no_fallback": learning.production_no_fallback,
                     }
@@ -637,7 +546,7 @@ class DatabaseManager:
         the resolved connection type as a string.
         """
         try:
-            profile = get_config().core.ip_profiles.get(ip)
+            profile = _get_config().core.ip_profiles.get(ip)
         except Exception:  # noqa: BLE001 - config not ready
             profile = None
 
@@ -699,7 +608,7 @@ class DatabaseManager:
         persists back to config).
         """
         try:
-            profile = get_config().core.ip_profiles.get(ip)
+            profile = _get_config().core.ip_profiles.get(ip)
         except Exception:  # noqa: BLE001 - config not ready
             profile = None
         return bool(profile and profile.bypass)
@@ -1239,10 +1148,11 @@ class DatabaseManager:
 
     async def close(self) -> None:
         """Close all database connections."""
+        await self.device_pool.close()
         if self._core_engine:
             await self._core_engine.dispose()
-        for engine in self._device_engines.values():
-            await engine.dispose()
+            self._core_engine = None
+            self._core_session_factory = None
         self._device_connection_cache.clear()
         self._device_meta_cache.clear()
         logger.info("All database connections closed")
@@ -1254,9 +1164,14 @@ _db_manager: DatabaseManager | None = None
 
 def get_db_manager() -> DatabaseManager:
     """Get or create global database manager instance."""
-    if _db_manager is None:
+    import core.database as db_mod  # noqa: PLC0415
+
+    if hasattr(db_mod, "_db_manager") and db_mod._db_manager is None:
         raise RuntimeError("DatabaseManager not initialized. Call init_db_manager first.")
-    return _db_manager
+    dm = getattr(db_mod, "_db_manager", None) or _db_manager
+    if dm is None:
+        raise RuntimeError("DatabaseManager not initialized. Call init_db_manager first.")
+    return dm
 
 
 def init_db_manager(
@@ -1268,4 +1183,15 @@ def init_db_manager(
     """Initialize the global database manager."""
     global _db_manager  # noqa: PLW0603
     _db_manager = DatabaseManager(core_db_url, device_db_dir, device_db_urls, echo)
+    import core.database as db_mod  # noqa: PLC0415
+
+    db_mod._db_manager = _db_manager
     return _db_manager
+
+
+__all__ = [
+    "DatabaseManager",
+    "_db_manager",
+    "get_db_manager",
+    "init_db_manager",
+]
