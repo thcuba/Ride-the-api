@@ -9,14 +9,14 @@ services:
       - "80:80"
       - "443:443"
       - "8883:8883"    # MQTT over TLS (stream proxy)
-    # NOTE: this mounts the whole certs directory, which also contains the CA private key
-    # (ca.key). A compromise of this container is therefore equivalent to holding the CA. Keeping
-    # the key out of the mount would require moving it out of certs/; until then, the hardening
-    # below and the read-only mount are what limit the exposure.
+    # Separates CA private key: nginx only needs the server certificate/key and the CA public cert.
+    # The CA private key (ca.key) is no longer mounted into the nginx container.
     volumes:
       - ../deploy/nginx.conf.template:/etc/nginx/nginx.conf.template:ro
       - ../deploy/nginx-entrypoint.sh:/docker-entrypoint.sh:ro
-      - ../certs:/etc/nginx/certs:ro
+      - ../certs/server.crt:/etc/nginx/certs/server.crt:ro
+      - ../certs/server.key:/etc/nginx/certs/server.key:ro
+      - ../certs/ca.crt:/etc/nginx/certs/ca.crt:ro
       - nginx-cache:/var/cache/nginx
       - nginx-run:/var/run
     # Needs CAP_NET_BIND_SERVICE for :80 and :443 only; everything else is dropped.
