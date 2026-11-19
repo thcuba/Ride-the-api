@@ -1,11 +1,64 @@
 """Deployment defaults that protect the administrative control plane."""
 
+import re
 from pathlib import Path
 
 import yaml
 
 # Upstream TLS connections in the nginx configs: two HTTP forwards, one MQTT stream.
 _UPSTREAM_TLS_BLOCKS = 3
+
+
+def _compose() -> dict:
+    """The compose file, parsed."""
+    path = Path(__file__).parents[1] / "deploy" / "docker-compose.yml"
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+def _nginx_mounted_cert_files() -> set[str]:
+    """Basenames of the files the nginx container gets under /etc/nginx/certs."""
+    prefix = "/etc/nginx/certs/"
+    volumes = _compose()["services"]["nginx"]["volumes"]
+    mounted = set()
+    for volume in volumes:
+        _host, _, target = volume.partition(":")
+        container_path = target.split(":")[0]
+        if container_path.startswith(prefix):
+            mounted.add(container_path.rsplit("/", 1)[-1])
+    return mounted
+
+
+def test_nginx_cannot_read_the_ca_private_key() -> None:
+    """The proxy container must not see certs/ca.key.
+
+    The CA key sits next to the proxy certificate in certs/, so mounting the directory handed it to
+    nginx: a compromise of that container was equivalent to holding the CA and being able to mint
+    valid certificates for any host.
+    """
+    volumes = _compose()["services"]["nginx"]["volumes"]
+
+    assert "../certs:/etc/nginx/certs:ro" not in volumes, (
+        "il container nginx monta l'intera cartella certs"
+    )
+    assert not any("ca.key" in volume for volume in volumes), (
+        "la chiave privata della CA non deve finire nel container nginx"
+    )
+
+
+def test_nginx_mounts_exactly_the_certificates_it_loads() -> None:
+    """Every /etc/nginx/certs file the template loads must be mounted, and nothing else.
+
+    Mounting the wrong names is not a cosmetic mistake: nginx refuses to start if it cannot read its
+    certificate, so the mount list has to follow the template. This test is what keeps them in step.
+    """
+    root = Path(__file__).parents[1]
+    template = (root / "deploy" / "nginx.conf.template").read_text(encoding="utf-8")
+    needed = set(re.findall(r"/etc/nginx/certs/([A-Za-z0-9._-]+)", template))
+    assert needed, "il template non carica alcun file da /etc/nginx/certs"
+
+    mounted = _nginx_mounted_cert_files()
+    assert needed <= mounted, f"nginx carica {sorted(needed - mounted)}, che non e' montato"
+    assert mounted <= needed, f"montato ma non usato: {sorted(mounted - needed)}"
 
 
 def test_compose_publishes_http_control_plane_on_loopback_only():
