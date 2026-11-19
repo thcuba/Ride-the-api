@@ -449,7 +449,11 @@ nginx:
     - "8883:8883"      # MQTT over TLS (stream proxy)
   volumes:
     - ../deploy/nginx.conf:/etc/nginx/nginx.conf:ro
-    - ../certs:/etc/nginx/certs:ro
+    # Single files, not the whole certs/ directory: it also holds the CA private key (ca.key),
+    # which the proxy container has no reason to read. Restart the container after regenerating
+    # the proxy certificate: a single-file bind does not follow the new inode.
+    - ../certs/ride-api.pem:/etc/nginx/certs/ride-api.pem:ro
+    - ../certs/ride-api.key:/etc/nginx/certs/ride-api.key:ro
   depends_on:
     - ride-the-api
 ```

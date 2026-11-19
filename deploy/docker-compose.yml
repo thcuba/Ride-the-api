@@ -9,14 +9,16 @@ services:
       - "80:80"
       - "443:443"
       - "8883:8883"    # MQTT over TLS (stream proxy)
-    # NOTE: this mounts the whole certs directory, which also contains the CA private key
-    # (ca.key). A compromise of this container is therefore equivalent to holding the CA. Keeping
-    # the key out of the mount would require moving it out of certs/; until then, the hardening
-    # below and the read-only mount are what limit the exposure.
+    # Only the two files nginx actually loads are mounted, so the CA private key (ca.key) stays
+    # outside this container: a compromise here no longer means holding the CA. The template is the
+    # source of truth for the names - tests/test_deployment_security.py fails if the two drift apart.
+    # A single-file bind does not follow the inode: after regenerating the proxy certificate, restart
+    # this container (`docker compose restart nginx`) or it keeps serving the old one.
     volumes:
       - ../deploy/nginx.conf.template:/etc/nginx/nginx.conf.template:ro
       - ../deploy/nginx-entrypoint.sh:/docker-entrypoint.sh:ro
-      - ../certs:/etc/nginx/certs:ro
+      - ../certs/ride-api.pem:/etc/nginx/certs/ride-api.pem:ro
+      - ../certs/ride-api.key:/etc/nginx/certs/ride-api.key:ro
       - nginx-cache:/var/cache/nginx
       - nginx-run:/var/run
     # Needs CAP_NET_BIND_SERVICE for :80 and :443 only; everything else is dropped.

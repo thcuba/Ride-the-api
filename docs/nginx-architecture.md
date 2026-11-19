@@ -172,7 +172,10 @@ services:
     volumes:
       - ./deploy/nginx.conf.template:/etc/nginx/nginx.conf.template:ro
       - ./deploy/nginx-entrypoint.sh:/docker-entrypoint.sh:ro
-      - ./data/certs:/etc/nginx/certs:ro
+      # Only the files nginx loads: the CA private key (ca.key) sits in the same directory and
+      # must not be readable from this container, so the directory itself is never mounted.
+      - ./data/certs/ride-api.pem:/etc/nginx/certs/ride-api.pem:ro
+      - ./data/certs/ride-api.key:/etc/nginx/certs/ride-api.key:ro
     environment:
       - DNS_PRIMARY=8.8.8.8
       - DNS_FALLBACK=1.1.1.1
@@ -185,6 +188,11 @@ services:
     expose:
       - "8911"
 ```
+
+Mounting single files instead of the directory keeps `ca.key` out of the proxy container. The
+trade-off is that a single-file bind follows the file *path*, not whatever is later written at it:
+after regenerating the proxy certificate, restart the container (`docker compose restart nginx`) or
+it keeps serving the old one. The names above must match the template — a test keeps the two in step.
 
 ## See also
 
