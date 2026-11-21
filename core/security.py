@@ -30,8 +30,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
+from starlette.responses import JSONResponse, Response
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -152,7 +153,7 @@ class ControlPlaneAuthMiddleware(BaseHTTPMiddleware):
 
     def __init__(
         self,
-        app,
+        app: ASGIApp,
         get_security_config: Callable[[], SecurityConfig],
     ) -> None:
         super().__init__(app)
@@ -172,7 +173,7 @@ class ControlPlaneAuthMiddleware(BaseHTTPMiddleware):
                 "the control plane is locked until you set it in config.yaml."
             )
 
-    async def dispatch(self, request: Request, call_next):  # noqa: ANN001, PLR0911
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         # Performance optimization: direct scope lookup avoids parsing URL object (~4x speedup)
         path = request.scope.get("path", "")
         # Decide on the canonical form, never on the raw spelling: an access-control check that
@@ -265,11 +266,11 @@ class CrossSiteRequestGuard:
     dashboard out.
     """
 
-    def __init__(self, app, allowed_origins: Iterable[str] = ()) -> None:
+    def __init__(self, app: ASGIApp, allowed_origins: Iterable[str] = ()) -> None:
         self.app = app
         self.allowed_origins = frozenset(o.rstrip("/").lower() for o in allowed_origins)
 
-    async def __call__(self, scope, receive, send) -> None:  # noqa: ANN001
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if (
             scope["type"] == "http"
             and scope.get("method") in _UNSAFE_METHODS
@@ -291,11 +292,11 @@ class CrossSiteRequestGuard:
             return
         await self.app(scope, receive, send)
 
-    def _cross_site(self, raw_headers) -> bool:  # noqa: ANN001
+    def _cross_site(self, raw_headers: Iterable[tuple[bytes, bytes]]) -> bool:
         headers = {name.lower(): value.decode("latin-1") for name, value in raw_headers}
         origin = headers.get(b"origin")
         if origin is None:
-            return headers.get(b"sec-fetch-site", "").lower() == "cross-site"
+            return bool(headers.get(b"sec-fetch-site", "").lower() == "cross-site")
         origin = origin.rstrip("/").lower()
         if origin in self.allowed_origins:
             return False
@@ -336,7 +337,7 @@ class MaxBodySizeMiddleware:
     as soon as the running total crosses the cap (F-09).
     """
 
-    def __init__(self, app, max_size: int, data_plane_max_size: int = 0) -> None:
+    def __init__(self, app: ASGIApp, max_size: int, data_plane_max_size: int = 0) -> None:
         self.app = app
         self.max_size = max_size
         self.data_plane_max_size = data_plane_max_size
@@ -346,7 +347,7 @@ class MaxBodySizeMiddleware:
         # resolving into /api must not escape the control-plane cap.
         return self.max_size if _is_control_plane(path) else self.data_plane_max_size
 
-    async def __call__(self, scope, receive, send) -> None:  # noqa: ANN001, C901
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:  # noqa: C901
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
@@ -375,13 +376,13 @@ class MaxBodySizeMiddleware:
         too_large = False
         response_started = False
 
-        async def send_wrapper(message):  # noqa: ANN001
+        async def send_wrapper(message: Message) -> None:
             nonlocal response_started
             if message["type"] == "http.response.start":
                 response_started = True
             await send(message)
 
-        async def guarded_receive():  # noqa: ANN202
+        async def guarded_receive() -> Message:
             nonlocal received, too_large
             message = await receive()
             if message["type"] == "http.request":
@@ -403,7 +404,7 @@ class MaxBodySizeMiddleware:
             raise
 
     @staticmethod
-    async def _reply_413(send, limit: int) -> None:  # noqa: ANN001
+    async def _reply_413(send: Send, limit: int) -> None:
         body = json.dumps(
             {"error": f"Request body exceeds the maximum allowed size ({limit} bytes)"}
         ).encode("utf-8")
@@ -433,7 +434,7 @@ _DEFAULT_SECURITY_HEADERS = (
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Add standard HTTP security response headers to all responses."""
 
-    async def dispatch(self, request: Request, call_next):  # noqa: ANN001
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         response = await call_next(request)
         raw = response.raw_headers
         # Performance optimization: single pass tuple inspection avoids 5x
