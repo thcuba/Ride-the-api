@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from jsonschema import ValidationError as JsonSchemaValidationError
 from jsonschema.validators import validator_for
@@ -67,7 +67,7 @@ def _load_schema(name: str) -> dict[str, Any]:
     path = _SCHEMA_DIR / name
     if not path.exists():
         raise FileNotFoundError(f"JSON Schema not found: {path}")
-    return json.loads(path.read_text(encoding="utf-8"))
+    return cast(dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
 
 
 def get_capture_schema() -> dict[str, Any]:
