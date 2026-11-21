@@ -327,15 +327,23 @@
       }
       if (resp.status === 401 && !sessionStorage.getItem('ride-401-shown')) {
         sessionStorage.setItem('ride-401-shown', '1');
-        const typed = window.prompt('Enter the control-plane password:');
-        if (typed) {
-          const key = typed.trim();
-          apiKey = key;
-          askRememberKey(key).then(function (remember) {
-            storeKey(key, remember);
-            location.reload();
-          });
-        }
+        const promptPromise = window.showPrompt
+          ? showPrompt({
+              title: 'Control-Plane Authentication',
+              message: 'Enter the control-plane password to authenticate administrative requests:',
+              inputType: 'password'
+            })
+          : Promise.resolve(window.prompt('Enter the control-plane password:'));
+        promptPromise.then(function (typed) {
+          if (typed) {
+            const key = typed.trim();
+            apiKey = key;
+            askRememberKey(key).then(function (remember) {
+              storeKey(key, remember);
+              location.reload();
+            });
+          }
+        });
       }
       return resp;
     });

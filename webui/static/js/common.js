@@ -139,3 +139,186 @@ function escapeHtml(str) {
     .replace(/'/g, '&#039;');
 }
 window.escapeHtml = escapeHtml;
+
+// ── Modern Dialogs (showConfirm & showPrompt) ────────────────────────────────
+function showConfirm(optionsOrMessage) {
+  return new Promise((resolve) => {
+    if (typeof document === 'undefined' || typeof HTMLDialogElement !== 'function') {
+      const msg = typeof optionsOrMessage === 'string' ? optionsOrMessage : (optionsOrMessage?.message || '');
+      resolve(window.confirm(msg));
+      return;
+    }
+
+    const opts = typeof optionsOrMessage === 'string'
+      ? { message: optionsOrMessage }
+      : (optionsOrMessage || {});
+
+    const titleText = opts.title || 'Confirm Action';
+    const messageText = opts.message || 'Are you sure you want to proceed?';
+    const confirmText = opts.confirmText || 'Confirm';
+    const cancelText = opts.cancelText || 'Cancel';
+    const isDanger = Boolean(opts.danger);
+
+    const dialog = document.createElement('dialog');
+    dialog.className = 'modern-dialog';
+    dialog.setAttribute('closedby', 'any');
+    dialog.setAttribute('aria-labelledby', 'modern-dialog-title');
+
+    // Fallback for browsers without native closedby support (e.g. Safari)
+    if (!('closedBy' in HTMLDialogElement.prototype)) {
+      dialog.addEventListener('click', (event) => {
+        if (event.target !== dialog) return;
+        const rect = dialog.getBoundingClientRect();
+        const isInside =
+          rect.top <= event.clientY &&
+          event.clientY <= rect.bottom &&
+          rect.left <= event.clientX &&
+          event.clientX <= rect.right;
+        if (!isInside) dialog.close('cancel');
+      });
+    }
+
+    const form = document.createElement('form');
+    form.method = 'dialog';
+
+    const h2 = document.createElement('h2');
+    h2.id = 'modern-dialog-title';
+    h2.textContent = titleText;
+
+    const p = document.createElement('p');
+    p.textContent = messageText;
+
+    const actions = document.createElement('div');
+    actions.className = 'dialog-actions';
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'submit';
+    cancelBtn.value = 'cancel';
+    cancelBtn.className = 'btn btn-ghost';
+    cancelBtn.textContent = cancelText;
+    cancelBtn.autofocus = true;
+
+    const confirmBtn = document.createElement('button');
+    confirmBtn.type = 'submit';
+    confirmBtn.value = 'confirm';
+    confirmBtn.className = 'btn ' + (isDanger ? 'btn-danger' : 'btn-primary');
+    confirmBtn.textContent = confirmText;
+
+    actions.appendChild(cancelBtn);
+    actions.appendChild(confirmBtn);
+
+    form.appendChild(h2);
+    form.appendChild(p);
+    form.appendChild(actions);
+    dialog.appendChild(form);
+
+    dialog.addEventListener('close', () => {
+      const confirmed = dialog.returnValue === 'confirm';
+      dialog.returnValue = '';
+      dialog.remove();
+      resolve(confirmed);
+    });
+
+    document.body.appendChild(dialog);
+    dialog.showModal();
+  });
+}
+window.showConfirm = showConfirm;
+
+function showPrompt(optionsOrMessage) {
+  return new Promise((resolve) => {
+    if (typeof document === 'undefined' || typeof HTMLDialogElement !== 'function') {
+      const msg = typeof optionsOrMessage === 'string' ? optionsOrMessage : (optionsOrMessage?.message || '');
+      const def = typeof optionsOrMessage === 'object' ? optionsOrMessage?.defaultValue : '';
+      resolve(window.prompt(msg, def));
+      return;
+    }
+
+    const opts = typeof optionsOrMessage === 'string'
+      ? { message: optionsOrMessage }
+      : (optionsOrMessage || {});
+
+    const titleText = opts.title || 'Enter Value';
+    const messageText = opts.message || '';
+    const placeholder = opts.placeholder || '';
+    const defaultValue = opts.defaultValue || '';
+    const inputType = opts.inputType || 'text';
+    const confirmText = opts.confirmText || 'OK';
+    const cancelText = opts.cancelText || 'Cancel';
+
+    const dialog = document.createElement('dialog');
+    dialog.className = 'modern-dialog';
+    dialog.setAttribute('closedby', 'any');
+    dialog.setAttribute('aria-labelledby', 'modern-prompt-title');
+
+    // Fallback for browsers without native closedby support
+    if (!('closedBy' in HTMLDialogElement.prototype)) {
+      dialog.addEventListener('click', (event) => {
+        if (event.target !== dialog) return;
+        const rect = dialog.getBoundingClientRect();
+        const isInside =
+          rect.top <= event.clientY &&
+          event.clientY <= rect.bottom &&
+          rect.left <= event.clientX &&
+          event.clientX <= rect.right;
+        if (!isInside) dialog.close('cancel');
+      });
+    }
+
+    const form = document.createElement('form');
+    form.method = 'dialog';
+
+    const h2 = document.createElement('h2');
+    h2.id = 'modern-prompt-title';
+    h2.textContent = titleText;
+    form.appendChild(h2);
+
+    if (messageText) {
+      const p = document.createElement('p');
+      p.textContent = messageText;
+      form.appendChild(p);
+    }
+
+    const input = document.createElement('input');
+    input.type = inputType;
+    input.className = 'prompt-input';
+    input.value = defaultValue;
+    if (placeholder) input.placeholder = placeholder;
+    input.autofocus = true;
+    form.appendChild(input);
+
+    const actions = document.createElement('div');
+    actions.className = 'dialog-actions';
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'submit';
+    cancelBtn.value = 'cancel';
+    cancelBtn.className = 'btn btn-ghost';
+    cancelBtn.textContent = cancelText;
+
+    const confirmBtn = document.createElement('button');
+    confirmBtn.type = 'submit';
+    confirmBtn.value = 'confirm';
+    confirmBtn.className = 'btn btn-primary';
+    confirmBtn.textContent = confirmText;
+
+    actions.appendChild(cancelBtn);
+    actions.appendChild(confirmBtn);
+    form.appendChild(actions);
+    dialog.appendChild(form);
+
+    dialog.addEventListener('close', () => {
+      const isConfirmed = dialog.returnValue === 'confirm';
+      const val = isConfirmed ? input.value : null;
+      dialog.returnValue = '';
+      dialog.remove();
+      resolve(val);
+    });
+
+    document.body.appendChild(dialog);
+    dialog.showModal();
+    input.select();
+  });
+}
+window.showPrompt = showPrompt;
+
