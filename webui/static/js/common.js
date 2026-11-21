@@ -9,7 +9,7 @@ function showToast(msg, type) {
   if (!c) {
     c = document.createElement('div');
     c.id = 'toasts';
-    c.className = 'toasts-container';
+    c.className = 'toast-container';
     document.body.appendChild(c);
   }
   const t = document.createElement('div');
@@ -22,14 +22,29 @@ function showToast(msg, type) {
   iconSpan.textContent = icons[toastType] || 'ℹ';
   const textSpan = document.createElement('span');
   textSpan.textContent = msg;
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'close-btn toast-close';
+  closeBtn.setAttribute('aria-label', 'Dismiss notification');
+  closeBtn.innerHTML = '&times;';
+  let timer;
+  const dismiss = () => {
+    clearTimeout(timer);
+    t.style.opacity = '0';
+    t.style.transition = 'opacity .25s ease';
+    setTimeout(() => t.remove(), 250);
+  };
+  closeBtn.addEventListener('click', dismiss);
   t.appendChild(iconSpan);
   t.appendChild(textSpan);
+  t.appendChild(closeBtn);
   c.appendChild(t);
-  setTimeout(() => {
-    t.style.opacity = '0';
-    t.style.transition = 'opacity .3s';
-    setTimeout(() => t.remove(), 300);
-  }, 3500);
+  const startTimer = () => { timer = setTimeout(dismiss, 4000); };
+  t.addEventListener('mouseenter', () => clearTimeout(timer));
+  t.addEventListener('mouseleave', startTimer);
+  t.addEventListener('focusin', () => clearTimeout(timer));
+  t.addEventListener('focusout', startTimer);
+  startTimer();
 }
 window.showToast = showToast;
 
@@ -63,26 +78,44 @@ function setTheme(theme) {
 window.setTheme = setTheme;
 
 // ── Copy to clipboard helper ─────────────────────────────────────────────────
-function copyToClipboard(text, onSuccess, onError) {
+function fallbackCopyText(text, onSuccess, onError) {
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    ta.style.top = '-9999px';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    if (ok) {
+      if (onSuccess) onSuccess();
+    } else if (onError) onError();
+  } catch (e) {
+    if (onError) onError(e);
+  }
+}
+window.fallbackCopyText = fallbackCopyText;
+
+function copyToClipboard(text, onSuccessOrLabel, onError) {
+  if (!text) return;
+  const isLabel = typeof onSuccessOrLabel === 'string';
+  const label = isLabel ? onSuccessOrLabel : 'Text';
+  const onSuccess = typeof onSuccessOrLabel === 'function'
+    ? onSuccessOrLabel
+    : () => showToast((label || 'Text') + ' copied to clipboard', 'success');
+  const onErr = typeof onError === 'function'
+    ? onError
+    : () => showToast('Failed to copy ' + (label || 'text').toLowerCase(), 'error');
+
   if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(text).then(onSuccess).catch(onError || (() => {}));
+    navigator.clipboard.writeText(text).then(onSuccess).catch(() => {
+      fallbackCopyText(text, onSuccess, onErr);
+    });
   } else {
-    try {
-      const ta = document.createElement('textarea');
-      ta.value = text;
-      ta.style.position = 'fixed';
-      ta.style.left = '-9999px';
-      document.body.appendChild(ta);
-      ta.focus();
-      ta.select();
-      const ok = document.execCommand('copy');
-      document.body.removeChild(ta);
-      if (ok) {
-        if (onSuccess) onSuccess();
-      } else if (onError) onError();
-    } catch (e) {
-      if (onError) onError(e);
-    }
+    fallbackCopyText(text, onSuccess, onErr);
   }
 }
 window.copyToClipboard = copyToClipboard;

@@ -246,6 +246,18 @@ a { text-underline-offset: .18em; }
   border-radius: 12px;
   box-shadow: var(--shadow);
   backdrop-filter: blur(12px);
+  gap: 10px;
+}
+
+.toast-close {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  margin-left: auto;
+  font-size: 16px;
+  padding: 0;
+  border-radius: 6px;
+  line-height: 1;
 }
 
 .skip-link:focus { top: 0; }

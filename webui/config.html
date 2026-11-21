@@ -525,7 +525,7 @@
 <a href="#main-content" class="skip-link">Skip to content</a>
 <div class="toast-container" id="toasts" role="status" aria-live="polite" aria-atomic="true"></div>
 
-<div class="header">
+<header class="header">
   <div class="header-left">
     <div class="brand-row">
       <img src="/static/logo.png" alt="ride-the-api logo" width="40" height="40">
@@ -550,11 +550,11 @@
     </button>
     <button class="btn btn-primary" id="saveBtn" onclick="saveConfig()" aria-label="Save all configuration changes" title="No unsaved changes (Ctrl+S)" disabled>&#x2714; Save All</button>
   </div>
-</div>
+</header>
 
 <div class="layout">
   <nav class="sidebar" id="sidebar" aria-label="Configuration sections"></nav>
-  <main class="content" id="main-content">
+  <main class="content" id="main-content" role="tabpanel" aria-labelledby="sectionTitle">
     <h2 id="sectionTitle">Loading…</h2>
     <p class="sec-desc" id="sectionDesc"></p>
     <div id="fields"></div>

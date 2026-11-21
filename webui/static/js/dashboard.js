@@ -53,55 +53,17 @@ function deviceIcon() {
   return '<svg class="icon-svg-sm" aria-hidden="true" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>';
 }
 
+// ── Clipboard & Toast (shared from common.js) ───────────────────────────────
 function fallbackCopyText(text, onSuccess, onError) {
-  try {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.style.position = 'fixed';
-    ta.style.left = '-9999px';
-    ta.style.top = '-9999px';
-    document.body.appendChild(ta);
-    ta.focus();
-    ta.select();
-    const ok = document.execCommand('copy');
-    document.body.removeChild(ta);
-    if (ok) onSuccess(); else onError();
-  } catch (e) {
-    onError();
-  }
+  return window.fallbackCopyText ? window.fallbackCopyText(text, onSuccess, onError) : undefined;
 }
 
 function copyToClipboard(text, label) {
-  if (!text) return;
-  const onSuccess = () => showToast((label || 'Text') + ' copied to clipboard', 'success');
-  const onError = () => showToast('Failed to copy ' + (label || 'text'), 'error');
-
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(text).then(onSuccess).catch(() => {
-      fallbackCopyText(text, onSuccess, onError);
-    });
-  } else {
-    fallbackCopyText(text, onSuccess, onError);
-  }
+  return window.copyToClipboard ? window.copyToClipboard(text, label) : undefined;
 }
 
-// ── Toast ────────────────────────────────────────────────────────────────────
 function showToast(msg, type) {
-  const c = document.getElementById('toasts');
-  const t = document.createElement('div');
-  const toastType = type || 'info';
-  t.className = 'toast ' + toastType;
-  const icons = { success: '✓', error: '✕', warning: '⚠', info: 'ℹ' };
-  const iconSpan = document.createElement('span');
-  iconSpan.className = 'toast-icon';
-  iconSpan.setAttribute('aria-hidden', 'true');
-  iconSpan.textContent = icons[toastType] || 'ℹ';
-  const textSpan = document.createElement('span');
-  textSpan.textContent = msg;
-  t.appendChild(iconSpan);
-  t.appendChild(textSpan);
-  c.appendChild(t);
-  setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity .3s'; setTimeout(() => t.remove(), 300); }, 3000);
+  return window.showToast ? window.showToast(msg, type) : undefined;
 }
 
 
