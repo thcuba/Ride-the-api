@@ -67,6 +67,8 @@ def test_configuration_sidebar_accessibility():
     html = config_path.read_text(encoding="utf-8")
     if config_js.exists():
         html += "\n" + config_js.read_text(encoding="utf-8")
+    for extra in sorted(Path("webui/static/js/config").glob("*.js")):
+        html += "\n" + extra.read_text(encoding="utf-8")
 
     # Verify search input has explicit accessibility label and type search
     assert 'aria-label="Filter configuration sections"' in html
@@ -104,6 +106,8 @@ def test_configuration_form_controls_and_mobile_accessibility():
     html = config_path.read_text(encoding="utf-8")
     if config_js.exists():
         html += "\n" + config_js.read_text(encoding="utf-8")
+    for extra in sorted(Path("webui/static/js/config").glob("*.js")):
+        html += "\n" + extra.read_text(encoding="utf-8")
 
     # Verify toggle switches have switch role, label association, and touch wrap
     assert "switchWrap.className = 'switch-wrap'" in html
@@ -203,6 +207,8 @@ def test_configuration_path_chip_accessibility_and_copy():
 
     html = config_path.read_text(encoding="utf-8")
     js = config_js.read_text(encoding="utf-8")
+    for extra in sorted(Path("webui/static/js/config").glob("*.js")):
+        js += "\n" + extra.read_text(encoding="utf-8")
 
     # Verify button element with accessible label and title
     assert 'id="configPathBtn"' in html
