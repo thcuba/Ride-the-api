@@ -266,6 +266,33 @@ async function sendToLLM(deviceId) {
   }
 }
 
+async function uploadSnifferCapture(deviceId, input) {
+  if (!input || !input.files || input.files.length === 0) return;
+  const file = input.files[0];
+  const formData = new FormData();
+  formData.append('file', file);
+
+  showToast('Uploading and parsing ' + file.name + '...', 'info');
+  try {
+    const res = await fetch('/api/devices/' + encodeURIComponent(deviceId) + '/sniffer/import', {
+      method: 'POST',
+      body: formData,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast(err.error || 'Failed to import sniffer capture', 'error');
+      return;
+    }
+    const data = await res.json();
+    showToast('Imported ' + data.imported + ' pairs from ' + String(data.format || 'capture').toUpperCase() + ' file!', 'success');
+    input.value = '';
+    loadBufferEntries(deviceId);
+    if (typeof loadDevices === 'function') loadDevices();
+  } catch(e) {
+    showToast('Failed to upload capture: ' + e.message, 'error');
+  }
+}
+
 
 // Global exports for inline HTML event handlers
 window.loadContextNotes = loadContextNotes;
@@ -282,3 +309,4 @@ window.copyAnalysisJson = copyAnalysisJson;
 window.discardPreview = discardPreview;
 window.commitPatterns = commitPatterns;
 window.sendToLLM = sendToLLM;
+window.uploadSnifferCapture = uploadSnifferCapture;
