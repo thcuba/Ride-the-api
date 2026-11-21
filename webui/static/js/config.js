@@ -617,6 +617,9 @@ function buildSidebar() {
     btn.className = 'section-item';
     btn.dataset.section = key;
     btn.setAttribute('role', 'tab');
+    btn.id = 'tab-' + key;
+    btn.setAttribute('aria-controls', 'main-content');
+    btn.tabIndex = -1;
     btn.title = HINTS[key] || SECTION_DETAILS[key] || 'Configuration section';
     attachTip(btn, btn.title);
     const iconSvg = SECTION_ICONS[key] || SECTION_ICONS._default;
@@ -656,6 +659,9 @@ function buildSidebar() {
   raw.className = 'section-item';
   raw.dataset.section = '__raw__';
   raw.setAttribute('role', 'tab');
+  raw.id = 'tab-__raw__';
+  raw.setAttribute('aria-controls', 'main-content');
+  raw.tabIndex = -1;
   raw.title = 'Full configuration as raw JSON';
   raw.innerHTML = `
     <div class="section-item-main">
@@ -668,6 +674,34 @@ function buildSidebar() {
     <span class="count"></span>`;
   raw.addEventListener('click', () => selectSection('__raw__'));
   sidebar.appendChild(raw);
+
+  if (!sidebar.dataset.tablistBound) {
+    sidebar.dataset.tablistBound = '1';
+    sidebar.addEventListener('keydown', (e) => {
+      if (e.target && e.target.classList.contains('section-item')) {
+        const tabs = Array.from(sidebar.querySelectorAll('.section-item')).filter(t => t.offsetParent !== null);
+        if (!tabs.length) return;
+        const curIdx = tabs.indexOf(e.target);
+        let nextIdx = -1;
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          nextIdx = (curIdx + 1) % tabs.length;
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          nextIdx = (curIdx - 1 + tabs.length) % tabs.length;
+        } else if (e.key === 'Home') {
+          e.preventDefault();
+          nextIdx = 0;
+        } else if (e.key === 'End') {
+          e.preventDefault();
+          nextIdx = tabs.length - 1;
+        }
+        if (nextIdx >= 0) {
+          selectSection(tabs[nextIdx].dataset.section, true);
+        }
+      }
+    });
+  }
 }
 
 // ── LLM Decipher section (editable; persistence via the LLM settings API) ───
@@ -791,13 +825,15 @@ function renderQuickActions(container, key) {
   container.appendChild(bar);
 }
 
-function selectSection(key) {
+function selectSection(key, shouldFocus = false) {
   document.querySelectorAll('.section-item').forEach(b => {
     const isActive = b.dataset.section === key;
     b.classList.toggle('active', isActive);
+    b.tabIndex = isActive ? 0 : -1;
     if (isActive) {
       b.setAttribute('aria-current', 'true');
       b.setAttribute('aria-selected', 'true');
+      if (shouldFocus) b.focus();
     } else {
       b.removeAttribute('aria-current');
       b.setAttribute('aria-selected', 'false');

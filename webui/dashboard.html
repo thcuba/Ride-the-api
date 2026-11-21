@@ -1171,7 +1171,7 @@
 
 <div class="toast-container" id="toasts" role="status" aria-live="polite" aria-atomic="true"></div>
 
-<div class="header">
+<header class="header">
   <div class="header-left">
       <div class="brand-row">
         <img src="/static/logo.png" alt="ride-the-api logo" width="40" height="40">
@@ -1192,7 +1192,7 @@
         <div class="workspace-controls__content">
           <div class="control-row">
       <div style="position:relative;display:inline-flex;align-items:center;">
-        <input type="password" id="apiKeyInput" placeholder="Password" autocomplete="off"
+        <input type="password" id="apiKeyInput" placeholder="Password" autocomplete="current-password"
                aria-label="Control-plane password"
                title="Control-plane password."
                style="padding:6px 28px 6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:12px;width:150px;"
@@ -1228,7 +1228,7 @@
       <span>Refresh</span>
     </button>
   </div>
-</div>
+</header>
 
 <details class="operations-panel" aria-label="Network and protocol controls">
   <summary><span aria-hidden="true">◌</span> Network &amp; protocol controls <span>Ports, certificates and listeners</span></summary>
@@ -1322,7 +1322,7 @@
   </div>
 </div>
 
-<div id="main-content">
+<main id="main-content">
   <div class="device-workspace">
     <div>
       <h2>Device workspace</h2>
@@ -1344,7 +1344,7 @@
       <div class="empty-text">Loading devices...</div>
     </div>
   </div>
-</div>
+</main>
 
 <div id="details" class="invisible" role="dialog" aria-labelledby="details-title" aria-modal="true" onclick="if(event.target===this)closeDetails();"></div>
 
