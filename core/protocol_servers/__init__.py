@@ -84,7 +84,7 @@ class ProtocolServerPlugin:
         """Return status dict for API / Web UI."""
         return {"name": self.name, "running": self._running}
 
-    async def update_config(self, **kwargs) -> bool:
+    async def update_config(self, **kwargs: Any) -> bool:
         """Update config at runtime. Override to support hot config."""
         for k, v in kwargs.items():
             if hasattr(self.config, k):
@@ -205,7 +205,7 @@ class ProtocolServerManager:
                 results.append({"name": name, "running": False, "error": str(e)})
         return results
 
-    async def update_plugin_config(self, name: str, **kwargs) -> bool:
+    async def update_plugin_config(self, name: str, **kwargs: Any) -> bool:
         """Update config for a specific plugin."""
         plugin = self._plugins.get(name)
         if not plugin:
