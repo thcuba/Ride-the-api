@@ -107,7 +107,13 @@ async def _rows_by(session: AsyncSession, column: InstrumentedAttribute, keys: s
     return {getattr(row, column.key): row for row in result.scalars().all()}
 
 
-def _upsert(session: AsyncSession, existing: dict, key: str, make: Callable[[], Any], values: dict):
+def _upsert(
+    session: AsyncSession,
+    existing: dict[str, Any],
+    key: str,
+    make: Callable[[], Any],
+    values: dict[str, Any],
+) -> Any:
     """Update the row ``existing[key]`` with ``values``, or add ``make()`` as it."""
     row = existing.get(key)
     if row is None:
@@ -383,12 +389,12 @@ class DecipherIngest:
                 },
             )
 
-            for ep, resp in plan:
+            for ep, resp_match in plan:
                 _upsert(
                     session,
                     patterns,
                     ep.id,
-                    lambda ep=ep: RequestPattern(pattern_id=ep.id),
+                    lambda: RequestPattern(pattern_id=ep.id),
                     {
                         "method": ep.method,
                         "path_pattern": ep.path_pattern or ep.path,
@@ -401,35 +407,35 @@ class DecipherIngest:
                         "confidence": 0.9,
                     },
                 )
-                if resp:
+                if resp_match:
                     template_id = f"tpl_{ep.id}"
                     _upsert(
                         session,
                         templates,
                         template_id,
-                        lambda tid=template_id, ep=ep: ResponseTemplate(
-                            template_id=tid, pattern_id=ep.id
+                        lambda: ResponseTemplate(
+                            template_id=template_id, pattern_id=ep.id
                         ),
                         {
-                            "status_code": resp.status_code,
-                            "headers_template": resp.headers_template,
-                            "body_template": resp.body_template,
-                            "field_mappings": {m.source: m.target for m in resp.field_mappings},
+                            "status_code": resp_match.status_code,
+                            "headers_template": resp_match.headers_template,
+                            "body_template": resp_match.body_template,
+                            "field_mappings": {m.source: m.target for m in resp_match.field_mappings},
                             "expected_variables": [
                                 m.target
-                                for m in resp.field_mappings
+                                for m in resp_match.field_mappings
                                 if m.target.startswith("result.")
                             ],
                             "confidence": 0.9,
                         },
                     )
-                    for fm in resp.field_mappings:
+                    for fm in resp_match.field_mappings:
                         mapping_id = _mapping_id(device_id, ep.intent, fm.source)
                         _upsert(
                             session,
                             mappings,
                             mapping_id,
-                            lambda mid=mapping_id: FieldMapping(mapping_id=mid),
+                            lambda: FieldMapping(mapping_id=mapping_id),
                             {
                                 "request_field": fm.source,
                                 "request_type": "string",
