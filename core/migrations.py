@@ -16,12 +16,14 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import sqlalchemy as sa
+from sqlalchemy import Connection
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Awaitable, Callable, Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -39,12 +41,12 @@ _CREATE_MIGRATION_TABLE = sa.text(
 class Migration:
     """A single, ordered schema migration."""
 
-    def __init__(self, id: int, name: str, apply_fn) -> None:
+    def __init__(self, id: int, name: str, apply_fn: Callable[[AsyncConnection], Awaitable[None]]) -> None:
         self.id = id
         self.name = name
         self.apply_fn = apply_fn
 
-    async def apply(self, conn) -> None:
+    async def apply(self, conn: AsyncConnection) -> None:
         """Apply this migration's DDL/logic on the given connection."""
         await self.apply_fn(conn)
 
@@ -54,7 +56,7 @@ class Migration:
 # ---------------------------------------------------------------------------
 
 
-async def _m0001_record_baseline(conn) -> None:
+async def _m0001_record_baseline(conn: AsyncConnection) -> None:
     """Baseline migration (no DDL).
 
     Databases created before this runner existed already have their tables via
@@ -66,10 +68,10 @@ async def _m0001_record_baseline(conn) -> None:
     await conn.execute(sa.text("SELECT 1"))
 
 
-def _column_names(table: str):
+def _column_names(table: str) -> Callable[[Connection], set[str]]:
     """A ``run_sync`` callable returning ``table``'s column names (empty if absent)."""
 
-    def inspect_columns(sync_conn) -> set[str]:
+    def inspect_columns(sync_conn: Connection) -> set[str]:
         inspector = sa.inspect(sync_conn)
         if not inspector.has_table(table):
             return set()
@@ -78,7 +80,7 @@ def _column_names(table: str):
     return inspect_columns
 
 
-async def _m0002_field_mapping_formula(conn) -> None:
+async def _m0002_field_mapping_formula(conn: AsyncConnection) -> None:
     """Add ``field_mappings.formula`` (formula expressions were not stored).
 
     Databases created after the model gained the column already have it from
@@ -98,10 +100,10 @@ MIGRATIONS: Sequence[Migration] = (
 class SchemaMigrator:
     """Applies pending migrations against an engine, idempotently."""
 
-    def __init__(self, engine) -> None:
+    def __init__(self, engine: AsyncEngine) -> None:
         self.engine = engine
 
-    async def _applied_ids(self, conn) -> set[int]:
+    async def _applied_ids(self, conn: AsyncConnection) -> set[int]:
         result = await conn.execute(sa.text("SELECT id FROM _schema_migrations"))
         return {row[0] for row in result.fetchall()}
 
