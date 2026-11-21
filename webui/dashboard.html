@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="light dark">
 <title>Ride the API — Local Cloud Replacement</title>
 <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
 <link rel="apple-touch-icon" href="/static/logo.png">
@@ -13,7 +14,11 @@
   (function () {
     try {
       var t = localStorage.getItem('rta-theme');
-      if (t) document.documentElement.setAttribute('data-theme', t);
+      if (t) {
+        document.documentElement.setAttribute('data-theme', t);
+        var m = document.querySelector('meta[name="color-scheme"]');
+        if (m) m.content = t;
+      }
     } catch (e) {}
   })();
 </script>
@@ -37,9 +42,15 @@
     background-image: radial-gradient(ellipse at 20% 10%, rgba(108,140,255,.08) 0%, transparent 50%),
                       radial-gradient(ellipse at 80% 90%, rgba(52,211,153,.06) 0%, transparent 50%);
   }
-  ::-webkit-scrollbar { width: 6px; height: 6px; }
-  ::-webkit-scrollbar-track { background: var(--surface); }
-  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  * {
+    scrollbar-color: var(--border) var(--surface);
+    scrollbar-width: thin;
+  }
+  @supports not (scrollbar-color: auto) {
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: var(--surface); }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  }
 
   /* ── Skip link ─────────────────────────────────────────────────────────── */
   .skip-link {
@@ -1197,7 +1208,7 @@
       <div class="ram-label" title="Buffer request/response pairs in RAM instead of disk (volatile)">
         <label for="ram-buffer-toggle" style="cursor:pointer;">RAM Buffer</label>
         <label class="ram-toggle" aria-label="Toggle RAM buffer" title="Toggle RAM buffer">
-          <input type="checkbox" id="ram-buffer-toggle" role="switch" aria-checked="false" onchange="toggleRamBuffer(this.checked)">
+          <input type="checkbox" id="ram-buffer-toggle" switch role="switch" aria-checked="false" onchange="toggleRamBuffer(this.checked)">
           <span class="ram-slider"></span>
         </label>
       </div>
@@ -1272,7 +1283,7 @@
     <div style="display:inline-flex;align-items:center;gap:8px;" title="Answer every name with this proxy's address, so every device that uses it as its resolver is captured. Names in the exclusion list are still forwarded untouched.">
       <label for="dnsInterceptAllToggle" style="font-size:12px;cursor:pointer;">Intercept all</label>
       <label class="tc-toggle" aria-label="Toggle intercept every name" title="Toggle intercept every name">
-        <input type="checkbox" id="dnsInterceptAllToggle" role="switch" aria-checked="false" aria-label="Intercept every name" onchange="dnsSetInterceptAll(this.checked)">
+        <input type="checkbox" id="dnsInterceptAllToggle" switch role="switch" aria-checked="false" aria-label="Intercept every name" onchange="dnsSetInterceptAll(this.checked)">
         <span class="tc-slider"></span>
       </label>
     </div>
@@ -1363,7 +1374,7 @@
       </div>
       <div class="f-control">
         <label class="switch-wrap" for="llm-enabled-toggle" aria-label="Toggle LLM deciphering">
-          <input type="checkbox" id="llm-enabled-toggle" class="switch" role="switch" aria-checked="true" onchange="this.setAttribute('aria-checked', this.checked)">
+          <input type="checkbox" id="llm-enabled-toggle" switch class="switch" role="switch" aria-checked="true" onchange="this.setAttribute('aria-checked', this.checked)">
         </label>
       </div>
     </div>

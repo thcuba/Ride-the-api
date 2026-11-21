@@ -52,6 +52,8 @@ window.updateThemeUI = updateThemeUI;
 
 function setTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme);
+  const meta = document.querySelector('meta[name="color-scheme"]');
+  if (meta) meta.content = theme;
   try {
     localStorage.setItem('rta-theme', theme);
   } catch (e) {}

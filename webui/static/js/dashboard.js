@@ -137,6 +137,8 @@ async function errorFrom(resOrErr, fallback) {
     const current = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
     const next = current === 'light' ? 'dark' : 'light';
     document.documentElement.setAttribute('data-theme', next);
+    const meta = document.querySelector('meta[name="color-scheme"]');
+    if (meta) meta.content = next;
     try { localStorage.setItem('rta-theme', next); } catch (e) {}
     updateThemeToggleButton(next);
     showToast('Theme set to ' + (next.charAt(0).toUpperCase() + next.slice(1)), 'info');
