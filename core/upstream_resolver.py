@@ -18,7 +18,7 @@ import functools
 import ipaddress
 import logging
 import socket
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import dns.asyncresolver
 import dns.exception
@@ -338,7 +338,7 @@ async def resolve_upstream(  # noqa: C901, PLR0912, PLR0915
             addrinfo = await asyncio.wait_for(loop.getaddrinfo(hostname, None, type=0), timeout=5.0)
             seen: set[str] = set()
             for family, _, _, _, sockaddr in addrinfo:
-                ip = sockaddr[0]
+                ip = str(sockaddr[0])
                 if ip not in seen:
                     addresses.append(ip)
                     seen.add(ip)
@@ -376,13 +376,13 @@ async def resolve_upstream(  # noqa: C901, PLR0912, PLR0915
     return addresses
 
 
-async def batch_resolve_upstream(hostnames: list[str], **kwargs) -> dict[str, list[str]]:
+async def batch_resolve_upstream(hostnames: list[str], **kwargs: Any) -> dict[str, list[str]]:
     """Resolve multiple hostnames in parallel via upstream DNS."""
     tasks = {h: resolve_upstream(h, **kwargs) for h in hostnames}
     results = await asyncio.gather(*tasks.values(), return_exceptions=True)
     mapping: dict[str, list[str]] = {}
     for hostname, result in zip(tasks, results):
-        if isinstance(result, Exception):
+        if isinstance(result, BaseException):
             logger.error("Batch resolve failed for %s: %s", hostname, result)
             mapping[hostname] = []
         else:
