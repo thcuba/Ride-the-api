@@ -88,7 +88,7 @@ class CaptureDB(BaseModel):
     """Root model for .ride-capture.json — raw buffer export."""
 
     schema_url: str = Field(
-        "https://ride-the-api.dev/capture-schema/v1",
+        default="https://ride-the-api.dev/capture-schema/v1",
         alias="$schema",
     )
     meta: CaptureMeta
@@ -261,7 +261,7 @@ class PatternDB(BaseModel):
     """Root model for .ride-pattern.json — deciphered protocol patterns."""
 
     schema_url: str = Field(
-        "https://ride-the-api.dev/pattern-schema/v1",
+        default="https://ride-the-api.dev/pattern-schema/v1",
         alias="$schema",
     )
     meta: PatternMeta
@@ -537,7 +537,7 @@ class DeviceModel(BaseModel):
     """
 
     schema_url: str = Field(
-        "https://ride-the-api.dev/pattern-schema/v2",
+        default="https://ride-the-api.dev/pattern-schema/v2",
         alias="$schema",
     )
     meta: PatternMeta
