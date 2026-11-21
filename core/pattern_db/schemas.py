@@ -146,6 +146,10 @@ class BodySchemaProperty(BaseModel):
     min_items: int | None = None
 
 
+def _default_headers() -> dict[str, list[str]]:
+    return {"required": []}
+
+
 class ClientEndpoint(BaseModel):
     """A single endpoint the device calls."""
 
@@ -159,7 +163,7 @@ class ClientEndpoint(BaseModel):
     # incoming request regardless of the caller's resolved protocol, preserving
     # the pre-M10 behaviour for endpoints written before the field existed.
     protocol: str = ""
-    headers: dict[str, list[str]] = Field(default_factory=lambda: {"required": []})
+    headers: dict[str, list[str]] = Field(default_factory=_default_headers)
     query_params: list[str] = Field(default_factory=list)
     body_schema: dict[str, Any] | None = None
     response_fields: list[dict[str, str]] = Field(default_factory=list)
@@ -513,7 +517,7 @@ class Command(BaseModel):
     path: str = ""  # HTTP path or CoAP path ("" for topic-only protocols)
     path_pattern: str = ""
     topic: str = ""  # MQTT / WebSocket topic
-    headers: dict[str, list[str]] = Field(default_factory=lambda: {"required": []})
+    headers: dict[str, list[str]] = Field(default_factory=_default_headers)
     query_params: list[str] = Field(default_factory=list)
     body_schema: dict[str, Any] | None = None
     confidence: float = 0.5
@@ -579,6 +583,7 @@ class DeviceModel(BaseModel):
         ]
         protocols = [self.protocol.protocol] if self.protocol.protocol else ["http"]
         return PatternDB(
+            **{"$schema": "https://ride-the-api.dev/pattern-schema/v1"},
             meta=self.meta,
             client=ClientConfig(protocols=protocols, endpoints=endpoints),
             server=ServerConfig(
