@@ -6,7 +6,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from starlette.requests import Request  # noqa: TC002
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
 
 from core.resilience import CloudIndependenceVerifier
 
@@ -30,7 +30,7 @@ def register_resilience_routes(  # noqa: C901
     """Register resilience-related API routes."""
 
     @app.get("/api/independence/{device_id}")
-    async def check_device_independence(device_id: str):
+    async def check_device_independence(device_id: str) -> Response | dict[str, Any]:
         """Check if a device can operate without vendor cloud."""
         db = get_db()
         if not db:
@@ -42,7 +42,7 @@ def register_resilience_routes(  # noqa: C901
     # The trailing-slash form used to fall through to the vendor proxy route.
     @app.get("/api/independence/", include_in_schema=False)
     @app.get("/api/independence")
-    async def check_all_independence():
+    async def check_all_independence() -> Response | dict[str, Any]:
         """Check independence for all devices."""
         db = get_db()
         if not db:
@@ -52,7 +52,7 @@ def register_resilience_routes(  # noqa: C901
         return {"devices": results}
 
     @app.post("/api/independence/{device_id}/auto-switch")
-    async def auto_switch_device(device_id: str):
+    async def auto_switch_device(device_id: str) -> Response | dict[str, Any]:
         """Auto-switch device to production if conditions are met."""
         db = get_db()
         if not db:
@@ -62,7 +62,7 @@ def register_resilience_routes(  # noqa: C901
         return {"device_id": device_id, "switched": switched}
 
     @app.get("/api/independence/{device_id}/export")
-    async def export_device_patterns(device_id: str):
+    async def export_device_patterns(device_id: str) -> Response | dict[str, Any]:
         """Export learned patterns for backup/sharing."""
         db = get_db()
         if not db:
@@ -71,7 +71,7 @@ def register_resilience_routes(  # noqa: C901
         return await verifier.export_device_patterns(device_id)
 
     @app.post("/api/independence/{device_id}/import")
-    async def import_device_patterns(device_id: str, request: Request):
+    async def import_device_patterns(device_id: str, request: Request) -> Response | dict[str, Any]:
         """Import previously exported patterns."""
         db = get_db()
         if not db:

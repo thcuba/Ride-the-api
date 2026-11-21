@@ -36,4 +36,4 @@ def iter_routes(app: FastAPI) -> Iterator[BaseRoute]:
 
 def route_paths(app: FastAPI) -> list[str]:
     """Return the paths the app serves, in registration order."""
-    return [route.path for route in iter_routes(app)]
+    return [str(getattr(route, "path", "")) for route in iter_routes(app)]
