@@ -162,7 +162,7 @@ class ContextBuffer:
 
         return await self.store.delete_entry(device_id, entry_id)
 
-    async def clear_cache(self, device_id: str):
+    async def clear_cache(self, device_id: str) -> None:
         """Clear session cache for a device after flush."""
 
         await self.store.clear_cache(device_id)
@@ -213,7 +213,7 @@ class ContextBuffer:
                 )
             )
 
-            total += result.rowcount or 0
+            total += getattr(result, "rowcount", 0) or 0
 
             retained = await session.execute(
                 select(LLMContextBuffer.sequence)
@@ -241,6 +241,6 @@ class ContextBuffer:
                     )
                 )
 
-                total += result.rowcount or 0
+                total += getattr(result, "rowcount", 0) or 0
 
         return total
