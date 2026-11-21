@@ -20,7 +20,7 @@ import functools
 import logging
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from prometheus_client import CollectorRegistry, Counter, Gauge, generate_latest
 
@@ -174,7 +174,7 @@ def start_metrics_server(
     return server
 
 
-def build_tracer(exporter_name: str, otlp_endpoint: str, sample_rate: float = 1.0):
+def build_tracer(exporter_name: str, otlp_endpoint: str, sample_rate: float = 1.0) -> Any:
     """Construct an OpenTelemetry ``TracerProvider`` for a callable exporter.
 
     ``exporter`` in {``console``, ``otlp``}. ``otlp`` requires the optional
@@ -212,7 +212,7 @@ def build_tracer(exporter_name: str, otlp_endpoint: str, sample_rate: float = 1.
     return otel_trace.get_tracer("ride-the-api")
 
 
-def get_tracer():
+def get_tracer() -> Any:
     """Return the app tracer, initializing the provider once if needed."""
     from opentelemetry import trace as otel_trace  # noqa: PLC0415
 
