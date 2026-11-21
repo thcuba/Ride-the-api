@@ -11,7 +11,7 @@ import tempfile
 import threading
 from enum import Enum, StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -89,14 +89,15 @@ def restore_masked_secrets(incoming: Any, current: Any) -> Any:  # noqa: ANN401
     if isinstance(incoming, str) and incoming == SECRET_MASK:
         return current if current is not None else ""
     if isinstance(incoming, dict):
-        base = current if isinstance(current, dict) else {}
+        base_dict = current if isinstance(current, dict) else {}
         return {
-            key: restore_masked_secrets(value, base.get(key)) for key, value in incoming.items()
+            key: restore_masked_secrets(value, base_dict.get(key))
+            for key, value in incoming.items()
         }
     if isinstance(incoming, list):
-        base = current if isinstance(current, list) else []
+        base_list = current if isinstance(current, list) else []
         return [
-            restore_masked_secrets(item, base[i] if i < len(base) else None)
+            restore_masked_secrets(item, base_list[i] if i < len(base_list) else None)
             for i, item in enumerate(incoming)
         ]
     return incoming
@@ -750,7 +751,7 @@ class ConfigManager:
         self.config_path = Path(config_path)
         self._config: Config | None = None
         self._lock = threading.RLock()
-        self._callbacks: list[callable] = []
+        self._callbacks: list[Callable[[Config], Any]] = []
         self._watch_thread: threading.Thread | None = None
         self._stop_watch = threading.Event()
 
@@ -916,7 +917,7 @@ class ConfigManager:
         """Get vendor-specific configuration."""
         return self.config.vendors.get(vendor)
 
-    def register_callback(self, callback: callable) -> None:
+    def register_callback(self, callback: Callable[[Config], Any]) -> None:
         """Register callback for config changes."""
         with self._lock:
             self._callbacks.append(callback)
@@ -928,6 +929,8 @@ class ConfigManager:
             # re-entrant callback cannot block reloads or registration.
             callbacks = list(self._callbacks)
             config = self._config
+        if config is None:
+            return
         for callback in callbacks:
             try:
                 callback(config)
