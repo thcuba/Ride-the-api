@@ -274,28 +274,23 @@ def register_standard_plugins(
     handler: Callable | None = None,
 ) -> None:
     """Register all built-in protocol server plugins with the manager."""
-    from core.protocol_servers.coap_server import CoAPServerPlugin  # noqa: PLC0415
+    from adapters import STANDARD_PROTOCOL_DEFINITIONS  # noqa: PLC0415
     from core.protocol_servers.http2_server import HTTP2ServerPlugin  # noqa: PLC0415
-    from core.protocol_servers.matter_bridge import MatterBridgePlugin  # noqa: PLC0415
-    from core.protocol_servers.modbus_server import ModbusServerPlugin  # noqa: PLC0415
-    from core.protocol_servers.mqtt_server import MQTTServerPlugin  # noqa: PLC0415
     from core.protocol_servers.raw_tcp_server import RawTCPServerPlugin  # noqa: PLC0415
     from core.protocol_servers.websocket_server import WebSocketServerPlugin  # noqa: PLC0415
-    from core.protocol_servers.zigbee_bridge import ZigbeeBridgePlugin  # noqa: PLC0415
-    from core.protocol_servers.zwave_bridge import ZWaveBridgePlugin  # noqa: PLC0415
 
-    plugins = [
-        MQTTServerPlugin(config.mqtt, handler=handler),
-        CoAPServerPlugin(config.coap, handler=handler),
-        ModbusServerPlugin(config.modbus, handler=handler),
+    # Register protocol servers defined in unified protocol definitions
+    for proto_def in STANDARD_PROTOCOL_DEFINITIONS:
+        if proto_def.server_plugin_class:
+            manager.register_from_definition(proto_def, servers_config=config, handler=handler)
+
+    # Register transport-only socket listeners
+    transport_plugins = [
         WebSocketServerPlugin(config.websocket, handler=handler),
         RawTCPServerPlugin(config.raw_tcp, handler=handler),
         HTTP2ServerPlugin(config.http2, handler=handler),
-        ZigbeeBridgePlugin(config.zigbee_bridge, handler=handler),
-        ZWaveBridgePlugin(config.zwave_bridge, handler=handler),
-        MatterBridgePlugin(config.matter_bridge, handler=handler),
     ]
-    for p in plugins:
+    for p in transport_plugins:
         manager.register_plugin(p, handler=handler)
 
 
