@@ -765,8 +765,14 @@ async function renderLLMSection(container) {
 // One-click entry points for the sections where a single action is the usual
 // reason to open them. Everything stays an ordinary edit of the working copy,
 // so the existing Save / dirty tracking applies unchanged.
-function addIpProfileOverride() {
-  const raw = prompt('Source IP of the device (for example 192.168.1.50):');
+async function addIpProfileOverride() {
+  const raw = window.showPrompt
+    ? await showPrompt({
+        title: 'IP Profile Override',
+        message: 'Source IP of the device (for example 192.168.1.50):',
+        placeholder: '192.168.1.50'
+      })
+    : prompt('Source IP of the device (for example 192.168.1.50):');
   if (!raw) return;
   const ip = raw.trim();
   if (!/^[0-9a-fA-F:.]+$/.test(ip)) {
@@ -964,8 +970,14 @@ function renderObject(container, obj, path) {
     addBtn.textContent = '+ Add key';
     addBtn.style.cssText = 'margin-top:6px;font-size:12px;padding:4px 12px;';
     addBtn.setAttribute('title', 'Add one or more keys to this section. Separate several keys with a comma.');
-    addBtn.addEventListener('click', () => {
-      const raw = prompt('New key name (separate several keys with a comma):');
+    addBtn.addEventListener('click', async () => {
+      const raw = window.showPrompt
+        ? await showPrompt({
+            title: 'Add Configuration Key',
+            message: 'New key name (separate several keys with a comma):',
+            placeholder: 'key1, key2'
+          })
+        : prompt('New key name (separate several keys with a comma):');
       if (!raw) return;
       const parent = getAt(cfg, path);
       raw.split(',').map((s) => s.trim()).filter((s) => s !== '').forEach((key) => {

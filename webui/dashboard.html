@@ -88,6 +88,11 @@
   /* ── Global Stats Bar ──────────────────────────────────────────────────── */
   .global-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 24px; }
   .global-stat {
+    font-family: inherit;
+    color: inherit;
+    text-align: left;
+    display: block;
+    width: 100%;
     background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px;
     position: relative; overflow: hidden; cursor: pointer; transition: all .2s;
   }
@@ -194,6 +199,10 @@
   /* ── Grid / Cards ──────────────────────────────────────────────────────── */
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
   .device-card {
+    font-family: inherit;
+    color: inherit;
+    text-align: left;
+    width: 100%;
     background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px;
     cursor: pointer; transition: all .25s; position: relative; overflow: hidden;
   }
@@ -219,6 +228,7 @@
     backdrop-filter: blur(4px);
     -webkit-backdrop-filter: blur(4px);
     overflow-y: auto;
+    overscroll-behavior: contain;
     animation: fadeIn .2s ease;
   }
   @keyframes fadeIn {
@@ -234,6 +244,7 @@
     min-height: 100vh;
     padding: 24px;
     margin: 0;
+    overscroll-behavior: contain;
     animation: slideInRight .22s cubic-bezier(0.16, 1, 0.3, 1);
   }
   @keyframes slideInRight {
@@ -1300,26 +1311,26 @@
 
 <!-- Global stats bar -->
 <div class="global-stats" id="globalStats" role="region" aria-label="Global device statistics">
-  <div class="global-stat gs-blue" tabindex="0" role="button" aria-pressed="false" aria-label="Filter by all devices" title="Show all devices" onclick="filterByMode(null)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();filterByMode(null);}">
+  <button type="button" class="global-stat gs-blue" aria-pressed="false" aria-label="Filter by all devices" title="Show all devices" onclick="filterByMode(null)">
     <svg class="icon-svg" aria-hidden="true" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
     <div class="gs-num" aria-live="polite">0</div>
     <div class="gs-lbl">Total Devices</div>
-  </div>
-  <div class="global-stat gs-green" tabindex="0" role="button" aria-pressed="false" aria-label="Filter by learning mode devices" title="Filter devices in Learning mode" onclick="filterByMode('learning')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();filterByMode('learning');}">
+  </button>
+  <button type="button" class="global-stat gs-green" aria-pressed="false" aria-label="Filter by learning mode devices" title="Filter devices in Learning mode" onclick="filterByMode('learning')">
     <svg class="icon-svg" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
     <div class="gs-num" aria-live="polite">0</div>
     <div class="gs-lbl">Learning</div>
-  </div>
-  <div class="global-stat gs-yellow" tabindex="0" role="button" aria-pressed="false" aria-label="Filter by production mode devices" title="Filter devices in Production mode" onclick="filterByMode('production')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();filterByMode('production');}">
+  </button>
+  <button type="button" class="global-stat gs-yellow" aria-pressed="false" aria-label="Filter by production mode devices" title="Filter devices in Production mode" onclick="filterByMode('production')">
     <svg class="icon-svg" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
     <div class="gs-num" aria-live="polite">0</div>
     <div class="gs-lbl">Production</div>
-  </div>
-  <div class="global-stat gs-red" tabindex="0" role="button" aria-pressed="false" aria-label="Filter by hybrid mode devices" title="Filter devices in Hybrid mode" onclick="filterByMode('hybrid')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();filterByMode('hybrid');}">
+  </button>
+  <button type="button" class="global-stat gs-red" aria-pressed="false" aria-label="Filter by hybrid mode devices" title="Filter devices in Hybrid mode" onclick="filterByMode('hybrid')">
     <svg class="icon-svg" aria-hidden="true" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/></svg>
     <div class="gs-num" aria-live="polite">0</div>
     <div class="gs-lbl">Hybrid</div>
-  </div>
+  </button>
 </div>
 
 <main id="main-content">

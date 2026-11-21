@@ -173,7 +173,7 @@
     list.forEach(p=>{
       const card = el('div',{class:'pattern-card'});
       const bodyId = `pc-body-${p.pattern_id}`;
-      const header = el('div',{class:'pc-header',tabindex:0,role:'button','aria-expanded':'false','aria-controls':bodyId,'aria-label':`Toggle pattern details for ${p.method} ${p.path}`});
+      const header = el('button',{type:'button',class:'pc-header','aria-expanded':'false','aria-controls':bodyId,'aria-label':`Toggle pattern details for ${p.method} ${p.path}`});
       const title = el('div',{class:'pc-title'},`${p.method} ${p.path} — ${p.intent || ''}`);
       const right = el('div',{},[]);
       const badge = el('span',{class:'badge badge-low'}, (p.confidence||0).toFixed(2));
@@ -233,7 +233,6 @@
         header.setAttribute('aria-expanded', isHidden ? 'true' : 'false');
       };
       header.addEventListener('click', toggleExpand);
-      header.addEventListener('keydown', (e)=>{ if(e.key==='Enter' || e.key===' ') { e.preventDefault(); toggleExpand(); } });
 
       // Save handler
       saveBtn.addEventListener('click', async ()=>{
@@ -256,7 +255,15 @@
 
       delBtn.addEventListener('click', async ()=>{
         if(delBtn.disabled) return;
-        if(!confirm('Delete this pattern?')) return;
+        const ok = window.showConfirm
+          ? await showConfirm({
+              title: 'Delete Pattern',
+              message: 'Are you sure you want to delete this pattern?',
+              confirmText: 'Delete',
+              danger: true
+            })
+          : confirm('Delete this pattern?');
+        if(!ok) return;
         delBtn.disabled = true;
         const origText = delBtn.textContent;
         delBtn.textContent = 'Deleting…';

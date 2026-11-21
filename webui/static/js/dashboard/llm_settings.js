@@ -42,10 +42,20 @@ function onProfileChange(deviceId) {
 }
 
 async function saveAsNewProfile(deviceId) {
-  const name = prompt('Profile name:');
+  const name = window.showPrompt
+    ? await showPrompt({ title: 'New Profile', message: 'Enter profile name:', placeholder: 'e.g. gpt-4o-mini' })
+    : prompt('Profile name:');
   if (!name || !name.trim()) return;
-  const description = prompt('Description (optional):') || '';
-  const promptTemplate = prompt('Prompt template (use {vendor}, {device_type}, {pairs}, {device_id}, {context_notes}):');
+  const description = (window.showPrompt
+    ? await showPrompt({ title: 'Profile Description', message: 'Description (optional):', placeholder: 'Optional description' })
+    : prompt('Description (optional):')) || '';
+  const promptTemplate = window.showPrompt
+    ? await showPrompt({
+        title: 'Prompt Template',
+        message: 'Prompt template (use {vendor}, {device_type}, {pairs}, {device_id}, {context_notes}):',
+        defaultValue: '{vendor} {device_type} {pairs}'
+      })
+    : prompt('Prompt template (use {vendor}, {device_type}, {pairs}, {device_id}, {context_notes}):');
   if (!promptTemplate) return showToast('Prompt template required', 'error');
   try {
     const res = await fetch('/api/llm/user-profiles', {
@@ -68,10 +78,15 @@ async function editProfile(deviceId) {
     const res = await fetch('/api/llm/user-profiles/' + encodeURIComponent(sel.value));
     if (!res.ok) return showToast('Failed to load profile', 'error');
     const p = await res.json();
-    // Simple inline edit via prompt
-    const name = prompt('Profile name:', p.name) || p.name;
-    const desc = prompt('Description:', p.description || '') || '';
-    const pt = prompt('Prompt template:', p.prompt_template) || p.prompt_template;
+    const name = (window.showPrompt
+      ? await showPrompt({ title: 'Edit Profile Name', defaultValue: p.name })
+      : prompt('Profile name:', p.name)) || p.name;
+    const desc = (window.showPrompt
+      ? await showPrompt({ title: 'Edit Description', defaultValue: p.description || '' })
+      : prompt('Description:', p.description || '')) || '';
+    const pt = (window.showPrompt
+      ? await showPrompt({ title: 'Edit Prompt Template', defaultValue: p.prompt_template })
+      : prompt('Prompt template:', p.prompt_template)) || p.prompt_template;
     const upRes = await fetch('/api/llm/user-profiles/' + encodeURIComponent(sel.value), {
       method: 'PUT', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({name, description: desc, prompt_template: pt}),
@@ -85,7 +100,15 @@ async function editProfile(deviceId) {
 async function deleteProfile(deviceId) {
   const sel = document.getElementById('profile-select-' + deviceId);
   if (!sel || sel.value === 'default') return;
-  if (!confirm('Delete profile "' + sel.value + '"?')) return;
+  const ok = window.showConfirm
+    ? await showConfirm({
+        title: 'Delete Profile',
+        message: 'Delete profile "' + sel.value + '"?',
+        confirmText: 'Delete',
+        danger: true
+      })
+    : confirm('Delete profile "' + sel.value + '"?');
+  if (!ok) return;
   try {
     const res = await fetch('/api/llm/user-profiles/' + encodeURIComponent(sel.value), { method: 'DELETE' });
     if (!res.ok) return showToast('Failed to delete profile', 'error');
@@ -263,10 +286,12 @@ function onLLMDefaultChange() {
   // No-op hook; the default profile is read at save time.
 }
 
-function addLLMProfile() {
+async function addLLMProfile() {
   const list = document.getElementById('llm-profiles-list');
   if (!list) return;
-  const name = prompt('New profile name:');
+  const name = window.showPrompt
+    ? await showPrompt({ title: 'New Profile Name', message: 'Enter name for new LLM profile:', placeholder: 'e.g. claude-3-5' })
+    : prompt('New profile name:');
   if (!name || !name.trim()) return;
   const card = document.createElement('div');
   card.className = 'llm-profile-card';
@@ -346,8 +371,16 @@ function addLLMProfile() {
   }
 }
 
-function deleteLLMProfile(name) {
-  if (!confirm('Delete LLM profile "' + name + '"?')) return;
+async function deleteLLMProfile(name) {
+  const ok = window.showConfirm
+    ? await showConfirm({
+        title: 'Delete LLM Profile',
+        message: 'Delete LLM profile "' + name + '"?',
+        confirmText: 'Delete',
+        danger: true
+      })
+    : confirm('Delete LLM profile "' + name + '"?');
+  if (!ok) return;
   const list = document.getElementById('llm-profiles-list');
   if (!list) return;
   const card = list.querySelector('.llm-profile-card[data-name="' + name + '"]');

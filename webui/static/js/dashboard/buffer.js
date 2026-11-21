@@ -232,7 +232,16 @@ async function sendToLLM(deviceId) {
     showToast('Select at least one buffer entry', 'warning');
     return;
   }
-  if (!confirm('Send ' + pairIds.length + ' selected entries to LLM for decoding?')) return;
+  if (window.showConfirm) {
+    const ok = await showConfirm({
+      title: 'Send Entries to LLM',
+      message: 'Send ' + pairIds.length + ' selected entries to LLM for decoding?',
+      confirmText: 'Send to LLM'
+    });
+    if (!ok) return;
+  } else if (!confirm('Send ' + pairIds.length + ' selected entries to LLM for decoding?')) {
+    return;
+  }
   const btn = document.getElementById('send-btn-' + deviceId);
   const origText = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = 'Sending...'; }
