@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
-from typing import Any
+from typing import Any, cast
 
 from openai import AsyncOpenAI
 from pydantic import SecretStr
@@ -17,10 +17,10 @@ from core.retry import make_retryer
 logger = logging.getLogger(__name__)
 
 
-def _get_async_openai_cls():
+def _get_async_openai_cls() -> type[AsyncOpenAI]:
     mod = sys.modules.get("core.llm_decipher")
     if mod is not None and hasattr(mod, "AsyncOpenAI"):
-        return mod.AsyncOpenAI
+        return cast(type[AsyncOpenAI], mod.AsyncOpenAI)
     return AsyncOpenAI
 
 

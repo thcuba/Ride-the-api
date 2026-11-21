@@ -5,10 +5,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable, cast
 
 from cachetools import TTLCache
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 
 if TYPE_CHECKING:
     from openai import AsyncOpenAI
@@ -46,13 +46,13 @@ _CACHE_MAX_SIZE = 512
 _CACHE_TTL = 3600  # 1 hour
 
 
-def _get_load_llm_settings():
+def _get_load_llm_settings() -> Callable[..., Any]:
     import core.llm_decipher as shim_mod  # noqa: PLC0415
 
     return getattr(shim_mod, "load_llm_settings", load_llm_settings)
 
 
-def _get_save_llm_settings():
+def _get_save_llm_settings() -> Callable[..., Any]:
     import core.llm_decipher as shim_mod  # noqa: PLC0415
 
     return getattr(shim_mod, "save_llm_settings", save_llm_settings)
@@ -67,7 +67,7 @@ class LLMDecipherService:
         "learning_context": "Analyse the buffer grounded with the already-learned model",
     }
 
-    def __init__(self, config_manager=None) -> None:
+    def __init__(self, config_manager: Any = None) -> None:
         self.config_manager = config_manager or get_config_manager()
         self._config = None
         self._profiles: dict[str, LLMProfile] = {}
@@ -140,7 +140,7 @@ class LLMDecipherService:
             profile = LLMProfile(
                 name=name,
                 base_url=getattr(profile_config, "base_url", "https://api.openai.com/v1"),
-                api_key=new_raw_keys[name],
+                api_key=SecretStr(new_raw_keys[name]),
                 model_id=getattr(profile_config, "model_id", "gpt-4o-mini"),
                 prompt_template=getattr(profile_config, "prompt_template", ""),
                 enabled=getattr(profile_config, "enabled", True),
@@ -174,7 +174,7 @@ class LLMDecipherService:
                         new_profiles[name] = LLMProfile(
                             name=name,
                             base_url=pcfg.get("base_url", "https://api.openai.com/v1"),
-                            api_key=new_raw_keys[name],
+                            api_key=SecretStr(new_raw_keys[name]),
                             model_id=pcfg.get("model_id", "gpt-4o-mini"),
                             prompt_template=pcfg.get("prompt_template", ""),
                             enabled=pcfg.get("enabled", True),
@@ -192,7 +192,7 @@ class LLMDecipherService:
 
         logger.info(f"Loaded {len(self._profiles)} LLM profiles: {list(self._profiles.keys())}")
 
-    def _on_config_change(self, _new_config) -> None:
+    def _on_config_change(self, _new_config: Any) -> None:
         """Reload config on change."""
         logger.info("LLM decipher config changed, reloading")
         self._load_config()
@@ -413,7 +413,7 @@ class LLMDecipherService:
     def _get_recent_patterns(self, vendor: str, device_type: str | None) -> list[dict]:
         return get_recent_patterns(self._pattern_loader, vendor, device_type)
 
-    def set_pattern_loader(self, loader) -> None:
+    def set_pattern_loader(self, loader: Any) -> None:
         """Register a callable(vendor, device_type) -> list[dict] provider."""
         self._pattern_loader = loader
 
@@ -514,7 +514,7 @@ class LLMDecipherService:
         if cache_key in self._cache:
             cached = self._cache[cache_key]
             logger.debug(f"Cache hit for pair {pair.pair_id}")
-            return cached
+            return cast(DecipherResult, cached)
 
         db_schema = self._get_db_schema(pair.vendor)
         request_meta = getattr(pair.request, "metadata", {}) or {}
@@ -610,7 +610,7 @@ class LLMDecipherService:
                         error=str(result),
                     )
                 )
-            else:
+            elif isinstance(result, DecipherResult):
                 deciphered.append(result)
 
         return deciphered

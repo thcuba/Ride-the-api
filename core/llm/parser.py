@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import logging
 
+from typing import Any
+
 import json_repair
 from openai import APIStatusError
 from pydantic import SecretStr
@@ -15,7 +17,7 @@ _RETRYABLE_STATUS = frozenset({408, 409, 429})
 _SERVER_ERROR_MIN = 500
 
 
-def _parse_llm_json(content: str) -> dict | None:
+def _parse_llm_json(content: str) -> dict[str, Any] | None:
     """Parse JSON from an LLM response, tolerating surrounding markdown/code fences.
 
     LLMs often wrap the JSON payload in ```json ... ``` fences, add prose
@@ -27,10 +29,12 @@ def _parse_llm_json(content: str) -> dict | None:
     if not content:
         return None
     try:
-        return json.loads(content)
+        parsed = json.loads(content)
+        return parsed if isinstance(parsed, dict) else None
     except json.JSONDecodeError:
         try:
-            return json_repair.loads(content)
+            repaired = json_repair.loads(content)
+            return repaired if isinstance(repaired, dict) else None
         except Exception:
             return None
 

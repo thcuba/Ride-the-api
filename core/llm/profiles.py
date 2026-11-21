@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, cast
 
-from core.fallback_policy import FallbackChain
+from core.fallback_policy import FallbackChain, FallbackHandler
 
 if TYPE_CHECKING:
     from core.fallback_policy import ProviderCircuitBreaker
@@ -105,14 +105,16 @@ async def execute_profile_chain(  # noqa: PLR0913, PLR0917
     if not available_names:
         return {"success": False, "error": "No enabled LLM profiles", "raw": ""}
 
-    handlers = OrderedDict(
-        (
-            name,
-            (lambda p=profiles[name]: call_profile_fn(p, prompt, context, build_kwargs)),
-        )
-        for name in available_names
-    )
-    chain = FallbackChain(handlers)
+    def _make_handler(prof: Any) -> FallbackHandler:
+        async def _handler() -> tuple[bool, Any]:
+            return cast(tuple[bool, Any], await call_profile_fn(prof, prompt, context, build_kwargs))
+
+        return _handler
+
+    steps: dict[str, FallbackHandler] = {
+        name: _make_handler(profiles[name]) for name in available_names
+    }
+    chain = FallbackChain(steps)
     outcome = await chain.run()
     if outcome.step and outcome.error is None:
         return {"success": True, "content": outcome.value, "profile": outcome.step}
