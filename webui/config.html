@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="light dark">
 <title>Ride the API — Configuration</title>
 <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
 <link rel="apple-touch-icon" href="/static/logo.png">
@@ -13,7 +14,11 @@
   (function () {
     try {
       var t = localStorage.getItem('rta-theme');
-      if (t) document.documentElement.setAttribute('data-theme', t);
+      if (t) {
+        document.documentElement.setAttribute('data-theme', t);
+        var m = document.querySelector('meta[name="color-scheme"]');
+        if (m) m.content = t;
+      }
     } catch (e) {}
   })();
 </script>
@@ -37,9 +42,15 @@
     background-image: radial-gradient(ellipse at 20% 10%, rgba(108,140,255,.08) 0%, transparent 50%),
                       radial-gradient(ellipse at 80% 90%, rgba(52,211,153,.06) 0%, transparent 50%);
   }
-  ::-webkit-scrollbar { width: 6px; height: 6px; }
-  ::-webkit-scrollbar-track { background: var(--surface); }
-  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  * {
+    scrollbar-color: var(--border) var(--surface);
+    scrollbar-width: thin;
+  }
+  @supports not (scrollbar-color: auto) {
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: var(--surface); }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  }
 
   .skip-link { position: absolute; top: -100%; left: 8px; padding: 8px 16px; background: var(--accent); color: #fff; border-radius: 0 0 8px 8px; font-size: 14px; font-weight: 600; z-index: 9999; text-decoration: none; }
   .skip-link:focus { top: 0; }

@@ -571,7 +571,7 @@ function filterSidebar(query) {
 
 function buildSidebar() {
   const sidebar = document.getElementById('sidebar');
-  sidebar.innerHTML = '';
+  sidebar.replaceChildren();
 
   const header = document.createElement('div');
   header.className = 'sidebar-header';
@@ -723,7 +723,7 @@ async function renderLLMSection(container) {
       return;
     }
   }
-  box.innerHTML = '';
+  box.replaceChildren();
   renderObject(box, cfg.llm_decipher, 'llm_decipher');
 }
 
@@ -839,7 +839,7 @@ function selectSection(key) {
     });
 
     desc.appendChild(fmtBtn);
-    fields.innerHTML = '';
+    fields.replaceChildren();
     fields.appendChild(ta);
     setDirty('__raw__');
     if (title) title.focus();
@@ -851,7 +851,7 @@ function selectSection(key) {
     // /api/llm/settings, never written to config.yaml by this page.
     title.textContent = SECTION_LABELS[key] || 'LLM Decipher';
     desc.textContent = 'LLM profiles in use — saved through the LLM settings API';
-    fields.innerHTML = '';
+    fields.replaceChildren();
     fields.classList.remove('dirty');
     renderLLMSection(fields);
     if (title) title.focus();
@@ -859,7 +859,7 @@ function selectSection(key) {
   }
   title.textContent = SECTION_LABELS[key] || key;
   desc.textContent = HINTS[key] || 'Configuration section';
-  fields.innerHTML = '';
+  fields.replaceChildren();
   hideTooltip();
   renderQuickActions(fields, key);
   renderObject(fields, cfg[key], key);

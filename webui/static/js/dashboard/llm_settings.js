@@ -115,7 +115,7 @@ function renderLLMSettings(settings) {
   }
   const defaultSel = document.getElementById('llm-default-profile');
   if (defaultSel) {
-    defaultSel.innerHTML = '';
+    defaultSel.replaceChildren();
     Object.keys(settings.profiles || {}).forEach(name => {
       const opt = document.createElement('option');
       opt.value = name; opt.textContent = name;
@@ -128,7 +128,7 @@ function renderLLMSettings(settings) {
   ['correlation', 'flush', 'learning_context'].forEach(task => {
     const sel = document.getElementById('llm-task-' + task);
     if (!sel) return;
-    sel.innerHTML = '';
+    sel.replaceChildren();
     const none = document.createElement('option');
     none.value = '';
     none.textContent = '— use default —';
@@ -174,7 +174,7 @@ function updateLLMCardDirty(card) {
 function renderLLMProfileCards(settings) {
   const list = document.getElementById('llm-profiles-list');
   if (!list) return;
-  list.innerHTML = '';
+  list.replaceChildren();
   // Snapshot of the last-saved state, used to flag cards whose form values
   // differ from what is persisted (the Test button probes UNSAVED values, so
   // a passed test does NOT mean the change is live until Save is pressed).

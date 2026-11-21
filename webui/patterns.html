@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
+<meta name="color-scheme" content="light dark">
 <title>Patterns — Ride the API</title>
 <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -11,7 +12,11 @@
   (function () {
     try {
       var t = localStorage.getItem('rta-theme');
-      if (t) document.documentElement.setAttribute('data-theme', t);
+      if (t) {
+        document.documentElement.setAttribute('data-theme', t);
+        var m = document.querySelector('meta[name="color-scheme"]');
+        if (m) m.content = t;
+      }
     } catch (e) {}
   })();
 </script>

@@ -88,7 +88,7 @@
       if(!res.ok) throw new Error('Failed to load');
       const json = await res.json();
       const devices = json.devices || [];
-      cardsEl.innerHTML = '';
+      cardsEl.replaceChildren();
       if(!devices.length){
         cardsEl.innerHTML = '<div class="empty"><div style="font-size:16px;font-weight:600;margin-bottom:6px;">No devices yet</div><div style="font-size:13px;color:var(--text2);">A device appears here once its traffic goes through the proxy.</div></div>';
         return;
@@ -165,7 +165,7 @@
   window.filterPatterns = filterPatterns;
 
   function renderPatterns(list){
-    cardsEl.innerHTML='';
+    cardsEl.replaceChildren();
     if(!list.length){
       cardsEl.innerHTML = '<div class="empty"><div style="font-size:16px;font-weight:600;margin-bottom:6px;">No patterns created yet</div><div style="font-size:13px;color:var(--text2);margin-bottom:14px;">Patterns are automatically learned when analyzing device traffic, or you can create one manually.</div><button class="btn btn-primary" onclick="renderNewPatternCard()" aria-label="Create a new pattern">+ Create Pattern</button></div>';
       return;
@@ -344,9 +344,9 @@
 
   function tagInput(name, items){ const wrap = document.createElement('div'); wrap.className='tags'; wrap.dataset.name = name; items = Array.isArray(items)?items.slice():[];
       const input = document.createElement('input'); input.type='text'; input.placeholder='Add...'; input.setAttribute('aria-label', `Add ${name.replace(/_/g, ' ')}`);
-      function render(focusInput = false){ wrap.innerHTML=''; items.forEach((it,idx)=>{ const removeBtn = el('button',{type:'button','aria-label':`Remove ${it}`},'×'); removeBtn.addEventListener('click', ()=>{ items.splice(idx,1); render(true); }); const t = el('span',{class:'tag'}, [it, removeBtn]); wrap.appendChild(t); }); wrap.appendChild(input); if(focusInput) input.focus(); }
+      function render(focusInput = false){ wrap.replaceChildren(); items.forEach((it,idx)=>{ const removeBtn = el('button',{type:'button','aria-label':`Remove ${it}`},'×'); removeBtn.addEventListener('click', ()=>{ items.splice(idx,1); render(true); }); const t = el('span',{class:'tag'}, [it, removeBtn]); wrap.appendChild(t); }); wrap.appendChild(input); if(focusInput) input.focus(); }
       function addTag(val, focusInput = true){ const v = val.trim().replace(/^,|,$/g, ''); if(v){ items.push(v); input.value=''; render(focusInput); } }
-      input.addEventListener('keydown', (e)=>{ if(e.key==='Enter' || e.key===','){ e.preventDefault(); addTag(input.value, true); } else if(e.key==='Backspace' && input.value==='' && items.length > 0){ e.preventDefault(); items.pop(); render(true); } });
+      input.addEventListener('keydown', (e)=>{ if((e.key==='Enter' || e.key===',') && !e.isComposing && e.keyCode !== 229){ e.preventDefault(); addTag(input.value, true); } else if(e.key==='Backspace' && input.value==='' && items.length > 0){ e.preventDefault(); items.pop(); render(true); } });
       input.addEventListener('blur', ()=>{ if(input.value.trim()) addTag(input.value, false); });
       wrap.getValue = () => items.slice();
       render(false); return wrap; }
@@ -366,7 +366,7 @@
     try {
       return JSON.parse(el.value);
     } catch (e) {
-      throw new Error(`Invalid JSON in ${label}: ${e.message}`);
+      throw new Error(`Invalid JSON in ${label}: ${e.message}`, { cause: e });
     }
   }
 

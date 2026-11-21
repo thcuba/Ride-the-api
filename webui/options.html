@@ -3,13 +3,18 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="light dark">
 <title>Ride the API — Options</title>
 <script>
   // Apply persisted theme as early as possible to avoid a flash of colour.
   (function () {
     try {
       var t = localStorage.getItem('rta-theme');
-      if (t) document.documentElement.setAttribute('data-theme', t);
+      if (t) {
+        document.documentElement.setAttribute('data-theme', t);
+        var m = document.querySelector('meta[name="color-scheme"]');
+        if (m) m.content = t;
+      }
     } catch (e) {}
   })();
 </script>
