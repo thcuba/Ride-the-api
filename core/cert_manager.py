@@ -20,6 +20,7 @@ import shutil
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import cast
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -85,7 +86,10 @@ class CertManager:
         """Load existing CA from disk."""
         try:
             with self.ca_key_path.open("rb") as f:
-                self._ca_key = serialization.load_pem_private_key(f.read(), password=None)
+                self._ca_key = cast(
+                    rsa.RSAPrivateKey,
+                    serialization.load_pem_private_key(f.read(), password=None),
+                )
             with self.ca_cert_path.open("rb") as f:
                 self._ca_cert = x509.load_pem_x509_certificate(f.read())
             logger.info("Loaded existing CA from %s", self.ca_cert_path)
@@ -227,6 +231,7 @@ class CertManager:
         else:
             is_ip = False
 
+        san: list[x509.GeneralName]
         if is_ip:
             san = [x509.IPAddress(ipaddress.ip_address(hostname))]
             subject_name = x509.Name(
@@ -251,7 +256,7 @@ class CertManager:
             ca_ski = ca_cert.extensions.get_extension_for_class(x509.SubjectKeyIdentifier)
             aki = x509.AuthorityKeyIdentifier.from_issuer_subject_key_identifier(ca_ski.value)
         except x509.ExtensionNotFound:
-            aki = x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_cert.public_key())
+            aki = x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_cert.public_key())  # type: ignore[arg-type]
 
         cert = (
             x509.CertificateBuilder()
@@ -412,7 +417,8 @@ class CertManager:
         if meta_path.exists():
             try:
                 with meta_path.open() as f:
-                    return json.load(f)
+                    data = json.load(f)
+                    return data if isinstance(data, dict) else None
             except Exception as e:
                 logger.warning("Failed to read cert meta for %s: %s", hostname, e)
         return None

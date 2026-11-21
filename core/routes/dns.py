@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 
 from core.dns_discovery import get_dns_recorder
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["dns"])
 
 
-def _server():
+def _server() -> Any:
     from core import server  # noqa: PLC0415 - lazy import avoids a cycle with core.server
 
     return server
@@ -102,7 +102,7 @@ def _apply_dns_settings(config: Config | None = None) -> None:
 
 
 @router.get("/api/dns/discovery")
-async def dns_discovery(limit: int = 500):
+async def dns_discovery(limit: int = 500) -> Response | dict[str, Any]:
     """What each client asks the DNS for, and what the proxy does with it now.
 
     This is the answer to "what should we intercept next?" read off real traffic:
@@ -160,7 +160,7 @@ async def dns_discovery(limit: int = 500):
 
 
 @router.post("/api/dns/intercept")
-async def dns_add_intercept(request: Request):
+async def dns_add_intercept(request: Request) -> Response | dict[str, Any]:
     """Promote a discovered hostname (or pattern) to an intercepted name."""
     if not _server().config_manager:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
@@ -186,7 +186,7 @@ async def dns_add_intercept(request: Request):
 
 
 @router.delete("/api/dns/intercept/{hostname}")
-async def dns_remove_intercept(hostname: str):
+async def dns_remove_intercept(hostname: str) -> Response | dict[str, Any]:
     """Stop intercepting a name: it goes back to being forwarded (and discovered)."""
     if not _server().config_manager:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
@@ -204,7 +204,7 @@ async def dns_remove_intercept(hostname: str):
 
 
 @router.get("/api/dns/settings")
-async def dns_get_settings():
+async def dns_get_settings() -> Response | dict[str, Any]:
     """The whole DNS interception policy, as the UI needs to render it."""
     if not _server().config_manager:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
@@ -227,7 +227,7 @@ async def dns_get_settings():
 
 
 @router.put("/api/dns/settings")
-async def dns_put_settings(request: Request):
+async def dns_put_settings(request: Request) -> Response | dict[str, Any]:
     """Update the interception policy: the name list, ``intercept_all``, exclusions.
 
     Only the fields present in the body are touched, so the UI can flip one
@@ -255,7 +255,7 @@ async def dns_put_settings(request: Request):
 
 
 @router.delete("/api/dns/discovery")
-async def dns_clear_discovery():
+async def dns_clear_discovery() -> Response | dict[str, Any]:
     """Forget the recorded queries (memory and database)."""
     recorder = get_dns_recorder()
     removed = await recorder.clear() if recorder is not None else 0

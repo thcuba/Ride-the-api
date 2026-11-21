@@ -429,8 +429,8 @@ class InterceptedMessage:
             vendor=getattr(intercepted, "vendor", ""),
             device_type=_metadata.get("device_type", "unknown"),
             intent=_parsed.value if _parsed else "unknown",
-            method=intercepted.method,
-            path=intercepted.path,
+            method=intercepted.method or "GET",
+            path=intercepted.path or "/",
             headers=headers_lower,
             body=intercepted.body,
             query_params=getattr(intercepted, "query_params", None) or {},
@@ -462,7 +462,7 @@ class ModificationEngine:
     Rules are evaluated in priority order (highest first).
     """
 
-    def __init__(self, config_manager=None) -> None:
+    def __init__(self, config_manager: Any = None) -> None:
         from core.config import get_config_manager  # noqa: PLC0415
 
         self.config_manager = config_manager or get_config_manager()
@@ -476,7 +476,7 @@ class ModificationEngine:
         # Register config change callback
         self.config_manager.register_callback(self._on_config_change)
 
-    def _load_rules(self):
+    def _load_rules(self) -> None:
         """Load modification rules from configuration."""
         config = self.config_manager.config
         mod_config = getattr(config, "modification", None)
@@ -542,7 +542,7 @@ class ModificationEngine:
 
         logger.info(f"Loaded {len(self._rules)} modification rules")
 
-    def _legacy_match(self, rule_data) -> dict | None:
+    def _legacy_match(self, rule_data: Any) -> dict | None:
         """Native match fields for a legacy ``match_type``/``match_value`` rule.
 
         Returns ``{}`` when there is nothing to translate (a native rule, or no
@@ -565,7 +565,7 @@ class ModificationEngine:
             return {"match_path_pattern": rf"^{re.escape(str(match_value))}(?:[/?#]|$)"}
         return None
 
-    def _translate_legacy_action_params(self, action: ModificationAction, rule_data) -> dict:
+    def _translate_legacy_action_params(self, action: ModificationAction, rule_data: Any) -> dict:
         """Translate legacy ``target_field``/``target_value`` into action_params."""
         target_field = _rule_field(rule_data, "target_field")
         target_value = _rule_field(rule_data, "target_value")
@@ -586,12 +586,12 @@ class ModificationEngine:
                 params = {}
         return params
 
-    def _on_config_change(self, new_config):  # noqa: ARG002
+    def _on_config_change(self, new_config: Any) -> None:  # noqa: ARG002
         """Reload rules on config change."""
         logger.info("Modification config changed, reloading rules")
         self._load_rules()
 
-    def add_rule(self, rule: ModificationRule):
+    def add_rule(self, rule: ModificationRule) -> None:
         """Add a new rule dynamically."""
         self._rules.append(rule)
         self._rules.sort(key=lambda r: -r.priority)
@@ -699,7 +699,7 @@ class ModificationEngine:
     ) -> InterceptedRequest:
         """Apply message modifications back to InterceptedRequest."""
         if msg.body is not original.body:
-            original.body = msg.body
+            original.body = msg.body  # type: ignore[assignment]
         if msg.path != original.path:
             original.path = msg.path
         # Only rewrite headers when a rule actually changed them (the REDIRECT
@@ -735,11 +735,11 @@ class ModificationEngine:
                 "body": {"error": "blocked", "reason": msg.block_reason},
             }
         else:
-            out = dict(original) if wrapped else {"status_code": 200, "headers": {}}
+            out = dict(original) if (wrapped and isinstance(original, dict)) else {"status_code": 200, "headers": {}}
             # The rules' body as is: REPLACE swaps it and REMOVE deletes keys,
             # which a merge into the original body would undo.
             out["body"] = msg.body
-            original_headers = (original.get("headers") or {}) if wrapped else {}
+            original_headers = (original.get("headers") or {}) if (wrapped and isinstance(original, dict)) else {}
             if msg.headers != {k.lower(): v for k, v in original_headers.items()}:
                 out["headers"] = dict(msg.headers)
         delay_ms = msg.metadata.get("artificial_delay_ms")
@@ -753,7 +753,7 @@ class ModificationEngine:
         msg: InterceptedMessage,
         original_body: Any,  # noqa: ANN401
         _original_headers: dict | None,
-    ):
+    ) -> None:
         """Log modification to audit trail."""
         orig_body_str = (
             original_body

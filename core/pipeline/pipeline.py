@@ -45,6 +45,7 @@ from core.redaction import redact_body, redact_headers, redact_query
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine
+    from core.pattern_db.pattern_engine import PatternEngine
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,7 @@ def _monotonic() -> float:
     parent = sys.modules.get("core.pipeline")
     parent_time = getattr(parent, "time", None) if parent is not None else None
     if parent_time is not None and parent_time is not time:
-        return parent_time.monotonic()
+        return float(parent_time.monotonic())
     return time.monotonic()
 
 
@@ -334,7 +335,7 @@ class LearningPipeline:
         llm_decipher: LLMDecipherService,
         buffer: ContextBuffer,
         tracker: MatchRateTracker,
-        engine=None,
+        engine: PatternEngine | None = None,
         *,
         flushes: FlushCoordinator | None = None,
     ) -> None:
@@ -343,7 +344,9 @@ class LearningPipeline:
         self.buffer = buffer
         self.tracker = tracker
         self.engine = engine
-        self._correlation_cache: dict[str, deque] = defaultdict(lambda: deque(maxlen=1000))
+        self._correlation_cache: dict[str, deque[dict[str, Any]]] = defaultdict(
+            lambda: deque(maxlen=1000)
+        )
         self.flushes = flushes or FlushCoordinator()
 
     def _schedule_flush(self, device_id: str) -> bool:
@@ -425,9 +428,9 @@ class LearningPipeline:
         # Authorization/cookie/token headers, sensitive query params and secret
         # body fields from the capture. The live device-cloud forwarding path
         # uses the original request object directly; this copy is capture-only.
-        headers = redact_headers(headers)
-        query_params = redact_query(query_params)
-        body = redact_body(body)
+        clean_headers = redact_headers(headers) or {}
+        clean_query = redact_query(query_params) or {}
+        clean_body = redact_body(body)
 
         corr_key = f"{device_id}:{method}:{path}:{uuid4().hex[:8]}"
 
@@ -438,9 +441,9 @@ class LearningPipeline:
             "protocol": protocol,
             "method": method,
             "path": path,
-            "headers": headers,
-            "body": body,
-            "query_params": query_params,
+            "headers": clean_headers,
+            "body": clean_body,
+            "query_params": clean_query,
             "enrichment": enrichment,
             "timestamp": datetime.now(UTC),
         }
@@ -498,7 +501,7 @@ class LearningPipeline:
                 )
             )
 
-        return removed_from_memory or bool(result.rowcount)
+        return removed_from_memory or bool(getattr(result, "rowcount", 0))
 
     def _pop_pending(
         self,
@@ -559,7 +562,7 @@ class LearningPipeline:
                     response_latency_ms=0.0,
                 )
             )
-            if not claim.rowcount:
+            if not getattr(claim, "rowcount", 0):
                 return None
             row = (
                 await session.execute(
@@ -601,8 +604,8 @@ class LearningPipeline:
         from one device, or a stale orphan, can otherwise be mis-paired.
         """
         # Credential redaction (F-02): never persist raw response secrets.
-        headers = redact_headers(headers)
-        body = redact_body(body)
+        clean_headers = redact_headers(headers) or {}
+        clean_body = redact_body(body)
         cutoff = datetime.now(UTC) - self._correlation_max_age()
 
         # Try memory cache first
@@ -623,15 +626,15 @@ class LearningPipeline:
                         correlated=True,
                         correlated_at=datetime.now(UTC),
                         response_status=status_code,
-                        response_headers=headers,
-                        response_body=body,
+                        response_headers=clean_headers,
+                        response_body=clean_body,
                         response_latency_ms=0.0,
                     )
                 )
 
         if not matched and correlation_key is not None:
             matched = await self._claim_keyed_row(
-                device_id, vendor, protocol, correlation_key, status_code, headers, body
+                device_id, vendor, protocol, correlation_key, status_code, clean_headers, clean_body
             )
 
         if not matched and correlation_key is None:
@@ -671,12 +674,12 @@ class LearningPipeline:
                                 correlated=True,
                                 correlated_at=datetime.now(UTC),
                                 response_status=status_code,
-                                response_headers=headers,
-                                response_body=body,
+                                response_headers=clean_headers,
+                                response_body=clean_body,
                                 response_latency_ms=0.0,
                             )
                         )
-                        if claim.rowcount == 0:
+                        if getattr(claim, "rowcount", 0) == 0:
                             # Another coroutine already claimed this row.
                             continue
                         matched = {
@@ -1079,12 +1082,12 @@ class LearningPipeline:
             logger.exception("Error in LLM analysis")
             return None
 
-    def _build_learning_prompt(self, profile, context: dict) -> str:
+    def _build_learning_prompt(self, profile: Any, context: dict) -> str:
         """Build prompt for LLM batch analysis."""
         # Defense-in-depth (F-02): pairs may come from persistent storage or
         # imports that predate capture-time redaction, so re-redact before the
         # payload ever reaches the LLM.
-        pairs = _redact_pairs_for_prompt(context.get("pairs"))
+        pairs = _redact_pairs_for_prompt(context.get("pairs") or [])
         pairs_json = json.dumps(pairs, indent=2, default=str)
         prompt = profile.prompt_template
         replacements = {
@@ -1145,9 +1148,9 @@ class LearningPipeline:
                 "changed knowledge. If nothing is new, return "
                 '{"commands": [], "responses": [], "interactions": []}.'
             )
-        return prompt
+        return str(prompt)
 
-    async def _save_patterns(self, device_id: str, analysis: dict):  # noqa: C901, PLR0912, PLR0915
+    async def _save_patterns(self, device_id: str, analysis: dict) -> None:  # noqa: C901, PLR0912, PLR0915
         """Save LLM-decoded patterns to the device database.
 
         Routes structured output through DecipherIngest: a v2 delta (with
@@ -1300,26 +1303,26 @@ class LearningPipeline:
                 stats_obj = MatchStats(device_id=device_id)
                 session.add(stats_obj)
 
-            existing_patterns = {}
+            existing_patterns: dict[str, RequestPattern] = {}
             if pattern_ids:
-                res = await session.execute(
+                p_res = await session.execute(
                     select(RequestPattern).where(RequestPattern.pattern_id.in_(pattern_ids))
                 )
-                existing_patterns = {p.pattern_id: p for p in res.scalars().all()}
+                existing_patterns = {p.pattern_id: p for p in p_res.scalars().all()}
 
-            existing_templates = {}
+            existing_templates: dict[str, ResponseTemplate] = {}
             if template_ids:
-                res = await session.execute(
+                t_res = await session.execute(
                     select(ResponseTemplate).where(ResponseTemplate.template_id.in_(template_ids))
                 )
-                existing_templates = {t.template_id: t for t in res.scalars().all()}
+                existing_templates = {t.template_id: t for t in t_res.scalars().all()}
 
-            existing_mappings = set()
+            existing_mappings: set[str] = set()
             if mapping_ids:
-                res = await session.execute(
+                m_res = await session.execute(
                     select(FieldMapping.mapping_id).where(FieldMapping.mapping_id.in_(mapping_ids))
                 )
-                existing_mappings = set(res.scalars().all())
+                existing_mappings = set(m_res.scalars().all())
 
             for item in prepared_patterns:
                 pattern_data = item["pattern_data"]

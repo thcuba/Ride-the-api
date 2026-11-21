@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import binascii
 import logging
+from typing import Any
 
 from fastapi import APIRouter, File, Form, Request, Response, UploadFile
 from fastapi.responses import JSONResponse
@@ -19,14 +20,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["tls"])
 
 
-def _server():
+def _server() -> Any:
     from core import server  # noqa: PLC0415 - lazy import avoids a cycle with core.server
 
     return server
 
 
 @router.get("/api/tls/ca-cert")
-async def tls_download_ca():
+async def tls_download_ca() -> Response:
     """Download the CA certificate (PEM) for installation on devices."""
     if not _server().cert_manager:
         return JSONResponse(status_code=503, content={"error": "Cert manager not ready"})
@@ -43,7 +44,7 @@ async def tls_download_ca():
 
 
 @router.get("/api/tls/stats")
-async def tls_stats():
+async def tls_stats() -> Response | dict[str, Any]:
     """Return TLS/MITM statistics."""
     stats = {"cert_manager": {}, "mitm_server": False, "device_ports": [], "open_relays": 0}
     if _server().cert_manager:
@@ -66,7 +67,7 @@ async def tls_stats():
 
 
 @router.get("/api/tls/relayed")
-async def tls_relayed(limit: int = 50):
+async def tls_relayed(limit: int = 50) -> Response | dict[str, Any]:
     """List connections forwarded without decryption, newest first.
 
     A device that pins its vendor's certificate never completes a handshake with us, so nothing of
@@ -106,7 +107,7 @@ async def tls_relayed(limit: int = 50):
 
 
 @router.get("/api/tls/device-ports")
-async def tls_device_ports():
+async def tls_device_ports() -> Response | dict[str, Any]:
     """Return IP-to-device mapping for all connected devices."""
     if not _server().tls_mitm_server:
         return {"devices": []}
@@ -125,7 +126,7 @@ async def tls_device_ports():
 
 
 @router.get("/api/tls/unidentified")
-async def tls_unidentified():
+async def tls_unidentified() -> Response | dict[str, Any]:
     """List device IDs starting with 'ip-' (auto-created by TLS handler)."""
     if not _server().db_manager:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
@@ -152,7 +153,7 @@ async def _move_device_db_to_name(device_id: str, new_name: str) -> None:
 
 
 @router.put("/api/devices/{device_id}/tls-config")
-async def tls_update_device_config(device_id: str, request: Request):
+async def tls_update_device_config(device_id: str, request: Request) -> Response | dict[str, Any]:
     """Update TLS config for a specific device (name, vendor, passthrough, pinning_bypass)."""
     if not _server().db_manager:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
@@ -189,7 +190,7 @@ async def tls_update_device_config(device_id: str, request: Request):
 
 
 @router.get("/api/tls/ports")
-async def tls_list_ports():
+async def tls_list_ports() -> Response | dict[str, Any]:
     """List all currently active TLS listen ports (read-only).
 
     Ports are configured ONLY in config.yaml (``tls_decrypt.listen_ports``)
@@ -202,13 +203,13 @@ async def tls_list_ports():
 
 
 @router.get("/api/tls/frida/script.js")
-async def tls_frida_script():
+async def tls_frida_script() -> Response:
     """Return a Frida script for bypassing certificate pinning."""
     return Response(content=get_frida_script(), media_type="application/javascript")
 
 
 @router.get("/api/tls/certs")
-async def tls_list_certs():
+async def tls_list_certs() -> Response | dict[str, Any]:
     """List all imported and auto-generated certificates."""
     if not _server().cert_manager:
         return JSONResponse(status_code=503, content={"error": "Cert manager not ready"})
@@ -221,7 +222,7 @@ async def tls_list_certs():
 
 
 @router.get("/api/tls/certs/{hostname}")
-async def tls_get_cert_info(hostname: str):
+async def tls_get_cert_info(hostname: str) -> Response | dict[str, Any]:
     """Get detailed info about a specific certificate."""
     if not _server().cert_manager:
         return JSONResponse(status_code=503, content={"error": "Cert manager not ready"})
@@ -242,7 +243,7 @@ async def tls_get_cert_info(hostname: str):
 @router.post("/api/tls/certs/upload")
 async def tls_upload_cert(
     hostname: str = Form(...), cert: UploadFile = File(...), key: UploadFile = File(...)
-):
+) -> Response | dict[str, Any]:
     """Upload a certificate + private key (PEM format) for a specific hostname."""
     if not _server().cert_manager:
         return JSONResponse(status_code=503, content={"error": "Cert manager not ready"})
@@ -267,7 +268,7 @@ async def tls_upload_cert(
 
 
 @router.post("/api/tls/certs/upload-json")
-async def tls_upload_cert_json(request: Request):
+async def tls_upload_cert_json(request: Request) -> Response | dict[str, Any]:
     """Upload a certificate + private key as JSON (base64-encoded PEM)."""
     if not _server().cert_manager:
         return JSONResponse(status_code=503, content={"error": "Cert manager not ready"})
@@ -295,7 +296,7 @@ async def tls_upload_cert_json(request: Request):
 
 
 @router.delete("/api/tls/certs/{hostname}")
-async def tls_delete_cert(hostname: str):
+async def tls_delete_cert(hostname: str) -> Response | dict[str, Any]:
     """Delete an imported certificate, reverting to auto-generated."""
     if not _server().cert_manager:
         return JSONResponse(status_code=503, content={"error": "Cert manager not ready"})
@@ -319,7 +320,7 @@ async def tls_delete_cert(hostname: str):
 
 
 @router.post("/api/tls/certs/{hostname}/rotate")
-async def tls_rotate_cert(hostname: str, request: Request):
+async def tls_rotate_cert(hostname: str, request: Request) -> Response | dict[str, Any]:
     """Replace an existing certificate without downtime."""
     if not _server().cert_manager:
         return JSONResponse(status_code=503, content={"error": "Cert manager not ready"})
@@ -349,7 +350,7 @@ async def tls_rotate_cert(hostname: str, request: Request):
 
 
 @router.post("/api/tls/root-ca/download")
-async def tls_download_root_ca():
+async def tls_download_root_ca() -> Response:
     """Download the root CA certificate for manual installation on devices."""
     if not _server().cert_manager:
         return JSONResponse(status_code=503, content={"error": "Cert manager not ready"})

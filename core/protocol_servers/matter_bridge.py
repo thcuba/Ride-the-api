@@ -53,7 +53,7 @@ class MatterBridgePlugin(ProtocolServerPlugin):
         )
 
     async def _handle_connection(  # noqa: C901, PLR0912
-        self, reader: asyncio.StreamReader, writer: asyncio.Writer
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
         peername = writer.get_extra_info("peername", ("unknown", 0))
         remote_ip = peername[0]

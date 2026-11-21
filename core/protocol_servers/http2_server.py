@@ -81,7 +81,7 @@ class HTTP2ServerPlugin(ProtocolServerPlugin):
         logger.info("HTTP/2 server stopped")
 
     async def _handle_connection(  # noqa: C901, PLR0912, PLR0915
-        self, reader: asyncio.StreamReader, writer: asyncio.Writer
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
         peername = writer.get_extra_info("peername", ("unknown", 0))
         remote_ip = peername[0]
@@ -280,7 +280,7 @@ def _send_queued(conn: h2.connection.H2Connection, outbox: dict[int, bytes]) -> 
             del outbox[stream_id]
 
 
-async def _flush(conn: h2.connection.H2Connection, writer: asyncio.Writer) -> None:
+async def _flush(conn: h2.connection.H2Connection, writer: asyncio.StreamWriter) -> None:
     # data_to_send() drains the buffer: calling it once to test and again to
     # write sent nothing, so SETTINGS ACKs and WINDOW_UPDATEs were lost.
     data = conn.data_to_send()

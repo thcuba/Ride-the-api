@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Response
 from fastapi.responses import JSONResponse
 
 from core.protocol_servers import get_protocol_server_manager
@@ -14,14 +15,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["protocols"])
 
 
-def _server():
+def _server() -> Any:
     from core import server  # noqa: PLC0415 - lazy import avoids a cycle with core.server
 
     return server
 
 
 @router.get("/api/protocol-servers")
-async def protocol_servers_status():
+async def protocol_servers_status() -> Response | dict[str, Any]:
     """List all protocol servers and their status."""
     manager = get_protocol_server_manager()
     status_list = await manager.get_all_status()
@@ -29,7 +30,7 @@ async def protocol_servers_status():
 
 
 @router.post("/api/protocol-servers/{name}/start")
-async def protocol_server_start(name: str):
+async def protocol_server_start(name: str) -> Response | dict[str, Any]:
     """Start a specific protocol server and persist enabled=true in config."""
     manager = get_protocol_server_manager()
     success = await manager.start_plugin(name)
@@ -48,7 +49,7 @@ async def protocol_server_start(name: str):
 
 
 @router.post("/api/protocol-servers/{name}/stop")
-async def protocol_server_stop(name: str):
+async def protocol_server_stop(name: str) -> Response | dict[str, Any]:
     """Stop a specific protocol server and persist enabled=false in config."""
     manager = get_protocol_server_manager()
     success = await manager.stop_plugin(name)
@@ -67,7 +68,7 @@ async def protocol_server_stop(name: str):
 
 
 @router.get("/api/protocol-servers/{name}/config")
-async def protocol_server_config(name: str):
+async def protocol_server_config(name: str) -> Response | dict[str, Any]:
     """Get configuration for a specific protocol server."""
     manager = get_protocol_server_manager()
     plugin = manager.get_plugin(name)

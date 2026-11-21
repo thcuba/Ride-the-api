@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import dns.asyncquery
 import dns.message
@@ -47,15 +47,15 @@ def _get_server() -> ModuleType:
     return server
 
 
-def _get_db() -> object:
+def _get_db() -> Any:
     return getattr(_get_server(), "db_manager", None)
 
 
-def _get_orchestrator() -> object:
+def _get_orchestrator() -> Any:
     return getattr(_get_server(), "orchestrator", None)
 
 
-def _get_config_manager() -> object:
+def _get_config_manager() -> Any:
     cm = getattr(_get_server(), "config_manager", None)
     if cm is not None:
         return cm
@@ -64,7 +64,7 @@ def _get_config_manager() -> object:
     return get_config_manager()
 
 
-def _get_modification_engine() -> object:
+def _get_modification_engine() -> Any:
     getter = getattr(_get_server(), "get_modification_engine", None)
     if getter is not None:
         return getter()
@@ -73,11 +73,12 @@ def _get_modification_engine() -> object:
     return get_modification_engine()
 
 
-async def _resolve_device_for_ip(db: object, client_ip: str | None) -> str | None:
+async def _resolve_device_for_ip(db: Any, client_ip: str | None) -> str | None:
     """Resolve a source IP to a known device id, when it is bound."""
     if not client_ip or client_ip == "unknown" or not db:
         return None
-    return await db.resolve_device_id(client_ip)  # type: ignore[union-attr]
+    res = await db.resolve_device_id(client_ip)
+    return str(res) if res is not None else None
 
 
 def _last_seen_is_stale(stored: datetime | None, now: datetime) -> bool:
@@ -91,7 +92,7 @@ def _last_seen_is_stale(stored: datetime | None, now: datetime) -> bool:
 
 async def handle_device_seen(client_ip: str, sni: str | None) -> None:
     """Register a device the moment it presents itself on a TLS port."""
-    db_manager: object = _get_db()
+    db_manager: Any = _get_db()
     if not db_manager:
         return
 
@@ -137,7 +138,7 @@ async def handle_device_seen(client_ip: str, sni: str | None) -> None:
 
 async def should_relay_tls(client_ip: str) -> bool:
     """Say whether a connection must be forwarded untouched instead of decrypted."""
-    db_manager: object = _get_db()
+    db_manager: Any = _get_db()
     if not db_manager:
         return False
 
@@ -154,7 +155,7 @@ async def should_relay_tls(client_ip: str) -> bool:
 
 async def mark_device_untrusted(client_ip: str, sni: str | None) -> None:
     """Record that a device refused our certificate, so it is relayed from now on."""
-    db_manager: object = _get_db()
+    db_manager: Any = _get_db()
     if not db_manager:
         return
 
@@ -206,7 +207,7 @@ async def mark_device_untrusted(client_ip: str, sni: str | None) -> None:
 
 async def record_relayed_connection(contact: dict) -> None:
     """Persist one connection that was forwarded without decryption."""
-    db_manager: object = _get_db()
+    db_manager: Any = _get_db()
     if not db_manager:
         return
 
@@ -303,10 +304,10 @@ def _raw_target(request: Request) -> str | None:
 
 
 async def _forward_bypassed_request(  # noqa: PLR0913
-    adapter: object,
+    adapter: Any,
     request: Request,
     path: str,
-    body: object,
+    body: dict[str, Any] | str | None,
     client_ip: str,
     *,
     raw_body: bytes | None = None,
@@ -401,7 +402,8 @@ async def _get_request_body(request: Request) -> dict | None:
             i += 1
         if i >= n or body[i] not in (123, 91):  # ord('{') == 123, ord('[') == 91
             return None
-        return json.loads(body)
+        parsed = json.loads(body)
+        return parsed if isinstance(parsed, dict) else None
     except (json.JSONDecodeError, UnicodeDecodeError) as e:
         logger.debug("Request body is not JSON: %s", e)
         return None

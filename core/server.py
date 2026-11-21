@@ -14,6 +14,7 @@ import logging
 import os
 import sys
 from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -261,6 +262,8 @@ auto_switch_scheduler: AutoSwitchScheduler | None = None
 metrics_server: MetricsServer | None = None
 
 _metrics_scrape_task: asyncio.Task | None = None
+
+_otel_tracer: object | None = None
 
 connection_watchdog: ConnectionWatchdog | None = None
 
@@ -631,7 +634,7 @@ async def _shutdown_services() -> None:
 
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI):
+async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan handler."""
     logger.info("Starting Local Cloud Replacement Proxy...")
     config = config_manager.config
@@ -790,7 +793,7 @@ app.include_router(proxy_router)
 _UVICORN_LOG_LEVELS = frozenset({"critical", "error", "warning", "info", "debug", "trace"})
 
 
-def main():
+def main() -> None:
     """Run the server."""
 
     config = config_manager.config
@@ -849,7 +852,7 @@ def publish_entrypoint_module(executing: ModuleType | None = None) -> None:
     sys.modules[_CANONICAL_MODULE] = module
     package = sys.modules.get("core")
     if package is not None and getattr(package, "server", None) is None:
-        package.server = module
+        setattr(package, "server", module)
 
 
 if __name__ == "__main__":

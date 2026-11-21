@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter
 from fastapi.responses import HTMLResponse
@@ -19,7 +19,7 @@ router = APIRouter(include_in_schema=False)
 _WEBUI_HTML_CACHE: dict[Path, str] = {}
 
 
-def _server():
+def _server() -> Any:
     from core import server  # noqa: PLC0415 - lazy import avoids a cycle with core.server
 
     return server
@@ -43,13 +43,13 @@ async def _serve_webui(path: Path, page_name: str, expected: str) -> HTMLRespons
 
 
 @router.get("/", response_class=HTMLResponse)
-async def dashboard():
+async def dashboard() -> HTMLResponse:
     """Simple web dashboard."""
     return await _serve_webui(_server().DASHBOARD_HTML, "Dashboard", "webui/dashboard.html")
 
 
 @router.get("/patterns", response_class=HTMLResponse)
-async def patterns_index_page():
+async def patterns_index_page() -> HTMLResponse:
     """Serve the Patterns web UI with no device selected.
 
     The dashboard navigates here. Without this route the path is picked up by the device-proxy
@@ -60,18 +60,18 @@ async def patterns_index_page():
 
 
 @router.get("/patterns/{device_id}", response_class=HTMLResponse)
-async def patterns_page(device_id: str):  # noqa: ARG001 - the id only selects the page
+async def patterns_page(device_id: str) -> HTMLResponse:  # noqa: ARG001 - the id only selects the page
     """Serve the Patterns web UI for a device."""
     return await _serve_webui(_server().PATTERNS_HTML, "Patterns page", "webui/patterns.html")
 
 
 @router.get("/config", response_class=HTMLResponse)
-async def config_page():
+async def config_page() -> HTMLResponse:
     """Serve the Configuration web UI."""
     return await _serve_webui(_server().CONFIG_HTML, "Config page", "webui/config.html")
 
 
 @router.get("/options", response_class=HTMLResponse)
-async def options_page():
+async def options_page() -> HTMLResponse:
     """Serve the Options web UI (theme + software update)."""
     return await _serve_webui(_server().OPTIONS_HTML, "Options page", "webui/options.html")

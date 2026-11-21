@@ -12,7 +12,7 @@ import contextlib
 import inspect
 import json
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from core.config import ProtocolServersConfig
 
@@ -58,8 +58,8 @@ class ProtocolServerPlugin:
 
     name: str = ""
 
-    def __init__(self, config: ProtocolServersConfig) -> None:
-        self.config = config
+    def __init__(self, config: Any) -> None:
+        self.config: Any = config
         self._task: asyncio.Task | None = None
         self._running = False
 

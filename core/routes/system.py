@@ -6,8 +6,9 @@ import json
 import logging
 import subprocess
 from pathlib import Path
+from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 from jsonschema.exceptions import ValidationError
 from pydantic import ValidationError as PydanticValidationError
@@ -28,7 +29,7 @@ router = APIRouter(tags=["system"])
 _MIN_PASSWORD_LENGTH = 8
 
 
-def _server():
+def _server() -> Any:
     from core import server  # noqa: PLC0415 - lazy import avoids a cycle with core.server
 
     return server
@@ -89,7 +90,7 @@ def _listening_ports() -> dict[str, object]:
 
 
 @router.get("/health")
-async def health_check():
+async def health_check() -> Response | dict[str, Any]:
     """Health check endpoint: also reports what is actually bound."""
 
     return {
@@ -102,7 +103,7 @@ async def health_check():
 
 
 @router.post("/api/system/update")
-async def system_update():
+async def system_update() -> Response | dict[str, Any]:
     """Update the software to the latest state and restart the service.
 
 
@@ -162,14 +163,14 @@ async def system_update():
 
 
 @router.get("/api/settings/buffer-backend")
-async def get_buffer_backend_setting():
+async def get_buffer_backend_setting() -> Response | dict[str, Any]:
     """Return the currently active buffer backend (``disk`` = SQLite, or ``memory``)."""
 
     return {"backend": get_buffer_backend()}
 
 
 @router.put("/api/settings/buffer-backend")
-async def set_buffer_backend_setting(request: Request):
+async def set_buffer_backend_setting(request: Request) -> Response | dict[str, Any]:
     """Switch the buffer backend, carrying the pairs in flight, and persist the choice.
 
 
@@ -227,7 +228,7 @@ async def set_buffer_backend_setting(request: Request):
 
 
 @router.get("/api/config")
-async def get_config():
+async def get_config() -> Response | dict[str, Any]:
     """Return the full current configuration (validated YAML model_dump).
 
 
@@ -242,7 +243,7 @@ async def get_config():
 
 
 @router.put("/api/config")
-async def put_config(request: Request):
+async def put_config(request: Request) -> Response | dict[str, Any]:
     """Validate and persist a full replacement of the configuration."""
 
     try:
@@ -325,7 +326,7 @@ def _new_password_problem(password: object) -> str | None:
 
 
 @router.post("/api/auth/password")
-async def set_control_plane_password(request: Request):
+async def set_control_plane_password(request: Request) -> Response | dict[str, Any]:
     """Set the control-plane ``security.password`` on first run.
 
 

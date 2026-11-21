@@ -49,11 +49,11 @@ class LearningOrchestrator:
 
     def __init__(self, db_manager: DatabaseManager) -> None:
         self.db_manager = db_manager
-        self.llm_decipher = None
+        self.llm_decipher: LLMDecipherService | None = None
         self.buffer: dict[str, ContextBuffer] = {}
-        self.engine = None
-        self.tracker = None
-        self.pipeline = None
+        self.engine: PatternEngine | None = None
+        self.tracker: MatchRateTracker | None = None
+        self.pipeline: LearningPipeline | None = None
         # Outlives pipeline rebuilds (buffer backend switch), see FlushCoordinator.
         self.flushes = FlushCoordinator()
 
@@ -61,7 +61,7 @@ class LearningOrchestrator:
         """Cancel automatic flushes still running (called at shutdown)."""
         await self.flushes.cancel_all()
 
-    def initialize(self, llm_decipher: LLMDecipherService):
+    def initialize(self, llm_decipher: LLMDecipherService) -> None:
         """Initialize the orchestrator with required services.
 
         Sets up the PatternEngine and MatchRateTracker.
@@ -104,7 +104,7 @@ class LearningOrchestrator:
         name = pattern_file.name.removesuffix(".ride-pattern.json")
         return name == hashlib.sha256(device_id.encode("utf-8")).hexdigest()
 
-    def _auto_load_patterns(self):
+    def _auto_load_patterns(self) -> None:
         """Load .ride-pattern.json files into the engine at startup.
 
         A file the sync wrote is a snapshot of the device DB: loading it warms
@@ -113,6 +113,8 @@ class LearningOrchestrator:
         flush used to replace it). Snapshots load first so a seed for the same
         device is merged on top of its snapshot.
         """
+        if self.engine is None:
+            return
         files = [
             (pattern_file, self._device_id_from_pattern_file(pattern_file))
             for search_dir in self._pattern_search_dirs()
@@ -208,7 +210,7 @@ class LearningOrchestrator:
             from core.config import get_config  # noqa: PLC0415
 
             cfg = get_config()
-            corr = cfg.correlation
+            corr: Any = cfg.correlation
         except Exception:
             logger.debug("Prune: config unavailable; using defaults")
 
@@ -295,6 +297,9 @@ class LearningOrchestrator:
         requests return a conclusive ``no_fallback`` action instead of
         forwarding to the cloud.
         """
+        if self.engine is None or self.tracker is None:
+            return {"action": "forward", "correlation_key": None}
+
         pattern, template, score = await self.engine.find_best_match(
             device.device_id, method, path, headers, body, query_params, protocol=protocol
         )
@@ -361,6 +366,9 @@ class LearningOrchestrator:
     ) -> dict:
         """Hybrid mode: try local match first; if confident serve locally, otherwise
         forward to cloud + learn."""
+        if self.engine is None or self.tracker is None:
+            return {"action": "forward", "correlation_key": None}
+
         pattern, template, score = await self.engine.find_best_match(
             device.device_id, method, path, headers, body, query_params, protocol=protocol
         )
@@ -429,18 +437,21 @@ class LearningOrchestrator:
         corr_key = await self._register_for_learning(
             device, protocol, method, path, headers, body, query_params, enrichment
         )
-        try:
-            pattern, template, score = await self.engine.find_best_match(
-                device.device_id, method, path, headers, body, query_params, protocol=protocol
+        would_serve = False
+        if self.engine is not None:
+            try:
+                pattern, template, score = await self.engine.find_best_match(
+                    device.device_id, method, path, headers, body, query_params, protocol=protocol
+                )
+                would_serve = bool(pattern and template and score >= device.match_threshold)
+            except Exception:  # noqa: BLE001 - a shadow-match failure must not break capture
+                logger.debug("Shadow match failed for %s", device.device_id, exc_info=True)
+                would_serve = False
+        if self.tracker is not None:
+            await self.tracker.record_result(
+                device.device_id,
+                MatchResult.LOCAL_HIT if would_serve else MatchResult.CLOUD_MISS,
             )
-            would_serve = bool(pattern and template and score >= device.match_threshold)
-        except Exception:  # noqa: BLE001 - a shadow-match failure must not break capture
-            logger.debug("Shadow match failed for %s", device.device_id, exc_info=True)
-            would_serve = False
-        await self.tracker.record_result(
-            device.device_id,
-            MatchResult.LOCAL_HIT if would_serve else MatchResult.CLOUD_MISS,
-        )
         return {
             "action": "forward",
             "correlation_key": corr_key,
@@ -450,6 +461,10 @@ class LearningOrchestrator:
     async def _ensure_pipeline(self, device_id: str) -> LearningPipeline:
         """Lazily build the LearningPipeline bound to this device's buffer."""
         if not self.pipeline:
+            if self.llm_decipher is None:
+                raise RuntimeError("Orchestrator not initialized with LLM service")
+            if self.tracker is None:
+                raise RuntimeError("Orchestrator not initialized with match tracker")
             buffer = await self.ensure_buffer(device_id)
             self.pipeline = LearningPipeline(
                 self.db_manager,
@@ -495,17 +510,8 @@ class LearningOrchestrator:
         enrichment: dict | None = None,
     ) -> str:
         """Register a request for learning capture with its real protocol."""
-        if not self.pipeline:
-            buffer = await self.ensure_buffer(device.device_id, device.context_buffer_size)
-            self.pipeline = LearningPipeline(
-                self.db_manager,
-                self.llm_decipher,
-                buffer,
-                self.tracker,
-                self.engine,
-                flushes=self.flushes,
-            )
-        return await self.pipeline.register_request(
+        pipeline = await self._ensure_pipeline(device.device_id)
+        return await pipeline.register_request(
             device.device_id,
             device.vendor,
             protocol,
@@ -575,7 +581,8 @@ class LearningOrchestrator:
         # was forwarded (_handle_production/_handle_hybrid record it at
         # request time). Recording it again on the response would double-count
         # total_requests/cloud_misses and understate the real match rate.
-        needs_flush = await self.pipeline.process_learning_pair(
+        pipeline = await self._ensure_pipeline(device_id)
+        needs_flush = await pipeline.process_learning_pair(
             device_id, pair, device.context_buffer_size
         )
         return {
@@ -586,6 +593,8 @@ class LearningOrchestrator:
 
     async def get_device_stats(self, device_id: str) -> dict:
         """Get comprehensive stats for a device."""
+        if self.tracker is None:
+            return {}
         stats = await self.tracker.get_stats(device_id)
         async with self.db_manager.core_session() as session:
             result = await session.execute(
