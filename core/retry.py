@@ -14,6 +14,7 @@ from tenacity import (
     AsyncRetrying,
     Retrying,
     before_sleep_log,
+    retry_base,
     retry_if_exception,
     retry_if_exception_type,
     stop_after_attempt,
@@ -61,7 +62,7 @@ def make_retryer(  # noqa: PLR0913
             if it is one of ``retry_on`` *and* the predicate returns True (e.g.
             to give up at once on a 401 that no retry can fix).
     """
-    retry = retry_if_exception_type(retry_on)
+    retry: retry_base = retry_if_exception_type(retry_on)
     if retry_if is not None:
         retry = retry & retry_if_exception(retry_if)
     return AsyncRetrying(
