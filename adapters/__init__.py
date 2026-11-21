@@ -8,8 +8,27 @@ from __future__ import annotations
 import logging
 
 from adapters.base import ProtocolAdapterRegistry, ProtocolDefinition, get_adapter_registry
+from adapters.coap import PROTOCOL_DEFINITION as COAP_DEF
+from adapters.example import PROTOCOL_DEFINITION as EXAMPLE_DEF
+from adapters.modbus import PROTOCOL_DEFINITION as MODBUS_DEF
+from adapters.mqtt import PROTOCOL_DEFINITION as MQTT_DEF
+from adapters.shelly import PROTOCOL_DEFINITION as SHELLY_DEF
+from adapters.thread_matter import PROTOCOL_DEFINITION as MATTER_DEF
+from adapters.zigbee import PROTOCOL_DEFINITION as ZIGBEE_DEF
+from adapters.zwave import PROTOCOL_DEFINITION as ZWAVE_DEF
 
 logger = logging.getLogger(__name__)
+
+STANDARD_PROTOCOL_DEFINITIONS: list[ProtocolDefinition] = [
+    EXAMPLE_DEF,
+    COAP_DEF,
+    MODBUS_DEF,
+    SHELLY_DEF,
+    ZIGBEE_DEF,
+    ZWAVE_DEF,
+    MATTER_DEF,
+    MQTT_DEF,
+]
 
 
 def _load_protocol_definition_entry_points(registry: ProtocolAdapterRegistry) -> None:
@@ -67,52 +86,8 @@ def register_all_adapters() -> ProtocolAdapterRegistry:
     """Register all available protocol adapters (built-in and entry-point discovered)."""
     registry = get_adapter_registry()
 
-    # Import and register the example reference adapter
-    from adapters.example import ExampleProtocolAdapter  # noqa: PLC0415
-
-    example_adapter = ExampleProtocolAdapter(
-        "example",
-        {
-            "region": "eu",
-            "api_version": "v1.0",
-        },
-    )
-    registry.register(example_adapter)
-
-    # CoAP adapter example
-    from adapters.coap import CoAPProtocolAdapter  # noqa: PLC0415
-
-    registry.register(CoAPProtocolAdapter("coap_example", {}))
-
-    # Modbus adapter example
-    from adapters.modbus import ModbusProtocolAdapter  # noqa: PLC0415
-
-    registry.register(ModbusProtocolAdapter("modbus_example", {}))
-
-    # Shelly adapter
-    from adapters.shelly import ShellyProtocolAdapter  # noqa: PLC0415
-
-    registry.register(ShellyProtocolAdapter("shelly", {}))
-
-    # Zigbee (open protocol)
-    from adapters.zigbee import ZigbeeProtocolAdapter  # noqa: PLC0415
-
-    registry.register(ZigbeeProtocolAdapter("zigbee", {}))
-
-    # Z-Wave (open protocol)
-    from adapters.zwave import ZWaveProtocolAdapter  # noqa: PLC0415
-
-    registry.register(ZWaveProtocolAdapter("zwave", {}))
-
-    # Thread / Matter (open protocol)
-    from adapters.thread_matter import MatterProtocolAdapter  # noqa: PLC0415
-
-    registry.register(MatterProtocolAdapter("matter", {}))
-
-    # MQTT adapter
-    from adapters.mqtt import MQTTProtocolAdapter  # noqa: PLC0415
-
-    registry.register(MQTTProtocolAdapter("mqtt", {}))
+    for proto_def in STANDARD_PROTOCOL_DEFINITIONS:
+        registry.register_definition(proto_def)
 
     # Discover and register third-party / community adapter plugins
     discover_adapter_entry_points(registry)
@@ -134,6 +109,7 @@ def get_registered_registry() -> ProtocolAdapterRegistry:
 
 __all__ = [
     "ProtocolDefinition",
+    "STANDARD_PROTOCOL_DEFINITIONS",
     "discover_adapter_entry_points",
     "get_registered_registry",
     "register_all_adapters",
