@@ -195,9 +195,9 @@ class CoAPServerPlugin(ProtocolServerPlugin):
 
             # Only a locally served response answers the device: other results
             # are pipeline bookkeeping (correlation keys...) and were sent as is.
-            body = device_reply(result)
-            if body is not None:
-                payload, is_json = encode_reply(body)
+            reply_body = device_reply(result)
+            if reply_body is not None:
+                payload, is_json = encode_reply(reply_body)
                 response = Message(code=aiocoap.CONTENT, payload=payload)
                 response.content_format = ContentFormat.JSON if is_json else ContentFormat.TEXT
                 return response

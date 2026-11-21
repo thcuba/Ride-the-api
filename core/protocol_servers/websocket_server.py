@@ -70,7 +70,7 @@ class WebSocketServerPlugin(ProtocolServerPlugin):
         self._running = True
         logger.info("WebSocket server listening on %s:%d%s", cfg.host, cfg.port, cfg.path)
 
-    async def _handle_ws(self, connection) -> None:  # noqa: ANN001, C901, PLR0912
+    async def _handle_ws(self, connection: Any) -> None:  # noqa: C901, PLR0912
         """Handle an individual WebSocket connection (websockets >= 14 API)."""
         remote_info = connection.remote_address
         remote_ip = remote_info[0] if remote_info else "unknown"

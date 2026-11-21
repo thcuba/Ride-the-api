@@ -31,7 +31,7 @@ class MatterBridgePlugin(ProtocolServerPlugin):
 
     name = "matter_bridge"
 
-    def __init__(self, config: Any, handler=None) -> None:  # noqa: ANN001, ANN401
+    def __init__(self, config: Any, handler: Any = None) -> None:  # noqa: ANN401
         super().__init__(config)
         self.handler = handler
         self._server: asyncio.AbstractServer | None = None
