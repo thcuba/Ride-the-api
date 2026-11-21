@@ -19,7 +19,7 @@ import asyncio
 import contextlib
 import logging
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -111,7 +111,7 @@ class ModbusServerPlugin(ProtocolServerPlugin):
         server = ModbusTcpServer(
             ModbusServerContext(devices=store, single=True), address=(cfg.host, cfg.port)
         )
-        server.context = _MirroringContext(server.context, self._notify)
+        server.context = cast(Any, _MirroringContext(server.context, self._notify))
         # Listen here so a failure (port in use) raises to the caller instead
         # of ending a background task nobody watches.
         await server.serve_forever(background=True)
@@ -171,6 +171,8 @@ class ModbusServerPlugin(ProtocolServerPlugin):
         task.add_done_callback(self._pending.discard)
 
     async def _mirror(self, request: InterceptedRequest) -> None:
+        if self.handler is None:
+            return
         try:
             await call_handler(self.handler, request)
         except Exception:
