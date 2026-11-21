@@ -463,9 +463,10 @@ async def _start_watchdog_and_scheduler(config: Config) -> None:
     """Start auto-switch scheduler and optional connection watchdog."""
     global auto_switch_scheduler, connection_watchdog  # noqa: PLW0603
 
-    auto_switch_scheduler = AutoSwitchScheduler(db_manager)
-    await auto_switch_scheduler.start()
-    logger.info("Auto-switch scheduler started")
+    if db_manager is not None:
+        auto_switch_scheduler = AutoSwitchScheduler(db_manager)
+        await auto_switch_scheduler.start()
+        logger.info("Auto-switch scheduler started")
 
     watchdog_cfg = config.connection_watchdog
     if watchdog_cfg.enabled:
