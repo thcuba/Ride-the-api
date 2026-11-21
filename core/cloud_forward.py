@@ -62,7 +62,7 @@ def _request_target(request: InterceptedRequest) -> str:
     """
     raw = getattr(request, "raw_target", None)
     if raw:
-        return raw
+        return str(raw)
     path = quote(request.path or "/", safe=_TARGET_SAFE)
     if request.query_params:
         sep = "&" if "?" in path else "?"
@@ -114,7 +114,7 @@ def _raw_body_matches_parsed(parsed: Any, raw: bytes) -> bool:  # noqa: ANN401
         # Nothing parsed (empty or non-JSON body): replay the original bytes.
         return True
     try:
-        return json.loads(raw) == parsed
+        return bool(json.loads(raw) == parsed)
     except (json.JSONDecodeError, UnicodeDecodeError, TypeError, ValueError):
         return False
 
@@ -137,7 +137,7 @@ def _request_body_bytes(
         if not raw:
             return None
         headers["content-length"] = str(len(raw))
-        return raw
+        return bytes(raw)
     if request.body is None or request.body == {}:
         return None
     body = json.dumps(request.body).encode("utf-8")
@@ -286,7 +286,10 @@ def _decode_body(raw: bytes) -> dict[str, Any] | None:
     if not raw:
         return None
     try:
-        return json.loads(raw.decode("utf-8"))
+        parsed = json.loads(raw.decode("utf-8"))
+        if isinstance(parsed, dict):
+            return parsed
+        return {"data": parsed}
     except (UnicodeDecodeError, json.JSONDecodeError):
         return {"raw": raw.decode("utf-8", "replace")}
 
