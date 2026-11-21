@@ -128,29 +128,29 @@ class HTTP2ServerPlugin(ProtocolServerPlugin):
                         # A request whose headers carry END_STREAM has no body
                         # and is fully dispatched while here.
                         if event.stream_ended:
-                            stream = pending.pop(event.stream_id)
-                            await self._respond(conn, outbox, stream, device_id, remote_ip)
+                            ended_req = pending.pop(event.stream_id)
+                            await self._respond(conn, outbox, ended_req, device_id, remote_ip)
                     elif isinstance(event, h2.events.DataReceived):
-                        stream = pending.get(event.stream_id)
-                        if stream is not None:
-                            if len(stream["body"]) + len(event.data) > _MAX_BODY_BYTES:
+                        data_stream = pending.get(event.stream_id)
+                        if data_stream is not None:
+                            if len(data_stream["body"]) + len(event.data) > _MAX_BODY_BYTES:
                                 conn.reset_stream(
                                     event.stream_id,
                                     error_code=h2.errors.ErrorCodes.REFUSED_STREAM,
-                                )
+                                 )
                                 # Drop the entry so a later StreamEnded cannot try to
                                 # send headers on a locally-closed stream.
                                 pending.pop(event.stream_id, None)
                             else:
-                                stream["body"].extend(event.data)
+                                data_stream["body"].extend(event.data)
                         # Always acknowledge so flow control keeps the stream alive.
                         conn.acknowledge_received_data(
                             event.flow_controlled_length, event.stream_id
                         )
                     elif isinstance(event, h2.events.StreamEnded):
-                        stream = pending.pop(event.stream_id, None)
-                        if stream is not None:
-                            await self._respond(conn, outbox, stream, device_id, remote_ip)
+                        stream_ended = pending.pop(event.stream_id, None)
+                        if stream_ended is not None:
+                            await self._respond(conn, outbox, stream_ended, device_id, remote_ip)
                     elif isinstance(event, h2.events.StreamReset):
                         pending.pop(event.stream_id, None)
                         outbox.pop(event.stream_id, None)
@@ -228,10 +228,10 @@ class HTTP2ServerPlugin(ProtocolServerPlugin):
         # Only a locally served response answers with content; anything else
         # used to come back as a 200 carrying the internal pipeline dict.
         reply = device_reply(result)
-        if reply is None:
+        if reply is None or not isinstance(result, dict):
             conn.send_headers(stream_id, [(":status", "502")], end_stream=True)
             return
-        response = result["response"]
+        response = result.get("response") or {}
         payload, is_json = encode_reply(reply)
         response_headers = [(":status", str(servable_status(response.get("status_code"))))]
         response_headers += [
