@@ -46,7 +46,7 @@ class ZWaveBridgePlugin(ProtocolServerPlugin):
 
     name = "zwave_bridge"
 
-    def __init__(self, config: Any, handler=None) -> None:  # noqa: ANN001, ANN401
+    def __init__(self, config: Any, handler: Any = None) -> None:  # noqa: ANN401
         super().__init__(config)
         self.handler = handler
         self._client: Any = None
@@ -111,11 +111,13 @@ class ZWaveBridgePlugin(ProtocolServerPlugin):
         )
         self._thread.start()
 
-    def _on_connect(self, client, _userdata, _flags, _reason_code, _properties) -> None:  # noqa: ANN001
+    def _on_connect(
+        self, client: Any, _userdata: Any, _flags: Any, _reason_code: Any, _properties: Any = None
+    ) -> None:
         self._connected = True
         client.subscribe("#")
 
-    def _on_message(self, _client, _userdata, msg) -> None:  # noqa: ANN001
+    def _on_message(self, _client: Any, _userdata: Any, msg: Any) -> None:
         if self._loop is None or self._loop.is_closed():
             return
         # Performance optimization: fast check for valid JSON start tokens before attempting
@@ -140,7 +142,7 @@ class ZWaveBridgePlugin(ProtocolServerPlugin):
             body = {"raw": payload.hex()}
         asyncio.run_coroutine_threadsafe(self._route_to_pipeline(msg.topic, body), self._loop)
 
-    async def _route_to_pipeline(self, topic: str, body) -> None:  # noqa: ANN001
+    async def _route_to_pipeline(self, topic: str, body: Any) -> None:
         # Splitting topic once into a tuple avoids duplicate string splitting (~1.64x speedup)
         parts = topic.split("/")
         device = parts[1] if len(parts) > 1 else "dev"
