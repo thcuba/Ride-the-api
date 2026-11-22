@@ -184,7 +184,22 @@ class SnifferService:
                     }
                 )
 
-        return {
+        warning = None
+        if not pairs_summary:
+            # A capture that parses but yields nothing is silent otherwise:
+            # the caller would see a successful import of 0 pairs.
+            logger.warning(
+                "Capture for device %s (%s) yielded no HTTP pairs", device_id, detected_fmt
+            )
+            warning = (
+                "No HTTP request/response pairs found in the capture. "
+                "PCAP files must carry cleartext HTTP: traffic that is TLS-encrypted "
+                "(even when captured with TLS keys) cannot be reconstructed here."
+                if detected_fmt in ("pcap", "pcapng")
+                else "No HTTP request/response pairs found in the capture."
+            )
+
+        result: dict[str, Any] = {
             "status": "success",
             "imported": count,
             "device_id": device_id,
@@ -193,3 +208,6 @@ class SnifferService:
             "pairs_count": len(pairs_summary),
             "pairs_summary": pairs_summary[:20],
         }
+        if warning:
+            result["warning"] = warning
+        return result
