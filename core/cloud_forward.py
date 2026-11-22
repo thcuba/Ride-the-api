@@ -297,7 +297,7 @@ def _decode_body(raw: bytes) -> dict[str, Any] | None:
 async def forward_intercepted(  # noqa: PLR0913
     request: InterceptedRequest,
     *,
-    hostname: str,
+    hostname: str | None = None,
     port: int = 443,
     use_tls: bool = True,
     ssl_context: ssl.SSLContext | bool | None = None,
