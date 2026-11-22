@@ -6,7 +6,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from starlette.requests import Request  # noqa: TC002
-from starlette.responses import JSONResponse, Response
+from starlette.responses import JSONResponse
 
 from core.resilience import CloudIndependenceVerifier
 

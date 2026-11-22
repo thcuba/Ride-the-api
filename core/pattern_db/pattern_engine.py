@@ -267,7 +267,7 @@ def _parse_formula_ast(expr: str) -> ast.AST:
     """Parse formula string into a simpleeval AST, cached for speedup."""
     parsed = _FORMULA_EVALUATOR.parse(expr)
     _validate_formula_ast(parsed)
-    return cast(ast.AST, parsed)
+    return cast("ast.AST", parsed)
 
 
 # Pre-compiled regex patterns for template resolution and formula processing (hot paths)
@@ -468,7 +468,7 @@ def _get_normalized_field_mappings(template: object) -> list[dict[str, Any]]:
     instance (~1.24x speedup)."""
     cached = getattr(template, "_cached_normalized_field_mappings", None)
     if cached is not None:
-        return cast(list[dict[str, Any]], cached)
+        return cast("list[dict[str, Any]]", cached)
     fms = _normalize_field_mappings(getattr(template, "field_mappings", None))
     with contextlib.suppress(AttributeError, TypeError):
         object.__setattr__(template, "_cached_normalized_field_mappings", fms)

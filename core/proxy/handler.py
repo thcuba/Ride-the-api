@@ -174,7 +174,7 @@ async def handle_tls_decrypted_request(req: DecryptedRequest) -> dict | None:  #
         else:
             logger.debug("TLS: passthrough for %s %s", req.method, req.path)
 
-        return cast(dict[str, Any], result)
+        return cast("dict[str, Any]", result)
 
 
 async def handle_tls_upstream_response(handler_result: dict, response: dict) -> dict | None:
@@ -195,7 +195,7 @@ async def handle_tls_upstream_response(handler_result: dict, response: dict) -> 
         body=normalize_request_body(response.get("body")),
         correlation_key=handler_result.get("correlation_key"),
     )
-    return cast(dict[str, Any] | None, res)
+    return cast("dict[str, Any] | None", res)
 
 
 async def handle_tls_upstream_failure(handler_result: dict) -> bool:
@@ -286,7 +286,7 @@ async def handle_protocol_request(request: InterceptedRequest) -> dict | None:  
             query_params=request.query_params or {},
             enrichment=enrichment,
         )
-        return cast(dict[str, Any] | None, res)
+        return cast("dict[str, Any] | None", res)
 
     except Exception as e:
         logger.error("Protocol handler error for %s: %s", device_id, e, exc_info=True)

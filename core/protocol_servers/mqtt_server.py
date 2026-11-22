@@ -273,7 +273,7 @@ class MQTTServerPlugin(ProtocolServerPlugin):
             logger.exception("MQTT handler error:")
             return None
         else:
-            return cast(dict[str, Any] | None, result)
+            return cast("dict[str, Any] | None", result)
 
     async def get_status(self) -> dict:
         return {

@@ -11,7 +11,7 @@ import tempfile
 import threading
 from enum import Enum, StrEnum
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -19,6 +19,9 @@ from watchfiles import Change, watch
 
 from core.backend_names import normalise_backend
 from core.modification import ModificationAction
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 

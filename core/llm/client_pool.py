@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 def _get_async_openai_cls() -> type[AsyncOpenAI]:
     mod = sys.modules.get("core.llm_decipher")
     if mod is not None and hasattr(mod, "AsyncOpenAI"):
-        return cast(type[AsyncOpenAI], mod.AsyncOpenAI)
+        return cast("type[AsyncOpenAI]", mod.AsyncOpenAI)
     return AsyncOpenAI
 
 

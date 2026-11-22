@@ -287,11 +287,12 @@ def _decode_body(raw: bytes) -> dict[str, Any] | None:
         return None
     try:
         parsed = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return {"raw": raw.decode("utf-8", "replace")}
+    else:
         if isinstance(parsed, dict):
             return parsed
         return {"data": parsed}
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return {"raw": raw.decode("utf-8", "replace")}
 
 
 async def forward_intercepted(  # noqa: PLR0913

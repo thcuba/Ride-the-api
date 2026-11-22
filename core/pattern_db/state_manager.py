@@ -166,7 +166,9 @@ class _SensorInstance:
     def _drift(self, baseline: float) -> float:
         if self._current_value is None:
             return baseline
-        return float(self._current_value) + random.uniform(self._drift_scaled_min, self._drift_scaled_max)
+        return float(self._current_value) + random.uniform(
+            self._drift_scaled_min, self._drift_scaled_max
+        )
 
     def _periodic(self, now: float, baseline: float) -> float:
         return baseline + self._amplitude * math.sin(now * self._two_pi_over_period)

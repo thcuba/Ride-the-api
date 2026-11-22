@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from collections import OrderedDict
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from core.fallback_policy import FallbackChain, FallbackHandler
 
@@ -107,7 +106,9 @@ async def execute_profile_chain(  # noqa: PLR0913, PLR0917
 
     def _make_handler(prof: Any) -> FallbackHandler:
         async def _handler() -> tuple[bool, Any]:
-            return cast(tuple[bool, Any], await call_profile_fn(prof, prompt, context, build_kwargs))
+            return cast(
+                "tuple[bool, Any]", await call_profile_fn(prof, prompt, context, build_kwargs)
+            )
 
         return _handler
 

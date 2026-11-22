@@ -413,14 +413,14 @@ class DecipherIngest:
                         session,
                         templates,
                         template_id,
-                        lambda: ResponseTemplate(
-                            template_id=template_id, pattern_id=ep.id
-                        ),
+                        lambda: ResponseTemplate(template_id=template_id, pattern_id=ep.id),
                         {
                             "status_code": resp_match.status_code,
                             "headers_template": resp_match.headers_template,
                             "body_template": resp_match.body_template,
-                            "field_mappings": {m.source: m.target for m in resp_match.field_mappings},
+                            "field_mappings": {
+                                m.source: m.target for m in resp_match.field_mappings
+                            },
                             "expected_variables": [
                                 m.target
                                 for m in resp_match.field_mappings

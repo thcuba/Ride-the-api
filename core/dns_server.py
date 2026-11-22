@@ -387,7 +387,12 @@ class DNSInterceptor:
         if recorder is None:
             return
         try:
-            recorder.note(client, qname, dns.rdatatype.to_text(cast(dns.rdatatype.RdataType, qtype)), decision)
+            recorder.note(
+                client,
+                qname,
+                dns.rdatatype.to_text(cast("dns.rdatatype.RdataType", qtype)),
+                decision,
+            )
         except Exception:  # noqa: BLE001 - the DNS answer matters more
             logger.debug("DNS: could not record the query for %s", qname, exc_info=True)
 

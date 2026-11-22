@@ -87,7 +87,7 @@ class CertManager:
         try:
             with self.ca_key_path.open("rb") as f:
                 self._ca_key = cast(
-                    rsa.RSAPrivateKey,
+                    "rsa.RSAPrivateKey",
                     serialization.load_pem_private_key(f.read(), password=None),
                 )
             with self.ca_cert_path.open("rb") as f:

@@ -111,7 +111,7 @@ class ModbusServerPlugin(ProtocolServerPlugin):
         server = ModbusTcpServer(
             ModbusServerContext(devices=store, single=True), address=(cfg.host, cfg.port)
         )
-        server.context = cast(Any, _MirroringContext(server.context, self._notify))
+        server.context = cast("Any", _MirroringContext(server.context, self._notify))
         # Listen here so a failure (port in use) raises to the caller instead
         # of ending a background task nobody watches.
         await server.serve_forever(background=True)

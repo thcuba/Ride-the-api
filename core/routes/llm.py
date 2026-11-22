@@ -6,7 +6,7 @@ import json
 import logging
 from typing import Any, cast
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from core.config import SECRET_MASK
@@ -36,7 +36,7 @@ async def get_llm_settings() -> Any:
     """Return the effective LLM settings (enabled, default profile, profiles)."""
     if not _server().llm_decipher_service:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
-    return cast(dict[str, Any], _server().llm_decipher_service.get_settings())
+    return cast("dict[str, Any]", _server().llm_decipher_service.get_settings())
 
 
 @router.put("/api/llm/settings")
@@ -60,7 +60,7 @@ async def update_llm_settings(request: Request) -> Any:
     except Exception:
         logger.exception("Failed to update LLM settings")
         return JSONResponse(status_code=500, content={"error": "Failed to update LLM settings"})
-    return cast(dict[str, Any], settings)
+    return cast("dict[str, Any]", settings)
 
 
 @router.post("/api/llm/profiles/test")
@@ -102,7 +102,7 @@ async def test_llm_profile(request: Request) -> Any:
     )
     if not result.get("success"):
         return JSONResponse(status_code=502, content=result)
-    return cast(dict[str, Any], result)
+    return cast("dict[str, Any]", result)
 
 
 @router.post("/api/llm/settings/profiles")
@@ -184,7 +184,7 @@ async def flush_buffer_to_llm(device_id: str, request: Request) -> Any:
     if not result.get("success"):
         status = 500 if "failed" in result.get("error", "") else 400
         return JSONResponse(status_code=status, content=result)
-    return cast(dict[str, Any], result)
+    return cast("dict[str, Any]", result)
 
 
 @router.post("/api/devices/{device_id}/llm/preview")
@@ -205,7 +205,7 @@ async def preview_llm_analysis(device_id: str, request: Request) -> Any:
     if not result.get("success"):
         status = 500 if "failed" in result.get("error", "") else 400
         return JSONResponse(status_code=status, content=result)
-    return cast(dict[str, Any], result)
+    return cast("dict[str, Any]", result)
 
 
 @router.get("/api/llm/user-profiles")
@@ -247,7 +247,7 @@ async def get_user_profile(name: str) -> Any:
     profile = await _server().db_manager.get_llm_profile(name)
     if not profile:
         return JSONResponse(status_code=404, content={"error": "Profile not found"})
-    return cast(dict[str, Any], profile)
+    return cast("dict[str, Any]", profile)
 
 
 @router.put("/api/llm/user-profiles/{name}")

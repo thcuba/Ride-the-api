@@ -735,11 +735,17 @@ class ModificationEngine:
                 "body": {"error": "blocked", "reason": msg.block_reason},
             }
         else:
-            out = dict(original) if (wrapped and isinstance(original, dict)) else {"status_code": 200, "headers": {}}
+            out = (
+                dict(original)
+                if (wrapped and isinstance(original, dict))
+                else {"status_code": 200, "headers": {}}
+            )
             # The rules' body as is: REPLACE swaps it and REMOVE deletes keys,
             # which a merge into the original body would undo.
             out["body"] = msg.body
-            original_headers = (original.get("headers") or {}) if (wrapped and isinstance(original, dict)) else {}
+            original_headers = (
+                (original.get("headers") or {}) if (wrapped and isinstance(original, dict)) else {}
+            )
             if msg.headers != {k.lower(): v for k, v in original_headers.items()}:
                 out["headers"] = dict(msg.headers)
         delay_ms = msg.metadata.get("artificial_delay_ms")

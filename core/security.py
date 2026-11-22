@@ -32,12 +32,12 @@ from typing import TYPE_CHECKING
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import JSONResponse, Response
-from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
 
     from starlette.requests import Request
+    from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
     from core.config import SecurityConfig
 
@@ -173,7 +173,7 @@ class ControlPlaneAuthMiddleware(BaseHTTPMiddleware):
                 "the control plane is locked until you set it in config.yaml."
             )
 
-    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:  # noqa: PLR0911
         # Performance optimization: direct scope lookup avoids parsing URL object (~4x speedup)
         path = request.scope.get("path", "")
         # Decide on the canonical form, never on the raw spelling: an access-control check that
@@ -434,7 +434,7 @@ _DEFAULT_SECURITY_HEADERS = (
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Add standard HTTP security response headers to all responses."""
 
-    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:  # noqa: PLR0911
         response = await call_next(request)
         raw = response.raw_headers
         # Performance optimization: single pass tuple inspection avoids 5x

@@ -137,7 +137,7 @@ class HTTP2ServerPlugin(ProtocolServerPlugin):
                                 conn.reset_stream(
                                     event.stream_id,
                                     error_code=h2.errors.ErrorCodes.REFUSED_STREAM,
-                                 )
+                                )
                                 # Drop the entry so a later StreamEnded cannot try to
                                 # send headers on a locally-closed stream.
                                 pending.pop(event.stream_id, None)

@@ -45,6 +45,7 @@ from core.redaction import redact_body, redact_headers, redact_query
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine
+
     from core.pattern_db.pattern_engine import PatternEngine
 
 logger = logging.getLogger(__name__)

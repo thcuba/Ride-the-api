@@ -14,7 +14,6 @@ import logging
 import os
 import sys
 from contextlib import asynccontextmanager
-from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -129,6 +128,7 @@ from core.traffic_selector import get_traffic_selector
 from core.upstream_resolver import _apply_config, self_connection_reason
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
     from types import ModuleType
 
     from core.config import Config

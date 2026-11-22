@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import TYPE_CHECKING, Any, Callable, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from cachetools import TTLCache
 from pydantic import SecretStr, ValidationError
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from openai import AsyncOpenAI
 
 from core.config import SECRET_MASK, get_config_manager, is_env_reference
@@ -514,7 +516,7 @@ class LLMDecipherService:
         if cache_key in self._cache:
             cached = self._cache[cache_key]
             logger.debug(f"Cache hit for pair {pair.pair_id}")
-            return cast(DecipherResult, cached)
+            return cast("DecipherResult", cached)
 
         db_schema = self._get_db_schema(pair.vendor)
         request_meta = getattr(pair.request, "metadata", {}) or {}

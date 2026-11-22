@@ -67,7 +67,7 @@ def _load_schema(name: str) -> dict[str, Any]:
     path = _SCHEMA_DIR / name
     if not path.exists():
         raise FileNotFoundError(f"JSON Schema not found: {path}")
-    return cast(dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
+    return cast("dict[str, Any]", json.loads(path.read_text(encoding="utf-8")))
 
 
 def get_capture_schema() -> dict[str, Any]:

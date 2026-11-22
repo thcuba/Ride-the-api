@@ -16,14 +16,15 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
 from sqlalchemy import Connection
-from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence
+
+    from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,9 @@ _CREATE_MIGRATION_TABLE = sa.text(
 class Migration:
     """A single, ordered schema migration."""
 
-    def __init__(self, id: int, name: str, apply_fn: Callable[[AsyncConnection], Awaitable[None]]) -> None:
+    def __init__(
+        self, id: int, name: str, apply_fn: Callable[[AsyncConnection], Awaitable[None]]
+    ) -> None:
         self.id = id
         self.name = name
         self.apply_fn = apply_fn

@@ -169,7 +169,7 @@ class ExampleProtocolAdapter(ProtocolAdapter):
 
         return request
 
-    async def _parse_http_request(self, request: InterceptedRequest) -> InterceptedRequest:
+    async def _parse_http_request(self, request: InterceptedRequest) -> InterceptedRequest:  # noqa: C901
         """Parse HTTP/HTTPS API request."""
         if not request.path:
             request.parsed_intent = CommandType.UNKNOWN
