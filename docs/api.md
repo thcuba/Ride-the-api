@@ -467,9 +467,12 @@ for that device. The per-device value overrides
 
 ### Connection Type: `GET /api/devices/{device_id}/connection`
 
-Reads how the device's ingress traffic is handled.
+Reads how the device's ingress traffic is handled. A device with no stored value
+reports `auto`.
 
 **Response `200 OK`** `{"device_id": "...", "connection": "auto"}`
+
+**Status codes**: `200` OK, `404` Device not found, `503` Service not ready
 
 ### Connection Type: `PUT /api/devices/{device_id}/connection`
 
