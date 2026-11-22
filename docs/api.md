@@ -1036,6 +1036,18 @@ present:
 
 **Status codes**: `200` OK, `400` Empty body/file, `413` Body over `proxy.max_device_request_size`, `422` Parse error, `503` Database service unready
 
+**CLI Usage**:
+
+Captures can also be imported using the built-in CLI module (`core.sniffer`):
+
+```bash
+# Upload to a running Ride-the-API server over HTTP
+python -m core.sniffer import --file capture.pcapng --device ip-192-168-1-42 --url http://localhost:8911
+
+# Direct import into local device database (offline, reads config.yaml device_db_dir)
+python -m core.sniffer import --file traffic.har --device ip-192-168-1-42
+```
+
 ---
 
 ## TLS / MITM

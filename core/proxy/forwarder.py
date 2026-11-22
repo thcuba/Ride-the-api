@@ -136,7 +136,7 @@ async def handle_device_seen(client_ip: str, sni: str | None) -> None:
             db_manager.invalidate_ip_lookup_cache()  # type: ignore[union-attr]
 
 
-async def should_relay_tls(client_ip: str) -> bool:
+async def should_relay_tls(client_ip: str, _sni: str | None = None) -> bool:
     """Say whether a connection must be forwarded untouched instead of decrypted."""
     db_manager: Any = _get_db()
     if not db_manager:

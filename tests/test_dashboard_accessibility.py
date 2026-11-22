@@ -224,3 +224,24 @@ def test_configuration_path_chip_accessibility_and_copy():
     assert "function copyConfigPath()" in js
     assert "copyToClipboard(path, done" in js
     assert "Config path copied to clipboard" in js
+
+
+def test_dialog_helpers_and_escape_accessibility():
+    common_js = Path("webui/static/js/common.js")
+    assert common_js.exists(), "webui/static/js/common.js must exist"
+    content = common_js.read_text(encoding="utf-8")
+
+    # Verify modern dialog exports
+    assert "function showConfirm(" in content
+    assert "window.showConfirm = showConfirm;" in content
+    assert "function showPrompt(" in content
+    assert "window.showPrompt = showPrompt;" in content
+
+    # Verify showPrompt cancel button is type="button" to avoid Enter key submitting cancel
+    assert "cancelBtn.type = 'button';" in content
+    assert "confirmBtn.type = 'submit';" in content
+    assert "confirmBtn.value = 'confirm';" in content
+
+    # Verify escapeJs is defined and exported in common.js
+    assert "function escapeJs(" in content
+    assert "window.escapeJs = escapeJs;" in content

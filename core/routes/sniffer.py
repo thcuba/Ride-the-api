@@ -39,7 +39,9 @@ async def _extract_content(
     if "filename=" in content_disp:
         parts = content_disp.split("filename=")
         if len(parts) > 1:
-            body_filename = parts[1].strip("\"'; ")
+            raw_filename = parts[1].split(";")[0].strip("\"'; ")
+            if raw_filename:
+                body_filename = sanitize_filename_component(raw_filename)
     return content, body_filename
 
 

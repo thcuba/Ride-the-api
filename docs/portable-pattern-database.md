@@ -7,6 +7,7 @@
 
 1. [Architettura](#architettura)
 2. [Buffer DB (da decifrare)](#buffer-db-da-decifrare)
+   - [Ingestione Catture Esterne (Sniffer: HAR, PCAP, PCAPNG)](#ingestione-catture-esterne-sniffer-har-pcap-pcapng)
 3. [Deciphered DB (decifrato)](#deciphered-db-decifrato)
    - [Client (dispositivo IoT)](#client-dispositivo-iot)
    - [Server (proxy)](#server-proxy)
@@ -78,6 +79,7 @@ Ogni dispositivo ha **due database** portabili, gestiti da un **motore** central
 | Componente | Database | Formato file | Descrizione |
 |------------|----------|-------------|-------------|
 | **Buffer Manager** | Buffer DB | `.ride-capture.json` | Accumula coppie raw fino a capienza, poi flush al LLM |
+| **Sniffer Ingest** | Buffer DB | `.har`, `.pcap`, `.pcapng` | Ingestione universale di catture esterne unpinned e decodifica stream |
 | **LLM Router** | — | — | Instrada il buffer pieno al LLM configurato per dispositivo |
 | **Decipher Ingest** | — | — | Prende output LLM e popola il database decifrato |
 | **Pattern Engine** | Deciphered DB | `.ride-pattern.json` | Match, risposte locali, stato dispositivo, sensori virtuali |
@@ -176,6 +178,22 @@ Formato per condividere traffico grezzo da far analizzare a un LLM (`.ride-captu
   ]
 }
 ```
+
+### Ingestione Catture Esterne (Sniffer: HAR, PCAP, PCAPNG)
+
+Oltre al file nativo `.ride-capture.json`, il sottosistema **Sniffer** (`core/sniffer/`) permette di popolare direttamente il Buffer DB del dispositivo importando tracce di traffico esterne generate da tool terzi. Questa funzionalità è essenziale per il reverse engineering di dispositivi che usano **certificate pinning** e non possono essere decifrati dal proxy TLS live:
+
+- **Formati supportati**:
+  - **HAR 1.2 (`.har`)**: file di archivio HTTP esportabili dai Developer Tools dei browser (Chrome, Firefox), da Proxyman, Charles Proxy o mitmproxy. Il parser (`har_parser.py`) estrae richieste/risposte HTTP, normalizza header, URL e body (JSON, testo, o codificati).
+  - **PCAP e PCAPNG (`.pcap`, `.pcapng`)**: catture di pacchetti generate con Wireshark, tcpdump o sniffer dedicati. Il parser (`pcap_parser.py`, basato su `scapy`) ricompone i flussi TCP su porte server tipiche (80, 443, 8080, ecc.), riassembla i payload HTTP decifrati o in chiaro e genera coppie coerenti di richiesta/risposta.
+  - **.ride-capture.json**: il formato JSON canonico di Ride-the-API.
+- **Riconoscimento automatico**: il formato viene rilevato automaticamente sia dall'estensione del nome file che dai *magic bytes* di testa.
+- **Modalità di importazione**:
+  1. **Da WebUI**: pulsante di upload file nel pannello buffer della dashboard (`uploadSnifferCapture`).
+  2. **Da API REST**: `POST /api/devices/{device_id}/sniffer/import` inviando il file come `multipart/form-data` o body binario.
+  3. **Da CLI**: `python -m core.sniffer import --file capture.pcapng --device <device_id> [--url http://localhost:8911]`.
+
+Tutte le coppie estratte vengono convertite in record `RawPairWithResponse` e scritte direttamente nella tabella `LLMContextBuffer` del dispositivo di destinazione, pronte per il ciclo di analisi dell'LLM.
 
 ---
 

@@ -126,7 +126,8 @@ nginx on port 443 → loop-free cloud forwarding via dedicated DNS (8.8.8.8/1.1.
 - **Auto-Switch** — transitions from learning to production when match rate ≥ 99%
 - **Per-IP Bypass** — forward specific IPs straight to the real cloud with no analysis (no buffer/LLM/learning)
 - **TLS MITM** — multi-port TLS interception with SNI extraction and dynamic certificate generation
-- **Multi-Protocol** — HTTP, MQTT, CoAP, Modbus, WebSocket, Raw TCP, HTTP/2, Zigbee, Z-Wave, Matter
+- **Universal Sniffer Ingestion** — imports external network captures (`.har`, `.pcap`, `.pcapng`, `.ride-capture.json`) via WebUI, REST API, or CLI (`python -m core.sniffer import`) into the device buffer for offline and unpinned learning
+- **Unified Protocol Architecture** — converged adapter normalizers and network server plugins via `ProtocolDefinition` for HTTP, MQTT, CoAP, Modbus, WebSocket, Raw TCP, HTTP/2, Zigbee, Z-Wave, Matter, and Shelly
 - **Portable Patterns** — export/import `.ride-pattern.json` and `.ride-capture.json`
 - **Virtual Sensors** — simulated sensors with drift, periodic, and random behaviors
 - **Persistent State** — device state variables (power, mode, temperature) persist across requests
@@ -178,6 +179,7 @@ shared helpers that remain are thin adaptation layers on top of them.
 | API-key secrets | [`pydantic-settings`](https://github.com/pydantic/pydantic-settings) | `SecretStr`-based API-key handling |
 | Wildcard→regex | [`fnmatch`](https://docs.python.org/3/library/fnmatch.html) (stdlib) | Wildcard pattern translation in `traffic_selector.py` |
 | HTTP status phrases | [`http.HTTPStatus`](https://docs.python.org/3/library/http.html#http.HTTPStatus) (stdlib) | Canonical reason phrases for responses in `tls_mitm.py` |
+| Packet / PCAP parsing | [`scapy`](https://scapy.net/) | PCAP and PCAPNG capture decoding and TCP stream reconstruction in `core/sniffer/pcap_parser.py` |
 
 Dependency versions are pinned in [`pyproject.toml`](pyproject.toml) and
 bundled into renewal groups in [`.github/dependabot.yml`](.github/dependabot.yml)
