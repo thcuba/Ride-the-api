@@ -72,10 +72,18 @@ async def import_sniffer_capture(  # noqa: C901
         )
     except ValueError as e:
         logger.warning("Sniffer parse error for device %s: %s", safe_device_id, e)
-        return JSONResponse(status_code=422, content={"error": str(e)})
-    except Exception as e:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": (
+                    "Unable to parse capture file. "
+                    "Expected .har, .pcap, .pcapng, or .ride-capture.json"
+                )
+            },
+        )
+    except Exception:
         logger.exception("Unexpected error importing sniffer capture for %s", safe_device_id)
-        return JSONResponse(status_code=500, content={"error": f"Failed to import capture: {e}"})
+        return JSONResponse(status_code=500, content={"error": "Failed to import capture"})
     else:
         if getattr(server_mod, "orchestrator", None):
             buf = server_mod.orchestrator.buffer.get(safe_device_id)
