@@ -163,7 +163,12 @@ def parse_har_data(  # noqa: C901, PLR0912, PLR0915
         # Parse Response
         raw_response = None
         if resp:
-            status_code = int(resp.get("status", 200))
+            try:
+                status_code = int(resp.get("status", 200))
+            except (TypeError, ValueError):
+                # Intercepting proxies write null/"" for entries that never
+                # completed; 0 keeps the entry instead of aborting the import.
+                status_code = 0
             resp_headers = _parse_headers(resp.get("headers"))
             resp_content = resp.get("content", {})
             resp_body = _parse_body(

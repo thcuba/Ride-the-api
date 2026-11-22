@@ -991,6 +991,14 @@ Imports external network traffic captures (**HAR**, **PCAP**, **PCAPNG**, or **.
 
 Accepts `multipart/form-data` with a `file` field (e.g. from the dashboard file picker) or raw binary/JSON in the request body.
 
+Capture uploads are bulk files: this endpoint accepts bodies up to
+`proxy.max_device_request_size` (default 16 MB), not the 1 MB
+`proxy.max_request_size` control-plane cap.
+
+PCAP/PCAPNG parsing reconstructs **cleartext HTTP only**. A capture whose
+traffic is TLS-encrypted parses successfully but yields no pairs; the response
+then carries a `warning` explaining why nothing was imported.
+
 **Response `200 OK`**
 
 ```json
@@ -1012,7 +1020,21 @@ Accepts `multipart/form-data` with a `file` field (e.g. from the dashboard file 
 }
 ```
 
-**Status codes**: `200` OK, `400` Empty body/file, `422` Parse error, `503` Database service unready
+When no pair could be extracted, `imported` is `0` and a `warning` field is
+present:
+
+```json
+{
+  "status": "success",
+  "imported": 0,
+  "format": "pcap",
+  "pairs_count": 0,
+  "pairs_summary": [],
+  "warning": "No HTTP request/response pairs found in the capture. PCAP files must carry cleartext HTTP: traffic that is TLS-encrypted (even when captured with TLS keys) cannot be reconstructed here."
+}
+```
+
+**Status codes**: `200` OK, `400` Empty body/file, `413` Body over `proxy.max_device_request_size`, `422` Parse error, `503` Database service unready
 
 ---
 

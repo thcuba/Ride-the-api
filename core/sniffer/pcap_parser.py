@@ -75,7 +75,13 @@ def _parse_body(body_bytes: bytes, headers: dict[str, str]) -> Any:  # noqa: ANN
 
 
 def _extract_chunked_body(data: bytes, body_start: int, length: int) -> tuple[bytes, int]:
-    """Parse HTTP chunked transfer encoding into raw decoded bytes."""
+    """Parse HTTP chunked transfer encoding into raw decoded bytes.
+
+    Returns the dechunked body and the offset just past the last chunk, so a
+    keep-alive stream can resume with the next message. Trailer lines after the
+    terminating ``0`` chunk are skipped: stopping right after the ``0\r\n`` line
+    used to make the following response unparseable.
+    """
     chunk_idx = body_start
     body_chunks = []
     while chunk_idx < length:
@@ -89,6 +95,16 @@ def _extract_chunked_body(data: bytes, body_start: int, length: int) -> tuple[by
             break
         if chunk_len == 0:
             chunk_idx = line_end + 2
+            # Trailer section: header-like lines closed by an empty line.
+            while chunk_idx < length:
+                trailer_end = data.find(b"\r\n", chunk_idx)
+                if trailer_end == -1:
+                    chunk_idx = length
+                    break
+                trailer_line = data[chunk_idx:trailer_end]
+                chunk_idx = trailer_end + 2
+                if not trailer_line:
+                    break
             break
         chunk_data_start = line_end + 2
         chunk_data_end = chunk_data_start + chunk_len

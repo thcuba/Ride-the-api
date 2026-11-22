@@ -284,7 +284,11 @@ async function uploadSnifferCapture(deviceId, input) {
       return;
     }
     const data = await res.json();
-    showToast('Imported ' + data.imported + ' pairs from ' + String(data.format || 'capture').toUpperCase() + ' file!', 'success');
+    if (data.warning) {
+      showToast(data.warning, 'warning');
+    } else {
+      showToast('Imported ' + data.imported + ' pairs from ' + String(data.format || 'capture').toUpperCase() + ' file!', 'success');
+    }
     input.value = '';
     loadBufferEntries(deviceId);
     if (typeof loadDevices === 'function') loadDevices();

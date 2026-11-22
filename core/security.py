@@ -25,6 +25,7 @@ import json
 import logging
 import os
 import posixpath
+import re
 import secrets
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -314,6 +315,17 @@ def _is_control_plane(path: str) -> bool:
     return path == "/api" or path.startswith("/api/")
 
 
+# Upload-only control-plane routes. A capture file is bulk data a browser posts
+# as a single multipart body, not JSON: real HAR/PCAP files are routinely tens
+# of megabytes, so these paths get the data-plane cap instead of the 1 MB
+# control-plane one.
+_SNIFFER_IMPORT_PATH = re.compile(r"^/api/devices/[^/]+/sniffer/import$")
+
+
+def _is_bulk_upload(path: str) -> bool:
+    return bool(_SNIFFER_IMPORT_PATH.match(posixpath.normpath(path or "/")))
+
+
 class RequestBodyTooLarge(StarletteHTTPException):
     """Raised when a control-plane body stream exceeds the configured cap."""
 
@@ -331,9 +343,10 @@ class MaxBodySizeMiddleware:
     the data-plane proxy route -- to ``data_plane_max_size``. Device payloads
     may legitimately exceed a control-plane request, but the proxy route reads
     the whole body into memory, so it needs a bound too (it had none). ``0``
-    disables a cap. ``Content-Length`` is checked up front; chunked/streamed
-    bodies are guarded by wrapping the ASGI receive channel and answering 413
-    as soon as the running total crosses the cap (F-09).
+    disables a cap. Capture uploads (sniffer import) are bulk files and take
+    ``data_plane_max_size`` as well. ``Content-Length`` is checked up front;
+    chunked/streamed bodies are guarded by wrapping the ASGI receive channel
+    and answering 413 as soon as the running total crosses the cap (F-09).
     """
 
     def __init__(self, app, max_size: int, data_plane_max_size: int = 0) -> None:
@@ -344,7 +357,9 @@ class MaxBodySizeMiddleware:
     def _limit_for(self, path: str) -> int:
         # Same canonical path decision as the auth middleware: a dotted path
         # resolving into /api must not escape the control-plane cap.
-        return self.max_size if _is_control_plane(path) else self.data_plane_max_size
+        if not _is_control_plane(path) or _is_bulk_upload(path):
+            return self.data_plane_max_size
+        return self.max_size
 
     async def __call__(self, scope, receive, send) -> None:  # noqa: ANN001, C901
         if scope["type"] != "http":
