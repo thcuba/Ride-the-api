@@ -231,6 +231,17 @@ Download the CA certificate from `http://<server-ip>:8911/api/tls/ca-cert` and i
 
 Turn on the IoT device. The device will start talking to the cloud — ride-the-api intercepts the traffic and begins learning.
 
+### 5.4 — (Alternative) Ingest unpinned sniffer captures
+
+If your device uses TLS certificate pinning and refuses the local CA, you can capture traffic from the device's companion mobile app (export as HAR from Charles/Proxyman) or raw packet captures (export as PCAP/PCAPNG from Wireshark/tcpdump), and import it directly into the device buffer:
+
+```bash
+# Upload to the running proxy
+python -m core.sniffer import --file capture.pcapng --device my-device --url http://localhost:8911
+```
+
+You can also upload capture files directly through the **Dashboard Web UI** via the upload button in the device buffer section.
+
 ---
 
 ## 6. Verification

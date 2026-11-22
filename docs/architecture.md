@@ -86,6 +86,11 @@ autonomous local responses. Each request passes through the following stages:
   the contact is the only evidence there is; `GET /api/tls/relayed` lists them and each device card
   shows its count. Failed attempts are recorded as well -- an attempt reveals the device just as
   much as a success does.
+- **Unpinned Learning via Sniffer Capture**: for devices with strict certificate pinning where live
+  TLS interception is impossible, Ride-the-API provides an offline capture ingestion pathway
+  (`core/sniffer/`). Traffic captured from companion mobile apps (e.g. via Proxyman/Charles as HAR)
+  or network interfaces (e.g. via Wireshark/tcpdump as PCAP/PCAPNG) can be ingested directly into
+  the device's buffer to train patterns without decrypting the device's TLS stream live.
 - **IP-first device routing**: device identity is determined by the **source IP address**,
   not by port or hostname. A device is registered as soon as it **presents itself**: the callback
   fires the moment the `ClientHello` has been read and its SNI extracted, *before* the handshake is
@@ -208,11 +213,16 @@ the configured capacity is reached, then signals a flush to the LLM.
 - **Cache cleanup**: after flushing, the device's `SessionCache` is cleared for the
   next learning cycle.
 
-#### 2.3.2 LLMRouter (LLMDecipherService) (`core/llm_decipher.py`)
+#### 2.3.2 LLMRouter (LLMDecipherService) (`core/llm/` & `core/llm_decipher.py`)
 
 **Role**: sends buffered request/response pairs to a configurable LLM for protocol
-analysis and field deciphering.
+analysis and field deciphering. Modularized in `core/llm/` (`service.py`, `client_pool.py`, `profiles.py`, `prompts.py`) with `core/llm_decipher.py` maintained as a backward-compatible façade.
 
+- **Modular Architecture (`core/llm/`)**:
+  - `core/llm/service.py`: core `LLMDecipherService` managing decipher flows, validation, and batching.
+  - `core/llm/client_pool.py`: pooled HTTP and OpenAI clients with lazy initialization.
+  - `core/llm/profiles.py`: profile configuration models, chain resolution, and purpose-bound overrides.
+  - `core/llm/prompts.py`: structured system and user prompt templates and JSON extraction.
 - **Multi-provider**: supports any OpenAI-compatible API (OpenAI, local Ollama,
   vLLM, etc.) via configurable profiles.
 - **LLM Profiles** (`LLMProfile`): each profile specifies `base_url`, `api_key`, `model_id`,
@@ -346,6 +356,22 @@ with state variable resolution and safe formula evaluation.
   swallowed this way and answered with the proxy's `Protocol 'patterns' not supported`. The
   Patterns UI is served at both `/patterns` (lists the devices) and `/patterns/{device_id}`.
 
+#### 2.3.6 Sniffer Capture Ingestion (`core/sniffer/`)
+
+**Role**: ingests external network traffic captures into the device buffer for offline protocol deciphering and training unpinned models.
+
+- **Universal Format Ingestion**:
+  - **HAR (`core/sniffer/har_parser.py`)**: parses HTTP Archive traces exported from browser Developer Tools, Proxyman, or Charles Proxy. Reconstructs JSON, text, or binary payloads into HTTP request/response pairs.
+  - **PCAP / PCAPNG (`core/sniffer/pcap_parser.py`)**: decodes raw packet captures using [`scapy`](https://scapy.net/). Reassembles TCP streams, parses cleartext or decrypted HTTP exchanges, extracts request/response pairs with method, URL, headers, and body payloads.
+  - **.ride-capture.json (`core/sniffer/service.py`)**: native portable capture format.
+- **SnifferService (`core/sniffer/service.py`)**: automatically detects file formats based on magic bytes (`pcap`, `pcapng`, `har`, `json`) and file extensions, coordinates parsing into `RawPairWithResponse` records, and populates the device's `LLMContextBuffer`.
+- **API and UI Integration**:
+  - `POST /api/devices/{device_id}/sniffer/import`: accepts `multipart/form-data` uploads or raw request bodies.
+  - Dashboard Buffer UI: provides a file upload button and drag-and-drop ingestion directly into the selected device buffer.
+- **CLI Tool (`core/sniffer/cli.py`)**:
+  - Allows command-line import: `python -m core.sniffer import --file <path> --device <device_id> [--url <server_url>]`.
+  - Can import directly into local databases (reading configured `device_db_dir`) or upload to a running server instance over HTTP.
+
 ---
 
 ## 3. Request/Response Correlation
@@ -446,12 +472,18 @@ like a device, and was captured as one. The address list comes from `psutil` whe
 then the host's own name and the default route; a miss fails safe (that traffic is treated as
 a device again, as before).
 
-### 4.4 Custom Databases
+### 4.4 Custom Databases & Connection Pooling (`DeviceDatabasePool`)
 
 Each device can have a completely separate database (custom URL) via the
 `DeviceRegistry.database_url` field. This allows physically isolating data from different
 devices (e.g. on separate volumes or PostgreSQL clusters). By default, all devices share
 a single SQLite database with per-device tables.
+
+Device database engine lifecycles, connection pooling, and disk cleanup are delegated to
+`DeviceDatabasePool` (`core/database/`):
+- **Lazy Engine Creation**: per-device async SQLAlchemy engines are instantiated and cached on demand.
+- **Connection Isolation**: manages SQLite WAL mode, pool timeouts, and session factories per device.
+- **Safe Unlinking**: on device deletion, unlinks the SQLite database and handles any OS errors (e.g. Windows file locking) while cleaning up `-wal` and `-shm` sidecar files.
 
 ---
 
@@ -516,6 +548,16 @@ The system includes adapters for non-HTTP IoT protocols, each in a dedicated dir
 
 Each adapter implements the `InterceptedRequest` interface to normalize requests and responses
 from different protocols, allowing the core to process them uniformly.
+
+### 7.1 Unified Protocol Architecture (`ProtocolDefinition`)
+
+Following the protocol convergence refactoring, adapters (`adapters/`) and protocol servers (`core/protocol_servers/`) are unified into a cohesive package architecture:
+- **Standardized Package Structure**: Each protocol directory under `adapters/<protocol>/` contains:
+  - `adapter.py`: Protocol normalizer (`ProtocolAdapter`).
+  - `definition.py`: `ProtocolDefinition` descriptor tying the adapter class, server plugin, configuration key, and metadata.
+  - `server.py`: Network server plugin (`ProtocolServerPlugin`), for protocols providing a native socket listener or bridge (MQTT, CoAP, Modbus, Zigbee, Z-Wave, Matter).
+- **`ProtocolDefinition` (`adapters/base/definition.py`)**: Unified contract that binds adapter normalizers and network server plugins together.
+- **Entry Points & Dynamic Discovery**: Protocols are exposed via standard entry points (`ride_the_api.protocols`, `ride_the_api.adapters`, `ride_the_api.protocol_servers`) and pre-registered in `STANDARD_PROTOCOL_DEFINITIONS`.
 
 ---
 
@@ -642,6 +684,12 @@ proprietary protocols the LLM analyses Observation batches directly.
 6'. If score < threshold and production_no_fallback → 501 (conclusive local-only)
 7'. If score < threshold and signal_forward_to_cloud → nginx forwards to cloud
 8'. If score < threshold and no flag → forward + learning from the miss
+
+   Offline / Sniffer Ingestion (External captures):
+1". External Capture (HAR / PCAP / PCAPNG / .ride-capture.json)
+2". WebUI / API / CLI → SnifferService (magic bytes / extension detection)
+3". Reconstruct HTTP pairs → BufferManager.add_pair() (ingest into device DB)
+4". Manual or auto flush → LLMDecipherService → DecipherIngest → Local patterns
 
    Auto-switch (60s scheduler):
      match_rate ≥ 99% → LEARNING → PRODUCTION

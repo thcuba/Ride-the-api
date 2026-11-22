@@ -107,6 +107,25 @@ The common handler (`handle_protocol_request`) translates each plugin's `Interce
 topic becomes the path with method `publish`). A `local_response` result tells the plugin to send the
 response back to the device.
 
+## Converged Architecture (`ProtocolDefinition`)
+
+Following the protocol architecture convergence (PR #583), protocol adapters (`adapters/`) and protocol servers (`core/protocol_servers/`) are unified:
+
+1. **Uniform Package Layout**:
+   Every protocol has a dedicated module under `adapters/<protocol>/`:
+   - `adapter.py`: Implements `ProtocolAdapter` to parse and normalize protocol payloads into `InterceptedRequest` and produce protocol responses.
+   - `definition.py`: Exports `PROTOCOL_DEFINITION` (`ProtocolDefinition`), declaring the adapter class, server plugin class, configuration key, and metadata.
+   - `server.py`: Implements or wraps `ProtocolServerPlugin` when the protocol provides a network listener or bridge (MQTT, CoAP, Modbus, Zigbee, Z-Wave, Matter).
+
+2. **Unified Descriptor (`ProtocolDefinition`)**:
+   Located in `adapters/base/definition.py`, binds the adapter normalizer and network server plugin into a single contract with factory methods (`create_adapter`, `create_server_plugin`).
+
+3. **Dynamic Discovery and Entry Points**:
+   Protocols are discovered and loaded dynamically via `STANDARD_PROTOCOL_DEFINITIONS` and standard Python entry points in `pyproject.toml`:
+   - `ride_the_api.protocols`
+   - `ride_the_api.adapters`
+   - `ride_the_api.protocol_servers`
+
 > **Nota (verificata):** dalla PR #198 il protocollo risolto (`ip_profiles > device_meta >
 > `ingress_default`) è letto dai handler TLS e protocol per scegliere l'adapter
 > (`_select_handler_adapter`) e passato a `handle_request`. Tuttavia ogni plugin
