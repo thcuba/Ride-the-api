@@ -80,7 +80,7 @@ class CoAPProtocolAdapter(ProtocolAdapter):
                 if part in ACTUATOR_RESOURCES:
                     # Actuator: a read reports state, a write turns on/off.
                     if method in ("PUT", "POST"):
-                        body = request.body or {}
+                        body = request.body if isinstance(request.body, dict) else {}
                         val = body.get("value", body.get("state", ""))
                         intent = (
                             CommandType.TURN_ON

@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["sniffer"])
 
 
-def _server():
+def _server() -> Any:
     return sys.modules.get("core.server")
 
 
@@ -29,18 +29,18 @@ async def _extract_content(
 ) -> tuple[bytes, str | None]:
     """Extract content bytes and filename from upload file or request body."""
     if file is not None and file.filename:
-        filename = sanitize_filename_component(file.filename)
+        file_name = sanitize_filename_component(file.filename)
         content = await file.read()
-        return content, filename
+        return content, file_name
 
     content = await request.body()
-    filename = None
+    body_filename: str | None = None
     content_disp = request.headers.get("content-disposition", "")
     if "filename=" in content_disp:
         parts = content_disp.split("filename=")
         if len(parts) > 1:
-            filename = parts[1].strip("\"'; ")
-    return content, filename
+            body_filename = parts[1].strip("\"'; ")
+    return content, body_filename
 
 
 @router.post("/api/devices/{device_id}/sniffer/import")

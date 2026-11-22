@@ -136,16 +136,17 @@ class ExampleProtocolAdapter(ProtocolAdapter):
         request.device_id = device_id
 
         # Extract DP data from body
+        body = request.body if isinstance(request.body, dict) else {}
         dp_data = {}
-        if "data" in request.body and isinstance(request.body["data"], dict):
-            dp_data = request.body["data"]
-        elif "dps" in request.body and isinstance(request.body["dps"], dict):
-            dp_data = request.body["dps"]
+        if "data" in body and isinstance(body["data"], dict):
+            dp_data = body["data"]
+        elif "dps" in body and isinstance(body["dps"], dict):
+            dp_data = body["dps"]
 
         # Map DP codes to standard params
-        params = {}
+        params: dict[str, Any] = {}
         for dp_code, value in dp_data.items():
-            std_name = self.DP_CODES_REV.get(dp_code, dp_code)
+            std_name = self.DP_CODES_REV.get(str(dp_code), str(dp_code))
             params[std_name] = value
 
         # Determine intent based on message type and content
@@ -161,7 +162,7 @@ class ExampleProtocolAdapter(ProtocolAdapter):
 
         return request
 
-    async def _parse_http_request(self, request: InterceptedRequest) -> InterceptedRequest:
+    async def _parse_http_request(self, request: InterceptedRequest) -> InterceptedRequest:  # noqa: C901
         """Parse HTTP/HTTPS API request."""
         if not request.path:
             request.parsed_intent = CommandType.UNKNOWN
@@ -178,14 +179,16 @@ class ExampleProtocolAdapter(ProtocolAdapter):
             request.parsed_intent = CommandType.GET_STATE
         elif "/commands" in request.path and method == "POST":
             request.parsed_intent = CommandType.UNKNOWN  # Will parse from body
-            if request.body and "commands" in request.body:
-                params = {}
-                for cmd in request.body["commands"]:
-                    dp_code = cmd.get("code")
-                    value = cmd.get("value")
-                    if dp_code:
-                        std_name = self.DP_CODES_REV.get(dp_code, dp_code)
-                        params[std_name] = value
+            body = request.body if isinstance(request.body, dict) else {}
+            if "commands" in body and isinstance(body["commands"], list):
+                params: dict[str, Any] = {}
+                for cmd in body["commands"]:
+                    if isinstance(cmd, dict):
+                        dp_code = cmd.get("code")
+                        value = cmd.get("value")
+                        if dp_code:
+                            std_name = self.DP_CODES_REV.get(str(dp_code), str(dp_code))
+                            params[std_name] = value
                 intent = self._dp_params_to_intent(params)
                 request.parsed_intent = intent
                 request.parsed_params = params
@@ -443,7 +446,7 @@ class ExampleProtocolAdapter(ProtocolAdapter):
 
     async def _state_to_response(self, state: DeviceState) -> dict[str, Any]:
         """Convert standard state to DP format."""
-        dps = {}
+        dps: dict[str, Any] = {}
 
         if state.on_off is not None:
             dps[self.DP_CODES["power"]] = state.on_off

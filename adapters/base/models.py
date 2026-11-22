@@ -194,3 +194,8 @@ class InterceptedRequest:
     identity: str | None = None  # device identity hint when derivable
     kind: ObservationKind | None = None  # request | publish | event | frame | ...
     scheme: str | None = None  # http | https | ws | wss (from HTTP/2 :scheme)
+    # Modification engine tracking
+    metadata: dict[str, Any] = field(default_factory=dict)
+    modifications: list[dict[str, Any]] = field(default_factory=list)
+    blocked: bool = False
+    block_reason: str | None = None
