@@ -103,9 +103,7 @@ def test_nginx_lets_sniffer_captures_through_the_body_limit() -> None:
     before the app ever saw it, so the app-side exemption was unreachable.
     """
     for name in ("nginx.conf", "nginx.conf.template"):
-        text = (Path(__file__).resolve().parents[1] / "deploy" / name).read_text(
-            encoding="utf-8"
-        )
+        text = (Path(__file__).resolve().parents[1] / "deploy" / name).read_text(encoding="utf-8")
         # The server-wide cap stays at 1 MB for ordinary API bodies.
         assert "client_max_body_size 1m;" in text, name
         # The sniffer import location overrides it with the bulk-upload cap.
@@ -124,9 +122,7 @@ def test_nginx_verifies_the_real_cloud_it_forwards_to() -> None:
     upstream path could answer as the vendor.
     """
     for name in ("nginx.conf", "nginx.conf.template"):
-        text = (Path(__file__).resolve().parents[1] / "deploy" / name).read_text(
-            encoding="utf-8"
-        )
+        text = (Path(__file__).resolve().parents[1] / "deploy" / name).read_text(encoding="utf-8")
         upstream_tls_blocks = text.count("proxy_ssl_server_name on;")
         assert upstream_tls_blocks == _UPSTREAM_TLS_BLOCKS, name
         assert text.count("proxy_ssl_verify on;") == upstream_tls_blocks, name
