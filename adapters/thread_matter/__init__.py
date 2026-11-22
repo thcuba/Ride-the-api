@@ -91,7 +91,7 @@ class MatterProtocolAdapter(ProtocolAdapter):
 
     async def parse_request(self, request: InterceptedRequest) -> InterceptedRequest:
         """Parse a Matter Interaction Model message into a standardized intent."""
-        body = request.body or {}
+        body = request.body if isinstance(request.body, dict) else {}
         interaction_type = body.get("interaction_type", IM_READ_ATTRIBUTE)
         cluster = body.get("cluster_id")
         command_id = body.get("command_id")

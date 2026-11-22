@@ -82,7 +82,7 @@ class ZigbeeProtocolAdapter(ProtocolAdapter):
 
     async def parse_request(self, request: InterceptedRequest) -> InterceptedRequest:
         """Parse a Zigbee ZCL message into a standardized command intent."""
-        body = request.body or {}
+        body = request.body if isinstance(request.body, dict) else {}
         cluster = body.get("cluster_id")
         command_id = body.get("command_id")
         attributes = body.get("attributes", {})
