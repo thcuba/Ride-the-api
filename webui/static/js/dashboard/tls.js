@@ -179,7 +179,15 @@ async function uploadCert(btn) {
 }
 
 async function deleteCert(hostname, btn) {
-  if (!confirm('Delete imported certificate for "' + hostname + '"? It will revert to the auto-generated cert.')) return;
+  const ok = window.showConfirm
+    ? await showConfirm({
+        title: 'Delete Certificate',
+        message: 'Delete imported certificate for "' + hostname + '"? It will revert to the auto-generated cert.',
+        confirmText: 'Delete Certificate',
+        danger: true
+      })
+    : confirm('Delete imported certificate for "' + hostname + '"? It will revert to the auto-generated cert.');
+  if (!ok) return;
   const targetBtn = btn instanceof HTMLElement ? btn : (btn?.target?.closest('button') || null);
   if (targetBtn) targetBtn.disabled = true;
   try {

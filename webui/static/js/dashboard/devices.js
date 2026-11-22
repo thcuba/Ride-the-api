@@ -63,7 +63,7 @@ async function loadDevices() {
       const unkClass = isUnknown ? ' unidentified' : '';
       const unkBadge = isUnknown ? '<span class="badge badge-hybrid">⚠ Unidentified</span>' : modeBadge(d.mode);
             const devName = d.name || d.device_id || 'unknown';
-            return `<div class="device-card${unkClass}" data-mode="${escapeHtml(d.mode || 'learning')}" data-device-id="${escapeHtml(d.device_id || '')}" tabindex="0" role="button" aria-label="View details for ${escapeHtml(devName)}" onclick="loadDeviceStats('${escapeJs(d.device_id)}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();loadDeviceStats('${escapeJs(d.device_id)}')}">
+            return `<button type="button" class="device-card${unkClass}" data-mode="${escapeHtml(d.mode || 'learning')}" data-device-id="${escapeHtml(d.device_id || '')}" aria-label="View details for ${escapeHtml(devName)}" onclick="loadDeviceStats('${escapeJs(d.device_id)}')">
               <div class="dc-top">
                 <div><div class="dc-name">${escapeHtml(d.name || shortId(d.device_id))}</div><div class="dc-id" title="${escapeHtml(d.device_id || '')}">${escapeHtml(shortId(d.device_id))}</div></div>
                 ${unkBadge}
@@ -75,7 +75,7 @@ async function loadDevices() {
           ${rate !== null ? `<span class="dc-stat"><span class="dc-label">Match:</span><span class="dc-value" style="color:${rateColor(rate)}">${rate}%</span></span>` : ''}
           <span class="dc-stat"><span class="dc-label">Last:</span><span class="dc-value">${d.last_seen ? new Date(d.last_seen).toLocaleString() : 'Never'}</span></span>
         </div>
-      </div>`;
+      </button>`;
     }).join('');
     filterDevices();
   } catch(e) {
@@ -185,7 +185,6 @@ async function loadDeviceStats(deviceId) {
     const s = stats.stats, pct = s.match_rate_pct || 0, rc = rateClass(pct);
     const detail = document.getElementById('details');
     detail.classList.remove('invisible');
-    document.body.style.overflow = 'hidden';
 
     // SVG ring
     const circum = 2 * Math.PI * 44;
@@ -454,6 +453,8 @@ async function loadDeviceStats(deviceId) {
                     <div style="display:flex;justify-content:space-between;align-items:center;width:100%;">
                       <label style="min-width:0;">Buffer</label>
                       <div style="display:flex;gap:6px;align-items:center;" id="buffer-actions-${escapeHtml(deviceId)}">
+                        <input type="file" id="sniffer-file-${escapeHtml(deviceId)}" style="display:none;" accept=".har,.pcap,.pcapng,.json" onchange="uploadSnifferCapture('${escapeJs(deviceId)}', this)">
+                        <button type="button" class="btn btn-ghost" style="padding:2px 8px;font-size:11px;" onclick="document.getElementById('sniffer-file-${escapeJs(deviceId)}').click()" title="Import external sniffer capture (HAR, PCAP, PCAPNG, JSON)">&#x1F4E5; Import Sniffer</button>
                         <span id="buf-count-${escapeHtml(deviceId)}" style="font-size:11px;color:var(--text2);">0 entries</span>
                         <label for="select-all-buf-${escapeHtml(deviceId)}" style="font-size:11px;color:var(--text2);display:flex;align-items:center;gap:4px;cursor:pointer;">
                           <input type="checkbox" id="select-all-buf-${escapeHtml(deviceId)}" aria-label="Select all buffer entries" onchange="toggleSelectAll('${escapeJs(deviceId)}')"> All
@@ -508,7 +509,6 @@ async function loadDeviceStats(deviceId) {
 function closeDetails() {
   const detail = document.getElementById('details');
   if (detail) detail.classList.add('invisible');
-  document.body.style.overflow = '';
   // Return focus to previously active element or first device card
   if (lastActiveElement && document.body.contains(lastActiveElement) && typeof lastActiveElement.focus === 'function') {
     lastActiveElement.focus();
@@ -536,7 +536,15 @@ async function switchMode(deviceId) {
 }
 
 async function deleteDevice(deviceId, btn) {
-  if (!confirm('Delete device "' + deviceId + '" and all its learned data? This cannot be undone.')) return;
+  const ok = window.showConfirm
+    ? await showConfirm({
+        title: 'Delete Device',
+        message: 'Delete device "' + deviceId + '" and all its learned data? This cannot be undone.',
+        confirmText: 'Delete Device',
+        danger: true
+      })
+    : confirm('Delete device "' + deviceId + '" and all its learned data? This cannot be undone.');
+  if (!ok) return;
   const targetBtn = btn instanceof HTMLElement ? btn : (btn?.target?.closest('button') || null);
   const origText = targetBtn ? targetBtn.textContent : '';
   if (targetBtn) { targetBtn.disabled = true; targetBtn.textContent = 'Deleting...'; }

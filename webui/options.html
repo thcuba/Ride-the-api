@@ -179,7 +179,15 @@
 
   // ── Update ──────────────────────────────────────────────────────────────────
   async function updateSoftware() {
-    if (!confirm('Update ride-the-api to the latest release?\n\nThe service will restart.')) return;
+    var ok = window.showConfirm
+      ? await showConfirm({
+          title: 'Update ride-the-api',
+          message: 'Update ride-the-api to the latest release?\n\nThe service will restart.',
+          confirmText: 'Update & Restart',
+          danger: true
+        })
+      : confirm('Update ride-the-api to the latest release?\n\nThe service will restart.');
+    if (!ok) return;
     var btn = document.getElementById('updateBtn');
     var status = document.getElementById('updateStatus');
     var label = btn ? btn.querySelector('.btn-label') : null;

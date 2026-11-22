@@ -107,6 +107,7 @@ from core.routes import (
     llm_router,
     patterns_router,
     protocols_router,
+    sniffer_router,
     system_router,
     tls_router,
     webui_router,
@@ -748,6 +749,8 @@ app.include_router(dns_router)
 app.include_router(protocols_router)
 
 app.include_router(devices_router)
+
+app.include_router(sniffer_router)
 
 app.include_router(patterns_router)
 

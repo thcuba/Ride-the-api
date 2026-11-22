@@ -232,7 +232,16 @@ async function sendToLLM(deviceId) {
     showToast('Select at least one buffer entry', 'warning');
     return;
   }
-  if (!confirm('Send ' + pairIds.length + ' selected entries to LLM for decoding?')) return;
+  if (window.showConfirm) {
+    const ok = await showConfirm({
+      title: 'Send Entries to LLM',
+      message: 'Send ' + pairIds.length + ' selected entries to LLM for decoding?',
+      confirmText: 'Send to LLM'
+    });
+    if (!ok) return;
+  } else if (!confirm('Send ' + pairIds.length + ' selected entries to LLM for decoding?')) {
+    return;
+  }
   const btn = document.getElementById('send-btn-' + deviceId);
   const origText = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = 'Sending...'; }
@@ -257,6 +266,33 @@ async function sendToLLM(deviceId) {
   }
 }
 
+async function uploadSnifferCapture(deviceId, input) {
+  if (!input || !input.files || input.files.length === 0) return;
+  const file = input.files[0];
+  const formData = new FormData();
+  formData.append('file', file);
+
+  showToast('Uploading and parsing ' + file.name + '...', 'info');
+  try {
+    const res = await fetch('/api/devices/' + encodeURIComponent(deviceId) + '/sniffer/import', {
+      method: 'POST',
+      body: formData,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast(err.error || 'Failed to import sniffer capture', 'error');
+      return;
+    }
+    const data = await res.json();
+    showToast('Imported ' + data.imported + ' pairs from ' + String(data.format || 'capture').toUpperCase() + ' file!', 'success');
+    input.value = '';
+    loadBufferEntries(deviceId);
+    if (typeof loadDevices === 'function') loadDevices();
+  } catch(e) {
+    showToast('Failed to upload capture: ' + e.message, 'error');
+  }
+}
+
 
 // Global exports for inline HTML event handlers
 window.loadContextNotes = loadContextNotes;
@@ -273,3 +309,4 @@ window.copyAnalysisJson = copyAnalysisJson;
 window.discardPreview = discardPreview;
 window.commitPatterns = commitPatterns;
 window.sendToLLM = sendToLLM;
+window.uploadSnifferCapture = uploadSnifferCapture;

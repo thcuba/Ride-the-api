@@ -75,9 +75,10 @@ dependencies = [
     "dpath>=2.1.0",
     "jsonschema>=4.26.0",
     
-    # TLS / MITM
+    # TLS / MITM / Sniffer
     "cryptography>=42.0.0",
     "h11>=0.14.0",
+    "scapy>=2.5.0",
     
     # Testing
     "pytest>=8.2.0",
