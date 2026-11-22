@@ -164,7 +164,7 @@ class SqlAlchemyBufferStore(BufferStore):
                     )
                     .values(flushed=True, flushed_at=now)
                 )
-                count = result.rowcount or 0
+                count = getattr(result, "rowcount", 0) or 0
 
                 stats = await _get_or_create_stats(session, device_id)
                 stats.current_buffer_size_bytes = 0
@@ -205,7 +205,7 @@ class SqlAlchemyBufferStore(BufferStore):
                     )
                     .values(flushed=True, flushed_at=now)
                 )
-                count = result.rowcount or 0
+                count = getattr(result, "rowcount", 0) or 0
 
                 stats = await _get_or_create_stats(session, device_id)
                 stats.current_buffer_size_bytes = max(

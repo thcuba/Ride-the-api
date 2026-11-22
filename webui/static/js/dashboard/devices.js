@@ -453,6 +453,8 @@ async function loadDeviceStats(deviceId) {
                     <div style="display:flex;justify-content:space-between;align-items:center;width:100%;">
                       <label style="min-width:0;">Buffer</label>
                       <div style="display:flex;gap:6px;align-items:center;" id="buffer-actions-${escapeHtml(deviceId)}">
+                        <input type="file" id="sniffer-file-${escapeHtml(deviceId)}" style="display:none;" accept=".har,.pcap,.pcapng,.json" onchange="uploadSnifferCapture('${escapeJs(deviceId)}', this)">
+                        <button type="button" class="btn btn-ghost" style="padding:2px 8px;font-size:11px;" onclick="document.getElementById('sniffer-file-${escapeJs(deviceId)}').click()" title="Import external sniffer capture (HAR, PCAP, PCAPNG, JSON)">&#x1F4E5; Import Sniffer</button>
                         <span id="buf-count-${escapeHtml(deviceId)}" style="font-size:11px;color:var(--text2);">0 entries</span>
                         <label for="select-all-buf-${escapeHtml(deviceId)}" style="font-size:11px;color:var(--text2);display:flex;align-items:center;gap:4px;cursor:pointer;">
                           <input type="checkbox" id="select-all-buf-${escapeHtml(deviceId)}" aria-label="Select all buffer entries" onchange="toggleSelectAll('${escapeJs(deviceId)}')"> All

@@ -43,6 +43,7 @@
 - [Capture](#capture)
   - [Export Capture](#export-capture-get-apidevicesdevice_idcaptureexport)
   - [Import Capture](#import-capture-post-apidevicesdevice_idcaptureimport)
+  - [Import Sniffer Capture](#import-sniffer-capture-post-apidevicesdevice_idsnifferimport)
 - [TLS / MITM](#tls--mitm)
   - [Download CA](#download-ca-get-apitlsca-cert)
   - [TLS Statistics](#tls-statistics-get-apitlsstats)
@@ -981,6 +982,59 @@ import.
 **Note**: Imported captures are added to the existing buffer. When the buffer
 reaches maximum capacity (default 512 KB), it is reported and can be
 manually flushed to the LLM via `POST /api/devices/{device_id}/llm/flush`.
+
+---
+
+### Import Sniffer Capture: `POST /api/devices/{device_id}/sniffer/import`
+
+Imports external network traffic captures (**HAR**, **PCAP**, **PCAPNG**, or **.ride-capture.json**) into a device's buffer. Automatically detects file format from magic bytes and filename extension.
+
+Accepts `multipart/form-data` with a `file` field (e.g. from the dashboard file picker) or raw binary/JSON in the request body.
+
+Capture uploads are bulk files: this endpoint accepts bodies up to
+`proxy.max_device_request_size` (default 16 MB), not the 1 MB
+`proxy.max_request_size` control-plane cap.
+
+PCAP/PCAPNG parsing reconstructs **cleartext HTTP only**. A capture whose
+traffic is TLS-encrypted parses successfully but yields no pairs; the response
+then carries a `warning` explaining why nothing was imported.
+
+**Response `200 OK`**
+
+```json
+{
+  "status": "success",
+  "imported": 15,
+  "device_id": "ip-192-168-1-42",
+  "format": "pcapng",
+  "filename": "cattura_iot.pcapng",
+  "pairs_count": 15,
+  "pairs_summary": [
+    {
+      "method": "POST",
+      "path": "/v1.0/devices/status",
+      "status": 200,
+      "timestamp": "2026-11-21T15:30:00+00:00"
+    }
+  ]
+}
+```
+
+When no pair could be extracted, `imported` is `0` and a `warning` field is
+present:
+
+```json
+{
+  "status": "success",
+  "imported": 0,
+  "format": "pcap",
+  "pairs_count": 0,
+  "pairs_summary": [],
+  "warning": "No HTTP request/response pairs found in the capture. PCAP files must carry cleartext HTTP: traffic that is TLS-encrypted (even when captured with TLS keys) cannot be reconstructed here."
+}
+```
+
+**Status codes**: `200` OK, `400` Empty body/file, `413` Body over `proxy.max_device_request_size`, `422` Parse error, `503` Database service unready
 
 ---
 

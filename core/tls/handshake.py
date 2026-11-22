@@ -19,7 +19,7 @@ async def read_complete_client_hello(reader: asyncio.StreamReader, initial_data:
     """Collect a ClientHello split across TCP reads without dropping bytes."""
     data = bytearray(initial_data[:MAX_CLIENT_HELLO_SIZE])
     while len(data) < MAX_CLIENT_HELLO_SIZE:
-        complete, _message = _client_hello_message(data)
+        complete, _message = _client_hello_message(bytes(data))
         if complete:
             break
         more = await reader.read(min(4096, MAX_CLIENT_HELLO_SIZE - len(data)))

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -47,9 +47,9 @@ class ProtocolDefinition:
         sub_cfg = getattr(servers_config, attr, None)
         target_cfg = sub_cfg if sub_cfg is not None else servers_config
         try:
-            return self.server_plugin_class(target_cfg, handler=handler)
+            return cast("object", self.server_plugin_class(target_cfg, handler=handler))
         except TypeError:
             try:
-                return self.server_plugin_class(target_cfg)
+                return cast("object", self.server_plugin_class(target_cfg))
             except TypeError:
-                return self.server_plugin_class()
+                return cast("object", self.server_plugin_class())

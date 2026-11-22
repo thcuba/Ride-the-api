@@ -18,7 +18,7 @@ import json
 import logging
 import threading
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from adapters.base import InterceptedRequest, ProtocolType
 from core.pattern_db.schemas import ObservationKind, TransportMeta
@@ -83,7 +83,7 @@ class MQTTServerPlugin(ProtocolServerPlugin):
         self.handler = handler
         self._broker: AMQTTBroker | None = None
         self._forward_thread: threading.Thread | None = None
-        self._forward_client = None
+        self._forward_client: Any = None
         self._stop_event = threading.Event()
         self._loop: asyncio.AbstractEventLoop | None = None
 
@@ -129,7 +129,7 @@ class MQTTServerPlugin(ProtocolServerPlugin):
         if HAS_PAHO and self.handler:
             self._start_forwarder(cfg)
 
-    def _start_forwarder(self, cfg) -> None:  # noqa: ANN001
+    def _start_forwarder(self, cfg: Any) -> None:
         filters = list(getattr(cfg, "topic_filters", None) or ["#"])
         client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
         client.on_connect = self._on_connect
@@ -138,18 +138,25 @@ class MQTTServerPlugin(ProtocolServerPlugin):
         self._stop_event.clear()
         host = cfg.host if cfg.host not in ("0.0.0.0", "::") else "127.0.0.1"
         self._filters = filters
+
+        def _run_forwarder() -> None:
+            client.connect_async(host, cfg.port)
+            client.loop_forever()
+
         self._forward_thread = threading.Thread(
-            target=lambda: client.connect_async(host, cfg.port) or client.loop_forever(),
+            target=_run_forwarder,
             name="mqtt-forwarder",
             daemon=True,
         )
         self._forward_thread.start()
 
-    def _on_connect(self, client, _userdata, _flags, _reason_code, _properties) -> None:  # noqa: ANN001
+    def _on_connect(
+        self, client: Any, _userdata: Any, _flags: Any, _reason_code: Any, _properties: Any = None
+    ) -> None:
         for topic in self._filters:
             client.subscribe(topic)
 
-    def _on_message(self, _client, _userdata, msg) -> None:  # noqa: ANN001
+    def _on_message(self, _client: Any, _userdata: Any, msg: Any) -> None:
         if self._loop is None or self._loop.is_closed():
             return
         # Single paho forwarder client; the publishing device's client_id is
@@ -266,7 +273,7 @@ class MQTTServerPlugin(ProtocolServerPlugin):
             logger.exception("MQTT handler error:")
             return None
         else:
-            return result
+            return cast("dict[str, Any] | None", result)
 
     async def get_status(self) -> dict:
         return {
@@ -286,7 +293,7 @@ class MQTTBridgeClient(ProtocolServerPlugin):
     def __init__(self, config: MQTTServerConfig, handler: Callable | None = None) -> None:
         super().__init__(config)
         self.handler = handler
-        self._client = None
+        self._client: Any = None
 
     async def start(self) -> None:
         """Connect to external MQTT broker."""

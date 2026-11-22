@@ -112,7 +112,7 @@ class TLSMITMServer:
         self.request_failure_handler: Callable[[dict], Coroutine] | None = None
         # Asked before the handshake: should this connection be forwarded untouched rather than
         # decrypted? True for devices known to refuse the certificate we would generate.
-        self.should_relay_tls: Callable[[str, str | None], Coroutine] | None = None
+        self.should_relay_tls: Callable[..., Coroutine] | None = None
         # Called when the client refuses our certificate and the handshake dies.
         self.on_handshake_refused: Callable[[str, str | None], Coroutine] | None = None
         # Resolves a hostname to its real address, bypassing our own DNS interception.
@@ -242,7 +242,8 @@ class TLSMITMServer:
             return False
         # Find and close the server for this port
         for i, server in enumerate(self._servers):
-            sock = server.sockets[0] if server.sockets else None
+            socks = getattr(server, "sockets", None)
+            sock = socks[0] if socks else None
             if sock:
                 sock_port = sock.getsockname()[1] if hasattr(sock, "getsockname") else None
                 if sock_port == port:

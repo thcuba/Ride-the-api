@@ -32,7 +32,7 @@ import logging
 import re
 import socket
 from functools import lru_cache
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import dns.asyncquery
 import dns.flags
@@ -104,11 +104,11 @@ def _name_matches(name: str, candidate: str) -> bool:
     # and regex compilation to avoid string manipulation and fnmatch overhead on every query.
     kind, val = _compile_candidate(candidate)
     if kind == _PATTERN_DOMAIN_WILDCARD:
-        return name == val[0] or name.endswith(val[1])
+        return bool(name == val[0] or name.endswith(val[1]))
     if kind == _PATTERN_GLOB:
         return bool(val(name))
     if kind == _PATTERN_EXACT:
-        return name == val
+        return bool(name == val)
     return False
 
 
@@ -387,7 +387,12 @@ class DNSInterceptor:
         if recorder is None:
             return
         try:
-            recorder.note(client, qname, dns.rdatatype.to_text(qtype), decision)
+            recorder.note(
+                client,
+                qname,
+                dns.rdatatype.to_text(cast("dns.rdatatype.RdataType", qtype)),
+                decision,
+            )
         except Exception:  # noqa: BLE001 - the DNS answer matters more
             logger.debug("DNS: could not record the query for %s", qname, exc_info=True)
 
@@ -485,7 +490,7 @@ class DNSInterceptor:
         self.forward_timeout = float(dns_cfg.forward_timeout)
         self.upstreams = [*dns_cfg.dns_servers, *dns_cfg.dns_servers_v6]
 
-    def _intercept_response(self, query: dns.message.Message, question) -> dns.message.Message:
+    def _intercept_response(self, query: dns.message.Message, question: Any) -> dns.message.Message:
         """A -> the proxy address; everything else an empty NOERROR.
 
         Answering AAAA with NODATA keeps a dual-stack device on the IPv4 route we

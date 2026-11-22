@@ -14,6 +14,7 @@ import re
 import threading
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any
 
 from core.config import get_config_manager
 
@@ -178,7 +179,7 @@ class TrafficSelector:
     Rules are evaluated in priority order (highest first).
     """
 
-    def __init__(self, config_manager=None) -> None:
+    def __init__(self, config_manager: Any = None) -> None:
         self.config_manager = config_manager or get_config_manager()
         self._lock = threading.RLock()
         self.rules: list[TrafficRule] = []
@@ -188,7 +189,7 @@ class TrafficSelector:
         # Watch for config changes
         self.config_manager.register_callback(self._on_config_change)
 
-    def _load_rules(self):
+    def _load_rules(self) -> None:
         """Load rules from configuration."""
         config = self.config_manager.config
         ts_config = getattr(config, "traffic_selection", None)
@@ -244,7 +245,7 @@ class TrafficSelector:
                 f"default: {self._default_action.value}"
             )
 
-    def _on_config_change(self, _new_config):
+    def _on_config_change(self, _new_config: Any) -> None:
         """Reload rules when config changes."""
         logger.info("Traffic selection config changed, reloading rules")
         self._load_rules()
@@ -298,7 +299,7 @@ class TrafficSelector:
                     return True
         return False
 
-    def update_rule(self, name: str, **kwargs) -> bool:
+    def update_rule(self, name: str, **kwargs: Any) -> bool:
         """Update rule properties."""
         with self._lock:
             for rule in self.rules:

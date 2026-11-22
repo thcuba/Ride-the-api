@@ -9,6 +9,7 @@ import asyncio
 import logging
 from contextlib import suppress
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import func, select
 
@@ -27,7 +28,7 @@ logger = logging.getLogger(__name__)
 _SERVER_COLUMNS = frozenset({"id", "created_at", "updated_at"})
 
 
-def _import_rows(model: type, rows: object) -> list[dict]:
+def _import_rows(model: Any, rows: object) -> list[dict[str, Any]]:
     """The importable rows of an uploaded list: objects only, known columns only.
 
     Rows used to go straight into ``Model(**row)``, so one unknown key (or a
@@ -35,7 +36,10 @@ def _import_rows(model: type, rows: object) -> list[dict]:
     """
     if not isinstance(rows, list):
         return []
-    columns = set(model.__table__.columns.keys()) - _SERVER_COLUMNS
+    table = getattr(model, "__table__", None)
+    if table is None:
+        return []
+    columns = set(table.columns.keys()) - _SERVER_COLUMNS
     return [
         {key: value for key, value in row.items() if key in columns}
         for row in rows
@@ -137,10 +141,10 @@ class CloudIndependenceVerifier:
             max_template_confidence = tmpl_row[1] or 0.0
 
         async with self.db_manager.core_session() as session:
-            result = await session.execute(
+            dev_result = await session.execute(
                 select(DeviceRegistry).where(DeviceRegistry.device_id == device_id)
             )
-            device = result.scalar_one_or_none()
+            device = dev_result.scalar_one_or_none()
             if not device:
                 return {"independent": False, "reason": "device_not_found"}
 
@@ -448,13 +452,13 @@ class AutoSwitchScheduler:
       below 90%
     """
 
-    def __init__(self, db_manager) -> None:
+    def __init__(self, db_manager: DatabaseManager) -> None:
         self.db_manager = db_manager
         self.verifier = CloudIndependenceVerifier(db_manager)
-        self._task = None
+        self._task: asyncio.Task[None] | None = None
         self._running = False
 
-    async def start(self):
+    async def start(self) -> None:
         """Start the background check loop."""
         if self._running:
             logger.warning("AutoSwitchScheduler already running")
@@ -463,7 +467,7 @@ class AutoSwitchScheduler:
         self._task = asyncio.create_task(self._run_loop())
         logger.info("AutoSwitchScheduler started")
 
-    async def stop(self):
+    async def stop(self) -> None:
         """Stop the background check loop."""
         self._running = False
         if self._task:
@@ -473,7 +477,7 @@ class AutoSwitchScheduler:
             self._task = None
         logger.info("AutoSwitchScheduler stopped")
 
-    async def _run_loop(self):
+    async def _run_loop(self) -> None:
         """Main loop: check all devices periodically."""
         while self._running:
             try:
@@ -482,7 +486,7 @@ class AutoSwitchScheduler:
                 logger.error(f"AutoSwitchScheduler error: {e}", exc_info=True)
             await asyncio.sleep(CHECK_INTERVAL_SECONDS)
 
-    async def _check_all_devices(self):
+    async def _check_all_devices(self) -> None:
         """Check all registered devices for auto-switch conditions."""
         auto_promote, min_match_rate, min_patterns = _auto_switch_settings()
         devices = await self.db_manager.list_devices()

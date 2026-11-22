@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
@@ -40,7 +40,7 @@ def _get_server() -> ModuleType:
     return server
 
 
-def _get_traffic_selector() -> object:
+def _get_traffic_selector() -> Any:
     server = _get_server()
     selector_getter = getattr(server, "get_traffic_selector", None)
     if selector_getter is not None:
@@ -50,7 +50,7 @@ def _get_traffic_selector() -> object:
     return get_traffic_selector()
 
 
-def _get_modification_engine() -> object:
+def _get_modification_engine() -> Any:
     server = _get_server()
     engine_getter = getattr(server, "get_modification_engine", None)
     if engine_getter is not None:
@@ -60,7 +60,7 @@ def _get_modification_engine() -> object:
     return get_modification_engine()
 
 
-def _get_tracer() -> object:
+def _get_tracer() -> Any:
     server = _get_server()
     tracer_getter = getattr(server, "get_tracer", None)
     if tracer_getter is not None:
@@ -70,7 +70,7 @@ def _get_tracer() -> object:
     return get_tracer()
 
 
-def _get_metrics_registry() -> object:
+def _get_metrics_registry() -> Any:
     server = _get_server()
     reg = getattr(server, "metrics_registry", None)
     if reg is not None:
@@ -178,7 +178,7 @@ async def proxy_vendor_request(  # noqa: C901, PLR0911, PLR0912, PLR0915
         device_id = (
             await resolve_device_fn(db_manager, client_ip)
             or intercepted.device_id
-            or extract_device_fn(request.headers, path)
+            or extract_device_fn(dict(request.headers), path)
         )
         intercepted.device_id = device_id
 

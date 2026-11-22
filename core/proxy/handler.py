@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from adapters.base import (
     InterceptedRequest,
@@ -174,7 +174,7 @@ async def handle_tls_decrypted_request(req: DecryptedRequest) -> dict | None:  #
         else:
             logger.debug("TLS: passthrough for %s %s", req.method, req.path)
 
-        return result
+        return cast("dict[str, Any]", result)
 
 
 async def handle_tls_upstream_response(handler_result: dict, response: dict) -> dict | None:
@@ -186,7 +186,7 @@ async def handle_tls_upstream_response(handler_result: dict, response: dict) -> 
     if not orchestrator or not context or not handler_result.get("correlation_key"):
         return None
 
-    return await orchestrator.handle_response(
+    res = await orchestrator.handle_response(
         device_id=context["device_id"],
         vendor=context["vendor"],
         protocol=context["protocol"],
@@ -195,6 +195,7 @@ async def handle_tls_upstream_response(handler_result: dict, response: dict) -> 
         body=normalize_request_body(response.get("body")),
         correlation_key=handler_result.get("correlation_key"),
     )
+    return cast("dict[str, Any] | None", res)
 
 
 async def handle_tls_upstream_failure(handler_result: dict) -> bool:
@@ -207,7 +208,7 @@ async def handle_tls_upstream_failure(handler_result: dict) -> bool:
     if not orchestrator or not context or not correlation_key:
         return False
 
-    return await orchestrator.discard_request(context["device_id"], correlation_key)
+    return bool(await orchestrator.discard_request(context["device_id"], correlation_key))
 
 
 async def handle_protocol_request(request: InterceptedRequest) -> dict | None:  # noqa: C901
@@ -274,7 +275,7 @@ async def handle_protocol_request(request: InterceptedRequest) -> dict | None:  
                 if val is not None:
                     enrichment[f] = val.value if hasattr(val, "value") else val
 
-        return await orchestrator.handle_request(
+        res = await orchestrator.handle_request(
             device_id=device_id,
             vendor="unknown",
             protocol=resolved_protocol,
@@ -285,6 +286,7 @@ async def handle_protocol_request(request: InterceptedRequest) -> dict | None:  
             query_params=request.query_params or {},
             enrichment=enrichment,
         )
+        return cast("dict[str, Any] | None", res)
 
     except Exception as e:
         logger.error("Protocol handler error for %s: %s", device_id, e, exc_info=True)

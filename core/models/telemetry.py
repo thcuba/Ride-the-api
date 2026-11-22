@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from sqlalchemy import JSON, DateTime, Float, Index, Integer, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -15,7 +17,7 @@ class InterceptedRequest(Base):
     __table_args__ = (Index("ix_intercepted_device_ts", "device_id", "captured_at"),)
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     device_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
-    captured_at: Mapped[DateTime] = mapped_column(
+    captured_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
     method: Mapped[str] = mapped_column(String(16), nullable=False)
@@ -28,7 +30,7 @@ class InterceptedRequest(Base):
     response_body: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     response_latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     processed: Mapped[bool] = mapped_column(default=False, nullable=False)
-    processed_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     action: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
@@ -54,7 +56,7 @@ class RelayedConnection(Base):
     bytes_to_device: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     duration_ms: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     outcome: Mapped[str] = mapped_column(String(32), nullable=False)
-    started_at: Mapped[DateTime] = mapped_column(
+    started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
 
@@ -81,8 +83,8 @@ class DNSQueryLog(Base):
     qtype: Mapped[str] = mapped_column(String(16), nullable=False, default="A")
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="forwarded")
     hit_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    first_seen: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False)
-    last_seen: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False)
+    first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class MatchStats(Base):
@@ -101,7 +103,7 @@ class MatchStats(Base):
     templates_created: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     buffer_flushes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     current_buffer_size_bytes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    last_flush_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    updated_at: Mapped[DateTime] = mapped_column(
+    last_flush_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

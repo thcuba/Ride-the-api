@@ -29,13 +29,13 @@ class DeviceStateStore:
         self._last_update: float = time.time()
         self._dirty: bool = False
 
-    def apply_state_variables(self, variables: list[StateVariable]):
+    def apply_state_variables(self, variables: list[StateVariable]) -> None:
         """Initialize state from pattern DB state_variables."""
         for v in variables:
             if v.name not in self._variables:
                 self._variables[v.name] = v.default
 
-    def apply_virtual_sensors(self, sensors: list[VirtualSensor]):
+    def apply_virtual_sensors(self, sensors: list[VirtualSensor]) -> None:
         """Initialize virtual sensors from pattern DB."""
         for s in sensors:
             self._sensors[s.name] = _SensorInstance(s)
@@ -72,7 +72,7 @@ class DeviceStateStore:
             "updated_at": time.time(),
         }
 
-    def restore(self, data: dict):
+    def restore(self, data: dict[str, Any]) -> None:
         """Restore from a snapshot."""
         self._variables.update(data.get("variables", {}))
 
@@ -166,7 +166,9 @@ class _SensorInstance:
     def _drift(self, baseline: float) -> float:
         if self._current_value is None:
             return baseline
-        return self._current_value + random.uniform(self._drift_scaled_min, self._drift_scaled_max)
+        return float(self._current_value) + random.uniform(
+            self._drift_scaled_min, self._drift_scaled_max
+        )
 
     def _periodic(self, now: float, baseline: float) -> float:
         return baseline + self._amplitude * math.sin(now * self._two_pi_over_period)

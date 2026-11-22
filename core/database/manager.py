@@ -9,7 +9,7 @@ import ipaddress
 import logging
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -50,7 +50,7 @@ from core.pattern_db.schemas import DeviceMeta, normalize_connection_mode
 logger = logging.getLogger(__name__)
 
 
-def _get_config():
+def _get_config() -> Any:
     import core.database as db_mod  # noqa: PLC0415
 
     fn = getattr(db_mod, "get_config", get_config)

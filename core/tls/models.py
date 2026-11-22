@@ -99,7 +99,7 @@ def parse_decrypted_http_request(
     except h11.RemoteProtocolError:
         return None
 
-    if not got_end or not method or not target:
+    if not got_end or not method or not target or not http_version:
         return None
     return method, target, http_version, headers, bytes(body)
 

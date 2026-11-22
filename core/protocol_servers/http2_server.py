@@ -81,7 +81,7 @@ class HTTP2ServerPlugin(ProtocolServerPlugin):
         logger.info("HTTP/2 server stopped")
 
     async def _handle_connection(  # noqa: C901, PLR0912, PLR0915
-        self, reader: asyncio.StreamReader, writer: asyncio.Writer
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
         peername = writer.get_extra_info("peername", ("unknown", 0))
         remote_ip = peername[0]
@@ -128,12 +128,12 @@ class HTTP2ServerPlugin(ProtocolServerPlugin):
                         # A request whose headers carry END_STREAM has no body
                         # and is fully dispatched while here.
                         if event.stream_ended:
-                            stream = pending.pop(event.stream_id)
-                            await self._respond(conn, outbox, stream, device_id, remote_ip)
+                            ended_req = pending.pop(event.stream_id)
+                            await self._respond(conn, outbox, ended_req, device_id, remote_ip)
                     elif isinstance(event, h2.events.DataReceived):
-                        stream = pending.get(event.stream_id)
-                        if stream is not None:
-                            if len(stream["body"]) + len(event.data) > _MAX_BODY_BYTES:
+                        data_stream = pending.get(event.stream_id)
+                        if data_stream is not None:
+                            if len(data_stream["body"]) + len(event.data) > _MAX_BODY_BYTES:
                                 conn.reset_stream(
                                     event.stream_id,
                                     error_code=h2.errors.ErrorCodes.REFUSED_STREAM,
@@ -142,15 +142,15 @@ class HTTP2ServerPlugin(ProtocolServerPlugin):
                                 # send headers on a locally-closed stream.
                                 pending.pop(event.stream_id, None)
                             else:
-                                stream["body"].extend(event.data)
+                                data_stream["body"].extend(event.data)
                         # Always acknowledge so flow control keeps the stream alive.
                         conn.acknowledge_received_data(
                             event.flow_controlled_length, event.stream_id
                         )
                     elif isinstance(event, h2.events.StreamEnded):
-                        stream = pending.pop(event.stream_id, None)
-                        if stream is not None:
-                            await self._respond(conn, outbox, stream, device_id, remote_ip)
+                        stream_ended = pending.pop(event.stream_id, None)
+                        if stream_ended is not None:
+                            await self._respond(conn, outbox, stream_ended, device_id, remote_ip)
                     elif isinstance(event, h2.events.StreamReset):
                         pending.pop(event.stream_id, None)
                         outbox.pop(event.stream_id, None)
@@ -228,10 +228,10 @@ class HTTP2ServerPlugin(ProtocolServerPlugin):
         # Only a locally served response answers with content; anything else
         # used to come back as a 200 carrying the internal pipeline dict.
         reply = device_reply(result)
-        if reply is None:
+        if reply is None or not isinstance(result, dict):
             conn.send_headers(stream_id, [(":status", "502")], end_stream=True)
             return
-        response = result["response"]
+        response = result.get("response") or {}
         payload, is_json = encode_reply(reply)
         response_headers = [(":status", str(servable_status(response.get("status_code"))))]
         response_headers += [
@@ -280,7 +280,7 @@ def _send_queued(conn: h2.connection.H2Connection, outbox: dict[int, bytes]) -> 
             del outbox[stream_id]
 
 
-async def _flush(conn: h2.connection.H2Connection, writer: asyncio.Writer) -> None:
+async def _flush(conn: h2.connection.H2Connection, writer: asyncio.StreamWriter) -> None:
     # data_to_send() drains the buffer: calling it once to test and again to
     # write sent nothing, so SETTINGS ACKs and WINDOW_UPDATEs were lost.
     data = conn.data_to_send()

@@ -15,6 +15,7 @@ All components have been modularized into ``core.tls``:
 from __future__ import annotations
 
 import asyncio  # Re-exported for test monkeypatching compatibility
+from typing import Any
 
 import core.tls.server as _server_mod
 from core.cloud_forward import (  # Re-exported for test monkeypatching compatibility
@@ -64,7 +65,7 @@ from core.tls.sni import (
 )
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     if name == "_tls_mitm_server":
         return _server_mod._tls_mitm_server
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

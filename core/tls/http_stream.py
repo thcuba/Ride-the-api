@@ -133,7 +133,7 @@ async def read_http_over_tls(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
                     sni=hostname,
                     method=method,
                     path=target,
-                    http_version=http_version,
+                    http_version=http_version or "1.1",
                     headers=headers,
                     body=bytes(body),
                 )

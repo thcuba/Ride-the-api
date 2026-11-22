@@ -127,7 +127,7 @@ class ShellyProtocolAdapter(ProtocolAdapter):
     async def _parse_mqtt_ws(self, request: InterceptedRequest) -> InterceptedRequest:
         """Parse Shelly Gen2/Gen3 MQTT or WebSocket message."""
         topic = request.topic or request.path or ""
-        body = request.body or {}
+        body = request.body if isinstance(request.body, dict) else {}
 
         # Status report topics: shelly/<device>/status/...
         if "/status/" in topic or topic.endswith("/status"):
@@ -166,9 +166,13 @@ class ShellyProtocolAdapter(ProtocolAdapter):
         actual location is resolved via upstream DNS (bypassing the local DNS
         server) so forwarding never re-enters the proxy.
         """
-        hostname = (self.config.get("cloud") or {}).get("hostname") or self._host_from_request(
-            request
+        cloud_cfg = self.config.get("cloud")
+        cloud_host = (
+            str(cloud_cfg.get("hostname"))
+            if isinstance(cloud_cfg, dict) and cloud_cfg.get("hostname")
+            else None
         )
+        hostname = cloud_host or self._host_from_request(request)
         port = int((self.config.get("cloud") or {}).get("port", 443))
         use_tls = bool((self.config.get("cloud") or {}).get("tls", True))
         result = await forward_intercepted(
