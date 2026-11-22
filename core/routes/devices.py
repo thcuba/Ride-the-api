@@ -32,7 +32,7 @@ def _server() -> Any:
 
 
 @router.get("/api/devices")
-async def list_devices() -> Response | dict[str, Any]:
+async def list_devices() -> Any:
     """List all registered devices."""
 
     if not _server().db_manager:
@@ -44,7 +44,7 @@ async def list_devices() -> Response | dict[str, Any]:
 
 
 @router.get("/api/devices/{device_id}")
-async def get_device(device_id: str) -> Response | dict[str, Any]:
+async def get_device(device_id: str) -> Any:
     """Get device details and stats."""
 
     if not _server().db_manager or not _server().orchestrator:
@@ -66,7 +66,7 @@ async def get_device(device_id: str) -> Response | dict[str, Any]:
 
 
 @router.get("/api/devices/{device_id}/stats")
-async def get_device_stats(device_id: str) -> Response | dict[str, Any]:
+async def get_device_stats(device_id: str) -> Any:
     """Get real-time match statistics for a device."""
 
     if not _server().orchestrator:
@@ -78,7 +78,7 @@ async def get_device_stats(device_id: str) -> Response | dict[str, Any]:
 
 
 @router.delete("/api/devices/{device_id}")
-async def delete_device(device_id: str) -> Response | dict[str, Any]:
+async def delete_device(device_id: str) -> Any:
     """Delete a device and its data (registry row, per-device DB, pattern file)."""
 
     if not _server().db_manager:
@@ -99,7 +99,7 @@ async def delete_device(device_id: str) -> Response | dict[str, Any]:
 
 
 @router.get("/api/devices/{device_id}/match-rate")
-async def get_match_rate(device_id: str) -> Response | dict[str, Any]:
+async def get_match_rate(device_id: str) -> Any:
     """Get current match rate percentage."""
 
     if not _server().orchestrator:
@@ -117,7 +117,7 @@ async def get_match_rate(device_id: str) -> Response | dict[str, Any]:
 
 
 @router.post("/api/devices/{device_id}/mode")
-async def set_device_mode(device_id: str, request: Request) -> Response | dict[str, Any]:
+async def set_device_mode(device_id: str, request: Request) -> Any:
     """Switch device between learning and production mode."""
 
     if not _server().db_manager:
@@ -149,7 +149,7 @@ async def set_device_mode(device_id: str, request: Request) -> Response | dict[s
 
 
 @router.put("/api/devices/{device_id}/threshold")
-async def set_device_threshold(device_id: str, request: Request) -> Response | dict[str, Any]:  # noqa: PLR0911
+async def set_device_threshold(device_id: str, request: Request) -> Any:  # noqa: PLR0911
     """Set the per-device match confidence threshold (0.0 to 1.0)."""
 
     if not _server().db_manager:
@@ -189,7 +189,7 @@ async def set_device_threshold(device_id: str, request: Request) -> Response | d
 
 
 @router.put("/api/devices/{device_id}/context-buffer")
-async def set_device_context_buffer(device_id: str, request: Request) -> Response | dict[str, Any]:  # noqa: PLR0911
+async def set_device_context_buffer(device_id: str, request: Request) -> Any:  # noqa: PLR0911
     """Set the per-device context buffer size in bytes."""
 
     if not _server().db_manager:
@@ -229,7 +229,7 @@ async def set_device_context_buffer(device_id: str, request: Request) -> Respons
 
 
 @router.get("/api/devices/{device_id}/auto-switch")
-async def get_device_auto_switch(device_id: str) -> Response | dict[str, Any]:
+async def get_device_auto_switch(device_id: str) -> Any:
     """Get auto-switch status for a device."""
 
     if not _server().db_manager:
@@ -248,7 +248,7 @@ async def get_device_auto_switch(device_id: str) -> Response | dict[str, Any]:
 
 
 @router.put("/api/devices/{device_id}/auto-switch")
-async def set_device_auto_switch(device_id: str, request: Request) -> Response | dict[str, Any]:
+async def set_device_auto_switch(device_id: str, request: Request) -> Any:
     """Enable or disable auto-switch to production for a device."""
 
     if not _server().db_manager:
@@ -275,7 +275,7 @@ async def set_device_auto_switch(device_id: str, request: Request) -> Response |
 
 
 @router.put("/api/devices/{device_id}/llm")
-async def configure_device_llm(device_id: str, request: Request) -> Response | dict[str, Any]:
+async def configure_device_llm(device_id: str, request: Request) -> Any:
     """Configure LLM settings for a device."""
 
     if not _server().db_manager:
@@ -331,7 +331,7 @@ def _requested_database_url(body: dict) -> tuple[str | None, str | None]:
 
 
 @router.post("/api/devices/{device_id}/database")
-async def assign_device_database(device_id: str, request: Request) -> Response | dict[str, Any]:
+async def assign_device_database(device_id: str, request: Request) -> Any:
     """Assign a database (URL or name) to a device. Creates a new DB if only name given."""
 
     if not _server().db_manager:
@@ -362,7 +362,7 @@ async def assign_device_database(device_id: str, request: Request) -> Response |
 
 
 @router.post("/api/devices/{device_id}/database/rename")
-async def rename_device_database(device_id: str, request: Request) -> Response | dict[str, Any]:
+async def rename_device_database(device_id: str, request: Request) -> Any:
     """Rename a device's database file.
 
 
@@ -413,7 +413,7 @@ async def rename_device_database(device_id: str, request: Request) -> Response |
 
 
 @router.get("/api/databases")
-async def list_databases() -> Response | dict[str, Any]:
+async def list_databases() -> Any:
     """List all active device databases."""
 
     if not _server().db_manager:
@@ -425,7 +425,7 @@ async def list_databases() -> Response | dict[str, Any]:
 
 
 @router.get("/api/devices/{device_id}/database")
-async def get_device_database(device_id: str) -> Response | dict[str, Any]:
+async def get_device_database(device_id: str) -> Any:
     """Get the database assignment for a device."""
 
     if not _server().db_manager:
@@ -450,7 +450,7 @@ async def get_device_database(device_id: str) -> Response | dict[str, Any]:
 
 
 @router.get("/api/devices/by-ip/{ip_address}")
-async def get_device_by_ip(ip_address: str) -> Response | dict[str, Any]:
+async def get_device_by_ip(ip_address: str) -> Any:
     """Look up a device by its IP address."""
 
     if not _server().db_manager:
@@ -468,7 +468,7 @@ async def get_device_by_ip(ip_address: str) -> Response | dict[str, Any]:
 
 
 @router.get("/api/devices/{device_id}/connection")
-async def get_device_connection(device_id: str) -> Response | dict[str, Any]:
+async def get_device_connection(device_id: str) -> Any:
     """Get the connection type for a device (default 'auto')."""
 
     if not _server().db_manager:
@@ -491,7 +491,7 @@ async def get_device_connection(device_id: str) -> Response | dict[str, Any]:
 
 
 @router.put("/api/devices/{device_id}/connection")
-async def update_device_connection(device_id: str, request: Request) -> Response | dict[str, Any]:
+async def update_device_connection(device_id: str, request: Request) -> Any:
     """Set the connection type for a device (auto | tls | http | mqtt | coap | modbus)."""
 
     if not _server().db_manager:
@@ -538,7 +538,7 @@ async def update_device_connection(device_id: str, request: Request) -> Response
 
 
 @router.get("/api/ip-profiles/{ip_address}/bypass")
-async def get_ip_bypass(ip_address: str) -> Response | dict[str, Any]:
+async def get_ip_bypass(ip_address: str) -> Any:
     """Get the bypass mode for an IP (from ip_profiles config, default False)."""
 
     if not _server().db_manager:
@@ -554,7 +554,7 @@ async def get_ip_bypass(ip_address: str) -> Response | dict[str, Any]:
 
 
 @router.put("/api/ip-profiles/{ip_address}/bypass")
-async def set_ip_bypass(ip_address: str, request: Request) -> Response | dict[str, Any]:
+async def set_ip_bypass(ip_address: str, request: Request) -> Any:
     """Set/clear bypass for an IP, persisting to the config file."""
 
     if not _server().db_manager:
@@ -581,7 +581,7 @@ async def set_ip_bypass(ip_address: str, request: Request) -> Response | dict[st
 
 
 @router.post("/api/devices/{device_id}/ip")
-async def register_device_ip(device_id: str, request: Request) -> Response | dict[str, Any]:  # noqa: PLR0911
+async def register_device_ip(device_id: str, request: Request) -> Any:  # noqa: PLR0911
     """Register an IP address for a device."""
 
     if not _server().db_manager:
@@ -620,7 +620,7 @@ async def register_device_ip(device_id: str, request: Request) -> Response | dic
 
 
 @router.get("/api/devices/{device_id}/buffer")
-async def list_buffer_entries(device_id: str) -> Response | dict[str, Any]:
+async def list_buffer_entries(device_id: str) -> Any:
     """List unflushed buffer entries for a device."""
 
     if not _server().db_manager or not _server().orchestrator:
@@ -650,7 +650,7 @@ async def list_buffer_entries(device_id: str) -> Response | dict[str, Any]:
 
 
 @router.delete("/api/devices/{device_id}/buffer/{entry_id}")
-async def delete_buffer_entry(device_id: str, entry_id: int) -> Response | dict[str, Any]:
+async def delete_buffer_entry(device_id: str, entry_id: int) -> Any:
     """Delete a single buffer entry."""
 
     if not _server().db_manager or not _server().orchestrator:
@@ -680,7 +680,7 @@ async def delete_buffer_entry(device_id: str, entry_id: int) -> Response | dict[
 
 
 @router.get("/api/devices/{device_id}/context")
-async def get_device_context(device_id: str) -> Response | dict[str, Any]:
+async def get_device_context(device_id: str) -> Any:
     """Get custom context notes for a device."""
 
     if not _server().db_manager:
@@ -692,7 +692,7 @@ async def get_device_context(device_id: str) -> Response | dict[str, Any]:
 
 
 @router.put("/api/devices/{device_id}/context")
-async def update_device_context(device_id: str, request: Request) -> Response | dict[str, Any]:
+async def update_device_context(device_id: str, request: Request) -> Any:
     """Update custom context notes for a device."""
 
     if not _server().db_manager:
@@ -716,7 +716,7 @@ async def update_device_context(device_id: str, request: Request) -> Response | 
 
 
 @router.get("/api/devices/{device_id}/capture/export")
-async def export_buffer(device_id: str) -> Response | dict[str, Any]:
+async def export_buffer(device_id: str) -> Any:
     """Export raw buffer to portable .ride-capture.json format."""
 
     if not _server().db_manager:
@@ -747,7 +747,7 @@ async def export_buffer(device_id: str) -> Response | dict[str, Any]:
 
 
 @router.post("/api/devices/{device_id}/capture/import")
-async def import_buffer(device_id: str, request: Request) -> Response | dict[str, Any]:
+async def import_buffer(device_id: str, request: Request) -> Any:
     """Import raw pairs from portable .ride-capture.json into buffer."""
 
     if not _server().db_manager:

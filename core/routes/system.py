@@ -90,7 +90,7 @@ def _listening_ports() -> dict[str, object]:
 
 
 @router.get("/health")
-async def health_check() -> Response | dict[str, Any]:
+async def health_check() -> Any:
     """Health check endpoint: also reports what is actually bound."""
 
     return {
@@ -103,7 +103,7 @@ async def health_check() -> Response | dict[str, Any]:
 
 
 @router.post("/api/system/update")
-async def system_update() -> Response | dict[str, Any]:
+async def system_update() -> Any:
     """Update the software to the latest state and restart the service.
 
 
@@ -163,14 +163,14 @@ async def system_update() -> Response | dict[str, Any]:
 
 
 @router.get("/api/settings/buffer-backend")
-async def get_buffer_backend_setting() -> Response | dict[str, Any]:
+async def get_buffer_backend_setting() -> Any:
     """Return the currently active buffer backend (``disk`` = SQLite, or ``memory``)."""
 
     return {"backend": get_buffer_backend()}
 
 
 @router.put("/api/settings/buffer-backend")
-async def set_buffer_backend_setting(request: Request) -> Response | dict[str, Any]:
+async def set_buffer_backend_setting(request: Request) -> Any:
     """Switch the buffer backend, carrying the pairs in flight, and persist the choice.
 
 
@@ -228,7 +228,7 @@ async def set_buffer_backend_setting(request: Request) -> Response | dict[str, A
 
 
 @router.get("/api/config")
-async def get_config() -> Response | dict[str, Any]:
+async def get_config() -> Any:
     """Return the full current configuration (validated YAML model_dump).
 
 
@@ -243,7 +243,7 @@ async def get_config() -> Response | dict[str, Any]:
 
 
 @router.put("/api/config")
-async def put_config(request: Request) -> Response | dict[str, Any]:
+async def put_config(request: Request) -> Any:
     """Validate and persist a full replacement of the configuration."""
 
     try:
@@ -326,7 +326,7 @@ def _new_password_problem(password: object) -> str | None:
 
 
 @router.post("/api/auth/password")
-async def set_control_plane_password(request: Request) -> Response | dict[str, Any]:
+async def set_control_plane_password(request: Request) -> Any:
     """Set the control-plane ``security.password`` on first run.
 
 

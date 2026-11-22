@@ -31,7 +31,7 @@ def _server() -> Any:
 
 
 @router.get("/api/devices/{device_id}/patterns")
-async def get_device_patterns(device_id: str) -> Response | dict[str, Any]:
+async def get_device_patterns(device_id: str) -> Any:
     """Get learned patterns for a device."""
 
     if not _server().db_manager:
@@ -86,7 +86,7 @@ async def get_device_patterns(device_id: str) -> Response | dict[str, Any]:
 
 
 @router.get("/api/devices/{device_id}/patterns/export")
-async def export_patterns(device_id: str) -> Response | dict[str, Any]:
+async def export_patterns(device_id: str) -> Any:
     """Export deciphered patterns to portable .ride-pattern.json format."""
 
     if not _server().db_manager:
@@ -124,7 +124,7 @@ async def export_patterns(device_id: str) -> Response | dict[str, Any]:
 
 
 @router.get("/api/devices/{device_id}/patterns/{pattern_id}")
-async def get_pattern_detail(device_id: str, pattern_id: str) -> Response | dict[str, Any]:
+async def get_pattern_detail(device_id: str, pattern_id: str) -> Any:
     """Get detailed pattern info including field mappings."""
 
     if not _server().db_manager:
@@ -219,7 +219,7 @@ async def _resync_device_patterns(device_id: str) -> None:
 
 
 @router.put("/api/devices/{device_id}/patterns/{pattern_id}")
-async def put_pattern(device_id: str, pattern_id: str, request: Request) -> Response | dict[str, Any]:
+async def put_pattern(device_id: str, pattern_id: str, request: Request) -> Any:
     """Full update of a request pattern, its response template, and field mappings."""
 
     if not _server().db_manager:
@@ -336,7 +336,7 @@ async def put_pattern(device_id: str, pattern_id: str, request: Request) -> Resp
 @router.patch("/api/devices/{device_id}/patterns/{pattern_id}")
 async def patch_pattern(  # noqa: C901, PLR0912
     device_id: str, pattern_id: str, request: Request
-) -> Response | dict[str, Any]:
+) -> Any:
     """Partial update for a pattern."""
 
     if not _server().db_manager:
@@ -444,7 +444,7 @@ async def patch_pattern(  # noqa: C901, PLR0912
 
 
 @router.delete("/api/devices/{device_id}/patterns/{pattern_id}")
-async def delete_pattern(device_id: str, pattern_id: str) -> Response | dict[str, Any]:
+async def delete_pattern(device_id: str, pattern_id: str) -> Any:
     """Delete a pattern and its associated response template and field mappings."""
 
     if not _server().db_manager:
@@ -493,7 +493,7 @@ async def delete_pattern(device_id: str, pattern_id: str) -> Response | dict[str
 
 
 @router.post("/api/devices/{device_id}/patterns/import")
-async def import_patterns(device_id: str, request: Request) -> Response | dict[str, Any]:
+async def import_patterns(device_id: str, request: Request) -> Any:
     """Import patterns from portable .ride-pattern.json format."""
 
     if not _server().db_manager:

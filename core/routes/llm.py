@@ -23,7 +23,7 @@ def _server() -> Any:
 
 
 @router.get("/api/llm/profiles")
-async def list_llm_profiles() -> Response | dict[str, Any]:
+async def list_llm_profiles() -> Any:
     """List available LLM profiles (system-level)."""
     if not _server().llm_decipher_service:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
@@ -32,7 +32,7 @@ async def list_llm_profiles() -> Response | dict[str, Any]:
 
 
 @router.get("/api/llm/settings")
-async def get_llm_settings() -> Response | dict[str, Any]:
+async def get_llm_settings() -> Any:
     """Return the effective LLM settings (enabled, default profile, profiles)."""
     if not _server().llm_decipher_service:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
@@ -40,7 +40,7 @@ async def get_llm_settings() -> Response | dict[str, Any]:
 
 
 @router.put("/api/llm/settings")
-async def update_llm_settings(request: Request) -> Response | dict[str, Any]:
+async def update_llm_settings(request: Request) -> Any:
     """Update the LLM settings (enabled, default profile, profiles) and persist."""
     if not _server().llm_decipher_service:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
@@ -64,7 +64,7 @@ async def update_llm_settings(request: Request) -> Response | dict[str, Any]:
 
 
 @router.post("/api/llm/profiles/test")
-async def test_llm_profile(request: Request) -> Response | dict[str, Any]:
+async def test_llm_profile(request: Request) -> Any:
     """Send a "hello" completion to a provider and report whether it answers.
 
     The dashboard's per-profile Test button calls this with the current form
@@ -106,7 +106,7 @@ async def test_llm_profile(request: Request) -> Response | dict[str, Any]:
 
 
 @router.post("/api/llm/settings/profiles")
-async def create_llm_profile(request: Request) -> Response | dict[str, Any]:  # noqa: PLR0911
+async def create_llm_profile(request: Request) -> Any:  # noqa: PLR0911
     """Create or update a single LLM profile and persist the settings."""
     if not _server().llm_decipher_service:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
@@ -144,7 +144,7 @@ async def create_llm_profile(request: Request) -> Response | dict[str, Any]:  # 
 
 
 @router.delete("/api/llm/settings/profiles/{name}")
-async def delete_llm_profile(name: str) -> Response | dict[str, Any]:
+async def delete_llm_profile(name: str) -> Any:
     """Delete an LLM profile and persist the settings."""
     if not _server().llm_decipher_service:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
@@ -167,7 +167,7 @@ async def delete_llm_profile(name: str) -> Response | dict[str, Any]:
 
 
 @router.post("/api/devices/{device_id}/llm/flush")
-async def flush_buffer_to_llm(device_id: str, request: Request) -> Response | dict[str, Any]:
+async def flush_buffer_to_llm(device_id: str, request: Request) -> Any:
     """Flush selected buffer entries to LLM with optional context notes."""
     if not _server().db_manager or not _server().orchestrator:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
@@ -188,7 +188,7 @@ async def flush_buffer_to_llm(device_id: str, request: Request) -> Response | di
 
 
 @router.post("/api/devices/{device_id}/llm/preview")
-async def preview_llm_analysis(device_id: str, request: Request) -> Response | dict[str, Any]:
+async def preview_llm_analysis(device_id: str, request: Request) -> Any:
     """Run LLM analysis without saving patterns. Returns analysis for review."""
     if not _server().db_manager or not _server().orchestrator:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
@@ -209,7 +209,7 @@ async def preview_llm_analysis(device_id: str, request: Request) -> Response | d
 
 
 @router.get("/api/llm/user-profiles")
-async def list_user_profiles() -> Response | dict[str, Any]:
+async def list_user_profiles() -> Any:
     """List all user-saved LLM profile templates."""
     if not _server().db_manager:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
@@ -218,7 +218,7 @@ async def list_user_profiles() -> Response | dict[str, Any]:
 
 
 @router.post("/api/llm/user-profiles")
-async def create_user_profile(request: Request) -> Response | dict[str, Any]:
+async def create_user_profile(request: Request) -> Any:
     """Create a new user LLM profile template."""
     if not _server().db_manager:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
@@ -240,7 +240,7 @@ async def create_user_profile(request: Request) -> Response | dict[str, Any]:
 
 
 @router.get("/api/llm/user-profiles/{name}")
-async def get_user_profile(name: str) -> Response | dict[str, Any]:
+async def get_user_profile(name: str) -> Any:
     """Get a single user LLM profile."""
     if not _server().db_manager:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
@@ -251,7 +251,7 @@ async def get_user_profile(name: str) -> Response | dict[str, Any]:
 
 
 @router.put("/api/llm/user-profiles/{name}")
-async def update_user_profile(name: str, request: Request) -> Response | dict[str, Any]:
+async def update_user_profile(name: str, request: Request) -> Any:
     """Update an existing user LLM profile."""
     if not _server().db_manager:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})
@@ -267,7 +267,7 @@ async def update_user_profile(name: str, request: Request) -> Response | dict[st
 
 
 @router.delete("/api/llm/user-profiles/{name}")
-async def delete_user_profile(name: str) -> Response | dict[str, Any]:
+async def delete_user_profile(name: str) -> Any:
     """Delete a user LLM profile."""
     if not _server().db_manager:
         return JSONResponse(status_code=503, content={"error": "Service not ready"})

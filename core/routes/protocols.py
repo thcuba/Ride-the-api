@@ -22,7 +22,7 @@ def _server() -> Any:
 
 
 @router.get("/api/protocol-servers")
-async def protocol_servers_status() -> Response | dict[str, Any]:
+async def protocol_servers_status() -> Any:
     """List all protocol servers and their status."""
     manager = get_protocol_server_manager()
     status_list = await manager.get_all_status()
@@ -30,7 +30,7 @@ async def protocol_servers_status() -> Response | dict[str, Any]:
 
 
 @router.post("/api/protocol-servers/{name}/start")
-async def protocol_server_start(name: str) -> Response | dict[str, Any]:
+async def protocol_server_start(name: str) -> Any:
     """Start a specific protocol server and persist enabled=true in config."""
     manager = get_protocol_server_manager()
     success = await manager.start_plugin(name)
@@ -49,7 +49,7 @@ async def protocol_server_start(name: str) -> Response | dict[str, Any]:
 
 
 @router.post("/api/protocol-servers/{name}/stop")
-async def protocol_server_stop(name: str) -> Response | dict[str, Any]:
+async def protocol_server_stop(name: str) -> Any:
     """Stop a specific protocol server and persist enabled=false in config."""
     manager = get_protocol_server_manager()
     success = await manager.stop_plugin(name)
@@ -68,7 +68,7 @@ async def protocol_server_stop(name: str) -> Response | dict[str, Any]:
 
 
 @router.get("/api/protocol-servers/{name}/config")
-async def protocol_server_config(name: str) -> Response | dict[str, Any]:
+async def protocol_server_config(name: str) -> Any:
     """Get configuration for a specific protocol server."""
     manager = get_protocol_server_manager()
     plugin = manager.get_plugin(name)
