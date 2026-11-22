@@ -46,10 +46,19 @@ async def _run_import(file_path: Path, device_id: str, server_url: str | None = 
             return
 
     # Direct import using local database
-    db_dir = Path("data/databases")
+    try:
+        from core.config import get_config  # noqa: PLC0415
+
+        cfg = get_config()
+        db_dir = Path(cfg.core.device_db_dir)
+        core_db_url = cfg.core.database_url
+    except Exception:
+        db_dir = Path("data/databases")
+        core_db_url = f"sqlite+aiosqlite:///{db_dir / 'core.db'}"
+
     db_dir.mkdir(parents=True, exist_ok=True)
     db_manager = DatabaseManager(
-        core_db_url=f"sqlite+aiosqlite:///{db_dir / 'core.db'}",
+        core_db_url=core_db_url,
         device_db_dir=db_dir,
     )
     await db_manager.initialize()

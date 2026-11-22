@@ -140,6 +140,17 @@ function escapeHtml(str) {
 }
 window.escapeHtml = escapeHtml;
 
+function escapeJs(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '\\x3C')
+    .replace(/>/g, '\\x3E');
+}
+window.escapeJs = escapeJs;
+
 // ── Modern Dialogs (showConfirm & showPrompt) ────────────────────────────────
 function showConfirm(optionsOrMessage) {
   return new Promise((resolve) => {
@@ -291,10 +302,10 @@ function showPrompt(optionsOrMessage) {
     actions.className = 'dialog-actions';
 
     const cancelBtn = document.createElement('button');
-    cancelBtn.type = 'submit';
-    cancelBtn.value = 'cancel';
+    cancelBtn.type = 'button';
     cancelBtn.className = 'btn btn-ghost';
     cancelBtn.textContent = cancelText;
+    cancelBtn.addEventListener('click', () => dialog.close('cancel'));
 
     const confirmBtn = document.createElement('button');
     confirmBtn.type = 'submit';
