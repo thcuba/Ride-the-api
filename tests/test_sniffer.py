@@ -27,6 +27,7 @@ from core.sniffer.service import SnifferService, detect_capture_format
 
 EXPECTED_PAIRS_COUNT = 2
 STATUS_OK = 200
+STATUS_UNPROCESSABLE = 422
 
 
 @pytest.fixture
@@ -230,5 +231,37 @@ async def test_sniffer_service_and_api(
         data = resp.json()
         assert data["status"] == "success"
         assert data["imported"] == EXPECTED_PAIRS_COUNT
+
+    await db_manager.close()
+
+
+@pytest.mark.asyncio
+async def test_sniffer_import_parse_error_does_not_leak_internals(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unparseable capture must return a generic 422 without internal details."""
+    monkeypatch.setattr(server_mod.config_manager.config.security, "auth_enabled", False)
+
+    db_path = tmp_path / "test_sniffer_leak.db"
+    devices_dir = tmp_path / "devices"
+    devices_dir.mkdir(parents=True, exist_ok=True)
+    db_manager = DatabaseManager(
+        core_db_url=f"sqlite+aiosqlite:///{db_path}",
+        device_db_dir=devices_dir,
+    )
+    await db_manager.initialize()
+    server_mod.db_manager = db_manager
+
+    transport = ASGITransport(app=server_mod.app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        files = {
+            "file": ("internalsecret.bin", b"\x00\x01\x02not-a-capture", "application/octet-stream")
+        }
+        resp = await client.post("/api/devices/dev-leak/sniffer/import", files=files)
+        assert resp.status_code == STATUS_UNPROCESSABLE
+        data = resp.json()
+        assert data["error"].startswith("Unable to parse capture file")
+        # Nessun dettaglio interno (nome file, traccia, eccezione) deve trapelare.
+        assert "internalsecret" not in json.dumps(data)
 
     await db_manager.close()
