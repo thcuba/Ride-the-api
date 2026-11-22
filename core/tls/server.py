@@ -16,34 +16,37 @@ import json
 import logging
 import os
 import ssl
-import sys
-import tempfile
 import time
-from contextlib import suppress
 from datetime import UTC, datetime
 from itertools import count
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import h11
-
-from adapters.base import InterceptedRequest, ProtocolType, device_id_from_ip
+from adapters.base import device_id_from_ip
 from core.cert_manager import CertManager
-from core.cloud_forward import forward_intercepted
 from core.ports import bind_failure_hint
+from core.tls.handshake import (
+    make_ssl_context,
+    pump_tls_handshake,
+    read_complete_client_hello,
+)
+from core.tls.http_stream import (
+    forward_upstream,
+    read_http_over_tls,
+    write_http_response,
+)
 from core.tls.models import (
-    MAX_ENCRYPTED_REQUEST_SIZE,
-    MAX_REQUEST_SIZE,
     TLS_VERSION_MAP,
     DecryptedRequest,
     DevicePortInfo,
-    serialize_http_response,
 )
-from core.tls.sni import (
-    MAX_CLIENT_HELLO_SIZE,
-    _client_hello_message,
-    extract_sni_from_client_hello,
+from core.tls.relay import (
+    _pipe_stream,
+    pipe_stream,
+    relay_to_upstream,
+    report_relayed,
 )
+from core.tls.sni import extract_sni_from_client_hello
 from core.upstream_resolver import self_connection_reason
 
 if TYPE_CHECKING:
@@ -51,31 +54,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
-async def _pipe_stream(
-    reader: asyncio.StreamReader,
-    writer: asyncio.StreamWriter,
-    counter: dict[str, int] | None = None,
-) -> None:
-    """Copy one stream to the other verbatim, until either side closes.
-
-    Used only by the relay path, where nothing is decrypted and nothing is inspected. ``counter``
-    accumulates the bytes moved: with the payload unreadable, volume is one of the few facts left.
-    """
-    try:
-        while True:
-            chunk = await reader.read(65536)
-            if not chunk:
-                break
-            writer.write(chunk)
-            await writer.drain()
-            if counter is not None:
-                counter["bytes"] = counter.get("bytes", 0) + len(chunk)
-    except (OSError, TimeoutError):
-        return
-    finally:
-        with suppress(Exception):
-            writer.write_eof()
+# Re-exported for backwards compatibility
+__all__ = [
+    "TLSMITMServer",
+    "_pipe_stream",
+    "get_tls_mitm_server",
+    "peek_tls_mitm_server",
+    "pipe_stream",
+]
 
 
 class TLSMITMServer:
@@ -144,20 +130,12 @@ class TLSMITMServer:
         self.device_ports: dict[str, DevicePortInfo] = {}
         self._device_ports_lock = asyncio.Lock()
 
-        # Relayed connections that are open right now, key -> live view. A relayed contact is
-        # recorded only when it ENDS, and a device that pins its certificate can hold one session
-        # open for hours: during that time the contact list looks empty exactly while the device is
-        # busy talking to its cloud. The byte counters are the same dicts the piping writes into,
-        # so they move by themselves while the session lives.
+        # Relayed connections that are open right now, key -> live view.
         self.live_relays: dict[str, dict] = {}
         self._live_relays_lock = asyncio.Lock()
         self._relay_sequence = count()
 
-        # Cache of parsed SSLContexts keyed by (cert_pem, key_pem). Building a
-        # context writes a temp file and parses the PEM on every TLS connection;
-        # caching it removes that per-connection cost while staying correct across
-        # cert rotation — rotation changes the PEM, so the cache key changes and a
-        # fresh context is built automatically.
+        # Cache of parsed SSLContexts keyed by (cert_pem, key_pem).
         self._ssl_context_cache: dict[tuple[str, str], ssl.SSLContext] = {}
 
         # Ensure CA exists on init
@@ -167,7 +145,7 @@ class TLSMITMServer:
 
     async def start(self) -> list[asyncio.AbstractServer]:
         """Start listening on all configured ports."""
-        ca_cert, ca_key = self.cert_manager.ensure_ca()
+        self.cert_manager.ensure_ca()
         logger.info(
             "TLS MITM: starting on %d ports: %s",
             len(self.listen_ports),
@@ -248,9 +226,6 @@ class TLSMITMServer:
                 port=port,
             )
         except OSError as e:
-            # Log the full exception server-side, but return a generic reason:
-            # the raw OSError text can contain stack-trace info that must not
-            # be exposed to the client (CodeQL: information exposure).
             logger.warning("TLS MITM: cannot add port %d — %s", port, e)
             return "port already in use or cannot be bound"
         except Exception as e:  # noqa: BLE001
@@ -287,16 +262,7 @@ class TLSMITMServer:
         self, reader: asyncio.StreamReader, initial_data: bytes
     ) -> bytes:
         """Collect a ClientHello split across TCP reads without dropping bytes."""
-        data = bytearray(initial_data[:MAX_CLIENT_HELLO_SIZE])
-        while len(data) < MAX_CLIENT_HELLO_SIZE:
-            complete, _message = _client_hello_message(data)
-            if complete:
-                break
-            more = await reader.read(min(4096, MAX_CLIENT_HELLO_SIZE - len(data)))
-            if not more:
-                break
-            data.extend(more)
-        return bytes(data)
+        return await read_complete_client_hello(reader, initial_data)
 
     async def _handle_connection(  # noqa: C901, PLR0911, PLR0912, PLR0915
         self,
@@ -548,69 +514,20 @@ class TLSMITMServer:
         cert_pem: str,
         key_pem: str,
     ) -> tuple[ssl.SSLContext | None, str | None]:
-        """Create an SSL context with the given cert and key.
-
-        Returns (context, temp_file_path) or (None, None) on failure.
-        The temp file must be cleaned up after use.
-
-        Performance: contexts are cached per ``(cert_pem, key_pem)`` so the
-        temp-file write + PEM parse + context construction only happens once
-        per distinct certificate instead of on every TLS connection. A cached
-        context returns a ``None`` temp path (nothing to clean up). Cert
-        rotation changes the PEM, so the key changes and a fresh context is
-        built for the new certificate.
-        """
-        cache_key = (cert_pem, key_pem)
-        cached = self._ssl_context_cache.get(cache_key)
-        if cached is not None:
-            return cached, None
-        try:
-            # Write cert+key to a temp file (load_cert_chain only takes file paths)
-            with tempfile.NamedTemporaryFile(
-                mode="w",
-                suffix=".pem",
-                delete=False,
-            ) as f:
-                f.write(cert_pem)
-                f.write("\n")
-                f.write(key_pem)
-                temp_path = f.name
-
-            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-            ctx.load_cert_chain(temp_path)
-
-            # Security settings
-            ctx.minimum_version = self.min_tls_version
-            ctx.maximum_version = self.max_tls_version
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
-
-            # load_cert_chain parses the file eagerly, so the context is
-            # self-contained and the temp file may be cleaned up immediately.
-            self._ssl_context_cache[cache_key] = ctx
-            return ctx, temp_path  # noqa: TRY300
-        except Exception:
-            logger.exception("TLS MITM: failed to create SSL context")
-            return None, None
+        """Create an SSL context with the given cert and key."""
+        return make_ssl_context(
+            cert_pem=cert_pem,
+            key_pem=key_pem,
+            min_tls_version=self.min_tls_version,
+            max_tls_version=self.max_tls_version,
+            cache=self._ssl_context_cache,
+        )
 
     async def _report_relayed(self, contact: dict) -> None:
-        """Hand one relayed contact to the recorder, best effort.
+        """Hand one relayed contact to the recorder, best effort."""
+        await report_relayed(self.on_relayed, contact)
 
-        Recording must never affect the forwarding itself: a failure here is logged and the
-        connection carries on, because staying connected matters more than being counted.
-        """
-        if self.on_relayed is None:
-            return
-        try:
-            await self.on_relayed(contact)
-        except Exception:
-            logger.warning(
-                "TLS relay: could not record the contact for %s",
-                contact.get("client_ip"),
-                exc_info=True,
-            )
-
-    async def _relay_to_upstream(  # noqa: PLR0913, PLR0917 — streams, hello, sni, peer, port
+    async def _relay_to_upstream(  # noqa: PLR0913, PLR0917
         self,
         reader: asyncio.StreamReader,
         writer: asyncio.StreamWriter,
@@ -619,93 +536,20 @@ class TLSMITMServer:
         client_ip: str,
         dst_port: int,
     ) -> None:
-        """Forward a connection to the real cloud without terminating TLS.
-
-        For devices that pin their vendor's certificate -- they will refuse any certificate we
-        generate, so the only useful thing left is to stay out of the way. The ClientHello already
-        read is replayed to the real server and the two streams are then piped verbatim: the device
-        keeps talking to its cloud, nothing is decrypted, and its identity is already in the
-        registry.
-        """
-        base = {"client_ip": client_ip, "server_name": sni, "destination_port": dst_port}
-
-        if self.resolve_upstream is None:
-            logger.warning("TLS relay: no upstream resolver wired, dropping %s", client_ip)
-            await self._report_relayed({**base, "outcome": "no_resolver"})
-            writer.close()
-            return
-
-        try:
-            upstream_ip = await self.resolve_upstream(sni)
-        except Exception:
-            logger.warning("TLS relay: could not resolve %s", sni, exc_info=True)
-            upstream_ip = None
-
-        if not upstream_ip:
-            logger.warning("TLS relay: %s does not resolve, dropping %s", sni, client_ip)
-            await self._report_relayed({**base, "outcome": "unresolvable"})
-            writer.close()
-            return
-
-        try:
-            up_reader, up_writer = await asyncio.wait_for(
-                asyncio.open_connection(upstream_ip, dst_port), timeout=10
-            )
-        except (OSError, TimeoutError) as exc:
-            logger.warning("TLS relay: cannot reach %s:%s (%s)", upstream_ip, dst_port, exc)
-            await self._report_relayed(
-                {**base, "upstream_ip": upstream_ip, "outcome": "unreachable"}
-            )
-            writer.close()
-            return
-
-        logger.info(
-            "TLS relay: %s -> %s (%s:%s), forwarded without decryption",
-            client_ip,
-            sni,
-            upstream_ip,
-            dst_port,
+        """Forward a connection to the real cloud without terminating TLS."""
+        await relay_to_upstream(
+            reader=reader,
+            writer=writer,
+            client_hello=client_hello,
+            sni=sni,
+            client_ip=client_ip,
+            dst_port=dst_port,
+            resolve_upstream=self.resolve_upstream,
+            report_relayed_fn=self._report_relayed,
+            register_live_relay=self._register_live_relay,
+            finish_live_relay=self._finish_live_relay,
+            relay_sequence=self._relay_sequence,
         )
-        to_cloud: dict[str, int] = {}
-        to_device: dict[str, int] = {}
-        started = time.monotonic()
-        up_writer.write(client_hello)
-        to_cloud["bytes"] = len(client_hello)
-        # Visible from here on: a session that stays open for hours must not look like silence.
-        relay_key = f"{client_ip}:{dst_port}:{next(self._relay_sequence)}"
-        await self._register_live_relay(
-            relay_key,
-            {
-                **base,
-                "upstream_ip": upstream_ip,
-                "to_cloud": to_cloud,
-                "to_device": to_device,
-            },
-        )
-        try:
-            await up_writer.drain()
-            await asyncio.gather(
-                _pipe_stream(reader, up_writer, to_cloud),
-                _pipe_stream(up_reader, writer, to_device),
-                return_exceptions=True,
-            )
-        finally:
-            # The contact record below becomes the visible trace of this session, so the live view
-            # goes away in the same breath.
-            self._finish_live_relay(relay_key)
-            for stream in (up_writer, writer):
-                with suppress(Exception):
-                    stream.close()
-            await self._report_relayed(
-                {
-                    **base,
-                    "upstream_ip": upstream_ip,
-                    "bytes_to_cloud": to_cloud.get("bytes", 0),
-                    "bytes_to_device": to_device.get("bytes", 0),
-                    "duration_ms": int((time.monotonic() - started) * 1000),
-                    "outcome": "relayed",
-                }
-            )
 
     async def _pump_tls_handshake(
         self,
@@ -716,44 +560,15 @@ class TLSMITMServer:
         writer: asyncio.StreamWriter,
     ) -> bool:
         """Complete the TLS handshake, reading/writing as needed."""
-        handshake_attempts = 0
-        max_attempts = 100
+        return await pump_tls_handshake(
+            ssl_obj=ssl_obj,
+            incoming=incoming,
+            outgoing=outgoing,
+            reader=reader,
+            writer=writer,
+        )
 
-        while handshake_attempts < max_attempts:
-            handshake_attempts += 1
-            try:
-                ssl_obj.do_handshake()
-                # Drain any remaining handshake output
-                if outgoing.pending:
-                    writer.write(outgoing.read(4096))
-                    await writer.drain()
-                return True  # Handshake complete  # noqa: TRY300
-            except ssl.SSLWantReadError:
-                # Send any pending handshake output to the client
-                if outgoing.pending:
-                    writer.write(outgoing.read(4096))
-                    await writer.drain()
-                # Read more data from the client
-                try:
-                    more = await asyncio.wait_for(reader.read(4096), timeout=30)
-                except TimeoutError:
-                    logger.warning("TLS MITM: handshake timeout")
-                    return False
-                if not more:
-                    return False
-                incoming.write(more)
-            except ssl.SSLWantWriteError:
-                if outgoing.pending:
-                    writer.write(outgoing.read(4096))
-                    await writer.drain()
-            except ssl.SSLError as e:
-                logger.warning("TLS MITM: handshake failed: %s", e)
-                return False
-
-        logger.warning("TLS MITM: handshake exceeded max attempts")
-        return False
-
-    async def _read_http_over_tls(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
+    async def _read_http_over_tls(  # noqa: PLR0913, PLR0917
         self,
         ssl_obj: ssl.SSLObject,
         incoming: ssl.MemoryBIO,
@@ -765,175 +580,24 @@ class TLSMITMServer:
         dst_port: int,
         hostname: str,
     ) -> DecryptedRequest | None:
-        """Read and parse a decrypted HTTP/1.1 request with the h11 state machine.
-
-        h11 handles request-line framing, header parsing and body consumption
-        (Content-Length or chunked) using validated HTTP/1.1 parsing instead of
-        a hand-rolled regex.
-
-        Optimized using an incremental h11.Connection state machine per request
-        to avoid quadratic O(N^2) re-parsing of previously read chunks, redundant
-        h11.Connection state allocations, and intermediate bytes(app_buffer) heap
-        allocations on every read loop iteration (~6.8x faster parsing).
-        """
-        conn = h11.Connection(h11.SERVER)
-        method = target = http_version = None
-        headers: dict[str, str] = {}
-        body = bytearray()
-        got_end = False
-        total_bytes = 0
-        total_encrypted_bytes = 0
-
-        while True:
-            chunk = None
-
-            # Try to read decrypted data from the SSL object
-            try:
-                chunk = ssl_obj.read(4096)
-                if chunk == b"":
-                    break
-                if chunk:
-                    total_bytes += len(chunk)
-                    if total_bytes > MAX_REQUEST_SIZE:
-                        logger.warning(
-                            "TLS MITM: request from %s exceeds %d bytes - dropping",
-                            client_ip,
-                            MAX_REQUEST_SIZE,
-                        )
-                        break
-            except ssl.SSLWantReadError:
-                # Need more encrypted data from the wire
-                try:
-                    more = await asyncio.wait_for(reader.read(4096), timeout=30)
-                except TimeoutError:
-                    logger.warning("TLS MITM: timeout reading from %s", client_ip)
-                    break
-                if not more:
-                    break
-                total_encrypted_bytes += len(more)
-                if total_encrypted_bytes > MAX_ENCRYPTED_REQUEST_SIZE:
-                    logger.warning(
-                        "TLS MITM: encrypted request from %s exceeds %d bytes - dropping",
-                        client_ip,
-                        MAX_ENCRYPTED_REQUEST_SIZE,
-                    )
-                    break
-                incoming.write(more)
-                continue
-            except ssl.SSLWantWriteError:
-                # Need to send data to the client
-                if outgoing.pending:
-                    writer.write(outgoing.read(4096))
-                    await writer.drain()
-                continue
-            except ssl.SSLEOFError:
-                break
-            except ssl.SSLError as e:
-                logger.warning("TLS MITM: SSL error for %s: %s", client_ip, e)
-                break
-
-            if chunk:
-                try:
-                    conn.receive_data(chunk)
-                    while True:
-                        event = conn.next_event()
-                        if event is h11.NEED_DATA:
-                            break
-                        if isinstance(event, h11.Request):
-                            method = event.method.decode("ascii", "replace")
-                            target = event.target.decode("ascii", "replace")
-                            http_version = event.http_version.decode("ascii", "replace")
-                            for name, value in event.headers:
-                                key = name.decode("ascii", "replace").lower()
-                                headers[key] = value.decode("iso-8859-1")
-                        elif isinstance(event, h11.Data):
-                            body.extend(event.data)
-                        elif isinstance(event, h11.EndOfMessage):
-                            got_end = True
-                            break
-                        elif isinstance(event, h11.ConnectionClosed):
-                            break
-                except h11.RemoteProtocolError:
-                    return None
-
-                if got_end and method and target:
-                    return DecryptedRequest(
-                        client_ip=client_ip,
-                        client_port=client_port,
-                        dst_port=dst_port,
-                        sni=hostname,
-                        method=method,
-                        path=target,
-                        http_version=http_version,
-                        headers=headers,
-                        body=bytes(body),
-                    )
-
-        return None
+        """Read and parse a decrypted HTTP/1.1 request with the h11 state machine."""
+        return await read_http_over_tls(
+            ssl_obj=ssl_obj,
+            incoming=incoming,
+            outgoing=outgoing,
+            reader=reader,
+            writer=writer,
+            client_ip=client_ip,
+            client_port=client_port,
+            dst_port=dst_port,
+            hostname=hostname,
+        )
 
     async def _forward_upstream(
         self, req: DecryptedRequest, hostname: str, device_id: str
     ) -> dict | None:
-        """Forward a decrypted device request to the vendor cloud.
-
-        The TLS listener terminates TLS itself, so no proxy downstream can see —
-        and therefore act on — an ``X-Action: forward`` signal: the device would
-        simply receive a bare 502 with a header it cannot interpret. So this
-        path performs the upstream exchange here and returns the vendor's real
-        response (status, headers and raw body bytes) for replay over TLS.
-
-        Returns ``None`` when the exchange failed, so the caller can answer with
-        an explicit error instead of pretending the request was forwarded.
-        """
-        try:
-            _forward = (
-                sys.modules.get("core.tls_mitm").__dict__.get(
-                    "forward_intercepted", forward_intercepted
-                )
-                if "core.tls_mitm" in sys.modules
-                else forward_intercepted
-            )
-            result = await _forward(
-                InterceptedRequest(
-                    device_id=device_id,
-                    timestamp=datetime.now(UTC),
-                    protocol=ProtocolType.HTTPS,
-                    client_ip=req.client_ip,
-                    method=req.method,
-                    path=req.path,
-                    headers=dict(req.headers),
-                    query_params={},
-                    # The raw bytes are replayed verbatim (`body` stays None so
-                    # nothing re-encodes a non-JSON payload as JSON).
-                    body=None,
-                    body_bytes=req.body or None,
-                ),
-                hostname=hostname,
-                port=req.dst_port or 443,
-                use_tls=True,
-            )
-        except Exception:  # noqa: BLE001 - a forward failure must not kill the session
-            logger.exception("TLS MITM: upstream forward to %s failed", hostname)
-            return None
-        if not result.success:
-            logger.warning("TLS MITM: upstream forward to %s failed: %s", hostname, result.error)
-            return None
-        logger.info(
-            "TLS MITM: forwarded %s %s to %s -> %s",
-            req.method,
-            req.path,
-            hostname,
-            result.status_code,
-        )
-        return {
-            "status_code": result.status_code or 200,
-            "headers": result.response_headers or {"content-type": "application/json"},
-            "body": (
-                result.body_bytes
-                if result.body_bytes is not None
-                else json.dumps(result.response or {})
-            ),
-        }
+        """Forward a decrypted device request to the vendor cloud."""
+        return await forward_upstream(req, hostname, device_id)
 
     async def _write_http_response(
         self,
@@ -944,33 +608,7 @@ class TLSMITMServer:
         client_ip: str,
     ) -> None:
         """Serialize and send an HTTP/1.1 response using the h11 state machine."""
-        try:
-            status_code = int(response.get("status_code", 200))
-            resp_headers = response.get("headers") or {}
-            body = response.get("body")
-            if not isinstance(body, (str, bytes, bytearray)):
-                body = json.dumps(body, default=str) if body is not None else ""
-            if isinstance(body, str):
-                body = body.encode("utf-8")
-            body = bytes(body)
-            raw = serialize_http_response(
-                status_code=status_code,
-                headers=resp_headers if isinstance(resp_headers, dict) else {},
-                body=body,
-            )
-
-            try:  # noqa: SIM105
-                ssl_obj.write(raw)
-            except (ssl.SSLWantReadError, ssl.SSLWantWriteError):
-                pass
-            if outgoing.pending:
-                try:
-                    writer.write(outgoing.read(65536))
-                    await writer.drain()
-                except Exception:
-                    pass
-        except Exception as e:
-            logger.warning("TLS MITM: failed sending response to %s: %s", client_ip, e)
+        await write_http_response(ssl_obj, outgoing, writer, response, client_ip)
 
     # ── Device routing ────────────────────────────────────────────────────────
 
@@ -1001,13 +639,7 @@ class TLSMITMServer:
                 )
 
     async def _register_live_relay(self, key: str, view: dict) -> None:
-        """Remember a relayed connection that is open right now.
-
-        ``on_relayed`` fires only once the connection ends, so a session that lasts hours is
-        invisible for hours: no contact in the list, no bytes anywhere, nothing that says the
-        device is alive and working. Keeping the ``to_cloud``/``to_device`` dicts by reference
-        means the byte counts update themselves as the streams are piped.
-        """
+        """Remember a relayed connection that is open right now."""
         async with self._live_relays_lock:
             view["started_monotonic"] = time.monotonic()
             view["started_at"] = datetime.now(UTC).isoformat()
@@ -1015,13 +647,7 @@ class TLSMITMServer:
             self.live_relays[key] = view
 
     def _finish_live_relay(self, key: str) -> None:
-        """Forget a relayed connection: its contact record takes over from here.
-
-        Deliberately synchronous and lock-free: it runs in a ``finally``, including when the task
-        is being cancelled, and awaiting a lock there can be interrupted and leave the live view
-        hanging forever. Removing one key is atomic in a single-threaded event loop, and
-        ``get_live_relays`` never awaits mid-iteration, so no lock is needed either side.
-        """
+        """Forget a relayed connection: its contact record takes over from here."""
         self.live_relays.pop(key, None)
 
     def get_live_relays(self) -> list[dict]:
@@ -1082,11 +708,7 @@ _tls_mitm_server: TLSMITMServer | None = None
 
 
 def peek_tls_mitm_server() -> TLSMITMServer | None:
-    """The running instance, or ``None`` — never creates one.
-
-    ``get_tls_mitm_server()`` builds the instance (and its CA) on first call, so a health
-    check must not use it: looking at the state must not change it.
-    """
+    """The running instance, or ``None`` — never creates one."""
     return _tls_mitm_server
 
 

@@ -163,6 +163,12 @@ ANALYSIS = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _isolate_runtime_settings(monkeypatch, tmp_path):
+    """Ensure runtime buffer settings are fully isolated to this test run."""
+    monkeypatch.setattr("core.buffer._settings_path", lambda: tmp_path / "runtime_settings.json")
+
+
 @pytest.fixture
 def allow_loopback(monkeypatch):
     """Let the forwarder reach localhost (the SSRF guard blocks private IPs)."""
