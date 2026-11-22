@@ -95,8 +95,8 @@ Main HTTP proxy configuration, listening TLS and fallback behavior.
 | `port` | `integer` | `8911` | Main proxy port |
 | `tls` | `TLSConfig` | — | Proxy TLS configuration |
 | `request_timeout` | `integer` | `30` | Request handling timeout in seconds |
-| `max_request_size` | `integer` | `1048576` | Maximum control-plane (`/api/*`) request size in bytes (1 MB) |
-| `max_device_request_size` | `integer` | `16777216` | Maximum device request size through the proxy in bytes (16 MB; `0` = no cap) |
+| `max_request_size` | `integer` | `1048576` | Maximum control-plane (`/api/*`) request size in bytes (1 MB). The sniffer capture import (`POST /api/devices/{id}/sniffer/import`) is **exempt** and uses `max_device_request_size` instead, because HAR/PCAP files are routinely larger. `0` = no cap |
+| `max_device_request_size` | `integer` | `16777216` | Maximum device request size through the proxy, **and** the cap for capture uploads, in bytes (16 MB; `0` = no cap) |
 | `fallback` | `FallbackConfig` | — | Vendor cloud fallback configuration |
 
 ### proxy.tls

@@ -13,20 +13,26 @@
 - [Health Check](#health-check-get-health)
 - [Metrics](#metrics-get-metrics)
 - [Configuration](#configuration-getput-apiconfig)
+- [Self-update](#self-update-post-apisystemupdate)
 - [Devices](#devices)
   - [List Devices](#list-devices-get-apidevices)
   - [Device Detail](#device-detail-get-apidevicesdevice_id)
   - [Match Statistics](#match-statistics-get-apidevicesdevice_idstats)
   - [Match Rate](#match-rate-get-apidevicesdevice_idmatch-rate)
   - [Device Mode](#device-mode-post-apidevicesdevice_idmode)
+  - [Match Threshold](#match-threshold-put-apidevicesdevice_idthreshold)
+  - [Context Buffer Size](#context-buffer-size-put-apidevicesdevice_idcontext-buffer)
+  - [Connection Type](#connection-type-getput-apidevicesdevice_idconnection)
   - [Auto-switch](#auto-switch-getput-apidevicesdevice_idauto-switch)
   - [LLM Configuration](#llm-configuration-put-apidevicesdevice_idllm)
   - [TLS Configuration](#tls-configuration-put-apidevicesdevice_idtls-config)
   - [Context Notes](#context-notes-getput-apidevicesdevice_idcontext)
   - [Database Assignment](#database-assignment-post-apidevicesdevice_iddatabase)
+  - [Database Lookup](#database-lookup-get-apidevicesdevice_iddatabase)
   - [IP Resolution](#ip-resolution-get-apidevicesby-ipip_address)
   - [IP Registration](#ip-registration-post-apidevicesdevice_idip)
   - [Bypass mode](#bypass-mode-get-apiip-profilesip_addressbypass)
+  - [Delete Device](#delete-device-delete-apidevicesdevice_id)
 - [Buffer](#buffer)
   - [List Buffer](#list-buffer-get-apidevicesdevice_idbuffer)
   - [Delete Buffer Entry](#delete-buffer-entry-delete-apidevicesdevice_idbufferentry_id)
@@ -230,6 +236,30 @@ generic config save can neither change nor drop the LLM profiles (see
 where `details` holds `loc`/`msg` pairs only — the submitted values are never echoed back,
 because they may be secrets.
 
+### Self-update: `POST /api/system/update`
+
+Runs the bundled updater (`deploy/update.sh`, or the `deploy/rideapi` helper in a
+frozen install) to move the installation to the latest state and restart the
+service. The updater is started **detached**, so the HTTP response is delivered
+before the process restarts — the request does not wait for the update to finish.
+Progress and errors land in `<install-dir>/update.log`.
+
+**Response `200 OK`**
+
+```json
+{
+  "status": "started",
+  "message": "Update started in the background. The service will restart — wait a moment and reload.",
+  "log": "/opt/ride-the-api/update.log"
+}
+```
+
+**Status codes**: `200` Update started, `500` Updater script not found in this install (`error: "Updater script not found in this install"`) or the updater failed to launch (`error: "Failed to start update. Check server logs for details."`), `503` Service not ready
+
+> The restart interrupts in-flight requests. Do not call this from a script that
+> needs the connection to stay up, and expect the dashboard to drop its session
+> for a few seconds.
+
 ---
 
 ## Devices
@@ -383,6 +413,84 @@ Changes the operating mode of a device.
 **Response `200 OK`** `{"device_id": "...", "mode": "production"}`
 
 **Status codes**: `200` OK, `400` Invalid mode, `404` Device not found, `503` Service not ready
+
+---
+
+### Match Threshold: `PUT /api/devices/{device_id}/threshold`
+
+Sets the per-device match confidence threshold — the minimum score a local
+pattern must reach to be served instead of forwarded to the cloud. The
+dashboard's device settings use this endpoint, so the value survives a restart
+(it is stored on the device registry row, not in memory).
+
+**JSON Body**
+
+```json
+{
+  "match_threshold": 0.9
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `match_threshold` | number | `0.0`–`1.0`; the registry default is `0.85` |
+
+**Response `200 OK`** `{"device_id": "...", "match_threshold": 0.9}`
+
+**Status codes**: `200` OK, `400` Missing, non-numeric, or out-of-range threshold, `404` Device not found, `503` Service not ready
+
+---
+
+### Context Buffer Size: `PUT /api/devices/{device_id}/context-buffer`
+
+Sets how many bytes of device traffic the learning pipeline keeps in context
+for that device. The per-device value overrides
+`core.default_context_buffer_size`.
+
+**JSON Body**
+
+```json
+{
+  "context_buffer_size": 1048576
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `context_buffer_size` | integer | Bytes, positive. The dashboard offers `131072`, `262144`, `524288`, `1048576`, `2097152`, `5242880`, `10485760` |
+
+**Response `200 OK`** `{"device_id": "...", "context_buffer_size": 1048576}`
+
+**Status codes**: `200` OK, `400` Missing, non-integer, or non-positive size, `404` Device not found, `503` Service not ready
+
+---
+
+### Connection Type: `GET /api/devices/{device_id}/connection`
+
+Reads how the device's ingress traffic is handled. A device with no stored value
+reports `auto`.
+
+**Response `200 OK`** `{"device_id": "...", "connection": "auto"}`
+
+**Status codes**: `200` OK, `404` Device not found, `503` Service not ready
+
+### Connection Type: `PUT /api/devices/{device_id}/connection`
+
+Forces a handler instead of detecting it on the first bytes.
+
+**JSON Body** `{"connection": "tls"}`
+
+| Value | Behaviour |
+|-------|-----------|
+| `auto` | Detect on the first bytes: a TLS ClientHello is decrypted, a known protocol is handled as such |
+| `tls` | Always decrypt (MITM) |
+| `http`, `mqtt`, `coap`, `modbus` | Force that protocol handler, without decryption |
+
+The value is matched case-insensitively and stored on the device registry row.
+
+**Response `200 OK`** `{"device_id": "...", "connection": "tls"}`
+
+**Status codes**: `200` OK, `400` Unknown connection type, `404` Device not found, `503` Service not ready
 
 ---
 
@@ -557,6 +665,26 @@ another device already uses that file name.
 
 ---
 
+### Database Lookup: `GET /api/devices/{device_id}/database`
+
+Reads which database a device is assigned to. This is the read side of
+`POST /api/devices/{device_id}/database`.
+
+**Response `200 OK`**
+
+```json
+{
+  "device_id": "ip-192-168-1-42",
+  "database_url": "sqlite+aiosqlite:///./ridebase/devices/ip-192-168-1-42.db",
+  "database_name": "ip-192-168-1-42",
+  "ip_addresses": ["192.168.1.42"]
+}
+```
+
+**Status codes**: `200` OK, `404` Device not found, `503` Service not ready
+
+---
+
 ### IP Resolution: `GET /api/devices/by-ip/{ip_address}`
 
 Looks up a device by IP address.
@@ -610,6 +738,26 @@ analysis (no buffer/LLM/local match).
 Associates an IP address with a device.
 
 **JSON Body** `{"ip_address": "192.168.1.100"}`
+
+---
+
+### Delete Device: `DELETE /api/devices/{device_id}`
+
+Removes a device and its data: the registry row, its per-device database file,
+and its learned pattern file. This is what the dashboard's delete action calls —
+it is **not** reversible, so export the patterns first
+(`GET /api/devices/{device_id}/patterns/export`) if they are worth keeping.
+
+**Response `200 OK`**
+
+```json
+{
+  "device_id": "ip-192-168-1-42",
+  "status": "deleted"
+}
+```
+
+**Status codes**: `200` OK, `400` Invalid `device_id`, `404` Device not found, `503` Service not ready
 
 ---
 
@@ -1346,6 +1494,46 @@ Updates a user profile.
 ### `DELETE /api/llm/user-profiles/{name}`
 
 Deletes a user profile.
+
+### `POST /api/llm/settings/profiles`
+
+Creates or replaces **one** system profile in `PUT /api/llm/settings`'s store and
+persists it, without resending the whole settings document. The dashboard's
+profile editor uses this to save a single profile.
+
+**JSON Body**
+
+```json
+{
+  "name": "local_ollama",
+  "base_url": "http://localhost:11434/v1",
+  "api_key": "",
+  "model_id": "llama3.2:1b",
+  "enabled": true
+}
+```
+
+| Field | Type | Default |
+|-------|------|---------|
+| `name` | string | — (required) |
+| `base_url` | string | `https://api.openai.com/v1` |
+| `api_key` | string | `""` |
+| `model_id` | string | `gpt-4o-mini` |
+| `enabled` | boolean | `true` |
+
+**Response `200 OK`** `{"name": "...", "status": "saved", "settings": { ... }}`
+
+**Status codes**: `200` OK, `400` Invalid JSON or invalid profile, `500` Profile could not be persisted, `503` Service not ready
+
+### `DELETE /api/llm/settings/profiles/{name}`
+
+Deletes one system profile and persists the settings. If it was the
+`default_profile`, the default is cleared so no device silently points at a
+missing profile.
+
+**Response `200 OK`** `{"name": "...", "status": "deleted", "settings": { ... }}`
+
+**Status codes**: `200` OK, `400` Settings rejected after the deletion, `404` Profile not found, `500` Settings could not be persisted, `503` Service not ready
 
 ---
 

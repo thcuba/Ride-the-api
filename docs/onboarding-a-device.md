@@ -109,6 +109,43 @@ returns (`GET /api/devices/{id}/patterns`). Two things decide whether that works
 Then switch the device to `production` (`POST /api/devices/{id}/mode`) once its match rate is
 good, and it is served locally.
 
+## 4b. Learning without waiting for the device (capture import)
+
+When the device cannot be put through the proxy — its traffic is already captured in a browser or
+Wireshark session, or the device pins its certificate and refuses the local CA — you can seed the
+learning pipeline from a saved capture instead of live traffic. The import accepts four formats,
+detected from the extension first and from the file's magic bytes if the extension is missing or
+wrong:
+
+| Format | What it is | Notes |
+|--------|------------|-------|
+| `.har` | Browser DevTools "Save all as HAR" | The only format that carries **both** sides of the exchange |
+| `.pcap` | Classic libpcap capture | **Cleartext HTTP only** — TLS payloads are encrypted and cannot be parsed |
+| `.pcapng` | Wireshark's default capture format | Same cleartext-only limit as `.pcap` |
+| `.ride-capture.json` | This project's own capture format | Produced by the pattern/capture export, re-importable as-is |
+
+```bash
+curl -X POST http://localhost:8911/api/devices/<device_id>/sniffer/import \
+  -H "X-API-Key: $RTA_PASSWORD" \
+  -F "file=@capture.har"
+```
+
+The dashboard's device page does the same thing from the **Import capture** button. The endpoint
+accepts up to `proxy.max_device_request_size` (16 MB by default; `0` removes the cap), so a large
+HAR is not rejected by the 1 MB control-plane limit — and behind the bundled nginx it is not
+rejected there either, because that location overrides `client_max_body_size`.
+
+Read the response before trusting it. `pairs_count` is how many request/response pairs the capture
+contained, and `imported` is how many were written to the buffer (always the same number — the
+buffer does not de-duplicate, so importing the same file twice doubles the entries; import once,
+then let the flush drain the buffer):
+
+- `pairs_count: 0` with a **`warning`** — nothing was parseable. The usual causes are a TLS-only
+  PCAP (nothing to decrypt) or a HAR whose requests never completed.
+
+The imported pairs are learned by the normal flush, so the patterns appear in
+`GET /api/devices/{id}/patterns` like any other traffic.
+
 ## What goes wrong, and what it looks like
 
 **Diagnose in this order.** A healthy proxy that captures nothing is almost always one of the
@@ -157,4 +194,5 @@ open           the device has to be power-cycled to retry its cloud connection; 
 - [Deployment](deployment.md) — capability, DNS interception, both deployment shapes
 - [Architecture](architecture.md) — DNS interception, request lifecycle, learning/production
 - [Verification](verification.md) — the request/response path proved end to end
-- [API](api.md) — device, pattern and health endpoints used above
+- [API](api.md) — device, pattern and health endpoints used above, plus the capture import
+  response shape

@@ -73,6 +73,10 @@ python -m core.server
 
 Open `http://localhost:8911/` — dashboard + pattern editor.
 
+Already have a capture instead of a live device? Import a `.har`, `.pcap` or `.pcapng` from the
+dashboard's device page and the pairs go straight into the learning buffer — see
+[Onboarding a device, step 4b](docs/onboarding-a-device.md#4b-learning-without-waiting-for-the-device-capture-import).
+
 ### Prebuilt binaries (all platforms)
 
 Every GitHub **release ships prebuilt bundles** for Linux (x64/arm64), macOS
@@ -129,6 +133,8 @@ nginx on port 443 → loop-free cloud forwarding via dedicated DNS (8.8.8.8/1.1.
 - **Universal Sniffer Ingestion** — imports external network captures (`.har`, `.pcap`, `.pcapng`, `.ride-capture.json`) via WebUI, REST API, or CLI (`python -m core.sniffer import`) into the device buffer for offline and unpinned learning
 - **Unified Protocol Architecture** — converged adapter normalizers and network server plugins via `ProtocolDefinition` for HTTP, MQTT, CoAP, Modbus, WebSocket, Raw TCP, HTTP/2, Zigbee, Z-Wave, Matter, and Shelly
 - **Portable Patterns** — export/import `.ride-pattern.json` and `.ride-capture.json`
+- **Capture Import** — seed learning from an existing HAR, PCAP or PCAPNG file
+  (`POST /api/devices/{id}/sniffer/import`), no live device traffic required
 - **Virtual Sensors** — simulated sensors with drift, periodic, and random behaviors
 - **Persistent State** — device state variables (power, mode, temperature) persist across requests
 - Web dashboard + built-in pattern editor
