@@ -12,7 +12,7 @@ import contextlib
 import inspect
 import json
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from core.config import ProtocolServersConfig
 
@@ -58,8 +58,8 @@ class ProtocolServerPlugin:
 
     name: str = ""
 
-    def __init__(self, config: ProtocolServersConfig) -> None:
-        self.config = config
+    def __init__(self, config: Any) -> None:
+        self.config: Any = config
         self._task: asyncio.Task | None = None
         self._running = False
 
@@ -84,7 +84,7 @@ class ProtocolServerPlugin:
         """Return status dict for API / Web UI."""
         return {"name": self.name, "running": self._running}
 
-    async def update_config(self, **kwargs) -> bool:
+    async def update_config(self, **kwargs: Any) -> bool:
         """Update config at runtime. Override to support hot config."""
         for k, v in kwargs.items():
             if hasattr(self.config, k):
@@ -205,7 +205,7 @@ class ProtocolServerManager:
                 results.append({"name": name, "running": False, "error": str(e)})
         return results
 
-    async def update_plugin_config(self, name: str, **kwargs) -> bool:
+    async def update_plugin_config(self, name: str, **kwargs: Any) -> bool:
         """Update config for a specific plugin."""
         plugin = self._plugins.get(name)
         if not plugin:

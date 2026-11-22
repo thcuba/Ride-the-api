@@ -101,7 +101,7 @@ class ZWaveProtocolAdapter(ProtocolAdapter):
 
     async def parse_request(self, request: InterceptedRequest) -> InterceptedRequest:
         """Parse a Z-Wave command class message into a standardized intent."""
-        body = request.body or {}
+        body = request.body if isinstance(request.body, dict) else {}
         cc_id = body.get("command_class_id")
         cmd_id = body.get("command_id")
         params = body.get("parameters", {})

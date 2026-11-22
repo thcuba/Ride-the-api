@@ -75,7 +75,7 @@ class RawTCPServerPlugin(ProtocolServerPlugin):
         return ProtocolType.TCPIP, "raw"
 
     async def _handle_connection(
-        self, reader: asyncio.StreamReader, writer: asyncio.Writer
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
         """Handle an incoming raw TCP connection."""
         peername = writer.get_extra_info("peername", ("unknown", 0))

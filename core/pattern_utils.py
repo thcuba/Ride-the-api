@@ -8,6 +8,7 @@ so they have a single source of truth instead of divergent copies.
 from __future__ import annotations
 
 import functools
+from typing import Any
 
 
 @functools.lru_cache(maxsize=2048)
@@ -25,7 +26,7 @@ def dot_to_dpath(path: str) -> str:
     return p.replace(".", "/")
 
 
-def safe_float(value, default: float = 0.0) -> float:
+def safe_float(value: Any, default: float = 0.0) -> float:
     """Parse a float from untrusted LLM-returned value without raising.
 
     LLMs often emit ``confidence`` as ``"high"``, ``"90%"`` or ``0.9``, which

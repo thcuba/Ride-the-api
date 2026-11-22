@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from sqlalchemy import JSON, DateTime, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -25,8 +27,8 @@ class LLMProfile(Base):
     prompt_template: Mapped[str] = mapped_column(String(16384), nullable=False)
     enabled: Mapped[bool] = mapped_column(default=True, nullable=False)
     is_default: Mapped[bool] = mapped_column(default=False, nullable=False)
-    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[DateTime] = mapped_column(
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
@@ -41,7 +43,7 @@ class LLMContextBuffer(Base):
     estimated_size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     flushed: Mapped[bool] = mapped_column(default=False, nullable=False)
-    captured_at: Mapped[DateTime] = mapped_column(
+    captured_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
-    flushed_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    flushed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

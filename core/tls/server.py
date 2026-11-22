@@ -126,7 +126,7 @@ class TLSMITMServer:
         self.request_failure_handler: Callable[[dict], Coroutine] | None = None
         # Asked before the handshake: should this connection be forwarded untouched rather than
         # decrypted? True for devices known to refuse the certificate we would generate.
-        self.should_relay_tls: Callable[[str, str | None], Coroutine] | None = None
+        self.should_relay_tls: Callable[..., Coroutine] | None = None
         # Called when the client refuses our certificate and the handshake dies.
         self.on_handshake_refused: Callable[[str, str | None], Coroutine] | None = None
         # Resolves a hostname to its real address, bypassing our own DNS interception.
@@ -267,7 +267,8 @@ class TLSMITMServer:
             return False
         # Find and close the server for this port
         for i, server in enumerate(self._servers):
-            sock = server.sockets[0] if server.sockets else None
+            socks = getattr(server, "sockets", None)
+            sock = socks[0] if socks else None
             if sock:
                 sock_port = sock.getsockname()[1] if hasattr(sock, "getsockname") else None
                 if sock_port == port:
@@ -289,7 +290,7 @@ class TLSMITMServer:
         """Collect a ClientHello split across TCP reads without dropping bytes."""
         data = bytearray(initial_data[:MAX_CLIENT_HELLO_SIZE])
         while len(data) < MAX_CLIENT_HELLO_SIZE:
-            complete, _message = _client_hello_message(data)
+            complete, _message = _client_hello_message(bytes(data))
             if complete:
                 break
             more = await reader.read(min(4096, MAX_CLIENT_HELLO_SIZE - len(data)))
@@ -864,7 +865,7 @@ class TLSMITMServer:
                         sni=hostname,
                         method=method,
                         path=target,
-                        http_version=http_version,
+                        http_version=http_version or "1.1",
                         headers=headers,
                         body=bytes(body),
                     )

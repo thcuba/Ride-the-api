@@ -91,7 +91,9 @@ class ZigbeeBridgePlugin(ProtocolServerPlugin):
             cfg.mqtt_port,
         )
 
-    def _on_connect(self, client, _userdata, _flags, reason_code, _properties) -> None:  # noqa: ANN001
+    def _on_connect(
+        self, client: Any, _userdata: Any, _flags: Any, reason_code: Any, _properties: Any = None
+    ) -> None:
         if getattr(reason_code, "is_failure", False):
             # Any CONNACK used to count as connected, "Not authorized" included.
             self._connected = False
@@ -101,11 +103,13 @@ class ZigbeeBridgePlugin(ProtocolServerPlugin):
         client.subscribe(f"{self._prefix}/#")
         logger.info("Zigbee bridge connected")
 
-    def _on_disconnect(self, _client, _userdata, _flags, reason_code, _properties) -> None:  # noqa: ANN001
+    def _on_disconnect(
+        self, _client: Any, _userdata: Any, _flags: Any, reason_code: Any, _properties: Any = None
+    ) -> None:
         self._connected = False
         logger.warning("Zigbee bridge disconnected (%s); reconnecting", reason_code)
 
-    def _on_message(self, _client, _userdata, msg) -> None:  # noqa: ANN001
+    def _on_message(self, _client: Any, _userdata: Any, msg: Any) -> None:
         if self._loop is None or self._loop.is_closed():
             return
         asyncio.run_coroutine_threadsafe(

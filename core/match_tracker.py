@@ -33,7 +33,7 @@ class MatchRateTracker:
         self._stats_cache: dict[str, dict] = {}
         self._flush_threshold = 50
 
-    async def _flush_cache(self, device_id: str):
+    async def _flush_cache(self, device_id: str) -> None:
         """Flush in-memory stats cache to the database."""
         cache = self._stats_cache.get(device_id)
         if not cache or cache["updates_pending"] == 0:
@@ -78,7 +78,7 @@ class MatchRateTracker:
             cache["errors"] = 0
             cache["recent_results"] = []
 
-    async def record_result(self, device_id: str, match_result: MatchResult):
+    async def record_result(self, device_id: str, match_result: MatchResult) -> None:
         """Record a match result and update stats."""
         cache = self._stats_cache.setdefault(
             device_id,

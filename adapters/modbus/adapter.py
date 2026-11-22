@@ -68,7 +68,7 @@ class ModbusProtocolAdapter(ProtocolAdapter):
 
     async def parse_request(self, request: InterceptedRequest) -> InterceptedRequest:
         """Parse a Modbus request and extract intent."""
-        body = request.body or {}
+        body = request.body if isinstance(request.body, dict) else {}
 
         # Normalize naming: the modbus protocol server emits func_code/address
         # (matching TransportMeta), while some callers use function_code/register.

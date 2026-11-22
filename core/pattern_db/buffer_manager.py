@@ -74,7 +74,7 @@ class BufferManager:
         """Get current buffer size in bytes."""
         return await self.store.get_current_size(device_id)
 
-    async def clear_cache(self, device_id: str):
+    async def clear_cache(self, device_id: str) -> None:
         """Clear session cache after flush."""
         self._buffer_size_cache.pop(device_id, None)
         await self.store.clear_cache(device_id)

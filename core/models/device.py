@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from sqlalchemy import JSON, DateTime, Float, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -33,9 +35,9 @@ class DeviceRegistry(Base):
     context_buffer_size: Mapped[int] = mapped_column(Integer, default=524288, nullable=False)
     llm_context_notes: Mapped[str | None] = mapped_column(String(4096), nullable=True)
     status: Mapped[str] = mapped_column(String(32), default="online", nullable=False)
-    last_seen: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[DateTime] = mapped_column(
+    last_seen: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
@@ -55,7 +57,7 @@ class ModelRegistry(Base):
     metrics: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
     is_default: Mapped[bool] = mapped_column(default=False, nullable=False)
-    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class DeviceState(Base):
@@ -69,7 +71,7 @@ class DeviceState(Base):
     __tablename__ = "device_state"
     device_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     state: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
-    updated_at: Mapped[DateTime] = mapped_column(
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
@@ -86,7 +88,7 @@ class DeviceMetaRow(Base):
     __tablename__ = "device_meta"
     device_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     meta: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
-    updated_at: Mapped[DateTime] = mapped_column(
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
@@ -109,6 +111,6 @@ class SessionCache(Base):
     response_body: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     response_latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
     correlated: Mapped[bool] = mapped_column(default=False, nullable=False)
-    correlated_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    correlated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     in_buffer: Mapped[bool] = mapped_column(default=False, nullable=False)
-    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

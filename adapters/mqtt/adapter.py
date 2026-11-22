@@ -82,7 +82,7 @@ class MQTTProtocolAdapter(ProtocolAdapter):
     async def parse_request(self, request: InterceptedRequest) -> InterceptedRequest:
         """Parse an MQTT message from its topic + payload."""
         topic = (request.topic or request.path or "").strip("/")
-        body = request.body or {}
+        body = request.body if isinstance(request.body, dict) else {}
 
         intent = self._resolve_intent(topic, body)
         request.parsed_intent = intent

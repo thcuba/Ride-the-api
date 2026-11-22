@@ -129,6 +129,7 @@ from core.traffic_selector import get_traffic_selector
 from core.upstream_resolver import _apply_config, self_connection_reason
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
     from types import ModuleType
 
     from core.config import Config
@@ -262,6 +263,8 @@ auto_switch_scheduler: AutoSwitchScheduler | None = None
 metrics_server: MetricsServer | None = None
 
 _metrics_scrape_task: asyncio.Task | None = None
+
+_otel_tracer: object | None = None
 
 connection_watchdog: ConnectionWatchdog | None = None
 
@@ -461,9 +464,10 @@ async def _start_watchdog_and_scheduler(config: Config) -> None:
     """Start auto-switch scheduler and optional connection watchdog."""
     global auto_switch_scheduler, connection_watchdog  # noqa: PLW0603
 
-    auto_switch_scheduler = AutoSwitchScheduler(db_manager)
-    await auto_switch_scheduler.start()
-    logger.info("Auto-switch scheduler started")
+    if db_manager is not None:
+        auto_switch_scheduler = AutoSwitchScheduler(db_manager)
+        await auto_switch_scheduler.start()
+        logger.info("Auto-switch scheduler started")
 
     watchdog_cfg = config.connection_watchdog
     if watchdog_cfg.enabled:
@@ -632,7 +636,7 @@ async def _shutdown_services() -> None:
 
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI):
+async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan handler."""
     logger.info("Starting Local Cloud Replacement Proxy...")
     config = config_manager.config
@@ -793,7 +797,7 @@ app.include_router(proxy_router)
 _UVICORN_LOG_LEVELS = frozenset({"critical", "error", "warning", "info", "debug", "trace"})
 
 
-def main():
+def main() -> None:
     """Run the server."""
 
     config = config_manager.config
@@ -852,7 +856,7 @@ def publish_entrypoint_module(executing: ModuleType | None = None) -> None:
     sys.modules[_CANONICAL_MODULE] = module
     package = sys.modules.get("core")
     if package is not None and getattr(package, "server", None) is None:
-        package.server = module
+        setattr(package, "server", module)
 
 
 if __name__ == "__main__":

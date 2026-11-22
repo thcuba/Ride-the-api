@@ -20,7 +20,7 @@ import random
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 import dpath
@@ -35,7 +35,7 @@ from core.database import (
     ResponseTemplate,
 )
 from core.http_framing import servable_status, without_framing_headers
-from core.pattern_db.schemas import DeviceModel, PatternDB, response_for_endpoint
+from core.pattern_db.schemas import DeviceModel, PatternDB, ServerResponse, response_for_endpoint
 from core.pattern_db.state_manager import DeviceStateStore
 from core.pattern_utils import dot_to_dpath as _dot_to_dpath
 
@@ -263,11 +263,11 @@ def _validate_formula_ast(node: ast.AST) -> None:
 
 
 @functools.lru_cache(maxsize=1024)
-def _parse_formula_ast(expr: str):
+def _parse_formula_ast(expr: str) -> ast.AST:
     """Parse formula string into a simpleeval AST, cached for speedup."""
     parsed = _FORMULA_EVALUATOR.parse(expr)
     _validate_formula_ast(parsed)
-    return parsed
+    return cast("ast.AST", parsed)
 
 
 # Pre-compiled regex patterns for template resolution and formula processing (hot paths)
@@ -463,12 +463,12 @@ def _normalize_field_mappings(field_mappings: Any) -> list[dict]:  # noqa: ANN40
     return result
 
 
-def _get_normalized_field_mappings(template: object) -> list[dict]:
+def _get_normalized_field_mappings(template: object) -> list[dict[str, Any]]:
     """Get normalized field mappings for a template, caching on the template
     instance (~1.24x speedup)."""
     cached = getattr(template, "_cached_normalized_field_mappings", None)
     if cached is not None:
-        return cached
+        return cast("list[dict[str, Any]]", cached)
     fms = _normalize_field_mappings(getattr(template, "field_mappings", None))
     with contextlib.suppress(AttributeError, TypeError):
         object.__setattr__(template, "_cached_normalized_field_mappings", fms)
@@ -484,7 +484,7 @@ def _template_has_vars(template: object) -> bool:
     """
     cached = getattr(template, "_cached_has_template_vars", None)
     if cached is not None:
-        return cached
+        return bool(cached)
     body = getattr(template, "body_template", None)
     if not body:
         has_vars = False
@@ -556,7 +556,7 @@ class PatternEngine:
             self._response_trigger_maps[device_id] = trigger_map
         return self._response_trigger_maps[device_id]
 
-    def apply_pattern_db(self, device_id: str, pattern_db: PatternDB):
+    def apply_pattern_db(self, device_id: str, pattern_db: PatternDB) -> None:
         """Apply a PatternDB's server config to a device's state store."""
         store = self.get_state_store(device_id)
         store.apply_state_variables(pattern_db.server.state_variables)
@@ -649,7 +649,7 @@ class PatternEngine:
         """
         best_score = 0.0
         best_pattern = None
-        best_template = None
+        best_template: ServerResponse | ResponseTemplate | None = None
 
         # Try cached in-memory patterns first.
         # The cache is the authoritative snapshot of the last export/import
@@ -820,9 +820,9 @@ class PatternEngine:
     async def build_local_response(
         self,
         device_id: str,
-        template,
-        original_request: dict,
-    ) -> dict:
+        template: Any,  # noqa: ANN401
+        original_request: dict[str, Any],
+    ) -> dict[str, Any]:
         """Build a local response from a template, resolving variables.
 
         Accepts either a Pydantic :class:`ServerResponse` (from a cached
@@ -918,7 +918,7 @@ class PatternEngine:
         except (KeyError, TypeError, IndexError):
             return None
 
-    def _set_nested(self, d: dict, path: str, value: Any):  # noqa: ANN401
+    def _set_nested(self, d: dict, path: str, value: Any) -> None:  # noqa: ANN401
         _dpath_set(d, path, value)
 
     def _template_var_value(self, m: re.Match, store: DeviceStateStore, request: dict) -> Any:  # noqa: ANN401
@@ -985,7 +985,7 @@ class PatternEngine:
                 if m.group(2):  # request.<path>
                     val = self._resolve_source(f"request.{m.group(2)}", request, store)
                     return _as_formula_literal(val or 0)
-                return m.group(0)
+                return str(m.group(0))
 
             resolved = _RE_FORMULA_VAR.sub(_var_replacer, formula)
             if len(resolved) > _MAX_RESOLVED_FORMULA_LENGTH:
@@ -1033,7 +1033,7 @@ class PatternEngine:
             self._seed_patterns[device_id] = pattern_db
         return pattern_db
 
-    def save_pattern_file(self, pattern_db: PatternDB | DeviceModel, filepath: str):
+    def save_pattern_file(self, pattern_db: PatternDB | DeviceModel, filepath: str) -> None:
         """Save a PatternDB (v1) or DeviceModel (v2) to a .ride-pattern.json file.
 
         The schema URL embedded in the model decides the format: v2 for a
