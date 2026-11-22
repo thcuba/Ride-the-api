@@ -205,6 +205,13 @@ the configured capacity is reached, then signals a flush to the LLM.
 - **Export/Import**: supports the portable `.ride-capture.json` format via
   `export_capture()` and `import_capture()`, validated against a JSON schema via `Validator`.
   This allows sharing traffic traces between users without exposing sensitive data.
+- **Capture import (`core/sniffer/`)**: `POST /api/devices/{id}/sniffer/import` parses a
+  HAR, PCAP, PCAPNG or `.ride-capture.json` file and feeds it through the same `import_capture()`
+  path, so traffic captured outside the proxy (browser DevTools, Wireshark) reaches the buffer
+  without the device ever being pointed here. The format is detected from the file extension and
+  then from the magic bytes; PCAP/PCAPNG must carry **cleartext HTTP**, because a TLS payload
+  cannot be reconstructed. A capture that parses to zero pairs returns `200` with a `warning`
+  instead of looking like a successful empty import.
 - **Cache cleanup**: after flushing, the device's `SessionCache` is cleared for the
   next learning cycle.
 

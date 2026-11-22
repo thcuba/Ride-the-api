@@ -94,6 +94,29 @@ def test_compose_trusts_forwarded_headers_only_from_nginx():
     )
 
 
+def test_nginx_lets_sniffer_captures_through_the_body_limit() -> None:
+    """Capture uploads must not be capped by the 1 MB control-plane limit.
+
+    The app raises its own limit for the sniffer import path
+    (``proxy.max_device_request_size``), but nginx sat in front of it with
+    ``client_max_body_size 1m``: a real HAR/PCAP file was rejected with 413
+    before the app ever saw it, so the app-side exemption was unreachable.
+    """
+    for name in ("nginx.conf", "nginx.conf.template"):
+        text = (Path(__file__).resolve().parents[1] / "deploy" / name).read_text(
+            encoding="utf-8"
+        )
+        # The server-wide cap stays at 1 MB for ordinary API bodies.
+        assert "client_max_body_size 1m;" in text, name
+        # The sniffer import location overrides it with the bulk-upload cap.
+        match = re.search(
+            r"location ~ \^/api/devices/\[\^/\]\+/sniffer/import\$\s*\{(?P<body>[^}]*)\}",
+            text,
+        )
+        assert match, f"{name}: nessuna location dedicata all'import di catture"
+        assert "client_max_body_size 16m;" in match.group("body"), name
+
+
 def test_nginx_verifies_the_real_cloud_it_forwards_to() -> None:
     """Forwards to the vendor cloud must check its certificate (S-13).
 
@@ -101,7 +124,9 @@ def test_nginx_verifies_the_real_cloud_it_forwards_to() -> None:
     upstream path could answer as the vendor.
     """
     for name in ("nginx.conf", "nginx.conf.template"):
-        text = (Path(__file__).resolve().parents[1] / "deploy" / name).read_text()
+        text = (Path(__file__).resolve().parents[1] / "deploy" / name).read_text(
+            encoding="utf-8"
+        )
         upstream_tls_blocks = text.count("proxy_ssl_server_name on;")
         assert upstream_tls_blocks == _UPSTREAM_TLS_BLOCKS, name
         assert text.count("proxy_ssl_verify on;") == upstream_tls_blocks, name
