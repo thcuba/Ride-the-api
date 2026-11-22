@@ -41,9 +41,7 @@ def _pcap_bytes(packets: list) -> bytes:
 
 def _keepalive_packets(requests: bytes, responses: bytes) -> list:
     return [
-        IP(src="10.0.0.2", dst="10.0.0.1")
-        / TCP(sport=40000, dport=80, seq=1)
-        / Raw(load=requests),
+        IP(src="10.0.0.2", dst="10.0.0.1") / TCP(sport=40000, dport=80, seq=1) / Raw(load=requests),
         IP(src="10.0.0.1", dst="10.0.0.2")
         / TCP(sport=80, dport=40000, seq=1)
         / Raw(load=responses),
