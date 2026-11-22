@@ -47,6 +47,7 @@ import sys
 import threading
 import webbrowser
 from pathlib import Path
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -173,7 +174,7 @@ def _failed_exit(exc: SystemExit) -> bool:
     return exc.code not in (None, 0)
 
 
-def _run_server(on_error) -> None:
+def _run_server(on_error: Callable[[], None] | None = None) -> None:
     try:
         from core.server import main as server_main  # noqa: PLC0415
 
@@ -196,7 +197,7 @@ class ServerController:
     """Runs the uvicorn server in a daemon thread, with graceful stop."""
 
     def __init__(self) -> None:
-        self._server = None  # uvicorn.Server once started
+        self._server: Any = None  # uvicorn.Server once started
         self._thread: threading.Thread | None = None
         self.error: threading.Event | None = None
 
