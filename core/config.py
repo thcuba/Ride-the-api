@@ -609,6 +609,11 @@ class WebSocketServerConfig(BaseModel):
     port: int = 9000
     path: str = "/ws"
     max_message_size: int = 1048576  # 1MB
+    tls_enabled: bool = False
+    upstream_url: str | None = None
+    auto_upstream: bool = True
+    upstream_ssl: bool | None = None
+    connect_timeout: float = 10.0
 
 
 class RawTCPServerConfig(BaseModel):
