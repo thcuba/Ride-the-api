@@ -16,6 +16,7 @@ import contextlib
 import inspect
 import json
 import logging
+import sys
 import threading
 import time
 from typing import TYPE_CHECKING, Any, cast
@@ -23,6 +24,7 @@ from typing import TYPE_CHECKING, Any, cast
 from adapters.base import InterceptedRequest, ProtocolType
 from core.pattern_db.schemas import ObservationKind, TransportMeta
 from core.protocol_servers import ProtocolServerPlugin
+from core.upstream_resolver import is_loopback_ip, is_self_address
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -51,6 +53,35 @@ _ALL_INTERFACES = frozenset({"", "0.0.0.0", "::", "[::]"})  # noqa: S104 - we de
 _STOP_TIMEOUT_S = 5
 
 
+def _get_default_response_handler() -> Callable | None:
+    """Retrieve default protocol response handler from server or proxy package."""
+    server = sys.modules.get("core.server")
+    if server and hasattr(server, "handle_protocol_response"):
+        return cast("Callable | None", getattr(server, "handle_protocol_response"))
+    try:
+        import core.proxy  # noqa: PLC0415
+    except ImportError:
+        return None
+    else:
+        return cast("Callable | None", getattr(core.proxy, "handle_protocol_response", None))
+
+
+def _parse_mqtt_payload(payload: bytes | None) -> Any:  # noqa: ANN401
+    """Parse MQTT payload into JSON or hex representation."""
+    if payload is None:
+        return None
+    i = 0
+    n = len(payload)
+    while i < n and payload[i] in (32, 9, 10, 13):
+        i += 1
+    if i < n and payload[i] in (123, 91):
+        with contextlib.suppress(UnicodeDecodeError, json.JSONDecodeError, TypeError):
+            parsed = json.loads(payload.decode("utf-8"))
+            if isinstance(parsed, (dict, list)):
+                return parsed
+    return {"raw": payload.hex()}
+
+
 def exposure_warnings(cfg: MQTTServerConfig) -> list[str]:
     """What an operator should know about how this broker is exposed.
 
@@ -74,16 +105,25 @@ def exposure_warnings(cfg: MQTTServerConfig) -> list[str]:
 
 
 class MQTTServerPlugin(ProtocolServerPlugin):
-    """Local MQTT broker for device protocol interception."""
+    """Local MQTT broker for device protocol interception with transparent cloud bridge."""
 
     name = "mqtt"
 
-    def __init__(self, config: MQTTServerConfig, handler: Callable | None = None) -> None:
+    def __init__(
+        self,
+        config: MQTTServerConfig,
+        handler: Callable | None = None,
+        response_handler: Callable | None = None,
+    ) -> None:
         super().__init__(config)
         self.handler = handler
+        self.response_handler = response_handler
         self._broker: AMQTTBroker | None = None
         self._forward_thread: threading.Thread | None = None
         self._forward_client: Any = None
+        self._upstream_thread: threading.Thread | None = None
+        self._upstream_client: Any = None
+        self._downlink_echo_guard: set[tuple[str, bytes]] = set()
         self._stop_event = threading.Event()
         self._loop: asyncio.AbstractEventLoop | None = None
 
@@ -126,8 +166,107 @@ class MQTTServerPlugin(ProtocolServerPlugin):
 
         # Forward captured messages to the pipeline (best-effort; devices work
         # even if no handler is wired).
-        if HAS_PAHO and self.handler:
-            self._start_forwarder(cfg)
+        if HAS_PAHO:
+            if self.handler or getattr(cfg, "upstream_host", None):
+                self._start_forwarder(cfg)
+            if getattr(cfg, "upstream_host", None):
+                self._start_upstream_bridge(cfg)
+
+    def _start_upstream_bridge(self, cfg: Any) -> None:
+        """Start upstream MQTT client connected to the vendor cloud broker."""
+        if not HAS_PAHO:
+            logger.warning("MQTT upstream bridge requires paho-mqtt")
+            return
+
+        host = cfg.upstream_host
+        port = int(getattr(cfg, "upstream_port", 1883))
+
+        # Prevent self-loop if pointing to our own broker
+        if (is_loopback_ip(host) or is_self_address(host)) and port == cfg.port:
+            logger.warning("MQTT upstream bridge refused self-connection on port %d", port)
+            return
+
+        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+        if getattr(cfg, "upstream_username", None):
+            client.username_pw_set(cfg.upstream_username, getattr(cfg, "upstream_password", None))
+        if getattr(cfg, "upstream_tls", False):
+            client.tls_set()
+
+        client.on_connect = self._on_upstream_connect
+        client.on_message = self._on_upstream_message
+        self._upstream_client = client
+
+        def _run_upstream() -> None:
+            try:
+                client.connect_async(host, port)
+                client.loop_forever()
+            except Exception as exc:
+                logger.warning("MQTT upstream bridge loop error: %s", exc)
+
+        self._upstream_thread = threading.Thread(
+            target=_run_upstream,
+            name="mqtt-upstream-bridge",
+            daemon=True,
+        )
+        self._upstream_thread.start()
+        logger.info("MQTT upstream bridge starting for %s:%d", host, port)
+
+    def _on_upstream_connect(
+        self, client: Any, _userdata: Any, _flags: Any, _reason_code: Any, _properties: Any = None
+    ) -> None:
+        filters = list(getattr(self.config, "topic_filters", None) or ["#"])
+        for topic in filters:
+            client.subscribe(topic)
+
+    def _on_upstream_message(self, _client: Any, _userdata: Any, msg: Any) -> None:
+        if self._loop is None or self._loop.is_closed():
+            return
+        asyncio.run_coroutine_threadsafe(
+            self._handle_upstream_downlink(
+                topic=msg.topic,
+                payload=msg.payload or b"",
+                qos=msg.qos,
+                retain=msg.retain,
+            ),
+            self._loop,
+        )
+
+    async def _handle_upstream_downlink(
+        self, topic: str, payload: bytes, qos: int, retain: bool
+    ) -> None:
+        """Handle downlink message from cloud: correlate into pipeline and relay to local broker."""
+        device_id = self._device_id_from_topic(topic)
+        body = _parse_mqtt_payload(payload)
+
+        # 1. Correlate into response_handler / learning pipeline
+        resp_handler = self.response_handler or _get_default_response_handler()
+        if resp_handler:
+            try:
+                context = {
+                    "action": "forward",
+                    "device_id": device_id,
+                    "protocol": "mqtt",
+                    "topic": topic,
+                    "correlation_key": f"mqtt-{topic}",
+                }
+                res = resp_handler(
+                    context,
+                    body,
+                    status_code=200,
+                    headers={"topic": topic, "qos": str(qos), "retain": str(retain)},
+                )
+                if inspect.isawaitable(res):
+                    await res
+            except Exception:
+                logger.debug("MQTT downlink response handler error:", exc_info=True)
+
+        # 2. Relay down to local devices via local broker
+        if self._forward_client:
+            self._downlink_echo_guard.add((topic, payload))
+            try:
+                self._forward_client.publish(topic, payload, qos=qos, retain=retain)
+            except Exception:
+                logger.warning("Failed to relay MQTT downlink to local broker", exc_info=True)
 
     def _start_forwarder(self, cfg: Any) -> None:
         filters = list(getattr(cfg, "topic_filters", None) or ["#"])
@@ -192,6 +331,14 @@ class MQTTServerPlugin(ProtocolServerPlugin):
     async def stop(self) -> None:
         """Stop the MQTT broker and disconnect all clients."""
         self._stop_event.set()
+        if self._upstream_client is not None:
+            with contextlib.suppress(Exception):
+                self._upstream_client.disconnect()
+            self._upstream_client = None
+        if self._upstream_thread is not None:
+            self._upstream_thread.join(timeout=2)
+            self._upstream_thread = None
+        self._downlink_echo_guard.clear()
         if self._forward_client is not None:
             with contextlib.suppress(Exception):
                 self._forward_client.disconnect()
@@ -223,24 +370,25 @@ class MQTTServerPlugin(ProtocolServerPlugin):
         self, client_id: str, topic: str, payload: bytes, qos: int, retain: bool
     ) -> dict | None:
         """Convert an intercepted MQTT message to a local response via the pipeline."""
+        # Check echo guard: if this message was relayed from upstream, do not re-process
+        guard_key = (topic, payload)
+        if guard_key in self._downlink_echo_guard:
+            self._downlink_echo_guard.discard(guard_key)
+            return None
+
         if not self.handler:
+            if self._upstream_client is not None:
+                try:
+                    self._upstream_client.publish(topic, payload, qos=qos, retain=retain)
+                except Exception as exc:
+                    logger.warning("Failed to publish MQTT message upstream: %s", exc)
             return None
 
         # Performance optimization: zero-allocation byte indexing check for leading
         # JSON structural tokens '{' (123) or '[' (91) before invoking json.loads().
         # Bypasses utf-8 decoding, json.loads, and exception creation/unwinding for
         # non-JSON or binary MQTT payloads (~8.2x speedup).
-        body = None
-        if payload:
-            i = 0
-            n = len(payload)
-            while i < n and payload[i] in (32, 9, 10, 13):
-                i += 1
-            if i < n and payload[i] in (123, 91):
-                with contextlib.suppress(UnicodeDecodeError, json.JSONDecodeError):
-                    body = json.loads(payload.decode("utf-8"))
-        if body is None:
-            body = {"raw": payload.hex()}
+        body = _parse_mqtt_payload(payload)
 
         # Fast timestamp generation using time.time() instead of
         # datetime.now(UTC).timestamp() (~4.8x speedup)
@@ -272,8 +420,19 @@ class MQTTServerPlugin(ProtocolServerPlugin):
         except Exception:
             logger.exception("MQTT handler error:")
             return None
-        else:
-            return cast("dict[str, Any] | None", result)
+
+        # Forward to upstream cloud in learning mode
+        if (
+            isinstance(result, dict)
+            and result.get("action") == "forward"
+            and self._upstream_client is not None
+        ):
+            try:
+                self._upstream_client.publish(topic, payload, qos=qos, retain=retain)
+            except Exception as exc:
+                logger.warning("Failed to publish MQTT message upstream: %s", exc)
+
+        return cast("dict[str, Any] | None", result)
 
     async def get_status(self) -> dict:
         return {
@@ -282,6 +441,9 @@ class MQTTServerPlugin(ProtocolServerPlugin):
             "host": self.config.host,
             "port": self.config.port,
             "tls_enabled": self.config.tls_enabled,
+            "upstream_host": getattr(self.config, "upstream_host", None),
+            "upstream_port": getattr(self.config, "upstream_port", 1883),
+            "bridge_connected": self._upstream_client is not None,
         }
 
 

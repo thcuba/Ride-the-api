@@ -22,7 +22,9 @@ from adapters.base import (
     InterceptedRequest,
     ProtocolAdapter,
     ProtocolType,
+    host_from_request,
 )
+from core.cloud_forward import forward_intercepted
 
 logger = logging.getLogger(__name__)
 
@@ -182,8 +184,32 @@ class ZWaveProtocolAdapter(ProtocolAdapter):
                 )
         return await self.forward_to_cloud(request)
 
-    async def forward_to_cloud(self, request: InterceptedRequest) -> CommandResult:  # noqa: ARG002
-        return CommandResult(success=False, error="Cloud forward not implemented", forwarded=False)
+    async def forward_to_cloud(self, request: InterceptedRequest) -> CommandResult:
+        """Forward request to the vendor cloud, loop-free."""
+        cloud_cfg = self.config.get("cloud") if isinstance(self.config, dict) else {}
+        cloud_host = (
+            str(cloud_cfg.get("hostname") or cloud_cfg.get("api_endpoint"))
+            if isinstance(cloud_cfg, dict)
+            else None
+        )
+        hostname = cloud_host or host_from_request(request)
+        if not hostname:
+            return CommandResult(
+                success=False,
+                error="Cloud forward: no upstream host configured",
+                forwarded=False,
+            )
+        port = int((cloud_cfg or {}).get("port", 443))
+        use_tls = bool((cloud_cfg or {}).get("tls", True))
+        result = await forward_intercepted(
+            request,
+            hostname=hostname,
+            port=port,
+            use_tls=use_tls,
+        )
+        if result.error:
+            logger.warning("Z-Wave cloud forward degraded: %s", result.error)
+        return result
 
     async def build_response(self, request: InterceptedRequest, result: CommandResult) -> dict:
         if result.success and result.response:

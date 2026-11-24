@@ -13,16 +13,25 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import json
 import logging
+import sys
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import h2.config
 import h2.connection
 import h2.errors
 import h2.events
 import h2.exceptions
+
+try:
+    import httpx
+
+    HAS_HTTPX = True
+except ImportError:  # pragma: no cover
+    HAS_HTTPX = False
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -35,6 +44,11 @@ from core.protocol_servers import (
     call_handler,
     device_reply,
     encode_reply,
+)
+from core.upstream_resolver import (
+    is_loopback_ip,
+    is_self_address,
+    resolve_upstream,
 )
 
 logger = logging.getLogger(__name__)
@@ -52,15 +66,96 @@ _MAX_BODY_BYTES = 1024 * 1024
 _MAX_PENDING_STREAMS = 512
 
 
+def _get_default_response_handler() -> Callable | None:
+    """Retrieve default protocol response handler from server or proxy package."""
+    server = sys.modules.get("core.server")
+    if server and hasattr(server, "handle_protocol_response"):
+        return cast("Callable | None", getattr(server, "handle_protocol_response"))
+    try:
+        import core.proxy  # noqa: PLC0415
+    except ImportError:
+        return None
+    else:
+        return cast("Callable | None", getattr(core.proxy, "handle_protocol_response", None))
+
+
+def _parse_http2_payload(payload_bytes: bytes | None, content_type: str | None = None) -> Any:  # noqa: ANN401, ARG001
+    """Parse HTTP/2 response payload into JSON or hex representation."""
+    if not payload_bytes:
+        return None
+    i = 0
+    n = len(payload_bytes)
+    while i < n and payload_bytes[i] in (32, 9, 10, 13):
+        i += 1
+    if i < n and payload_bytes[i] in (123, 91):
+        with contextlib.suppress(UnicodeDecodeError, json.JSONDecodeError, TypeError):
+            parsed = json.loads(payload_bytes.decode("utf-8"))
+            if isinstance(parsed, (dict, list)):
+                return parsed
+    return {"raw": payload_bytes.hex()}
+
+
 class HTTP2ServerPlugin(ProtocolServerPlugin):
-    """HTTP/2 server for h2c prior-knowledge transport."""
+    """HTTP/2 server for h2c prior-knowledge transport with transparent MITM."""
 
     name = "http2"
 
-    def __init__(self, config: Any, handler: Callable | None = None) -> None:  # noqa: ANN401
+    def __init__(
+        self,
+        config: Any,  # noqa: ANN401
+        handler: Callable | None = None,
+        response_handler: Callable | None = None,
+    ) -> None:
         super().__init__(config)
         self.handler = handler
+        self.response_handler = response_handler
         self._server: asyncio.AbstractServer | None = None
+
+    async def _resolve_upstream_h2_target(
+        self, headers: dict[str, str], path: str, scheme: str
+    ) -> str | None:
+        """Resolve upstream HTTP/2 target URL, preventing loopback/SSRF recursion."""
+        cfg_url = getattr(self.config, "upstream_url", None)
+        if cfg_url:
+            base = cfg_url.rstrip("/")
+            subpath = path if path.startswith("/") else f"/{path}"
+            return f"{base}{subpath}"
+
+        if not getattr(self.config, "auto_upstream", True):
+            return None
+
+        authority = headers.get(":authority") or headers.get("host")
+        if not authority:
+            return None
+
+        parsed_host, sep, parsed_port = authority.partition(":")
+        parsed_host = parsed_host.strip("[]")
+
+        # SSRF and loopback recursion guard
+        if is_loopback_ip(parsed_host) or is_self_address(parsed_host):
+            logger.warning(
+                "HTTP/2 auto-upstream refused loopback/self-address authority: %s", authority
+            )
+            return None
+
+        try:
+            resolved_ips = await resolve_upstream(parsed_host)
+            for ip in resolved_ips:
+                if is_loopback_ip(ip) or is_self_address(ip):
+                    logger.warning(
+                        "HTTP/2 auto-upstream refused authority %s resolving to self/loopback: %s",
+                        parsed_host,
+                        ip,
+                    )
+                    return None
+        except Exception as exc:
+            logger.debug(
+                "DNS resolution check for HTTP/2 authority %s failed: %s", parsed_host, exc
+            )
+
+        subpath = path if path.startswith("/") else f"/{path}"
+        port_part = f":{parsed_port}" if sep and parsed_port else ""
+        return f"{scheme}://{parsed_host}{port_part}{subpath}"
 
     async def start(self) -> None:
         if self._server is not None:
@@ -167,7 +262,7 @@ class HTTP2ServerPlugin(ProtocolServerPlugin):
                 writer.close()
                 await writer.wait_closed()
 
-    async def _respond(
+    async def _respond(  # noqa: C901, PLR0912, PLR0915
         self,
         conn: h2.connection.H2Connection,
         outbox: dict[int, bytes],
@@ -225,29 +320,100 @@ class HTTP2ServerPlugin(ProtocolServerPlugin):
             except Exception:
                 logger.exception("HTTP/2 pipeline handler error:")
 
-        # Only a locally served response answers with content; anything else
-        # used to come back as a 200 carrying the internal pipeline dict.
+        # 1. Local response (production mode / learned pattern)
         reply = device_reply(result)
-        if reply is None or not isinstance(result, dict):
-            conn.send_headers(stream_id, [(":status", "502")], end_stream=True)
+        if reply is not None and isinstance(result, dict):
+            response = result.get("response") or {}
+            payload, is_json = encode_reply(reply)
+            response_headers = [(":status", str(servable_status(response.get("status_code"))))]
+            response_headers += [
+                (name.lower(), value)
+                for name, value in without_framing_headers(response.get("headers")).items()
+                if name.lower() != "content-type"
+            ]
+            content_type = "application/json" if is_json else "application/octet-stream"
+            response_headers += [
+                ("content-type", (response.get("headers") or {}).get("content-type", content_type)),
+                ("content-length", str(len(payload))),
+            ]
+            conn.send_headers(stream_id, response_headers, end_stream=not payload)
+            if payload:
+                outbox[stream_id] = payload
+                _send_queued(conn, outbox)
             return
-        response = result.get("response") or {}
-        payload, is_json = encode_reply(reply)
-        response_headers = [(":status", str(servable_status(response.get("status_code"))))]
-        response_headers += [
-            (name.lower(), value)
-            for name, value in without_framing_headers(response.get("headers")).items()
-            if name.lower() != "content-type"
-        ]
-        content_type = "application/json" if is_json else "application/octet-stream"
-        response_headers += [
-            ("content-type", (response.get("headers") or {}).get("content-type", content_type)),
-            ("content-length", str(len(payload))),
-        ]
-        conn.send_headers(stream_id, response_headers, end_stream=not payload)
-        if payload:
-            outbox[stream_id] = payload
-            _send_queued(conn, outbox)
+
+        # 2. Forward to upstream cloud in learning mode
+        if isinstance(result, dict) and result.get("action") == "forward" and HAS_HTTPX:
+            upstream_url = await self._resolve_upstream_h2_target(headers, path, scheme)
+            if upstream_url:
+                forward_headers = {
+                    k: v
+                    for k, v in headers.items()
+                    if not k.startswith(":")
+                    and k.lower()
+                    not in {
+                        "connection",
+                        "keep-alive",
+                        "proxy-connection",
+                        "transfer-encoding",
+                        "te",
+                        "upgrade",
+                    }
+                }
+                timeout = getattr(self.config, "connect_timeout", 10.0)
+                is_cleartext = upstream_url.startswith("http://")
+                try:
+                    async with httpx.AsyncClient(
+                        http1=not is_cleartext,
+                        http2=True,
+                        timeout=timeout,
+                        verify=False,  # noqa: S501
+                    ) as client:
+                        upstream_resp = await client.request(
+                            method=method,
+                            url=upstream_url,
+                            headers=forward_headers,
+                            content=body_raw if body_raw else None,
+                        )
+
+                    # Correlate response into learning pipeline
+                    resp_body = _parse_http2_payload(
+                        upstream_resp.content, upstream_resp.headers.get("content-type")
+                    )
+                    resp_handler = self.response_handler or _get_default_response_handler()
+                    if resp_handler and result.get("correlation_key"):
+                        res = resp_handler(
+                            result,
+                            resp_body,
+                            status_code=upstream_resp.status_code,
+                            headers=dict(upstream_resp.headers),
+                        )
+                        if inspect.isawaitable(res):
+                            await res
+
+                    resp_h = [(":status", str(upstream_resp.status_code))]
+                    for h_name, h_val in without_framing_headers(
+                        dict(upstream_resp.headers)
+                    ).items():
+                        if h_name.lower() not in ("content-length", "content-encoding"):
+                            resp_h.append((h_name.lower(), h_val))
+                    resp_h.append(("content-length", str(len(upstream_resp.content))))
+
+                    conn.send_headers(stream_id, resp_h, end_stream=not upstream_resp.content)
+                    if upstream_resp.content:
+                        outbox[stream_id] = upstream_resp.content
+                        _send_queued(conn, outbox)
+                except Exception as exc:
+                    logger.warning(
+                        "HTTP/2 upstream forward to %s failed: %s; returning 502",
+                        upstream_url,
+                        exc,
+                    )
+                    conn.send_headers(stream_id, [(":status", "502")], end_stream=True)
+                return
+
+        # 3. Fallback when neither served locally nor forwarded
+        conn.send_headers(stream_id, [(":status", "502")], end_stream=True)
 
     async def get_status(self) -> dict:
         return {
@@ -257,6 +423,8 @@ class HTTP2ServerPlugin(ProtocolServerPlugin):
             "port": self.config.port,
             "cleartext_port": self.config.cleartext_port,
             "tls_enabled": self.config.tls_enabled,
+            "upstream_url": getattr(self.config, "upstream_url", None),
+            "auto_upstream": getattr(self.config, "auto_upstream", True),
         }
 
 

@@ -13,6 +13,8 @@ from websockets.asyncio.client import connect
 
 from adapters.base import InterceptedRequest, ProtocolType
 from core.config import WebSocketServerConfig
+from core.pattern_db.schemas import ObservationKind
+from core.protocol_servers import websocket_server as ws_mod
 from core.protocol_servers.websocket_server import WebSocketServerPlugin
 
 
@@ -163,6 +165,8 @@ async def test_websocket_mitm_auto_upstream_from_host_header(
             return ["127.0.0.1"]
         return []
 
+    # In this mock test, allow loopback address for the test upstream server
+    monkeypatch.setattr(ws_mod, "filter_safe_ips", lambda ips: ips)
     monkeypatch.setattr(
         "core.protocol_servers.websocket_server.resolve_upstream",
         mock_resolve_upstream,
@@ -336,3 +340,99 @@ async def test_websocket_mitm_out_of_order_responses_with_event() -> None:
         await plugin.stop()
         server.close()
         await server.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_websocket_scheme_normalization() -> None:
+    """Test that http:// and https:// in upstream_url are normalized to ws:// and wss://."""
+    cfg = WebSocketServerConfig(
+        host="127.0.0.1",
+        port=0,
+        enabled=True,
+        upstream_url="http://vendor.example.com/ws",
+    )
+    plugin = WebSocketServerPlugin(cfg)
+
+    class _DummyConn:
+        request = None
+
+    target = await plugin._resolve_upstream_target(_DummyConn(), "/ws", "")  # noqa: SLF001
+    assert target is not None
+    assert target[0].startswith("ws://vendor.example.com/ws")
+
+    cfg_tls = WebSocketServerConfig(
+        host="127.0.0.1",
+        port=0,
+        enabled=True,
+        upstream_url="https://secure.example.com/ws",
+    )
+    plugin_tls = WebSocketServerPlugin(cfg_tls)
+    target_tls = await plugin_tls._resolve_upstream_target(_DummyConn(), "/ws", "")  # noqa: SLF001
+    assert target_tls is not None
+    assert target_tls[0].startswith("wss://secure.example.com/ws")
+
+
+@pytest.mark.asyncio
+async def test_websocket_auto_upstream_ssrf_blocked(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that auto_upstream blocks domains resolving to private/blocked IPs (SSRF guard)."""
+
+    # Mock resolve_upstream to return a private IP (e.g. 10.0.0.1)
+    async def mock_resolve(host: str) -> list[str]:  # noqa: ARG001
+        return ["10.0.0.1"]
+
+    monkeypatch.setattr(ws_mod, "resolve_upstream", mock_resolve)
+
+    cfg = WebSocketServerConfig(
+        host="127.0.0.1",
+        port=0,
+        enabled=True,
+        auto_upstream=True,
+    )
+    plugin = WebSocketServerPlugin(cfg)
+
+    class _DummyReq:
+        headers = {"Host": "internal-iot.vendor.com"}
+        path = "/ws"
+
+    class _DummyConn:
+        request = _DummyReq()
+
+    # Must be blocked and return None
+    target = await plugin._resolve_upstream_target(_DummyConn(), "/ws", "")  # noqa: SLF001
+    assert target is None
+
+
+@pytest.mark.asyncio
+async def test_websocket_local_mode_observation_kind() -> None:
+    """Verify that commands in local mode are classified as REQUEST and events as EVENT."""
+    expected_local_requests = 2
+    observed_requests: list[InterceptedRequest] = []
+
+    async def mock_handler(req: InterceptedRequest) -> dict:
+        observed_requests.append(req)
+        return {"action": "drop"}
+
+    cfg = WebSocketServerConfig(
+        host="127.0.0.1",
+        port=0,
+        enabled=True,
+        upstream_url=None,
+        auto_upstream=False,
+    )
+    plugin = WebSocketServerPlugin(cfg, handler=mock_handler)
+    await plugin.start()
+    port = next(iter(plugin._server.sockets)).getsockname()[1]  # noqa: SLF001
+
+    try:
+        async with connect(f"ws://127.0.0.1:{port}/ws") as client_ws:
+            # 1. Command with 'method' -> REQUEST
+            await client_ws.send(json.dumps({"method": "set_level", "val": 10}))
+            # 2. Telemetry without command keys -> EVENT
+            await client_ws.send(json.dumps({"sensor": "temp", "val": 22.5}))
+            await asyncio.sleep(0.05)
+
+            assert len(observed_requests) == expected_local_requests
+            assert observed_requests[0].kind == ObservationKind.REQUEST
+            assert observed_requests[1].kind == ObservationKind.EVENT
+    finally:
+        await plugin.stop()

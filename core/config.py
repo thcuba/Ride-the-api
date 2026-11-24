@@ -575,6 +575,12 @@ class MQTTServerConfig(BaseModel):
     tls_enabled: bool = False
     max_packet_size: int = 268435  # 256KB
     topic_filters: list[str] = Field(default_factory=lambda: ["#"])
+    upstream_host: str | None = None
+    upstream_port: int = 1883
+    upstream_tls: bool = False
+    upstream_username: str | None = None
+    upstream_password: str | None = None
+    auto_upstream: bool = True
 
 
 class CoAPServerConfig(BaseModel):
@@ -586,6 +592,9 @@ class CoAPServerConfig(BaseModel):
     dtls_enabled: bool = False
     dtls_port: int = 5684
     max_pdu_size: int = 1024
+    upstream_url: str | None = None
+    auto_upstream: bool = True
+    connect_timeout: float = 5.0
 
 
 class ModbusServerConfig(BaseModel):
@@ -635,6 +644,9 @@ class HTTP2ServerConfig(BaseModel):
     port: int = 443
     cleartext_port: int = 8080  # h2c
     tls_enabled: bool = True
+    upstream_url: str | None = None
+    auto_upstream: bool = True
+    connect_timeout: float = 10.0
 
 
 class ZigbeeBridgeConfig(BaseModel):
