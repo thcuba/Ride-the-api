@@ -128,7 +128,13 @@ from core.tls_mitm import (
     get_tls_mitm_server,
 )
 from core.traffic_selector import get_traffic_selector
-from core.upstream_resolver import _apply_config, self_connection_reason
+from core.upstream_resolver import (
+    _apply_config,
+    is_self_address,
+    is_self_device,
+    self_addresses,
+    self_connection_reason,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -165,11 +171,14 @@ __all__ = [
     "handle_tls_decrypted_request",
     "handle_tls_upstream_failure",
     "handle_tls_upstream_response",
+    "is_self_address",
+    "is_self_device",
     "mark_device_untrusted",
     "proxy_router",
     "proxy_vendor_request",
     "record_relayed_connection",
     "resolve_upstream",
+    "self_addresses",
     "self_connection_reason",
     "should_relay_tls",
     # Re-exported types and getters for backward compatibility
