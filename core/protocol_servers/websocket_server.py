@@ -47,6 +47,7 @@ from core.protocol_servers import (
     encode_reply,
 )
 from core.upstream_resolver import (
+    filter_safe_ips,
     is_loopback_ip,
     is_self_address,
     resolve_upstream,
@@ -114,14 +115,60 @@ def _get_default_response_handler() -> Callable | None:
     if server and hasattr(server, "handle_protocol_response"):
         return cast("Callable | None", getattr(server, "handle_protocol_response"))
     try:
-        from core.proxy.handler import handle_protocol_response  # noqa: PLC0415
+        import core.proxy  # noqa: PLC0415
     except ImportError:
         return None
     else:
-        return cast("Callable | None", handle_protocol_response)
+        return cast("Callable | None", getattr(core.proxy, "handle_protocol_response", None))
+
+
+def _get_default_failure_handler() -> Callable | None:
+    """Retrieve default protocol failure handler from server or proxy package."""
+    server = sys.modules.get("core.server")
+    if server and hasattr(server, "handle_protocol_failure"):
+        return cast("Callable | None", getattr(server, "handle_protocol_failure"))
+    try:
+        from core.proxy.handler import handle_protocol_failure  # noqa: PLC0415
+    except ImportError:
+        return None
+    else:
+        return cast("Callable | None", handle_protocol_failure)
+
+
+def _determine_observation_kind(body: Any) -> ObservationKind:  # noqa: ANN401
+    """Determine if a WebSocket message is a request expecting a response or an event."""
+    if isinstance(body, dict) and any(
+        k in body for k in ("id", "cmd", "action", "method", "command")
+    ):
+        return ObservationKind.REQUEST
+    return ObservationKind.EVENT
 
 
 _PENDING_TIMEOUT_S = 60.0
+_MAX_PENDING_REQUESTS = 256
+
+
+async def _prune_and_bound_pending(
+    pending_requests: deque[dict[str, Any]],
+    fail_handler: Callable | None,
+    now: float,
+) -> None:
+    """Prune expired pending requests and enforce max size to prevent memory leaks."""
+    while pending_requests and (now - pending_requests[0].get("time", now)) > _PENDING_TIMEOUT_S:
+        expired = pending_requests.popleft()
+        if fail_handler:
+            with contextlib.suppress(Exception):
+                res = fail_handler(expired["result"], count_as_error=False)
+                if inspect.isawaitable(res):
+                    await res
+
+    while len(pending_requests) >= _MAX_PENDING_REQUESTS:
+        overflow = pending_requests.popleft()
+        if fail_handler:
+            with contextlib.suppress(Exception):
+                res = fail_handler(overflow["result"], count_as_error=False)
+                if inspect.isawaitable(res):
+                    await res
 
 
 def _match_pending_request(
@@ -199,6 +246,10 @@ class WebSocketServerPlugin(ProtocolServerPlugin):
         if configured_url:
             parsed = urlsplit(configured_url)
             scheme = parsed.scheme or "ws"
+            if scheme == "http":
+                scheme = "ws"
+            elif scheme == "https":
+                scheme = "wss"
             host_header = parsed.netloc
             target_host = parsed.hostname or ""
             target_port = parsed.port
@@ -250,9 +301,11 @@ class WebSocketServerPlugin(ProtocolServerPlugin):
                 ips = await resolve_upstream(raw_host)
             except Exception:
                 ips = []
-            if not ips:
+            safe_ips = filter_safe_ips(ips)
+            if not safe_ips:
+                logger.debug("WebSocket MITM auto_upstream: no safe IPs for %s", raw_host)
                 return None
-            upstream_ip = ips[0]
+            upstream_ip = safe_ips[0]
 
             upstream_ssl = getattr(self.config, "upstream_ssl", None)
             if upstream_ssl is True:
@@ -335,17 +388,13 @@ class WebSocketServerPlugin(ProtocolServerPlugin):
         """Run bidirectional forwarding and learning between client and upstream."""
         pending_requests: deque[dict[str, Any]] = deque()
         resp_handler = self.response_handler or _get_default_response_handler()
+        fail_handler = _get_default_failure_handler()
 
         async def client_to_upstream() -> None:
             try:
                 async for message in client_ws:
                     body = _parse_ws_payload(message)
-                    kind = (
-                        ObservationKind.REQUEST
-                        if isinstance(body, dict)
-                        and any(k in body for k in ("id", "cmd", "action", "method", "command"))
-                        else ObservationKind.EVENT
-                    )
+                    kind = _determine_observation_kind(body)
                     request = InterceptedRequest(
                         device_id=device_id,
                         timestamp=time.time(),
@@ -384,11 +433,13 @@ class WebSocketServerPlugin(ProtocolServerPlugin):
                                 if isinstance(body, dict)
                                 else None
                             )
+                            now = time.time()
+                            await _prune_and_bound_pending(pending_requests, fail_handler, now)
                             pending_requests.append(
                                 {
                                     "result": handler_result,
                                     "msg_id": msg_id,
-                                    "time": time.time(),
+                                    "time": now,
                                 }
                             )
 
@@ -427,16 +478,22 @@ class WebSocketServerPlugin(ProtocolServerPlugin):
                     await t
         finally:
             if pending_requests:
-                server = sys.modules.get("core.server")
-                orchestrator = getattr(server, "orchestrator", None) if server else None
-                if orchestrator:
-                    for item in pending_requests:
-                        corr = (item.get("result") or {}).get("correlation_key")
-                        if corr:
-                            with contextlib.suppress(Exception):
-                                await orchestrator.discard_request(
-                                    device_id, corr, count_as_error=False
-                                )
+                for item in pending_requests:
+                    if fail_handler:
+                        with contextlib.suppress(Exception):
+                            res = fail_handler(item["result"], count_as_error=False)
+                            if inspect.isawaitable(res):
+                                await res
+                    else:
+                        server = sys.modules.get("core.server")
+                        orchestrator = getattr(server, "orchestrator", None) if server else None
+                        if orchestrator:
+                            corr = (item.get("result") or {}).get("correlation_key")
+                            if corr:
+                                with contextlib.suppress(Exception):
+                                    await orchestrator.discard_request(
+                                        device_id, corr, count_as_error=False
+                                    )
 
     async def _run_local_mode(
         self,
@@ -451,6 +508,7 @@ class WebSocketServerPlugin(ProtocolServerPlugin):
         try:
             async for message in connection:
                 body = _parse_ws_payload(message)
+                kind = _determine_observation_kind(body)
                 request = InterceptedRequest(
                     device_id=device_id,
                     timestamp=time.time(),
@@ -463,7 +521,7 @@ class WebSocketServerPlugin(ProtocolServerPlugin):
                     transport=TransportMeta(port=getattr(self.config, "port", 9000)),
                     security="none",
                     identity=device_id,
-                    kind=ObservationKind.EVENT,
+                    kind=kind,
                 )
                 if handler:
                     try:

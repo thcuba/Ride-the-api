@@ -30,6 +30,7 @@ from core.proxy.forwarder import (
 from core.proxy.handler import (
     _ENRICHMENT_FIELDS,
     _select_handler_adapter,
+    handle_protocol_failure,
     handle_protocol_request,
     handle_protocol_response,
     handle_tls_decrypted_request,
@@ -60,6 +61,7 @@ __all__ = [
     "_select_handler_adapter",
     "_upstream_response",
     "handle_device_seen",
+    "handle_protocol_failure",
     "handle_protocol_request",
     "handle_protocol_response",
     "handle_tls_decrypted_request",

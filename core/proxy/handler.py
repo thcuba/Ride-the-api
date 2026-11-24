@@ -327,3 +327,25 @@ async def handle_protocol_response(
         correlation_key=correlation_key,
     )
     return cast("dict[str, Any] | None", res)
+
+
+async def handle_protocol_failure(
+    handler_result: dict,
+    count_as_error: bool = False,
+) -> bool:
+    """Discard a queued protocol request when upstream exchange fails or connection closes."""
+    server = _get_server()
+    orchestrator = getattr(server, "orchestrator", None)
+
+    context = handler_result.get("_learning_context")
+    correlation_key = handler_result.get("correlation_key")
+    if not orchestrator or not context or not correlation_key:
+        return False
+
+    return bool(
+        await orchestrator.discard_request(
+            context["device_id"],
+            correlation_key,
+            count_as_error=count_as_error,
+        )
+    )
