@@ -19,6 +19,7 @@ from core.dns_server import get_dns_interceptor
 from core.paths import bundle_root, is_frozen
 from core.security import password_problem
 from core.tls_mitm import peek_tls_mitm_server
+from core.upstream_resolver import self_addresses
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +98,7 @@ async def health_check() -> Any:
         "status": "healthy",
         "service": "local-cloud-replacement-proxy",
         "version": _server().runtime_version(),
+        "host_addresses": sorted(self_addresses()),
         "adapters": _server().adapter_registry.list_vendors() if _server().adapter_registry else [],
         "ports": _listening_ports(),
     }

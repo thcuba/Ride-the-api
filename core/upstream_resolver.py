@@ -124,7 +124,7 @@ def is_loopback_ip(ip_str: str | None) -> bool:
 _self_addresses: frozenset[str] | None = None
 
 
-def self_addresses() -> frozenset[str]:
+def self_addresses() -> frozenset[str]:  # noqa: C901
     """Every address this machine is reachable on (best effort), cached.
 
     Sources in order of reliability: ``psutil`` when importable (all interfaces, IPv6
@@ -149,13 +149,36 @@ def self_addresses() -> frozenset[str]:
             found.add(_normalise_address(info[4][0]))
     except Exception:  # noqa: BLE001 - an unresolvable host name is not fatal
         logger.debug("could not resolve this host's own name")
+    try:
+        for ip in socket.gethostbyname_ex(socket.gethostname())[2]:
+            found.add(_normalise_address(ip))
+    except Exception:  # noqa: BLE001
+        pass
     found.add(_normalise_address(_default_route_address()))
+
+    try:
+        from core.config import get_config  # noqa: PLC0415
+
+        cfg = get_config()
+        if cfg:
+            if getattr(cfg.dns, "answer_ip", None):
+                found.add(_normalise_address(cfg.dns.answer_ip))
+            if getattr(cfg.proxy, "host", None) and cfg.proxy.host not in ("0.0.0.0", "::"):
+                found.add(_normalise_address(cfg.proxy.host))
+            for own_ip in getattr(cfg.core, "own_ips", []):
+                found.add(_normalise_address(own_ip))
+    except Exception:  # noqa: BLE001
+        pass
 
     # Keep IP literals only: psutil also lists link-layer entries, whose "address" is a
     # MAC (or an all-zero placeholder), and those have no business in a set compared
     # against client IPs.
     _self_addresses = frozenset(address for address in found if _is_ip_literal(address))
-    logger.info("Proxy: %d address(es) belong to this machine", len(_self_addresses))
+    logger.info(
+        "Proxy: %d address(es) belong to this machine: %s",
+        len(_self_addresses),
+        ", ".join(sorted(_self_addresses)),
+    )
     return _self_addresses
 
 
@@ -227,6 +250,25 @@ def self_connection_reason(ip_str: str | None) -> str | None:
     if literal in mine or f"::ffff:{literal}" in mine:
         return "own-address"
     return None
+
+
+def is_self_device(device_id: str | None, ip_addresses: list[str] | None = None) -> bool:
+    """Return True if ``device_id`` or any of ``ip_addresses`` belongs to this machine.
+
+    Prevents the host running Ride-the-API from ever being registered or listed as an
+    IoT device in learning mode.
+    """
+    if any(is_self_address(ip) for ip in (ip_addresses or [])):
+        return True
+    if not device_id:
+        return False
+    clean_id = device_id.strip().lower()
+    if clean_id in ("localhost", "127.0.0.1", "::1", "self") or is_self_address(clean_id):
+        return True
+    if "-" in clean_id:
+        _, _, candidate = clean_id.partition("-")
+        return is_self_address(candidate.replace("-", "."))
+    return False
 
 
 def _apply_config(config: Config) -> None:

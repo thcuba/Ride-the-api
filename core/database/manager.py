@@ -46,6 +46,7 @@ from core.models import (
     RelayedConnection,
 )
 from core.pattern_db.schemas import DeviceMeta, normalize_connection_mode
+from core.upstream_resolver import is_self_device
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +141,20 @@ class DatabaseManager:
         async with self._core_engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         await SchemaMigrator(self._core_engine).run()
+
+        # Purge any legacy self-device records (e.g. from prior runs before self filtering)
+        async with self._core_session_factory() as session:
+            result = await session.execute(select(DeviceRegistry))
+            purged = False
+            for d in result.scalars().all():
+                if is_self_device(d.device_id, d.ip_addresses):
+                    logger.info("Database: purging self-device %s from registry", d.device_id)
+                    await session.delete(d)
+                    purged = True
+            if purged:
+                await session.commit()
+                self.invalidate_ip_lookup_cache()
+
         logger.info("Core database initialized")
 
     @staticmethod
@@ -436,6 +451,12 @@ class DatabaseManager:
         self, device_id: str, vendor: str, device_type: str = "unknown", name: str = ""
     ) -> None:
         """Ensure a device exists in the registry and create its DB."""
+        if is_self_device(device_id):
+            logger.debug(
+                "Database: refusing to register this machine (%s) as an IoT device", device_id
+            )
+            return
+
         # F-12: serialize per-device creation so concurrent callers cannot both
         # insert a registry row (and race on the device DB) for the same id.
         lock = self._device_locks.setdefault(device_id, asyncio.Lock())
@@ -780,6 +801,7 @@ class DatabaseManager:
                     "relayed_connections": relayed.get(d.device_id, 0),
                 }
                 for d in result.scalars().all()
+                if not is_self_device(d.device_id, d.ip_addresses)
             ]
 
     async def get_device(self, device_id: str) -> DeviceRegistry | None:
