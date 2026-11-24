@@ -286,8 +286,44 @@ async def handle_protocol_request(request: InterceptedRequest) -> dict | None:  
             query_params=request.query_params or {},
             enrichment=enrichment,
         )
+        if isinstance(res, dict) and res.get("action") == "forward" and res.get("correlation_key"):
+            res = {
+                **res,
+                "_learning_context": {
+                    "device_id": device_id,
+                    "vendor": "unknown",
+                    "protocol": resolved_protocol,
+                },
+            }
         return cast("dict[str, Any] | None", res)
 
     except Exception as e:
         logger.error("Protocol handler error for %s: %s", device_id, e, exc_info=True)
         return None
+
+
+async def handle_protocol_response(
+    handler_result: dict,
+    response_body: Any,
+    status_code: int = 200,
+    headers: dict | None = None,
+) -> dict | None:
+    """Correlate an upstream protocol response with its captured request."""
+    server = _get_server()
+    orchestrator = getattr(server, "orchestrator", None)
+
+    context = handler_result.get("_learning_context")
+    correlation_key = handler_result.get("correlation_key")
+    if not orchestrator or not context or not correlation_key:
+        return None
+
+    res = await orchestrator.handle_response(
+        device_id=context["device_id"],
+        vendor=context.get("vendor", "unknown"),
+        protocol=context.get("protocol", "websocket"),
+        status_code=status_code,
+        headers=headers or {},
+        body=normalize_request_body(response_body),
+        correlation_key=correlation_key,
+    )
+    return cast("dict[str, Any] | None", res)
