@@ -99,6 +99,7 @@ async def health_check() -> Any:
         "version": _server().runtime_version(),
         "adapters": _server().adapter_registry.list_vendors() if _server().adapter_registry else [],
         "ports": _listening_ports(),
+        "host_addresses": sorted(_server().self_addresses()),
     }
 
 

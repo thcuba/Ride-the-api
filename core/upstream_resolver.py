@@ -124,7 +124,29 @@ def is_loopback_ip(ip_str: str | None) -> bool:
 _self_addresses: frozenset[str] | None = None
 
 
-def self_addresses() -> frozenset[str]:
+def _configured_host_addresses() -> set[str]:
+    """Addresses configured explicitly on this instance (DNS answer IP, proxy, core.own_ips)."""
+    configured: set[str] = set()
+    try:
+        from core.config import get_config_manager  # noqa: PLC0415
+
+        cfg = get_config_manager().config
+        if cfg:
+            if getattr(cfg, "dns", None) and getattr(cfg.dns, "answer_ip", None):
+                configured.add(_normalise_address(cfg.dns.answer_ip))
+            if getattr(cfg, "proxy", None) and getattr(cfg.proxy, "host", None):
+                host = _normalise_address(cfg.proxy.host)
+                if _is_ip_literal(host):
+                    configured.add(host)
+            if getattr(cfg, "core", None) and getattr(cfg.core, "own_ips", None):
+                for own_ip in cfg.core.own_ips:
+                    configured.add(_normalise_address(own_ip))
+    except Exception:  # noqa: BLE001
+        pass
+    return configured
+
+
+def self_addresses() -> frozenset[str]:  # noqa: C901
     """Every address this machine is reachable on (best effort), cached.
 
     Sources in order of reliability: ``psutil`` when importable (all interfaces, IPv6
@@ -145,17 +167,27 @@ def self_addresses() -> frozenset[str]:
     except Exception:  # noqa: BLE001 - any failure just narrows the list
         logger.debug("psutil unavailable: identifying this host by name and route only")
     try:
+        for ip in socket.gethostbyname_ex(socket.gethostname())[2]:
+            found.add(_normalise_address(ip))
+    except Exception:  # noqa: BLE001
+        logger.debug("socket.gethostbyname_ex unavailable")
+    try:
         for info in socket.getaddrinfo(socket.gethostname(), None):
             found.add(_normalise_address(info[4][0]))
     except Exception:  # noqa: BLE001 - an unresolvable host name is not fatal
         logger.debug("could not resolve this host's own name")
     found.add(_normalise_address(_default_route_address()))
+    found.update(_configured_host_addresses())
 
     # Keep IP literals only: psutil also lists link-layer entries, whose "address" is a
     # MAC (or an all-zero placeholder), and those have no business in a set compared
     # against client IPs.
     _self_addresses = frozenset(address for address in found if _is_ip_literal(address))
-    logger.info("Proxy: %d address(es) belong to this machine", len(_self_addresses))
+    logger.info(
+        "Proxy: %d address(es) belong to this machine (%s)",
+        len(_self_addresses),
+        ", ".join(sorted(_self_addresses)),
+    )
     return _self_addresses
 
 
@@ -229,6 +261,35 @@ def self_connection_reason(ip_str: str | None) -> str | None:
     return None
 
 
+def is_self_device(device_id: str | None) -> bool:
+    """Return True if ``device_id`` represents the host running Ride-the-API.
+
+    Prevents this machine (loopback, LAN IP, or own interface addresses) from
+    registering as an IoT device or appearing in learning mode on the dashboard.
+    """
+    if not device_id or not isinstance(device_id, str):
+        return False
+    normalized = device_id.strip().lower()
+    if not normalized:
+        return False
+    if normalized in {"localhost", "127.0.0.1", "::1", "self", "host"}:
+        return True
+
+    # Check direct IP match
+    if is_self_address(normalized):
+        return True
+
+    # Check if formatted as "<prefix>-<ip-with-hyphens>" from device_id_from_ip
+    for prefix in ("ip", "tls", "ws", "h2", "raw", "matter"):
+        prefix_dash = f"{prefix}-"
+        if normalized.startswith(prefix_dash):
+            candidate = normalized[len(prefix_dash) :].replace("-", ".")
+            if is_self_address(candidate):
+                return True
+
+    return False
+
+
 def _apply_config(config: Config) -> None:
     """Update cached DNS server lists from a loaded Config object."""
     global _last_dns_servers, _last_dns_servers_v6  # noqa: PLW0603
@@ -237,6 +298,7 @@ def _apply_config(config: Config) -> None:
         _last_dns_servers = list(dns_cfg.dns_servers)
     if dns_cfg.dns_servers_v6:
         _last_dns_servers_v6 = list(dns_cfg.dns_servers_v6)
+    invalidate_self_addresses()
 
 
 def _build_resolver() -> dns.asyncresolver.Resolver:
