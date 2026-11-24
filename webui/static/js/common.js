@@ -10,6 +10,7 @@ function showToast(msg, type) {
     c = document.createElement('div');
     c.id = 'toasts';
     c.className = 'toast-container';
+    c.style.zIndex = '10050';
     document.body.appendChild(c);
   }
   const t = document.createElement('div');

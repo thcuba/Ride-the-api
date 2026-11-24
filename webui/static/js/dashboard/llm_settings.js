@@ -245,6 +245,7 @@ function renderLLMProfileCards(settings) {
           </button>
         </div>
       </div>
+      <div class="lpc-test-result" id="lpc-test-result-${safeKey}" style="display:none;" role="status" aria-live="polite"></div>
       <div class="lpc-fields">
         <div class="lpc-field">
           <label for="lpc-base-url-${safeKey}">Base URL</label>
@@ -326,6 +327,7 @@ async function addLLMProfile() {
         </button>
       </div>
     </div>
+    <div class="lpc-test-result" id="lpc-test-result-${safeKey}" style="display:none;" role="status" aria-live="polite"></div>
     <div class="lpc-fields">
       <div class="lpc-field">
         <label for="lpc-base-url-${safeKey}">Base URL</label>
@@ -403,7 +405,15 @@ async function testLLMProfile(name) {
   const btn = card.querySelector('.btn-test-profile') || card.querySelector('.lpc-actions .btn');
   const span = btn ? (btn.querySelector('.btn-label') || btn.querySelector('span') || btn) : null;
   const origText = span ? span.textContent : '';
+  const resultBox = card.querySelector('.lpc-test-result');
+
   if (btn) { btn.disabled = true; if (span) span.textContent = 'Testing…'; }
+  if (resultBox) {
+    resultBox.style.display = 'flex';
+    resultBox.className = 'lpc-test-result testing';
+    resultBox.innerHTML = '<span class="lpc-result-icon">⏳</span><span>Testing connection…</span>';
+  }
+
   const body = {
     // The profile name lets the server use the stored key when the key field
     // still shows the masked value (stored keys are never sent to the browser).
@@ -421,18 +431,35 @@ async function testLLMProfile(name) {
     });
     if (!res.ok) {
       const err = await errorFrom(res, 'Test failed');
+      if (resultBox) {
+        resultBox.style.display = 'flex';
+        resultBox.className = 'lpc-test-result error';
+        resultBox.innerHTML = '<span class="lpc-result-icon">✕</span><span>Test failed: ' + escapeHtml(err) + '</span>';
+      }
       showToast(`${name}: ${err}`, 'error');
       return;
     }
     const data = await res.json();
     const baseMsg = data.message || 'Test passed: got a response';
     const unsaved = card.classList.contains('lpc-dirty');
+    const msg = `${baseMsg}${unsaved ? ' — press Save to apply' : ''}`;
+    if (resultBox) {
+      resultBox.style.display = 'flex';
+      resultBox.className = 'lpc-test-result success';
+      resultBox.innerHTML = '<span class="lpc-result-icon">✓</span><span>' + escapeHtml(msg) + '</span>';
+    }
     showToast(
       `${name}: ${baseMsg}${unsaved ? ' — press Save to apply' : ''}`,
       unsaved ? 'warning' : 'success'
     );
   } catch(e) {
-    showToast(`${name}: ${e.message || 'Test failed'}`, 'error');
+    const errText = e.message || 'Test failed';
+    if (resultBox) {
+      resultBox.style.display = 'flex';
+      resultBox.className = 'lpc-test-result error';
+      resultBox.innerHTML = '<span class="lpc-result-icon">✕</span><span>Test failed: ' + escapeHtml(errText) + '</span>';
+    }
+    showToast(`${name}: ${errText}`, 'error');
   } finally {
     if (btn) { btn.disabled = false; if (span) span.textContent = origText; }
   }

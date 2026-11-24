@@ -454,8 +454,8 @@
   .save-bar .status.err { color: var(--red); max-width: 60ch; white-space: pre-wrap; }
 
   .dirty { border-left: 3px solid var(--yellow) !important; }
-  .toast-container { position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column; gap: 8px; z-index: 1000; }
-  .toast { background: var(--surface2); border: 1px solid var(--border); padding: 10px 16px; border-radius: 10px; font-size: 13px; box-shadow: var(--shadow); opacity: 0; transition: opacity .3s; display: flex; align-items: center; gap: 8px; }
+  .toast-container { position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column; gap: 8px; z-index: 10050; pointer-events: none; }
+  .toast { background: var(--surface2); border: 1px solid var(--border); padding: 10px 16px; border-radius: 10px; font-size: 13px; box-shadow: var(--shadow); opacity: 0; transition: opacity .3s; display: flex; align-items: center; gap: 8px; pointer-events: auto; }
   .toast.show { opacity: 1; }
   .toast.success { border-color: var(--green); }
   .toast.error { border-color: var(--red); }

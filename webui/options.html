@@ -79,11 +79,12 @@
   .meta { font-size: 12px; color: var(--text2); margin-top: 10px; }
   .skip-link { position: absolute; top: -100%; left: 8px; padding: 8px 16px; background: var(--accent); color: #fff; border-radius: 0 0 8px 8px; font-size: 14px; font-weight: 600; z-index: 9999; text-decoration: none; }
   .skip-link:focus { top: 0; }
-  .toast-container { position: fixed; top: 20px; right: 20px; z-index: 1000; display: flex; flex-direction: column; gap: 8px; }
+  .toast-container { position: fixed; top: 20px; right: 20px; z-index: 10050; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
   .toast {
     padding: 12px 20px; border-radius: 10px; background: var(--surface); border: 1px solid var(--border);
     box-shadow: 0 8px 24px rgba(0,0,0,.4); font-size: 13px; font-weight: 500;
     display: flex; align-items: center; gap: 8px; max-width: 360px;
+    pointer-events: auto;
   }
   .toast.success { border-color: var(--green); }
   .toast.error { border-color: var(--red); }
