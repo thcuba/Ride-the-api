@@ -128,23 +128,6 @@ class CoreConfig(BaseModel):
     # the traffic should be TLS-decrypted or handled by a known protocol).
     ip_profiles: dict[str, IpProfileConfig] = Field(default_factory=dict)
 
-    # Explicit IP addresses belonging to this host (auto-detected interfaces and loopback
-    # are always included).
-    own_ips: list[str] = Field(default_factory=list)
-
-    @model_validator(mode="before")
-    @classmethod
-    def _normalize_own_ips(cls, data: Any) -> Any:  # noqa: ANN401
-        if isinstance(data, dict):
-            if "own_ip" in data and "own_ips" not in data:
-                val = data.get("own_ip")
-                if isinstance(val, str) and val.strip():
-                    data["own_ips"] = [val.strip()]
-            elif isinstance(data.get("own_ips"), str):
-                val = data["own_ips"].strip()
-                data["own_ips"] = [val] if val else []
-        return data
-
 
 class ConnectionType(StrEnum):
     """How a device connection is handled on ingress.
@@ -925,12 +908,6 @@ class ConfigManager:
                 Path(tmp_name).replace(self.config_path)
                 tmp_name = None
                 self._config = candidate
-                try:
-                    from core.upstream_resolver import invalidate_self_addresses  # noqa: PLC0415
-
-                    invalidate_self_addresses()
-                except Exception:
-                    pass
         except Exception:  # noqa: BLE001 - persist failure should not crash
             logger.exception("ConfigManager: failed to persist config to %s", self.config_path)
             if tmp_name is not None:

@@ -25,7 +25,6 @@ from core.proxy.forwarder import (
     _upstream_response,
 )
 from core.traffic_selector import TrafficRequestInfo
-from core.upstream_resolver import self_connection_reason
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -135,17 +134,6 @@ async def proxy_vendor_request(  # noqa: C901, PLR0911, PLR0912, PLR0915
 
     client_ip = request.client.host if request.client else "unknown"
     is_local = is_local_ip_fn(client_ip)
-
-    self_reason = self_connection_reason(client_ip)
-    if self_reason:
-        logger.debug(
-            "Proxy router: %s client %s is never intercepted, forwarding %s %s",
-            self_reason,
-            client_ip,
-            request.method,
-            path,
-        )
-        return await forward_bypassed_fn(adapter, request, path, body, client_ip, raw_body=raw_body)
 
     traffic_selector_fn = _get_traffic_selector
     if traffic_selector := traffic_selector_fn():

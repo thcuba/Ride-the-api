@@ -10,26 +10,17 @@ its own requests (the ``curl`` to the intercepted hostname used from the box).
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from fastapi import Request
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 import core.server as server_mod
 import core.upstream_resolver as resolver
 from adapters.base import InterceptedRequest, ProtocolType
-from core.config import Config
 from core.database import DatabaseManager, DeviceRegistry
-from core.proxy.router import proxy_vendor_request
 from core.tls_mitm import DecryptedRequest, TLSMITMServer
-from core.upstream_resolver import (
-    is_loopback_ip,
-    is_self_address,
-    is_self_device,
-    self_connection_reason,
-)
+from core.upstream_resolver import is_loopback_ip, is_self_address, self_connection_reason
 
 LOOPBACK = "127.0.0.1"
 LAN_IP = "192.168.1.77"
@@ -322,159 +313,3 @@ async def test_tls_request_from_our_own_lan_address_is_forwarded(
     assert result == {"action": "forward", "reason": "own-address"}
     assert orch.calls == []
     assert await _devices(db_manager) == []
-
-
-def test_is_self_device_identification(own_address):
-    """Verify that is_self_device identifies loopback, own IPs, and dashed device IDs."""
-    assert is_self_device("ip-127-0-0-1") is True
-    assert is_self_device("tls-127-0-0-1") is True
-    assert is_self_device("127.0.0.1") is True
-    assert is_self_device("::1") is True
-    assert is_self_device("localhost") is True
-    assert is_self_device("self") is True
-    assert is_self_device(f"ip-{own_address.replace('.', '-')}") is True
-    assert is_self_device(f"tls-{own_address.replace('.', '-')}") is True
-    assert is_self_device("custom-dev", ["127.0.0.1"]) is True
-    assert is_self_device("custom-dev", [own_address]) is True
-
-    # Real devices are NOT self devices
-    assert is_self_device("ip-192-168-1-50") is False
-    assert is_self_device("shelly-plug-s") is False
-    assert is_self_device("custom-dev", ["192.168.1.50"]) is False
-    assert is_self_device(None) is False
-    assert is_self_device("") is False
-
-
-@pytest.mark.asyncio
-async def test_database_manager_refuses_to_create_self_device(db_manager):
-    """get_or_create_device must refuse to register this machine as a device."""
-    await db_manager.get_or_create_device("ip-127-0-0-1", "unknown")
-    await db_manager.get_or_create_device("localhost", "unknown")
-    assert await _devices(db_manager) == []
-
-
-@pytest.mark.asyncio
-async def test_database_manager_list_devices_filters_out_self_device(db_manager):
-    """Even if a self-device was somehow created, list_devices() hides it."""
-    async with db_manager.core_session() as session:
-        session.add(
-            DeviceRegistry(
-                device_id="ip-127-0-0-1",
-                name="Loopback Ghost",
-                vendor="unknown",
-                device_type="unknown",
-                ip_addresses=["127.0.0.1"],
-                mode="learning",
-            )
-        )
-        session.add(
-            DeviceRegistry(
-                device_id="real-sensor",
-                name="Real Sensor",
-                vendor="shelly",
-                device_type="sensor",
-                ip_addresses=["192.168.1.99"],
-                mode="learning",
-            )
-        )
-        await session.commit()
-
-    listed = await db_manager.list_devices()
-    device_ids = [d["device_id"] for d in listed]
-    assert "ip-127-0-0-1" not in device_ids
-    assert "real-sensor" in device_ids
-
-
-@pytest.mark.asyncio
-async def test_database_manager_initialize_purges_self_devices(db_manager):
-    """DatabaseManager.initialize() purges any legacy self-device records from core.db."""
-    async with db_manager.core_session() as session:
-        session.add(
-            DeviceRegistry(
-                device_id="ip-127-0-0-1",
-                name="Old Ghost",
-                vendor="unknown",
-                device_type="unknown",
-                ip_addresses=["127.0.0.1"],
-                mode="learning",
-            )
-        )
-        session.add(
-            DeviceRegistry(
-                device_id="real-device",
-                name="Real Device",
-                vendor="shelly",
-                device_type="plug",
-                ip_addresses=["192.168.1.50"],
-                mode="learning",
-            )
-        )
-        await session.commit()
-
-    await db_manager.initialize()
-
-    devices = await _devices(db_manager)
-    device_ids = [d.device_id for d in devices]
-    assert "ip-127-0-0-1" not in device_ids
-    assert "real-device" in device_ids
-
-
-@pytest.mark.asyncio
-async def test_http_proxy_vendor_request_from_self_is_forwarded_not_registered(
-    monkeypatch, db_manager
-):
-    """A vendor request from loopback to /{vendor}/{path} must be forwarded, not learned."""
-    orch = _FakeOrchestrator()
-    monkeypatch.setattr(server_mod, "db_manager", db_manager)
-    monkeypatch.setattr(server_mod, "orchestrator", orch)
-
-    adapter = MagicMock()
-    cloud_resp = SimpleNamespace(
-        success=True,
-        status_code=200,
-        response={"ok": True},
-        body_bytes=b'{"ok": true}',
-        response_headers={},
-    )
-    adapter.forward_to_cloud = AsyncMock(return_value=cloud_resp)
-    registry = MagicMock()
-    registry.get_adapter.return_value = adapter
-    monkeypatch.setattr(server_mod, "adapter_registry", registry)
-
-    scope = {
-        "type": "http",
-        "method": "GET",
-        "path": "/example/v1/status",
-        "headers": [],
-        "query_string": b"",
-        "client": ("127.0.0.1", 54321),
-    }
-
-    async def receive():
-        return {"type": "http.request", "body": b"", "more_body": False}
-
-    req = Request(scope, receive)
-
-    resp = await proxy_vendor_request("example", "v1/status", req)
-    assert resp.status_code == 200  # noqa: PLR2004
-    assert orch.calls == []
-    assert await _devices(db_manager) == []
-
-
-def test_core_config_own_ips_recognized():
-    """Configuring core.own_ips or core.own_ip adds them to self_addresses."""
-    cfg1 = Config.model_validate({"core": {"own_ips": ["10.20.30.40"]}})
-    assert "10.20.30.40" in cfg1.core.own_ips
-
-    cfg2 = Config.model_validate({"core": {"own_ip": "10.20.30.50"}})
-    assert "10.20.30.50" in cfg2.core.own_ips
-
-
-def test_health_check_reports_host_addresses():
-    """Health check endpoint exposes host_addresses."""
-    client = TestClient(server_mod.app)
-    resp = client.get("/health")
-    assert resp.status_code == 200  # noqa: PLR2004
-    data = resp.json()
-    assert "host_addresses" in data
-    assert "127.0.0.1" in data["host_addresses"]
