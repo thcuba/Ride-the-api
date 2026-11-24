@@ -242,7 +242,13 @@ a { text-underline-offset: .18em; }
 .pw-toggle-btn:hover { color: var(--text); }
 .pw-toggle-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
+.toast-container {
+  z-index: 10050 !important;
+  pointer-events: none;
+}
+
 .toast, .toast-container .toast {
+  pointer-events: auto;
   border-radius: 12px;
   box-shadow: var(--shadow);
   backdrop-filter: blur(12px);

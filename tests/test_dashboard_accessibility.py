@@ -157,9 +157,13 @@ def test_llm_settings_modal_accessibility_and_mobile_ergonomics():
     # Verify profile card controls and micro-interactions
     assert "lpc-status-pill" in html
     assert "lpc-unsaved-badge" in html
+    assert "lpc-test-result" in html
     assert "btn-glow-pill" in html
     assert "pw-toggle-btn" in html
     assert "updateProfileStatusPill" in html
+
+    # Verify toast layering above modals
+    assert "10050" in html
 
     # Verify mobile-specific ergonomics (iOS auto-zoom guard >=16px and sticky save bar)
     assert "#llm-settings-modal input," in html
