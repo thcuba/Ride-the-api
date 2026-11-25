@@ -10,6 +10,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from core.config import SECRET_MASK
+from core.llm.url_guard import LLMUrlRejected, check_base_url
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +65,7 @@ async def update_llm_settings(request: Request) -> Any:
 
 
 @router.post("/api/llm/profiles/test")
-async def test_llm_profile(request: Request) -> Any:
+async def test_llm_profile(request: Request) -> Any:  # noqa: PLR0911
     """Send a "hello" completion to a provider and report whether it answers.
 
     The dashboard's per-profile Test button calls this with the current form
@@ -88,6 +89,13 @@ async def test_llm_profile(request: Request) -> Any:
             status_code=400,
             content={"error": "Both 'base_url' and 'model_id' are required for the test"},
         )
+    # The URL is what the client tells us to connect to: refuse the ones that cannot be
+    # a provider and must not be reachable before any connection is attempted.
+    try:
+        await check_base_url(base_url)
+    except LLMUrlRejected as exc:
+        logger.warning("Refused LLM test to %s: %s", base_url, exc)
+        return JSONResponse(status_code=400, content={"error": str(exc)})
     api_key = str(body.get("api_key", ""))
     if api_key == SECRET_MASK:
         api_key = _server().llm_decipher_service.stored_api_key(str(body.get("name") or ""))
@@ -121,10 +129,18 @@ async def create_llm_profile(request: Request) -> Any:  # noqa: PLR0911
     name = body.get("name")
     if not name:
         return JSONResponse(status_code=400, content={"error": "name is required"})
+    profile_base_url = str(body.get("base_url", "https://api.openai.com/v1"))
+    # Refuse at save time as well: a profile that cannot be tested is not one that should
+    # be stored and then used by the deciphering workflow.
+    try:
+        await check_base_url(profile_base_url)
+    except LLMUrlRejected as exc:
+        logger.warning("Refused LLM profile %s: %s", name, exc)
+        return JSONResponse(status_code=400, content={"error": str(exc)})
     settings = _server().llm_decipher_service.get_settings()
     profiles = settings["profiles"]
     profiles[name] = {
-        "base_url": body.get("base_url", "https://api.openai.com/v1"),
+        "base_url": profile_base_url,
         "api_key": body.get("api_key", ""),
         "model_id": body.get("model_id", "gpt-4o-mini"),
         "prompt_template": body.get("prompt_template", ""),

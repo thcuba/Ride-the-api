@@ -1477,6 +1477,17 @@ cached client must never be reused here: caching the throwaway profile under a f
 name would pin the first test's `base_url`/`api_key`, so every later test would keep
 using stale credentials and a corrected key would appear to have no effect.
 
+`base_url` is checked before any connection is attempted (`core/llm/url_guard.py`), and
+a refused one returns `400` with the reason. Allowed: `http`/`https` to any host,
+including loopback and LAN addresses — a self-hosted provider (Ollama on
+`127.0.0.1:11434`) is the normal case. Refused: other schemes (`file:`, `gopher:`, …),
+unspecified/multicast/reserved addresses, **link-local** ones (the cloud metadata
+endpoint lives at `169.254.169.254`), and hostnames that resolve only to those — a name
+is resolved, so `metadata.google.internal` cannot slip past a check on its text. The
+throwaway client also **does not follow redirects**: a redirect would carry the request
+to a host that was never checked, which is the classic way around such a guard. A saved
+profile goes through the same check, because the deciphering workflow then uses it.
+
 ### `GET /api/llm/user-profiles`
 
 List of saved user profiles.
