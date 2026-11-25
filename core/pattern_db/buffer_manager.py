@@ -29,6 +29,7 @@ from core.pattern_db.schemas import (
     RawResponse,
 )
 from core.pattern_db.validator import ValidationError, validate_capture
+from core.redaction import redact_pair
 
 if TYPE_CHECKING:
     from core.buffer.store import BufferStore
@@ -158,7 +159,9 @@ class BufferManager:
                     "latency_ms": pair.response.latency_ms if pair.response else 0.0,
                     "timestamp": pair.timestamp.isoformat(),
                 }
-                await self.add_pair(device_id, pair_dict)
+                # A HAR carries the credentials that were on the wire: they must not
+                # become the raw material of the analysis (nor reach the buffer API).
+                await self.add_pair(device_id, redact_pair(pair_dict))
                 count += 1
         return count
 

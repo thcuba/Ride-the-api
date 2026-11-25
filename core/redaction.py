@@ -327,3 +327,43 @@ def _redact_key_value_pairs(text: str) -> str:
 def redact_pair_headers(headers: dict[str, Any] | None) -> dict[str, Any] | None:
     """Alias kept for readability in capture contexts."""
     return redact_headers(headers)
+
+
+# The fields of a capture pair that can carry a secret, and the handler for each.
+# Kept here rather than in the pipeline: the buffer, the export and the LLM prompt all
+# scrub the same five fields, and they must not drift apart.
+PAIR_REDACTORS: tuple[tuple[str, Any], ...] = (
+    ("request_headers", redact_headers),
+    ("response_headers", redact_headers),
+    ("request_query", redact_query),
+    ("request_body", redact_body),
+    ("response_body", redact_body),
+)
+
+
+def redact_pair(pair: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of a capture pair with the sensitive fields redacted.
+
+    Applied where a pair **enters** the buffer from a user import and where it
+    **leaves** through the API, so a token captured on the wire or pulled from an
+    imported HAR is not exposed to whoever lists the buffer. Values are copied, never
+    mutated in place: a caller still holding the raw pair keeps it.
+    """
+    result = dict(pair)
+    for field, handler in PAIR_REDACTORS:
+        if field in result:
+            result[field] = handler(result[field])
+    return result
+
+
+def redact_buffer_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    """Redact a buffer entry, whose pair is **nested** under ``"pair"``.
+
+    The buffer keeps ``{"pair": {...}, "size": N}``: redacting the entry's own keys
+    would leave every field of the pair untouched and look like a guard that is not
+    there. Anything that is not shaped like an entry is returned unchanged.
+    """
+    pair = entry.get("pair")
+    if not isinstance(pair, dict):
+        return entry
+    return {**entry, "pair": redact_pair(pair)}
