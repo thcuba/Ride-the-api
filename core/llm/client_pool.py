@@ -7,6 +7,7 @@ import logging
 import sys
 from typing import Any, cast
 
+import httpx
 from openai import AsyncOpenAI
 from pydantic import SecretStr
 
@@ -50,18 +51,30 @@ class LLMClientPool:
                     logger.info("LLM profile %r connection changed, recreating client", name)
                 self._clients.pop(key)
 
-    @staticmethod
-    def build_client(profile: LLMProfile) -> AsyncOpenAI:
-        """Create a fresh OpenAI-compatible async client for a profile."""
+    def build_client(self, profile: LLMProfile, *, follow_redirects: bool = True) -> AsyncOpenAI:
+        """Create a fresh OpenAI-compatible async client for a profile.
+
+        ``follow_redirects`` is turned off by the test endpoint. The base URL is checked
+        before the request, and a redirect would carry it to a host that was never
+        checked — the classic way around an SSRF guard. The SDK builds its own httpx
+        client with redirects on, so the only way to say no is to hand it one.
+        """
         import core.llm_decipher as shim_mod  # noqa: PLC0415
 
         cls = getattr(shim_mod, "AsyncOpenAI", AsyncOpenAI)
         api_key = profile.api_key.get_secret_value() or "not-set"
+        extra: dict[str, Any] = {}
+        if not follow_redirects:
+            extra["http_client"] = httpx.AsyncClient(
+                follow_redirects=False,
+                timeout=profile.timeout,
+            )
         return cls(
             api_key=api_key,
             base_url=profile.base_url.rstrip("/"),
             timeout=profile.timeout,
             max_retries=0,
+            **extra,
         )
 
     def get_client(
@@ -160,7 +173,7 @@ class LLMClientPool:
             timeout=timeout,
             max_retries=max_retries,
         )
-        client = self.build_client(profile)
+        client = self.build_client(profile, follow_redirects=False)
         kwargs = {
             "model": profile.model_id,
             "messages": [{"role": "user", "content": "hello"}],
