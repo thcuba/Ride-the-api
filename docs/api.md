@@ -236,6 +236,14 @@ generic config save can neither change nor drop the LLM profiles (see
 where `details` holds `loc`/`msg` pairs only — the submitted values are never echoed back,
 because they may be secrets.
 
+**A save takes effect immediately, inside this process.** The config is applied to the
+running components — traffic selector, DNS settings, protocol servers, LLM service and
+modification engine — by notifying their registered callbacks before `PUT` returns, so the
+dashboard reflects the settings it has just written. The file watcher still handles edits
+made outside the API (a hand-edited `config.yaml`) and skips this process's own atomic
+`replace`, which has already notified: it does not re-read the file over the config that
+was just validated. A save that fails to persist notifies nobody, because nothing changed.
+
 ### Self-update: `POST /api/system/update`
 
 Runs the bundled updater (`deploy/update.sh`, or the `deploy/rideapi` helper in a
