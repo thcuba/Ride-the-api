@@ -204,6 +204,19 @@ async def forward_upstream(req: DecryptedRequest, hostname: str, device_id: str)
     }
 
 
+async def _flush_pending(outgoing: ssl.MemoryBIO, writer: asyncio.StreamWriter) -> None:
+    """Write every encrypted record sitting in the BIO to the socket.
+
+    ``SSLObject.write()`` splits the plaintext into records of at most 16 KiB, and each
+    ``read`` hands back only what is there at that moment: draining with a single read
+    left the rest encrypted inside the BIO, and the connection closed right after it.
+    Measured on the wire: vendor responses beyond ~49 KB arrived truncated.
+    """
+    while outgoing.pending:
+        writer.write(outgoing.read(65536))
+        await writer.drain()
+
+
 async def write_http_response(
     ssl_obj: ssl.SSLObject,
     outgoing: ssl.MemoryBIO,
@@ -227,15 +240,28 @@ async def write_http_response(
             body=body,
         )
 
-        try:  # noqa: SIM105
-            ssl_obj.write(raw)
-        except (ssl.SSLWantReadError, ssl.SSLWantWriteError):
-            pass
-        if outgoing.pending:
-            try:
-                writer.write(outgoing.read(65536))
-                await writer.drain()
-            except Exception:
-                pass
+        # Write the whole response. ``SSLObject.write`` accepts as much as the output
+        # BIO can hold and raises SSLWantWriteError when it is full: draining there and
+        # retrying is the difference between a complete response and a truncated one.
+        view = memoryview(raw)
+        try:
+            while view:
+                try:
+                    written = ssl_obj.write(view)
+                except ssl.SSLWantWriteError:
+                    await _flush_pending(outgoing, writer)
+                    continue
+                except ssl.SSLWantReadError:
+                    # The reply itself is never truncated on purpose: nothing to read
+                    # from the peer at this point means the session is gone.
+                    logger.debug("TLS MITM: session closed while answering %s", client_ip)
+                    break
+                if written <= 0:
+                    break
+                view = view[written:]
+                await _flush_pending(outgoing, writer)
+            await _flush_pending(outgoing, writer)
+        except Exception:
+            logger.debug("TLS MITM: flush to %s failed", client_ip, exc_info=True)
     except Exception as e:
         logger.warning("TLS MITM: failed sending response to %s: %s", client_ip, e)
