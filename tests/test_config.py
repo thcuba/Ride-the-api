@@ -4,6 +4,7 @@ Tests for the Configuration module (Pydantic models, ConfigManager, hot-reload).
 
 import os
 import stat
+import threading
 from unittest.mock import MagicMock
 
 import pytest
@@ -473,6 +474,159 @@ class TestConfigManager:
         assert cm._watch_thread is thread
 
         cm.stop_watching()
+
+
+class TestConfigHotReload:
+    """A save must notify the components without waiting for the file watcher.
+
+    Before this, ``_write`` updated the active config silently and the watcher was the
+    only notifier: ``POST /api/config`` changed every setting with zero callback calls
+    (measured: 1 registered, 0 called), and nothing reached DNS, the protocol servers,
+    the traffic selector, the LLM service or the modification engine until the watcher
+    happened to fire — or never, if it could not see the atomic ``replace``.
+    """
+
+    def _manager(self, tmp_path):
+        path = tmp_path / "config.yaml"
+        with path.open("w") as f:
+            yaml.dump({"core": {}}, f)
+        cm = ConfigManager(config_path=path)
+        cm.load()
+        return cm, path
+
+    def test_update_config_notifies_callbacks(self, tmp_path):
+        """The control-plane save path: was zero callbacks before the fix."""
+        cm, _ = self._manager(tmp_path)
+        callback = MagicMock()
+        cm.register_callback(callback)
+
+        assert cm.update_config({"core": {"database_url": "sqlite:///new.db"}}) is True
+
+        callback.assert_called_once()
+
+    def test_every_registered_callback_is_notified(self, tmp_path):
+        cm, _ = self._manager(tmp_path)
+        callbacks = [MagicMock(), MagicMock(), MagicMock()]
+        for cb in callbacks:
+            cm.register_callback(cb)
+
+        cm.update_config({"core": {"database_url": "sqlite:///new.db"}})
+
+        for cb in callbacks:
+            cb.assert_called_once()
+
+    def test_a_failed_save_does_not_notify(self, tmp_path, monkeypatch):
+        """Nothing was written, so nothing changed: components must not be told."""
+        cm, _ = self._manager(tmp_path)
+        callback = MagicMock()
+        cm.register_callback(callback)
+        before = cm.config.core.database_url
+
+        def _boom(*_args, **_kwargs):
+            raise OSError("disk full")
+
+        monkeypatch.setattr("core.config.yaml.safe_dump", _boom)
+
+        assert cm.update_config({"core": {"database_url": "sqlite:///new.db"}}) is False
+        callback.assert_not_called()
+        assert cm.config.core.database_url == before
+
+    def test_the_watcher_ignores_our_own_save(self, tmp_path):
+        """The atomic replace must not reload and notify a second time."""
+        cm, _ = self._manager(tmp_path)
+        callback = MagicMock()
+        cm.register_callback(callback)
+        cm.update_config({"core": {"database_url": "sqlite:///new.db"}})
+        callback.reset_mock()
+        active = cm.config
+
+        cm._handle_observed_change()
+
+        callback.assert_not_called()
+        assert cm.config is active, "a re-read must not replace the validated config"
+
+    def test_the_watcher_picks_up_an_external_edit(self, tmp_path):
+        """Editing the file by hand keeps working."""
+        cm, path = self._manager(tmp_path)
+        callback = MagicMock()
+        cm.register_callback(callback)
+
+        with path.open("w") as f:
+            yaml.dump({"core": {"database_url": "sqlite:///manual.db"}}, f)
+
+        cm._handle_observed_change()
+
+        callback.assert_called_once()
+        assert cm.config.core.database_url == "sqlite:///manual.db"
+
+    def test_an_edit_after_our_own_save_is_still_picked_up(self, tmp_path):
+        """The digest skip must only cover our own content, not a later edit."""
+        cm, path = self._manager(tmp_path)
+        callback = MagicMock()
+        cm.register_callback(callback)
+        cm.update_config({"core": {"database_url": "sqlite:///ours.db"}})
+        callback.reset_mock()
+
+        with path.open("w") as f:
+            yaml.dump({"core": {"database_url": "sqlite:///manual.db"}}, f)
+
+        cm._handle_observed_change()
+
+        callback.assert_called_once()
+        assert cm.config.core.database_url == "sqlite:///manual.db"
+
+    def test_the_other_save_paths_notify_too(self, tmp_path):
+        """Every writer funnels through _write: DNS settings, password, servers."""
+        cm, _ = self._manager(tmp_path)
+        callback = MagicMock()
+        cm.register_callback(callback)
+
+        assert cm.set_dns_settings(intercept=["home.example"]) is True
+        callback.assert_called_once()
+
+        callback.reset_mock()
+        assert cm.set_security_password("una-password-lunga") is True
+        callback.assert_called_once()
+
+        callback.reset_mock()
+        assert cm.set_ip_profile_bypass("192.168.1.50", True) is True
+        callback.assert_called_once()
+
+    def test_a_rejected_save_notifies_nobody(self, tmp_path):
+        """An unknown protocol server returns False without touching the config."""
+        cm, _ = self._manager(tmp_path)
+        callback = MagicMock()
+        cm.register_callback(callback)
+
+        assert cm.set_protocol_server_enabled("does-not-exist", True) is False
+
+        callback.assert_not_called()
+
+    def test_callbacks_run_outside_the_config_lock(self, tmp_path):
+        """A slow callback must not hold the lock a saving thread no longer needs.
+
+        The writers used to call ``_write`` inside their own ``with self._lock``
+        block, so every callback ran while the config lock was held.
+        """
+        cm, _ = self._manager(tmp_path)
+        acquired: list[bool] = []
+
+        def callback(_config):
+            def grab():
+                got = cm._lock.acquire(timeout=2)
+                acquired.append(got)
+                if got:
+                    cm._lock.release()
+
+            thread = threading.Thread(target=grab)
+            thread.start()
+            thread.join(timeout=5)
+
+        cm.register_callback(callback)
+
+        cm.update_config({"core": {"database_url": "sqlite:///new.db"}})
+
+        assert acquired == [True], "the config lock was still held while the callback ran"
 
 
 # ---------------------------------------------------------------------------

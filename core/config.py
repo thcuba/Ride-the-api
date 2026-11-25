@@ -4,6 +4,7 @@ Configuration management with hot-reload support.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import re
@@ -791,6 +792,9 @@ class ConfigManager:
         self._callbacks: list[Callable[[Config], Any]] = []
         self._watch_thread: threading.Thread | None = None
         self._stop_watch = threading.Event()
+        # Digest of the last content this process wrote, so the file watcher can tell
+        # our own atomic save from an edit made outside the process.
+        self._last_written_digest: str | None = None
 
     def load(self) -> Config:
         """Load configuration from file."""
@@ -808,15 +812,15 @@ class ConfigManager:
     def set_ip_profile_bypass(self, ip: str, bypass: bool) -> bool:
         """Set/clear ``ip_profiles[ip].bypass`` and persist to the config file.
 
-        Mutates the in-memory config, writes the file atomically and leaves the
-        hot-reload watcher to refresh other consumers. Returns True on success.
+        Mutates the in-memory config, writes the file atomically and notifies the
+        registered consumers. Returns True on success.
         """
         with self._lock:
             cfg = self.config.model_copy(deep=True)
             profile = cfg.core.ip_profiles.get(ip, IpProfileConfig())
             profile.bypass = bypass
             cfg.core.ip_profiles[ip] = profile
-            return self._write(cfg)
+        return self._write(cfg)
 
     def set_dns_settings(
         self,
@@ -831,8 +835,8 @@ class ConfigManager:
         hostname to an intercepted one, or flips ``intercept_all``. Only the
         arguments that are not ``None`` are touched, so the UI updates one field
         without resending (and risking) the others. Mutates the in-memory config,
-        writes the file atomically and leaves the hot-reload watcher to refresh
-        other consumers. Returns True on success.
+        writes the file atomically and notifies the registered consumers. Returns
+        True on success.
         """
         with self._lock:
             cfg = self.config.model_copy(deep=True)
@@ -842,19 +846,18 @@ class ConfigManager:
                 cfg.dns.intercept_all = bool(intercept_all)
             if exclude is not None:
                 cfg.dns.exclude = [str(item).strip() for item in exclude if str(item).strip()]
-            return self._write(cfg)
+        return self._write(cfg)
 
     def set_security_password(self, password: str) -> bool:
         """Persist the control-plane ``security.password`` back to the config.
 
-        Mutates the in-memory config, writes the file atomically and leaves
-        the hot-reload watcher to refresh other consumers. Returns True on
-        success.
+        Mutates the in-memory config, writes the file atomically and notifies the
+        registered consumers. Returns True on success.
         """
         with self._lock:
             cfg = self.config.model_copy(deep=True)
             cfg.security.password = password
-            return self._write(cfg)
+        return self._write(cfg)
 
     def set_protocol_server_enabled(self, name: str, enabled: bool) -> bool:
         """Set/clear ``protocol_servers.<name>.enabled`` and persist to disk.
@@ -862,8 +865,7 @@ class ConfigManager:
         Called by the protocol-server start/stop API so a server toggled on in
         the dashboard survives a restart (``start_all()`` boots whatever has
         ``enabled: true``). Mutates the in-memory config, writes the file
-        atomically and leaves the hot-reload watcher to reconcile the running
-        plugins. Returns True on success.
+        atomically and notifies the registered consumers. Returns True on success.
         """
         with self._lock:
             cfg = self.config.model_copy(deep=True)
@@ -871,7 +873,7 @@ class ConfigManager:
             if sub is None:
                 return False
             sub.enabled = bool(enabled)
-            return self._write(cfg)
+        return self._write(cfg)
 
     def update_config(self, data: dict) -> bool:
         """Replace the full config after validation; atomically persist.
@@ -891,16 +893,21 @@ class ConfigManager:
                     security["password"] = current.security.password
                 data = {**data, "security": security}
             new_config = Config(**data)
-            return self._write(new_config)
+        return self._write(new_config)
 
     def _write(self, config: Config | None = None) -> bool:
-        """Atomically persist a candidate config before making it active.
+        """Atomically persist a candidate config, activate it, then notify consumers.
 
         The temporary file is created with mode ``0600`` because the YAML may
         contain the control-plane password and LLM API keys. The live config is
         swapped only after the durable file replacement succeeds, so a failed
         save cannot leave this process running with settings that disappear on
         restart.
+
+        A failed save returns ``False`` before notifying anybody: nothing was
+        written, so nothing changed. Callers must therefore call this **outside**
+        their own ``self._lock`` block, or the callbacks would run while the
+        config lock is still held by the saving thread.
         """
         tmp_name: str | None = None
         try:
@@ -925,6 +932,7 @@ class ConfigManager:
                 Path(tmp_name).replace(self.config_path)
                 tmp_name = None
                 self._config = candidate
+                self._last_written_digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
                 try:
                     from core.upstream_resolver import invalidate_self_addresses  # noqa: PLC0415
 
@@ -939,6 +947,15 @@ class ConfigManager:
                 except OSError:
                     logger.warning("ConfigManager: could not remove temporary config %s", tmp_name)
             return False
+        # Notify outside the lock: a callback reads the config and may be slow, and it
+        # must not hold the writer's lock meanwhile. This is the only place the active
+        # config changes, so it is the only place that has to notify. Before, a save
+        # from the control plane updated the config silently and the file watcher was
+        # the sole notifier — neither synchronous nor reliable: watchfiles may not see
+        # the atomic `replace` at all, and if the watcher is not running (or the
+        # filesystem does not emit events) every component keeps using the previous
+        # config until a restart.
+        self._notify_callbacks()
         return True
 
     @property
@@ -996,20 +1013,39 @@ class ConfigManager:
         if self._watch_thread:
             self._watch_thread.join(timeout=5)
 
+    def _digest(self) -> str | None:
+        """Digest of the config file as it is on disk, or None if it cannot be read."""
+        try:
+            return hashlib.sha256(self.config_path.read_bytes()).hexdigest()
+        except OSError:
+            return None
+
+    def _handle_observed_change(self) -> None:
+        """Reload and notify after a change on disk, skipping this process's own save.
+
+        ``_write`` replaces the file atomically and has already notified the callbacks,
+        so a watcher event caused by that save must neither reload — it would swap the
+        freshly validated config for a re-read copy — nor notify a second time.
+        """
+        if self._digest() == self._last_written_digest:
+            logger.debug("Config file change is this process's own save, already notified")
+            return
+        self.load()
+        self._notify_callbacks()
+
     def _watch_loop(self) -> None:
         """Watch loop for config file changes."""
         try:
             for changes in watch(str(self.config_path), stop_event=self._stop_watch):
                 for change_type, path in changes:
                     if change_type in (Change.modified, Change.added):
-                        logging.getLogger(__name__).info("Config file changed: %s", path)
+                        logger.info("Config file changed: %s", path)
                         try:
-                            self.load()
-                            self._notify_callbacks()
+                            self._handle_observed_change()
                         except Exception:
-                            logging.getLogger(__name__).exception("Failed to reload config")
+                            logger.exception("Failed to reload config")
         except Exception:
-            logging.getLogger(__name__).exception("Config watch error")
+            logger.exception("Config watch error")
 
 
 # Global config manager instance
