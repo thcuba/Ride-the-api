@@ -8,7 +8,6 @@ This is step ③ in the Engine flow:
 
 from __future__ import annotations
 
-import hashlib
 import logging
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
@@ -22,6 +21,8 @@ from core.database import (
     RequestPattern,
     ResponseTemplate,
 )
+from core.pattern_db.ids import legacy_pattern_id, resolve_pattern_id
+from core.pattern_db.ids import pattern_id as build_pattern_id
 from core.pattern_db.schemas import (
     ClientConfig,
     ClientEndpoint,
@@ -673,8 +674,13 @@ class DecipherIngest:
             if cmd.id and not cmd.id.startswith(f"{device_id}_"):
                 pattern_id = cmd.id
             else:
-                path_digest = hashlib.md5(path.encode("utf-8")).hexdigest()[:8]
-                pattern_id = f"{device_id}_{cmd.kind}_{path_digest}"
+                pattern_id = build_pattern_id(device_id, cmd.kind, cmd.method, cmd.protocol, path)
+                # A row learned before method and protocol were part of the identity
+                # has to be fetched too, or the first re-flush after an upgrade would
+                # duplicate every pattern on a device that has been running a while.
+                legacy = legacy_pattern_id(device_id, cmd.kind, path)
+                pattern_ids.add(legacy)
+                template_ids.add(f"tpl_{legacy}")
 
             pattern_ids.add(pattern_id)
             template_ids.add(f"tpl_{pattern_id}")
@@ -716,13 +722,23 @@ class DecipherIngest:
             else:
                 existing_mappings = {}
 
+            # Method stored on each fetched row: a legacy id is reused only when it
+            # belongs to the same command, not merely to the same path.
+            existing_methods = {pid: (p.method or "") for pid, p in existing_patterns.items()}
+
             for cmd in model.commands:
                 path = cmd.path or cmd.path_pattern or cmd.topic or ""
                 if cmd.id and not cmd.id.startswith(f"{device_id}_"):
                     pattern_id = cmd.id
                 else:
-                    path_digest = hashlib.md5(path.encode("utf-8")).hexdigest()[:8]
-                    pattern_id = f"{device_id}_{cmd.kind}_{path_digest}"
+                    pattern_id = resolve_pattern_id(
+                        device_id,
+                        cmd.kind,
+                        method=cmd.method or "GET",
+                        protocol=cmd.protocol,
+                        path=path,
+                        existing=existing_methods,
+                    )
 
                 pattern = existing_patterns.get(pattern_id)
                 if pattern is None:

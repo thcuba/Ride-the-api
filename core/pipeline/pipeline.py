@@ -32,7 +32,7 @@ from core.database import (
     SessionCache,
 )
 from core.llm_decipher import LLMDecipherService, LLMProfile, _parse_llm_json
-from core.pattern_db import decipher_ingest
+from core.pattern_db import decipher_ingest, ids
 from core.pattern_db.schemas import (
     DeviceModel,
     PatternDB,
@@ -1151,6 +1151,30 @@ class LearningPipeline:
             )
         return str(prompt)
 
+    async def _device_protocol(self, device_id: str) -> str:
+        """The protocol the device actually speaks, for patterns that omit the field.
+
+        A learned pattern defaulted its protocol to the literal ``"http"``, and the
+        default prompt never asked for the field: every pattern of an MQTT, CoAP or
+        Modbus device was therefore born as ``http``. ``_protocol_matches`` treats only
+        http/https as one family, so those patterns could never match — match rate
+        pinned at 0 and the auto-switch unreachable.
+        """
+        try:
+            header = await self.db_manager.read_device_meta(device_id) or {}
+        except Exception as e:  # noqa: BLE001 - a missing header must not lose the pattern
+            logger.warning("Cannot read the protocol of %s: %s", device_id, e)
+            return "http"
+
+        candidates = header.get("protocols") or []
+        if isinstance(candidates, str):
+            candidates = [candidates]
+        for raw in [*candidates, header.get("connection_mode"), header.get("protocol")]:
+            protocol = normalize_protocol(raw) if raw else None
+            if protocol:
+                return protocol
+        return "http"
+
     async def _save_patterns(self, device_id: str, analysis: dict) -> None:  # noqa: C901, PLR0912, PLR0915
         """Save LLM-decoded patterns to the device database.
 
@@ -1196,10 +1220,15 @@ class LearningPipeline:
                 for cmd in pruned.get("commands", []):
                     if not cmd.get("id"):
                         path = cmd.get("path") or cmd.get("path_pattern") or cmd.get("topic") or ""
-                        digest = (
-                            hashlib.md5(path.encode("utf-8")).hexdigest()[:8] if path else "none"
+                        # Same identity merge_device_model builds: kind, method,
+                        # protocol and path, so GET and POST on one path stay apart.
+                        cmd["id"] = ids.pattern_id(
+                            device_id,
+                            str(cmd.get("kind") or "cmd"),
+                            cmd.get("method"),
+                            cmd.get("protocol"),
+                            str(path),
                         )
-                        cmd["id"] = f"{device_id}_{cmd.get('kind', 'cmd')}_{digest}"
                 for resp in pruned.get("responses", []):
                     if not resp.get("id"):
                         tpl_prefix = f"tpl_{device_id}_{resp.get('triggers', ['resp'])[0]}"
@@ -1244,6 +1273,9 @@ class LearningPipeline:
         template_ids = []
         mapping_ids = []
 
+        # The protocol the device speaks, used when a pattern does not carry one.
+        device_protocol = await self._device_protocol(device_id)
+
         prepared_patterns = []
         for pattern_data in patterns:
             # `or` (not a .get default): a model often sends explicit nulls,
@@ -1251,9 +1283,14 @@ class LearningPipeline:
             intent = str(pattern_data.get("intent") or "unknown")
             method = str(pattern_data.get("method") or pattern_data.get("request_method") or "POST")
             path = str(pattern_data.get("path") or pattern_data.get("request_path") or "/unknown")
-            path_digest = hashlib.md5(path.encode("utf-8")).hexdigest()[:8]
-            pattern_id = f"{device_id}_{intent}_{path_digest}"
+            protocol = str(pattern_data.get("protocol") or device_protocol)
+            pattern_id = ids.pattern_id(device_id, intent, method, protocol, path)
             pattern_ids.append(pattern_id)
+            # Also fetch the row this pattern had before method and protocol were part
+            # of the identity: without it the first re-flush after the upgrade would
+            # duplicate every pattern already learned on the device.
+            legacy_id = ids.legacy_pattern_id(device_id, intent, path)
+            pattern_ids.append(legacy_id)
 
             resp_data = pattern_data.get("response", pattern_data.get("response_template", {}))
             if resp_data and not isinstance(resp_data, dict):
@@ -1266,6 +1303,8 @@ class LearningPipeline:
             template_id = f"tpl_{pattern_id}" if resp_data else None
             if template_id:
                 template_ids.append(template_id)
+                if legacy_id != pattern_id:
+                    template_ids.append(f"tpl_{legacy_id}")
 
             mappings = pattern_data.get("field_mappings", {})
             prepared_mappings = []
@@ -1288,7 +1327,9 @@ class LearningPipeline:
                     "intent": intent,
                     "method": method,
                     "path": path,
+                    "protocol": protocol,
                     "pattern_id": pattern_id,
+                    "legacy_id": legacy_id,
                     "resp_data": resp_data,
                     "template_id": template_id,
                     "prepared_mappings": prepared_mappings,
@@ -1325,14 +1366,28 @@ class LearningPipeline:
                 )
                 existing_mappings = set(m_res.scalars().all())
 
+            # Method stored on each fetched row: a legacy id is reused only when it is
+            # the same command, not merely the same path.
+            existing_methods = {pid: (p.method or "") for pid, p in existing_patterns.items()}
+
             for item in prepared_patterns:
                 pattern_data = item["pattern_data"]
                 intent = item["intent"]
                 method = item["method"]
                 path = item["path"]
-                pattern_id = item["pattern_id"]
+                protocol = item["protocol"]
                 resp_data = item["resp_data"]
-                template_id = item["template_id"]
+                # Resolved after the lookup so a pattern learned by an older version
+                # keeps its row — and its template — instead of being written twice.
+                pattern_id = ids.resolve_pattern_id(
+                    device_id,
+                    intent,
+                    method=method,
+                    protocol=protocol,
+                    path=path,
+                    existing=existing_methods,
+                )
+                template_id = f"tpl_{pattern_id}" if resp_data else None
 
                 pattern = existing_patterns.get(pattern_id)
                 if not pattern:
@@ -1340,7 +1395,7 @@ class LearningPipeline:
                         pattern_id=pattern_id,
                         method=method,
                         path_pattern=path,
-                        protocol=pattern_data.get("protocol", "http"),
+                        protocol=protocol,
                         required_headers=_pattern_headers(pattern_data),
                         body_schema=pattern_data.get("body_schema", {}),
                         query_param_keys=_pattern_query_keys(pattern_data),
@@ -1355,7 +1410,7 @@ class LearningPipeline:
                     # learned fields fresh instead of leaving the old row stale.
                     pattern.method = method
                     pattern.path_pattern = path
-                    pattern.protocol = pattern_data.get("protocol", "http")
+                    pattern.protocol = protocol
                     pattern.required_headers = _pattern_headers(pattern_data)
                     pattern.body_schema = pattern_data.get("body_schema", {})
                     pattern.query_param_keys = _pattern_query_keys(pattern_data)

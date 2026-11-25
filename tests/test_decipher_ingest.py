@@ -11,6 +11,7 @@ from sqlalchemy import select
 
 from core.database import DatabaseManager, DeviceRegistry, MatchStats, RequestPattern
 from core.pattern_db.decipher_ingest import DecipherIngest
+from core.pattern_db.ids import legacy_pattern_id
 from core.pattern_db.pattern_engine import PatternEngine
 from core.pattern_db.schemas import (
     Command,
@@ -296,6 +297,77 @@ async def test_merge_device_model_is_idempotent(db_manager):
     assert exported.protocol.identity == "shelly-plug"
     assert len(exported.commands) == 1  # noqa: PLR2004
     assert len(exported.responses) == 1  # noqa: PLR2004
+
+
+async def test_two_methods_on_one_path_are_two_patterns(db_manager):
+    """C2: GET e POST sullo stesso path collassavano nella stessa riga.
+
+    L'id era ``{device_id}_{kind}_{md5(path)[:8]}``, senza method: il secondo comando
+    riscriveva ``path_pattern``, ``body_schema`` e lo status code del primo, quindi il
+    device che spegneva riceveva la risposta dell'accensione. Qui il percorso reale:
+    due comandi sullo stesso path con metodi diversi devono restare due righe.
+    """
+    ingester = DecipherIngest(db_manager)
+    device_id = "device-methods"
+
+    model = DeviceModel(
+        meta=PatternMeta(pattern_id=f"{device_id}-patterns", vendor="Acme", device_type="relay"),
+        commands=[
+            Command(id="", kind="set", method="GET", path="/api/ctl"),
+            Command(id="", kind="set", method="POST", path="/api/ctl"),
+        ],
+    )
+
+    await ingester.merge_device_model(device_id, model)
+
+    async with db_manager.device_session(device_id) as session:
+        result = await session.execute(select(RequestPattern))
+        rows = list(result.scalars().all())
+
+    assert len(rows) == 2, "GET e POST sono due comandi: due righe, non una sovrascritta"  # noqa: PLR2004
+    assert {row.method for row in rows} == {"GET", "POST"}
+    assert len({row.pattern_id for row in rows}) == 2  # noqa: PLR2004
+
+
+async def test_a_legacy_pattern_row_is_reused_instead_of_duplicated(db_manager):
+    """Un pattern appreso da una versione precedente non viene duplicato.
+
+    Il nuovo id include method e protocollo, quindi non coincide con quello già su
+    disco: senza il riuso ogni device esistente si ritroverebbe i pattern duplicati al
+    primo re-flush dopo l'aggiornamento.
+    """
+    ingester = DecipherIngest(db_manager)
+    device_id = "device-legacy"
+    legacy_id = legacy_pattern_id(device_id, "set", "/api/ctl")
+
+    async with db_manager.device_session(device_id) as session:
+        session.add(
+            RequestPattern(
+                pattern_id=legacy_id,
+                method="GET",
+                path_pattern="/api/ctl",
+                protocol="http",
+                required_headers=[],
+                body_schema={},
+                query_param_keys=[],
+                intent="set",
+                confidence=0.9,
+            )
+        )
+
+    model = DeviceModel(
+        meta=PatternMeta(pattern_id=f"{device_id}-patterns", vendor="Acme", device_type="relay"),
+        commands=[Command(id="", kind="set", method="GET", path="/api/ctl")],
+    )
+
+    await ingester.merge_device_model(device_id, model)
+
+    async with db_manager.device_session(device_id) as session:
+        result = await session.execute(select(RequestPattern))
+        rows = list(result.scalars().all())
+
+    assert len(rows) == 1, "il pattern esistente deve essere aggiornato, non duplicato"
+    assert rows[0].pattern_id == legacy_id
 
 
 async def test_merge_device_model_derives_ids_for_deltas(db_manager):
