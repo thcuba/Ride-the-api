@@ -318,6 +318,32 @@ def test_path_similarity_close_length(engine):
     assert engine._path_similarity("/a/b/c", "/a/b/c/d") == pytest.approx(0.3)
 
 
+def test_a_different_literal_segment_is_not_a_match(engine):
+    """Il segmento che porta il comando (on/off) non vale 1/4 di match.
+
+    Con il credito parziale ``/api/v1/light/on`` contro ``/api/v1/light/off`` faceva
+    0,75: sommato al metodo superava la soglia e il device che spegneva riceveva la
+    risposta di quello che accendeva, senza che il fallback cloud scattasse.
+    """
+    assert engine._path_similarity("/api/v1/light/on", "/api/v1/light/off") == 0.0
+
+
+def test_an_identifier_segment_is_not_a_partial_match(engine):
+    """Lo stesso per un identificatore: /dev/A/state e /dev/B/state sono comandi diversi."""
+    assert engine._path_similarity("/api/dev/A/state", "/api/dev/B/state") == 0.0
+
+
+def test_a_longer_path_gets_no_partial_credit_either(engine):
+    """Con più segmenti il credito parziale superava la soglia anche più facilmente."""
+    assert engine._path_similarity("/api/v1/dev/a/state", "/api/v1/dev/b/state") == 0.0
+
+
+def test_a_placeholder_still_matches_any_value(engine):
+    """I placeholder non perdono nulla: valgono ancora un match pieno."""
+    assert engine._path_similarity("/api/v1/light/{action}", "/api/v1/light/off") == 1.0
+    assert engine._path_similarity("/api/{id}/state", "/api/dev-A/state") == 1.0
+
+
 # Test: pattern matching with cached pattern DB
 @pytest.mark.asyncio
 async def test_find_best_match_cached(engine):

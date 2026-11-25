@@ -356,8 +356,17 @@ def _path_similarity(pattern: str, actual: str) -> float:
     """Compare a path pattern (may contain ``{placeholders}``) vs an actual path.
 
     Shared by :class:`PatternEngine` and the pipeline's matcher so both use the
-    same scoring. Segments match when equal or when the pattern segment is a
-    ``{placeholder}``. Length mismatch within one yields a partial 0.3 score.
+    same scoring. A segment matches when it is equal, or when the pattern segment
+    is a ``{placeholder}``, which matches any value.
+
+    A literal segment that differs returns 0.0, with no partial credit. Those
+    segments carry the meaning of the command (``on``/``off``, ``set``/``get``,
+    device A vs device B): counting them as a fraction of a match meant that
+    ``/api/v1/light/on`` scored 0.75 against ``/api/v1/light/off``, which carried
+    the total over the match threshold once the method was added — the device that
+    switched a light off got the response of the one that switched it on, and the
+    cloud fallback never fired. A length mismatch within one segment still scores
+    a partial 0.3.
 
     Fast string equality check bypasses LRU cache and string splitting on exact matches.
     """
@@ -377,13 +386,15 @@ def _cached_path_similarity(pattern: str, actual: str) -> float:
         return 0.3 if abs(lp - la) <= 1 else 0.0
     if not lp:
         return 1.0
-    matches = 0
-    # Performance optimization: direct index checks p[0] == "{" and p[-1] == "}"
-    # instead of startswith/endswith (~1.4x faster per call in request hot path).
+    # Direct index checks (p[0] == "{" and p[-1] == "}") instead of
+    # startswith/endswith: ~1.4x faster per call in the request hot path.
     for p, a in zip(p_parts, a_parts):
-        if p == a or (p and p[0] == "{" and p[-1] == "}"):
-            matches += 1
-    return matches / lp
+        if p == a:
+            continue
+        if p and p[0] == "{" and p[-1] == "}":
+            continue
+        return 0.0
+    return 1.0
 
 
 def _body_similarity(schema: dict, body: dict) -> float:

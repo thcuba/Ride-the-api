@@ -302,7 +302,11 @@ with state variable resolution and safe formula evaluation.
   - **Method match** (30): HTTP method equality.
   - **Path similarity** (30): path matching with `{id}` placeholder support. A query string is stripped
     from the incoming path first, so `/poll?ts=1` still matches a `/poll` pattern (the query is matched
-    through the query-parameter dimension instead).
+    through the query-parameter dimension instead). A literal segment that differs scores **0, with no
+    partial credit**: those segments carry the command itself (`on`/`off`, `set`/`get`, device A vs
+    device B), and counting them as a fraction of a match served the response of one command to another
+    as soon as the total crossed the threshold — `/api/v1/light/on` scored 0.75 against
+    `/api/v1/light/off`. `{placeholder}` segments still match any value.
   - **Required headers** (15, only when the pattern lists some): how many are present.
   - **Query params** (10, only when the pattern lists some): how many are present.
   - **Body schema** (15, only when the pattern models a body or the request carries one): key
@@ -312,6 +316,16 @@ with state variable resolution and safe formula evaluation.
     could never be served locally.
   - `http` and `https` count as one protocol family when filtering: a pattern learned over plain HTTP
     still matches the same request once it arrives over TLS.
+- **Pattern identity** (`core/pattern_db/ids.py`): a learned pattern is keyed by
+  `(kind, method, protocol, path)` with 64 bits of SHA-256. Method and protocol used to be left out, so
+  `GET /api/ctl` and `POST /api/ctl` produced the *same* id and the second write overwrote the first —
+  path, body template, status code. The old digest was 32 bits, cheap to collide on purpose, and the
+  path comes from LLM output the device's traffic can influence. Rows written by an older version are
+  still found through `legacy_pattern_id()` and are reused when their stored method matches the command
+  being learned, so an existing device is not duplicated on the first re-flush; a row whose method is
+  unknown is not reused, so nothing is overwritten on a guess. A pattern that does not carry a protocol
+  inherits the **device's** (`LearningPipeline._device_protocol`): the default was the literal `http`,
+  which left every pattern of an MQTT, CoAP or Modbus device permanently unmatchable.
 - **Local response construction**: `build_local_response()` starts from a `ResponseTemplate` and:
   1. Applies `field_mappings` to transfer values from the request or device state to the response.
      Body and headers are **deep-copied** first, so a mapping writes into this response only and never
