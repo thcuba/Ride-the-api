@@ -674,9 +674,7 @@ class DecipherIngest:
             if cmd.id and not cmd.id.startswith(f"{device_id}_"):
                 pattern_id = cmd.id
             else:
-                pattern_id = build_pattern_id(
-                    device_id, cmd.kind, cmd.method, cmd.protocol, path
-                )
+                pattern_id = build_pattern_id(device_id, cmd.kind, cmd.method, cmd.protocol, path)
                 # A row learned before method and protocol were part of the identity
                 # has to be fetched too, or the first re-flush after an upgrade would
                 # duplicate every pattern on a device that has been running a while.
