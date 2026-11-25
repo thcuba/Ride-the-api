@@ -752,9 +752,14 @@ Associates an IP address with a device.
 ### Delete Device: `DELETE /api/devices/{device_id}`
 
 Removes a device and its data: the registry row, its per-device database file,
-and its learned pattern file. This is what the dashboard's delete action calls —
-it is **not** reversible, so export the patterns first
-(`GET /api/devices/{device_id}/patterns/export`) if they are worth keeping.
+its learned pattern file, and the relayed-connection rows recorded for it. This is what
+the dashboard's delete action calls — it is **not** reversible, so export the patterns
+first (`GET /api/devices/{device_id}/patterns/export`) if they are worth keeping.
+
+The per-device database is closed before its file is removed, and the file is located
+through the registry rather than derived from the `device_id`: a device that was renamed
+keeps its database under the new name, and removing the file while the engine is still
+open would let a write in flight land on a deleted inode and vanish silently.
 
 **Response `200 OK`**
 

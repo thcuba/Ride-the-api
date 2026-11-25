@@ -11,9 +11,11 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 import core.server as server_mod
-from core.database import DatabaseManager
+from core.database import DatabaseManager, DeviceRegistry
+from core.models.telemetry import RelayedConnection
 from core.server import app
 
 
@@ -129,3 +131,85 @@ class TestDeleteDevice:
 
         assert f"Could not remove pattern file {pf}" in caplog.text
         assert not any(d["device_id"] == "dev-err-pat" for d in await dm.list_devices())
+
+    @pytest.mark.asyncio
+    async def test_the_engine_is_closed_before_the_files_are_removed(self, dm, monkeypatch):
+        """Il database non deve essere cancellato con l'engine ancora aperto.
+
+        SQLite tiene il file aperto per tutta la vita dell'engine e su Linux l'unlink
+        riesce anche con l'handle aperto: una scrittura in volo finisce su un inode
+        cancellato e i dati spariscono senza un errore.
+        """
+        await dm.get_or_create_device("dev-order", "shelly")
+        async with await dm.get_device_session("dev-order") as _session:
+            pass
+        assert "dev-order" in dm._device_engines  # noqa: SLF001
+
+        seen: dict[str, bool] = {}
+        original = dm.device_pool.delete_storage_files
+
+        def spy(db_path):
+            seen["engine_alive"] = "dev-order" in dm._device_engines  # noqa: SLF001
+            return original(db_path)
+
+        monkeypatch.setattr(dm.device_pool, "delete_storage_files", spy)
+
+        assert await dm.delete_device("dev-order") is True
+
+        assert seen["engine_alive"] is False, "file cancellato con l'engine ancora aperto"
+
+    @pytest.mark.asyncio
+    async def test_delete_removes_the_database_after_a_rename(self, dm):
+        """Dopo un rename il file ha un altro nome: derivarlo dall'id lo mancherebbe."""
+        await dm.get_or_create_device("dev-ren", "shelly")
+        await dm.rename_device_database("dev-ren", "purificatore-salotto")
+
+        on_disk = list(dm.device_db_dir.glob("*.db"))
+        assert len(on_disk) == 1  # noqa: PLR2004
+        renamed = on_disk[0]
+        assert renamed.name != dm._safe_db_name("dev-ren")  # noqa: SLF001
+
+        assert await dm.delete_device("dev-ren") is True
+
+        assert not renamed.exists(), "il database rinominato è rimasto su disco"
+
+    @pytest.mark.asyncio
+    async def test_delete_drops_relayed_connection_rows(self, dm):
+        """Le connessioni relayate non hanno cascade e sopravvivrebbero al device."""
+        await dm.get_or_create_device("dev-rel", "shelly")
+        async with await dm.get_core_session() as session:
+            session.add(
+                RelayedConnection(
+                    device_id="dev-rel",
+                    client_ip="192.168.1.77",
+                    destination_port=8883,
+                    outcome="relayed",
+                )
+            )
+            await session.commit()
+
+        assert await dm.delete_device("dev-rel") is True
+
+        async with await dm.get_core_session() as session:
+            result = await session.execute(
+                select(RelayedConnection).where(RelayedConnection.device_id == "dev-rel")
+            )
+            assert result.scalars().all() == []
+
+    @pytest.mark.asyncio
+    async def test_delete_invalidates_the_ip_lookup_cache(self, dm):
+        """Un device cancellato non deve continuare a risolversi dai suoi vecchi IP."""
+        await dm.get_or_create_device("dev-ip", "shelly")
+        async with dm.core_session() as session:
+            result = await session.execute(
+                select(DeviceRegistry).where(DeviceRegistry.device_id == "dev-ip")
+            )
+            result.scalar_one().ip_addresses = ["192.168.1.90"]
+
+        assert await dm.resolve_device_id("192.168.1.90") == "dev-ip"
+        assert dm._ip_lookup_cache is not None  # noqa: SLF001
+
+        assert await dm.delete_device("dev-ip") is True
+
+        assert dm._ip_lookup_cache is None  # noqa: SLF001
+        assert await dm.resolve_device_id("192.168.1.90") is None
