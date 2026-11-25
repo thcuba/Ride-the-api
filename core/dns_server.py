@@ -60,6 +60,10 @@ logger = logging.getLogger(__name__)
 # TCP length prefix is a 16-bit field: anything larger is a malformed message.
 _MAX_TCP_MESSAGE = 65535
 
+# Names and addresses that always mean "this machine", for an upstream comparison.
+_SELF_HOSTNAMES = frozenset({"localhost", "ip6-localhost", "ip6-loopback"})
+_UNSPECIFIED_HOSTS = frozenset({"0.0.0.0", "::"})
+
 # Hostnames claimed by the registered adapters, resolved once. The registry is a
 # process-wide singleton populated on first use, so a name accepted early stays accepted.
 _adapter_hostnames_cache: list[str] | None = None
@@ -191,6 +195,8 @@ class DNSInterceptor:
         self.ttl = int(dns_cfg.answer_ttl)
         self.forward_timeout = float(dns_cfg.forward_timeout)
         self.upstreams = [*dns_cfg.dns_servers, *dns_cfg.dns_servers_v6]
+        # Upstreams already reported as being this server itself (see _forward).
+        self._warned_self_upstreams: set[str] = set()
 
         self._udp_transport: asyncio.DatagramTransport | None = None
         self._tcp_server: asyncio.AbstractServer | None = None
@@ -531,6 +537,12 @@ class DNSInterceptor:
         """
         for server in self.upstreams:
             host, port = self._split_upstream(server)
+            if self._is_self_upstream(host, port):
+                # Forwarding to ourselves is not a slow path, it is no path at all: the
+                # query comes back through handle_query and is forwarded again, until the
+                # recursion gives up (301 queries for one, measured).
+                self._warn_self_upstream(server)
+                continue
             try:
                 response = await dns.asyncquery.udp(
                     query, host, port=port, timeout=self.forward_timeout
@@ -546,6 +558,30 @@ class DNSInterceptor:
                 continue  # this resolver cannot deliver it over TCP: try the next one
             return response.to_wire()
         return None
+
+    def _is_self_upstream(self, host: str, port: int) -> bool:
+        """True when forwarding to ``host:port`` would come straight back to us.
+
+        The port is part of the test: another resolver on this same host, on a different
+        port, is a legitimate upstream; our own listening address is a resolution loop.
+        """
+        if port != self.port:
+            return False
+        if host.lower() in _SELF_HOSTNAMES or host in _UNSPECIFIED_HOSTS:
+            return True
+        return is_self_address(host)
+
+    def _warn_self_upstream(self, server: str) -> None:
+        """Say it once per upstream: a warning on every query would flood the log."""
+        if server in self._warned_self_upstreams:
+            return
+        self._warned_self_upstreams.add(server)
+        logger.warning(
+            "DNS: upstream %s is this server itself (listening on port %s): skipped, "
+            "otherwise every query would be forwarded to itself in a loop",
+            server,
+            self.port,
+        )
 
     async def _retry_over_tcp(self, query: dns.message.Message, server: str) -> bytes | None:
         """Ask the same resolver again over TCP, which has no size limit."""
