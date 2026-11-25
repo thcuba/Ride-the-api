@@ -419,7 +419,7 @@ DNS integration for local resolution and rewriting.
 | `answer_ip` | `string` | `""` | address returned for intercepted names; empty = detect the LAN address |
 | `answer_ttl` | `integer` | `60` | TTL of the synthesised answers |
 | `forward_timeout` | `float` | `5.0` | per-upstream timeout, seconds |
-| `dns_servers` / `dns_servers_v6` | `array[string]` | `8.8.8.8`, `1.1.1.1` / Google and Cloudflare v6 | upstream resolvers, tried in order |
+| `dns_servers` / `dns_servers_v6` | `array[string]` | `8.8.8.8`, `1.1.1.1` / Google and Cloudflare v6 | upstream resolvers, tried in order. One that points at this server on its own listening port is skipped (it would be a resolution loop), and a warning is logged once |
 | `intercept` | `array[string]` | `[]` | names answered with this proxy's address: exact names or `*.domain` wildcards |
 | `intercept_all` | `boolean` | `false` | answer **every** name with this proxy's address |
 | `exclude` | `array[string]` | `ntp.*`, `time.*`, `ocsp.*`, `crl.*`, `*.local`, `*.lan`, `*.localdomain` | names that are **never** intercepted and always forwarded |

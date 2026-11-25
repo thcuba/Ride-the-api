@@ -738,7 +738,12 @@ start. This server is the piece that makes that possible without breaking anythi
   cannot answer.
 - **Everything else is forwarded verbatim** to the upstream resolvers
   (`dns.dns_servers`, `dns.dns_servers_v6`), so the proxy can be the DNS for a whole
-  network with nothing hijacked by accident. A name no source claims is **never** guessed:
+  network with nothing hijacked by accident. An upstream that is **this server itself** is
+  skipped: forwarding a query to our own listening address brings it straight back through
+  `handle_query` and forwards it again, up to the recursion limit (measured: 301 queries
+  for one). The listening port is part of the test, so a different resolver on the same
+  host (`127.0.0.1:5353`) is still a legitimate upstream; when no usable upstream is left
+  the client gets SERVFAIL, which is what it would get anyway. A name no source claims is **never** guessed:
   guessing would silently black-hole a device. If the adapter registry cannot be read, interception
   falls back to `dns.intercept` alone — it never widens.
 - **`dns.exclude` is what makes `intercept_all` safe**: the defaults (`ntp.*`, `time.*`, `ocsp.*`,
