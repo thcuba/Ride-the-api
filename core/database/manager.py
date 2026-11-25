@@ -870,10 +870,15 @@ class DatabaseManager:
     async def delete_device(self, device_id: str) -> bool:
         """Remove a device and its on-disk data (per-device DB + pattern file).
 
-        Deletes the registry row, the per-device SQLite database and the
-        portable ``.ride-pattern.json`` export, then drops the in-memory
-        engine/session caches for that device. Returns ``False`` if the
-        device does not exist.
+        The order is deliberate. The registry row goes first, so nothing resolves the
+        device any more; then the per-device engine is closed **before** the files are
+        removed. SQLite keeps the file handle open for the life of the engine and
+        unlinking an open file succeeds on Linux, so deleting the database first left
+        any write still in flight landing on a deleted inode: the data disappeared
+        without a single error. The per-device lock is held across that window so no
+        writer can be mid-statement.
+
+        Returns ``False`` if the device does not exist.
         """
         async with await self.get_core_session() as session:
             result = await session.execute(
@@ -883,10 +888,29 @@ class DatabaseManager:
             if not device:
                 return False
             await session.delete(device)
+            # Nothing cascades these: left behind they outlive the device and keep being
+            # counted under a device_id that no longer exists.
+            await session.execute(
+                delete(RelayedConnection).where(RelayedConnection.device_id == device_id)
+            )
             await session.commit()
 
-        db_path = self.device_db_dir / self._safe_db_name(device_id)
-        self.device_pool.delete_storage_files(db_path)
+        # Resolved through the registry, not derived from the id: renaming a device
+        # moves its file, and a path built from the device_id alone misses it — the
+        # database then stays on disk and a re-created device starts from scratch.
+        db_path = await self._resolve_device_db_path(device_id) or (
+            self.device_db_dir / self._safe_db_name(device_id)
+        )
+
+        # Close the engine before touching the file, and hold the per-device lock so a
+        # writer cannot be mid-statement while the handle goes away.
+        lock = self._device_locks.setdefault(device_id, asyncio.Lock())
+        async with lock:
+            engine = self._device_engines.pop(device_id, None)
+            if engine is not None:
+                await engine.dispose()
+            self._device_sessions.pop(device_id, None)
+            self.device_pool.delete_storage_files(db_path)
 
         pattern_file = (
             self.device_db_dir.parent
@@ -899,11 +923,13 @@ class DatabaseManager:
             except OSError as e:
                 logger.warning(f"Could not remove pattern file {pattern_file}: {e}")
 
-        self._device_engines.pop(device_id, None)
-        self._device_sessions.pop(device_id, None)
-        self._device_locks.pop(device_id, None)
         self._device_db_urls.pop(device_id, None)
+        self._device_locks.pop(device_id, None)
         self.invalidate_device_cache(device_id)
+        # The reverse IP → device index has its own cache: without this a deleted
+        # device keeps resolving from its old addresses and gets re-created on the next
+        # packet.
+        self.invalidate_ip_lookup_cache()
         logger.info(f"Deleted device {device_id}")
         return True
 
