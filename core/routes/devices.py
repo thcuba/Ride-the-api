@@ -16,6 +16,7 @@ from core.database import DeviceRegistry
 from core.pattern_db import buffer_manager
 from core.pattern_db.schemas import CaptureDB
 from core.pattern_db.validator import validate_capture
+from core.redaction import redact_buffer_entry
 from core.routes.common import _client_error
 
 logger = logging.getLogger(__name__)
@@ -633,6 +634,11 @@ async def list_buffer_entries(device_id: str) -> Any:
             buf = await _server().orchestrator.ensure_buffer(device_id)
 
         pairs = await buf.get_buffer_pairs(device_id)
+
+        # The buffer keeps the values that were on the wire (the replay of a learned
+        # pattern needs them), but they are not for whoever lists it: a captured
+        # Authorization header or password would travel to any client of this API.
+        pairs = [redact_buffer_entry(p) for p in pairs]
 
         total_size = sum(p["size"] for p in pairs)
 

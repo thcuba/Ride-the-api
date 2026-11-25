@@ -41,7 +41,7 @@ from core.pattern_db.schemas import (
     normalize_connection_mode,
     normalize_protocol,
 )
-from core.redaction import redact_body, redact_headers, redact_query
+from core.redaction import PAIR_REDACTORS, redact_body, redact_headers, redact_query
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine
@@ -222,14 +222,9 @@ def _status_code(value: Any, default: int = 200) -> int:  # noqa: ANN401
     return code if _MIN_STATUS <= code <= _MAX_STATUS else default
 
 
-# Pre-computed tuple mapping field names to redaction handlers for LLM prompt pair preparation
-_REDACT_MAPPINGS = (
-    ("request_headers", redact_headers),
-    ("response_headers", redact_headers),
-    ("request_query", redact_query),
-    ("request_body", redact_body),
-    ("response_body", redact_body),
-)
+# Field names and handlers come from core.redaction: the buffer, the export and this
+# prompt preparation scrub the same five fields, and they must not drift apart.
+_REDACT_MAPPINGS = PAIR_REDACTORS
 
 
 def _redact_pairs_for_prompt(pairs: list) -> list:
