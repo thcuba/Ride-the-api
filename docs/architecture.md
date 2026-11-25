@@ -106,7 +106,12 @@ autonomous local responses. Each request passes through the following stages:
   implement certificate pinning (`GET /api/tls/frida/script.js`).
 - **HTTP/1.1 parsing/serialization**: decrypted traffic is parsed and re-serialized with the
   [`h11`](https://github.com/python-hyper/h11) state machine (`parse_decrypted_http_request`,
-  `serialize_http_response`) — no regex-based HTTP parsers are used.
+  `serialize_http_response`) — no regex-based HTTP parsers are used. A response is written to the
+  device **complete**: `SSLObject.write` splits the plaintext into records of at most 16 KiB and
+  the output `MemoryBIO` hands back one read's worth, so draining it with a single `read` left the
+  rest encrypted inside the BIO and the connection closed right after it — vendor responses beyond
+  ~49 KB arrived truncated. A full BIO (`SSLWantWriteError`) means "drain, then continue", never
+  "this response ends here".
 - **Forward contract**: when the pipeline does not serve a local response, the behaviour depends
   on who terminates the connection.
   - **FastAPI HTTP handler**: with `signal_forward_to_cloud` enabled (a proxy is in front) it
