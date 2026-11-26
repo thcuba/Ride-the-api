@@ -16,11 +16,6 @@ import hashlib
 
 import pytest
 
-# Imported first on purpose: `core.cloud_forward` imports `adapters.base`, which runs
-# `adapters/__init__` and comes back through the coap adapter. Entering that cycle from
-# `core.cloud_forward` fails, so the package goes first — same order the suite gets
-# incidentally from other modules.
-import adapters  # noqa: F401  # isort: skip
 from core.cloud_forward import (
     _MAX_RESPONSE_BODY_IN_MEMORY,
     CloudForwarder,

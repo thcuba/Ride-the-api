@@ -29,12 +29,18 @@ import logging
 import ssl
 import tempfile
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, urlencode
 
 import h11
 
-from adapters.base import CommandResult, InterceptedRequest
+if TYPE_CHECKING:
+    # Types only: importing `adapters.base` at module level runs `adapters/__init__`,
+    # which imports every adapter, and eight of them import `forward_intercepted` from
+    # here. That closed a cycle where `import core.cloud_forward` failed unless
+    # `adapters` happened to be loaded first — which is why `tests/test_cloud_forward.py`
+    # could not run on its own. The runtime import lives inside `forward_intercepted`.
+    from adapters.base import CommandResult, InterceptedRequest
 from core.upstream_resolver import is_blocked_ip, resolve_upstream
 
 logger = logging.getLogger(__name__)
@@ -342,6 +348,8 @@ async def forward_intercepted(  # noqa: PLR0913
     If resolution fails or every upstream IP errors/times out, returns a failed
     result carrying the error message so callers can fall back locally.
     """
+    from adapters.base import CommandResult  # noqa: PLC0415 - see TYPE_CHECKING above
+
     if not hostname:
         return CommandResult(
             success=False,
