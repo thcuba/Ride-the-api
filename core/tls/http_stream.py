@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
+import os
 import ssl
 import sys
 from datetime import UTC, datetime
@@ -21,6 +23,10 @@ from core.tls.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Block size used to walk a spooled body to the device: one 64 KiB read at a time, so a
+# firmware download costs a block of memory instead of its own size.
+_STREAM_BLOCK = 65536
 
 
 async def read_http_over_tls(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
@@ -201,6 +207,11 @@ async def forward_upstream(req: DecryptedRequest, hostname: str, device_id: str)
             if result.body_bytes is not None
             else json.dumps(result.response or {})
         ),
+        # A response too large for memory arrives as an open spool: `write_http_response`
+        # streams it to the device and closes it.
+        # `getattr`: il campo è nuovo, e un risultato costruito da un altro percorso
+        # (o da un test) semplicemente non lo ha.
+        "body_file": getattr(result, "body_file", None),
     }
 
 
@@ -217,6 +228,69 @@ async def _flush_pending(outgoing: ssl.MemoryBIO, writer: asyncio.StreamWriter) 
         await writer.drain()
 
 
+async def _write_plaintext(
+    ssl_obj: ssl.SSLObject,
+    outgoing: ssl.MemoryBIO,
+    writer: asyncio.StreamWriter,
+    data: bytes,
+) -> None:
+    """Push ``data`` through the TLS session, draining while the BIO is full."""
+    view = memoryview(data)
+    while view:
+        try:
+            written = ssl_obj.write(view)
+        except ssl.SSLWantWriteError:
+            await _flush_pending(outgoing, writer)
+            continue
+        except ssl.SSLWantReadError:
+            # Nothing to read from the peer: the session is gone, not the response short.
+            logger.debug("TLS MITM: session closed while writing")
+            return
+        if written <= 0:
+            return
+        view = view[written:]
+        await _flush_pending(outgoing, writer)
+    await _flush_pending(outgoing, writer)
+
+
+async def _write_streamed_response(  # noqa: PLR0913, PLR0917
+    ssl_obj: ssl.SSLObject,
+    outgoing: ssl.MemoryBIO,
+    writer: asyncio.StreamWriter,
+    status_code: int,
+    headers: dict,
+    body_file,
+    client_ip: str,
+) -> None:
+    """Announce the real length, then send the body from disk a block at a time.
+
+    A firmware download does not fit the idea of "read the response, then replay it":
+    the bytes are already spooled to a temporary file upstream, and this walks them
+    through the TLS session without ever holding more than one block.
+    """
+    try:
+        body_file.seek(0, os.SEEK_END)
+        size = body_file.tell()
+        body_file.seek(0)
+        head = serialize_http_response(
+            status_code=status_code,
+            headers=headers if isinstance(headers, dict) else {},
+            body=b"",
+            content_length=size,
+            head_only=True,
+        )
+        await _write_plaintext(ssl_obj, outgoing, writer, head)
+        while True:
+            chunk = body_file.read(_STREAM_BLOCK)
+            if not chunk:
+                break
+            await _write_plaintext(ssl_obj, outgoing, writer, chunk)
+        logger.info("TLS MITM: streamed %d bytes to %s", size, client_ip)
+    finally:
+        with contextlib.suppress(Exception):
+            body_file.close()
+
+
 async def write_http_response(
     ssl_obj: ssl.SSLObject,
     outgoing: ssl.MemoryBIO,
@@ -228,6 +302,14 @@ async def write_http_response(
     try:
         status_code = int(response.get("status_code", 200))
         resp_headers = response.get("headers") or {}
+        body_file = response.get("body_file")
+        if body_file is not None:
+            # Too large for memory: the head is written from the real size and the body
+            # follows in blocks. Returning here keeps the buffered path below untouched.
+            await _write_streamed_response(
+                ssl_obj, outgoing, writer, status_code, resp_headers, body_file, client_ip
+            )
+            return
         body = response.get("body")
         if not isinstance(body, (str, bytes, bytearray)):
             body = json.dumps(body, default=str) if body is not None else ""
@@ -243,24 +325,8 @@ async def write_http_response(
         # Write the whole response. ``SSLObject.write`` accepts as much as the output
         # BIO can hold and raises SSLWantWriteError when it is full: draining there and
         # retrying is the difference between a complete response and a truncated one.
-        view = memoryview(raw)
         try:
-            while view:
-                try:
-                    written = ssl_obj.write(view)
-                except ssl.SSLWantWriteError:
-                    await _flush_pending(outgoing, writer)
-                    continue
-                except ssl.SSLWantReadError:
-                    # The reply itself is never truncated on purpose: nothing to read
-                    # from the peer at this point means the session is gone.
-                    logger.debug("TLS MITM: session closed while answering %s", client_ip)
-                    break
-                if written <= 0:
-                    break
-                view = view[written:]
-                await _flush_pending(outgoing, writer)
-            await _flush_pending(outgoing, writer)
+            await _write_plaintext(ssl_obj, outgoing, writer, raw)
         except Exception:
             logger.debug("TLS MITM: flush to %s failed", client_ip, exc_info=True)
     except Exception as e:

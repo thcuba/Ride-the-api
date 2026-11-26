@@ -143,6 +143,10 @@ class CommandResult:
     # parsing/learning); ``body_bytes`` is what actually goes back on the wire,
     # so non-JSON payloads survive byte-for-byte.
     body_bytes: bytes | None = None
+    # Set instead of ``body_bytes`` when the upstream response was too large to keep in
+    # memory: an open spool the caller streams and closes. ``body_bytes`` is empty in
+    # that case, so a caller that ignores this ships an empty body, never a truncated one.
+    body_file: Any | None = None
 
 
 @dataclass
