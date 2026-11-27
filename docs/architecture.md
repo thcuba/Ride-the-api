@@ -112,6 +112,11 @@ autonomous local responses. Each request passes through the following stages:
   rest encrypted inside the BIO and the connection closed right after it — vendor responses beyond
   ~49 KB arrived truncated. A full BIO (`SSLWantWriteError`) means "drain, then continue", never
   "this response ends here".
+- **Large forwarded responses**: the upstream body is held in memory only up to 5 MiB. Beyond
+  that it rolls to a spooled temporary file and the TLS writer streams it to the device in blocks
+  (`ForwardedResponse.body_file`), so a firmware download costs one block of RAM instead of its own
+  size — before, the 5 MiB cap was an outright `CloudForwardError` and the device got a 502. The
+  hard cap is now 512 MiB, a disk guard rather than a memory guard.
 - **Forward contract**: when the pipeline does not serve a local response, the behaviour depends
   on who terminates the connection.
   - **FastAPI HTTP handler**: with `signal_forward_to_cloud` enabled (a proxy is in front) it

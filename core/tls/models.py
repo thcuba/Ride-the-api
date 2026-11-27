@@ -108,15 +108,25 @@ def serialize_http_response(
     status_code: int,
     headers: dict[str, str] | None,
     body: bytes,
+    *,
+    content_length: int | None = None,
+    head_only: bool = False,
 ) -> bytes:
     """Serialize an HTTP/1.1 response with h11 (Content-Length, keep-alive-off).
 
     Returns the raw bytes ready to write to the TLS stream. Raises on invalid
     status codes in the same way the state machine does.
+
+    ``content_length`` overrides the value derived from ``body``, and ``head_only``
+    stops after the status line and headers: together they let a caller announce a body
+    it is still streaming from disk instead of holding it all in memory.
     """
     reason = str(HTTPStatus(status_code).phrase) if status_code in _VALID_HTTP_STATUSES else "OK"
     out_headers: list[tuple[bytes, bytes]] = [
-        (b"content-length", str(len(body)).encode("ascii")),
+        (
+            b"content-length",
+            str(len(body) if content_length is None else content_length).encode("ascii"),
+        ),
         (b"connection", b"close"),
     ]
     for k, v in (headers or {}).items():
@@ -134,6 +144,8 @@ def serialize_http_response(
             headers=out_headers,
         )
     )
+    if head_only:
+        return raw
     if body:
         raw += conn.send(h11.Data(data=body))
     raw += conn.send(h11.EndOfMessage())

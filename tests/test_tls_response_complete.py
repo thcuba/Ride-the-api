@@ -10,6 +10,7 @@ Il secondo difetto era accanto al primo: `SSLWantWriteError` (BIO pieno) veniva 
 con un `pass`, quindi il pezzo che non era entrato nel BIO veniva perso in silenzio.
 """
 
+import io
 import json
 import ssl
 
@@ -113,6 +114,39 @@ async def test_a_full_bio_is_drained_and_the_write_retried():
     sent = bytes(writer.sent)
     assert sent.endswith(body), "il corpo deve arrivare intero anche partendo da un BIO pieno"
     assert outgoing.pending == 0
+
+
+@pytest.mark.asyncio
+async def test_a_spooled_body_is_announced_and_streamed():
+    """Un corpo su disco: la testa annuncia la lunghezza vera, poi arrivano i blocchi."""
+    body = bytes(range(256)) * 400  # 102400 byte, più blocchi da 64 KiB? no: 2 blocchi
+    spool = io.BytesIO(body)
+
+    outgoing = _FakeOutgoing()
+    ssl_obj = _FakeSSLObject(outgoing)
+    writer = _FakeWriter()
+
+    await write_http_response(
+        ssl_obj,
+        outgoing,
+        writer,
+        {
+            "status_code": 200,
+            "headers": {"content-type": "application/octet-stream"},
+            "body": b"",
+            "body_file": spool,
+        },
+        "192.168.1.50",
+    )
+
+    sent = bytes(writer.sent)
+    head, _, streamed = sent.partition(b"\r\n\r\n")
+    assert f"content-length: {len(body)}".encode() in head.lower(), (
+        "la testa deve annunciare la lunghezza reale del corpo"
+    )
+    assert streamed == body, "il corpo deve arrivare intero, nell'ordine giusto"
+    assert outgoing.pending == 0
+    assert spool.closed, "lo spool va chiuso dopo l'invio"
 
 
 @pytest.mark.asyncio

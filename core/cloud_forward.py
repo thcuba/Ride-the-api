@@ -27,13 +27,20 @@ import contextlib
 import json
 import logging
 import ssl
+import tempfile
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, urlencode
 
 import h11
 
-from adapters.base import CommandResult, InterceptedRequest
+if TYPE_CHECKING:
+    # Types only: importing `adapters.base` at module level runs `adapters/__init__`,
+    # which imports every adapter, and eight of them import `forward_intercepted` from
+    # here. That closed a cycle where `import core.cloud_forward` failed unless
+    # `adapters` happened to be loaded first — which is why `tests/test_cloud_forward.py`
+    # could not run on its own. The runtime import lives inside `forward_intercepted`.
+    from adapters.base import CommandResult, InterceptedRequest
 from core.upstream_resolver import is_blocked_ip, resolve_upstream
 
 logger = logging.getLogger(__name__)
@@ -41,7 +48,13 @@ logger = logging.getLogger(__name__)
 _DEFAULT_TIMEOUT: float = 10.0
 _DEFAULT_CONNECT_TIMEOUT: float = 3.0
 _READ_CHUNK = 65536
-_MAX_RESPONSE_BODY = 5 * 1024 * 1024  # 5 MiB cap on forwarded response body
+# A forwarded body up to this size is held in RAM; beyond it the bytes go to a
+# temporary file and are streamed to the device, so memory stays flat instead of
+# growing with the response (a firmware download is tens of MB).
+_MAX_RESPONSE_BODY_IN_MEMORY = 5 * 1024 * 1024
+# Hard cap, now a disk guard rather than a RAM guard: without it a runaway response
+# would fill the volume instead of failing the one request.
+_MAX_RESPONSE_BODY_TOTAL = 512 * 1024 * 1024
 
 # Pre-computed tuple of hop-by-hop/framing headers stripped before replaying requests
 _HOP_BY_HOP_HEADERS: tuple[str, ...] = ("content-length", "transfer-encoding", "connection")
@@ -97,6 +110,10 @@ class ForwardedResponse:
     status_code: int
     headers: dict[str, str] = field(default_factory=dict)
     body: bytes = b""
+    # Set instead of ``body`` when the response was too large to keep in memory: the
+    # caller streams it from here and closes it. ``body`` is empty in that case, so a
+    # caller that ignores this field ships an empty body rather than a wrong one.
+    body_file: Any | None = None
 
 
 def _norm_headers(headers: dict[str, str] | None) -> dict[str, str]:
@@ -226,7 +243,13 @@ class CloudForwarder:
 
         status_code: int | None = None
         resp_headers: dict[str, str] = {}
-        resp_body = bytearray()
+        # Spooled: stays in RAM while small, rolls to disk by itself once it grows.
+        # Not a context manager: the spool outlives this method when the body is too
+        # large for memory, and closing it is the caller's job (see `body_file`).
+        resp_body = tempfile.SpooledTemporaryFile(  # noqa: SIM115
+            max_size=_MAX_RESPONSE_BODY_IN_MEMORY
+        )
+        body_total = 0
 
         try:
             data = conn.send(
@@ -258,16 +281,20 @@ class CloudForwarder:
                     }
                 elif isinstance(event, h11.Data):
                     chunk = event.data
-                    if len(resp_body) + len(chunk) > _MAX_RESPONSE_BODY:
+                    body_total += len(chunk)
+                    if body_total > _MAX_RESPONSE_BODY_TOTAL:
                         raise CloudForwardError(
-                            f"response body from {hostname} exceeded {_MAX_RESPONSE_BODY} bytes"
+                            f"response body from {hostname} exceeded "
+                            f"{_MAX_RESPONSE_BODY_TOTAL} bytes"
                         )
-                    resp_body.extend(chunk)
+                    resp_body.write(chunk)
                 elif isinstance(event, (h11.EndOfMessage, h11.ConnectionClosed)):
                     break
         except (TimeoutError, OSError):
+            resp_body.close()
             raise
         except h11.RemoteProtocolError as exc:
+            resp_body.close()
             raise CloudForwardError(f"malformed response from {hostname}: {exc}") from exc
         finally:
             writer.close()
@@ -277,8 +304,17 @@ class CloudForwarder:
         if status_code is None:
             raise CloudForwardError("connection closed before response status line")
 
+        resp_body.seek(0)
+        if body_total <= _MAX_RESPONSE_BODY_IN_MEMORY:
+            body = resp_body.read()
+            resp_body.close()
+            return ForwardedResponse(status_code=status_code, headers=resp_headers, body=body)
+        # Too big for RAM: hand the spool out and let the caller stream it.
         return ForwardedResponse(
-            status_code=status_code, headers=resp_headers, body=bytes(resp_body)
+            status_code=status_code,
+            headers=resp_headers,
+            body=b"",
+            body_file=resp_body,
         )
 
 
@@ -312,6 +348,8 @@ async def forward_intercepted(  # noqa: PLR0913
     If resolution fails or every upstream IP errors/times out, returns a failed
     result carrying the error message so callers can fall back locally.
     """
+    from adapters.base import CommandResult  # noqa: PLC0415 - see TYPE_CHECKING above
+
     if not hostname:
         return CommandResult(
             success=False,
@@ -377,6 +415,7 @@ async def forward_intercepted(  # noqa: PLR0913
                 status_code=response.status_code,
                 response_headers=dict(response.headers),
                 body_bytes=response.body,
+                body_file=response.body_file,
             )
         except (TimeoutError, CloudForwardError, ConnectionError, OSError) as exc:
             last_err = str(exc)
